@@ -369,3 +369,25 @@ fn pending_op_with_no_version() {
     assert_eq!(ops[0].id, op_id);
     assert!(ops[0].forge_version_id.is_none());
 }
+
+#[test]
+fn lookup_mod_by_name_or_slug() {
+    let db = Database::open_in_memory().unwrap();
+    // Use a name that differs from the slug to test both paths
+    db.insert_mod(100, 200, "S.A.I.N.", Some("sain"), "3.0.0")
+        .unwrap();
+
+    // Lookup by name (case-insensitive)
+    let by_name = db.get_mod_by_name_or_slug("S.A.I.N.").unwrap();
+    assert!(by_name.is_some());
+    assert_eq!(by_name.as_ref().unwrap().forge_mod_id, 100);
+
+    // Lookup by slug (distinct from name)
+    let by_slug = db.get_mod_by_name_or_slug("sain").unwrap();
+    assert!(by_slug.is_some());
+    assert_eq!(by_slug.unwrap().name, "S.A.I.N.");
+
+    // Not found
+    let missing = db.get_mod_by_name_or_slug("nonexistent").unwrap();
+    assert!(missing.is_none());
+}

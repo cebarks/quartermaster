@@ -72,6 +72,30 @@ impl Database {
             .optional()
     }
 
+    pub fn get_mod_by_name_or_slug(&self, query: &str) -> rusqlite::Result<Option<InstalledMod>> {
+        // Name match takes priority over slug match to avoid nondeterminism
+        let by_name = self
+            .conn
+            .query_row(
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at
+                 FROM installed_mods WHERE LOWER(name) = LOWER(?1)",
+                params![query],
+                row_to_installed_mod,
+            )
+            .optional()?;
+        if by_name.is_some() {
+            return Ok(by_name);
+        }
+        self.conn
+            .query_row(
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at
+                 FROM installed_mods WHERE LOWER(slug) = LOWER(?1)",
+                params![query],
+                row_to_installed_mod,
+            )
+            .optional()
+    }
+
     pub fn list_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at
