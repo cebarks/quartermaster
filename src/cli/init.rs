@@ -83,16 +83,33 @@ mod tests {
 
     fn create_fake_spt_dir(base: &std::path::Path) -> PathBuf {
         let spt_root = base.to_path_buf();
-        std::fs::write(spt_root.join("SPT.Server.exe"), b"").unwrap();
-        let configs_dir = spt_root.join("SPT_Data/Server/configs");
+
+        // SPT/SPT.Server.exe
+        std::fs::create_dir_all(spt_root.join("SPT")).unwrap();
+        std::fs::write(spt_root.join("SPT/SPT.Server.exe"), b"").unwrap();
+
+        // SPT/SPT_Data/configs/core.json
+        let configs_dir = spt_root.join("SPT/SPT_Data/configs");
         std::fs::create_dir_all(&configs_dir).unwrap();
         std::fs::write(
             configs_dir.join("core.json"),
-            r#"{"sptVersion": "4.0.13", "compatibleTarkovVersion": "0.16.9-40087"}"#,
+            r#"{"compatibleTarkovVersion": "0.16.9-40087"}"#,
         )
         .unwrap();
-        std::fs::create_dir_all(spt_root.join("user/mods")).unwrap();
+
+        // SPT/SPT.Server.deps.json
+        std::fs::write(
+            spt_root.join("SPT/SPT.Server.deps.json"),
+            r#"{"libraries":{"SPT.Server/4.0.13-RELEASE+abc123.20260101":{}}}"#,
+        )
+        .unwrap();
+
+        // SPT/user/mods/
+        std::fs::create_dir_all(spt_root.join("SPT/user/mods")).unwrap();
+
+        // BepInEx/plugins/
         std::fs::create_dir_all(spt_root.join("BepInEx/plugins")).unwrap();
+
         spt_root
     }
 
@@ -139,7 +156,7 @@ mod tests {
         let spt_dir = create_fake_spt_dir(tmp.path());
 
         // Create some existing mod files
-        let mod_dir = spt_dir.join("user/mods/SomeMod");
+        let mod_dir = spt_dir.join("SPT/user/mods/SomeMod");
         std::fs::create_dir_all(&mod_dir).unwrap();
         std::fs::write(mod_dir.join("package.json"), b"{}").unwrap();
 

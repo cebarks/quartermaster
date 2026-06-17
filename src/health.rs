@@ -199,7 +199,11 @@ fn check_integrity(ctx: &CliContext) -> Result<IntegrityHealth> {
         std::collections::BTreeMap::new();
     for path in &untracked {
         let parts: Vec<&str> = path.split('/').collect();
-        let dir = if parts.len() >= 3 {
+        // For server mods: SPT/user/mods/ModName/... -> SPT/user/mods/ModName
+        // For client mods: BepInEx/plugins/ModName/... -> BepInEx/plugins/ModName
+        let dir = if path.starts_with("SPT/") && parts.len() >= 4 {
+            format!("{}/{}/{}/{}", parts[0], parts[1], parts[2], parts[3])
+        } else if path.starts_with("BepInEx/") && parts.len() >= 3 {
             format!("{}/{}/{}", parts[0], parts[1], parts[2])
         } else {
             path.to_string()
@@ -363,14 +367,14 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(spt_dir.join("user/mods")).unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
         std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
         let db = Database::open_in_memory().unwrap();
         let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
         db.insert_file(
             mod_id,
-            "user/mods/TestMod/test.dll",
+            "SPT/user/mods/TestMod/test.dll",
             Some("abc123"),
             Some(100),
         )
@@ -391,7 +395,7 @@ mod tests {
 
         let result = check_integrity(&ctx).unwrap();
         assert_eq!(result.tracked_files, 1);
-        assert_eq!(result.missing_files, vec!["user/mods/TestMod/test.dll"]);
+        assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
         assert!(result.modified_files.is_empty());
     }
 
@@ -406,10 +410,10 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(spt_dir.join("user/mods/TestMod")).unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/TestMod")).unwrap();
         std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
-        let file_path = spt_dir.join("user/mods/TestMod/test.dll");
+        let file_path = spt_dir.join("SPT/user/mods/TestMod/test.dll");
         std::fs::write(&file_path, b"original content").unwrap();
         let original_hash = compute_file_hash(&file_path).unwrap();
 
@@ -417,7 +421,7 @@ mod tests {
         let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
         db.insert_file(
             mod_id,
-            "user/mods/TestMod/test.dll",
+            "SPT/user/mods/TestMod/test.dll",
             Some(&original_hash),
             Some(16),
         )
@@ -441,7 +445,10 @@ mod tests {
 
         let result = check_integrity(&ctx).unwrap();
         assert!(result.missing_files.is_empty());
-        assert_eq!(result.modified_files, vec!["user/mods/TestMod/test.dll"]);
+        assert_eq!(
+            result.modified_files,
+            vec!["SPT/user/mods/TestMod/test.dll"]
+        );
     }
 
     #[test]
@@ -454,8 +461,8 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(spt_dir.join("user/mods/UnknownMod")).unwrap();
-        std::fs::write(spt_dir.join("user/mods/UnknownMod/mod.dll"), b"x").unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/UnknownMod")).unwrap();
+        std::fs::write(spt_dir.join("SPT/user/mods/UnknownMod/mod.dll"), b"x").unwrap();
         std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
         let db = Database::open_in_memory().unwrap();
@@ -476,7 +483,7 @@ mod tests {
         let result = check_integrity(&ctx).unwrap();
         assert_eq!(result.tracked_files, 0);
         assert_eq!(result.untracked_dirs.len(), 1);
-        assert_eq!(result.untracked_dirs[0].path, "user/mods/UnknownMod");
+        assert_eq!(result.untracked_dirs[0].path, "SPT/user/mods/UnknownMod");
         assert_eq!(result.untracked_dirs[0].file_count, 1);
     }
 }

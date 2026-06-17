@@ -144,7 +144,7 @@ mod tests {
 
     fn make_test_ctx(tmp: &TempDir) -> CliContext {
         let spt_dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(spt_dir.join("user/mods")).unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
         std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
         CliContext {
@@ -212,7 +212,7 @@ mod tests {
         let ctx = make_test_ctx(&tmp);
 
         // Create mod files on disk
-        let mod_dir = ctx.spt_dir.join("user/mods/TestMod");
+        let mod_dir = ctx.spt_dir.join("SPT/user/mods/TestMod");
         std::fs::create_dir_all(&mod_dir).unwrap();
         std::fs::write(mod_dir.join("package.json"), b"{}").unwrap();
 
@@ -224,7 +224,7 @@ mod tests {
         ctx.db
             .insert_file(
                 db_id,
-                "user/mods/TestMod/package.json",
+                "SPT/user/mods/TestMod/package.json",
                 Some("abc"),
                 Some(2),
             )

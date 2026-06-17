@@ -24,12 +24,12 @@ pub struct ExtractedFile {
 }
 
 /// Known prefixes that indicate a mod's target directory.
-const SERVER_PREFIX: &str = "user/mods/";
+const SERVER_PREFIX: &str = "SPT/user/mods/";
 const CLIENT_PREFIX: &str = "BepInEx/plugins/";
 
 /// Inspect ZIP entries to determine whether a mod targets the server, client, or both.
 ///
-/// - Has `user/mods/` paths -> Server
+/// - Has `SPT/user/mods/` paths -> Server
 /// - Has `BepInEx/plugins/` paths -> Client
 /// - Has both -> Hybrid
 /// - Has neither -> Ambiguous
@@ -64,7 +64,7 @@ pub fn detect_mod_type(archive_path: &Path) -> Result<ModType> {
 }
 
 /// If all entries share a single top-level directory that does NOT start with a
-/// known prefix (`user/` or `BepInEx/`), return that directory as the prefix to
+/// known prefix (`SPT/` or `BepInEx/`), return that directory as the prefix to
 /// strip (e.g. `"SAIN/"`). Otherwise return an empty string.
 pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
     let file = fs::File::open(archive_path)
@@ -85,7 +85,7 @@ pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
         };
 
         // If the top-level dir is a known prefix, no stripping needed
-        if top_dir == "user/" || top_dir == "BepInEx/" {
+        if top_dir == "SPT/" || top_dir == "BepInEx/" {
             return Ok(String::new());
         }
 
@@ -224,12 +224,12 @@ pub fn delete_mod_files(spt_root: &Path, file_paths: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Recursively scan `user/mods/` and `BepInEx/plugins/` under `spt_root`,
+/// Recursively scan `SPT/user/mods/` and `BepInEx/plugins/` under `spt_root`,
 /// returning all file paths relative to `spt_root`.
 pub fn scan_mod_directories(spt_root: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();
 
-    let server_dir = spt_root.join("user/mods");
+    let server_dir = spt_root.join("SPT/user/mods");
     if server_dir.is_dir() {
         scan_dir_recursive(&server_dir, spt_root, &mut out)?;
     }
@@ -295,14 +295,14 @@ fn hex_encode(bytes: &[u8]) -> String {
 /// to look through wrapper directories.
 fn strip_known_prefix_from_name(name: &str) -> &str {
     // If the name directly starts with a known prefix, return as-is
-    if name.starts_with("user/") || name.starts_with("BepInEx/") {
+    if name.starts_with("SPT/") || name.starts_with("BepInEx/") {
         return name;
     }
 
     // Check if after the first path component, a known prefix appears
     if let Some(idx) = name.find('/') {
         let after = &name[idx + 1..];
-        if after.starts_with("user/") || after.starts_with("BepInEx/") {
+        if after.starts_with("SPT/") || after.starts_with("BepInEx/") {
             return after;
         }
     }
@@ -337,8 +337,8 @@ mod tests {
     #[test]
     fn detect_server_mod() {
         let zip = create_test_zip(&[
-            ("user/mods/TestMod/package.json", b"{}"),
-            ("user/mods/TestMod/src/mod.ts", b"// code"),
+            ("SPT/user/mods/TestMod/package.json", b"{}"),
+            ("SPT/user/mods/TestMod/src/mod.ts", b"// code"),
         ]);
         let result = detect_mod_type(zip.path()).unwrap();
         assert_eq!(result, ModType::Server);
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn detect_hybrid_mod() {
         let zip = create_test_zip(&[
-            ("user/mods/TestMod/package.json", b"{}"),
+            ("SPT/user/mods/TestMod/package.json", b"{}"),
             ("BepInEx/plugins/TestPlugin.dll", b"\x00\x01"),
         ]);
         let result = detect_mod_type(zip.path()).unwrap();
@@ -374,8 +374,8 @@ mod tests {
     #[test]
     fn strip_top_level_wrapper_dir() {
         let zip = create_test_zip(&[
-            ("SAIN/user/mods/SAIN/package.json", b"{}"),
-            ("SAIN/user/mods/SAIN/src/mod.ts", b"// code"),
+            ("SAIN/SPT/user/mods/SAIN/package.json", b"{}"),
+            ("SAIN/SPT/user/mods/SAIN/src/mod.ts", b"// code"),
         ]);
         let prefix = detect_strip_prefix(zip.path()).unwrap();
         assert_eq!(prefix, "SAIN/");
@@ -384,8 +384,8 @@ mod tests {
     #[test]
     fn no_strip_when_known_prefix() {
         let zip = create_test_zip(&[
-            ("user/mods/TestMod/package.json", b"{}"),
-            ("user/mods/TestMod/src/mod.ts", b"// code"),
+            ("SPT/user/mods/TestMod/package.json", b"{}"),
+            ("SPT/user/mods/TestMod/src/mod.ts", b"// code"),
         ]);
         let prefix = detect_strip_prefix(zip.path()).unwrap();
         assert_eq!(prefix, "");
@@ -394,8 +394,8 @@ mod tests {
     #[test]
     fn extract_server_mod() {
         let zip = create_test_zip(&[
-            ("user/mods/TestMod/package.json", b"{\"name\":\"test\"}"),
-            ("user/mods/TestMod/src/mod.ts", b"export class Mod {}"),
+            ("SPT/user/mods/TestMod/package.json", b"{\"name\":\"test\"}"),
+            ("SPT/user/mods/TestMod/src/mod.ts", b"export class Mod {}"),
         ]);
 
         let tmp_dir = TempDir::new().unwrap();
@@ -446,30 +446,30 @@ mod tests {
         let root = tmp_dir.path();
 
         // Create some files in nested directories
-        let mod_dir = root.join("user/mods/TestMod/src");
+        let mod_dir = root.join("SPT/user/mods/TestMod/src");
         fs::create_dir_all(&mod_dir).unwrap();
         fs::write(mod_dir.join("mod.ts"), b"// code").unwrap();
-        fs::write(root.join("user/mods/TestMod/package.json"), b"{}").unwrap();
+        fs::write(root.join("SPT/user/mods/TestMod/package.json"), b"{}").unwrap();
 
         let file_paths = vec![
-            "user/mods/TestMod/src/mod.ts".to_string(),
-            "user/mods/TestMod/package.json".to_string(),
+            "SPT/user/mods/TestMod/src/mod.ts".to_string(),
+            "SPT/user/mods/TestMod/package.json".to_string(),
         ];
 
         delete_mod_files(root, &file_paths).unwrap();
 
         // Files should be gone
         assert!(!mod_dir.join("mod.ts").exists());
-        assert!(!root.join("user/mods/TestMod/package.json").exists());
+        assert!(!root.join("SPT/user/mods/TestMod/package.json").exists());
 
         // Empty directories should be cleaned up
         assert!(!mod_dir.exists(), "src/ should be removed (empty)");
         assert!(
-            !root.join("user/mods/TestMod").exists(),
+            !root.join("SPT/user/mods/TestMod").exists(),
             "TestMod/ should be removed (empty)"
         );
 
-        // user/mods/ should still exist (it's a structural dir we don't own)
+        // SPT/user/mods/ should still exist (it's a structural dir we don't own)
         // Actually, it will be removed too since it becomes empty. That's fine —
         // the important thing is we stop at spt_root.
         // The root itself must still exist.
@@ -482,7 +482,7 @@ mod tests {
         let root = tmp_dir.path();
 
         // Create server mod files
-        let server_dir = root.join("user/mods/TestMod");
+        let server_dir = root.join("SPT/user/mods/TestMod");
         fs::create_dir_all(&server_dir).unwrap();
         fs::write(server_dir.join("package.json"), b"{}").unwrap();
         fs::write(server_dir.join("mod.ts"), b"// code").unwrap();
@@ -501,11 +501,11 @@ mod tests {
             "should find client plugin: {files:?}"
         );
         assert!(
-            files.contains(&"user/mods/TestMod/mod.ts".to_string()),
+            files.contains(&"SPT/user/mods/TestMod/mod.ts".to_string()),
             "should find server mod source: {files:?}"
         );
         assert!(
-            files.contains(&"user/mods/TestMod/package.json".to_string()),
+            files.contains(&"SPT/user/mods/TestMod/package.json".to_string()),
             "should find server mod package.json: {files:?}"
         );
     }
@@ -513,8 +513,8 @@ mod tests {
     #[test]
     fn extract_rejects_path_traversal() {
         let zip = create_test_zip(&[
-            ("user/mods/../../etc/evil.txt", b"malicious"),
-            ("user/mods/../../../tmp/bad", b"also bad"),
+            ("SPT/user/mods/../../etc/evil.txt", b"malicious"),
+            ("SPT/user/mods/../../../tmp/bad", b"also bad"),
         ]);
         let tmp_dir = TempDir::new().unwrap();
         let result = extract_mod(zip.path(), tmp_dir.path());

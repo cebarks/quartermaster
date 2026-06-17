@@ -16,10 +16,10 @@ pub async fn run(path: &str, forge_mod_ref: &str, ctx: &CliContext) -> Result<()
         bail!("path is not a directory: {}", full_path.display());
     }
 
-    // Ensure the path is under user/mods/ or BepInEx/plugins/
-    if !path.starts_with("user/mods/") && !path.starts_with("BepInEx/plugins/") {
+    // Ensure the path is under SPT/user/mods/ or BepInEx/plugins/
+    if !path.starts_with("SPT/user/mods/") && !path.starts_with("BepInEx/plugins/") {
         bail!(
-            "path must be under user/mods/ or BepInEx/plugins/, got: {}",
+            "path must be under SPT/user/mods/ or BepInEx/plugins/, got: {}",
             path
         );
     }
@@ -139,7 +139,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let mod_dir = root.join("user/mods/TestMod");
+        let mod_dir = root.join("SPT/user/mods/TestMod");
         std::fs::create_dir_all(&mod_dir).unwrap();
         std::fs::write(mod_dir.join("package.json"), b"{}").unwrap();
         std::fs::write(mod_dir.join("mod.ts"), b"// code").unwrap();
@@ -150,10 +150,10 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert!(files
             .iter()
-            .any(|(p, _, _)| p == "user/mods/TestMod/package.json"));
+            .any(|(p, _, _)| p == "SPT/user/mods/TestMod/package.json"));
         assert!(files
             .iter()
-            .any(|(p, _, _)| p == "user/mods/TestMod/mod.ts"));
+            .any(|(p, _, _)| p == "SPT/user/mods/TestMod/mod.ts"));
 
         // Verify hashes are present
         for (_, hash, _) in &files {

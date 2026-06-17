@@ -74,7 +74,7 @@ mod tests {
     fn resolve_addr_from_http_json() {
         let tmp = tempfile::tempdir().unwrap();
         let spt = tmp.path();
-        let configs_dir = spt.join("SPT_Data/Server/configs");
+        let configs_dir = spt.join("SPT/SPT_Data/configs");
         std::fs::create_dir_all(&configs_dir).unwrap();
         std::fs::write(
             configs_dir.join("http.json"),
@@ -92,7 +92,7 @@ mod tests {
     fn resolve_addr_config_overrides_http_json() {
         let tmp = tempfile::tempdir().unwrap();
         let spt = tmp.path();
-        let configs_dir = spt.join("SPT_Data/Server/configs");
+        let configs_dir = spt.join("SPT/SPT_Data/configs");
         std::fs::create_dir_all(&configs_dir).unwrap();
         std::fs::write(
             configs_dir.join("http.json"),
