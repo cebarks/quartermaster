@@ -132,7 +132,7 @@ impl ForgeClient {
 
         let resp = self
             .client
-            .post(&url)
+            .request(reqwest::Method::GET, &url)
             .json(&payload)
             .send()
             .await
@@ -165,7 +165,7 @@ impl ForgeClient {
 
         let resp = self
             .client
-            .post(&url)
+            .request(reqwest::Method::GET, &url)
             .json(&payload)
             .send()
             .await

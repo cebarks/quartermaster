@@ -6,8 +6,8 @@ use super::Database;
 pub struct User {
     pub id: i64,
     pub username: String,
-    pub spt_profile_id: Option<String>,
-    pub password_hash: String,
+    pub spt_profile_id: String,
+    pub password_hash: Option<String>,
     pub role: String,
     pub created_at: String,
 }
@@ -16,7 +16,7 @@ pub struct User {
 pub struct InviteCode {
     pub id: i64,
     pub code: String,
-    pub created_by: i64,
+    pub created_by: Option<i64>,
     pub used_by: Option<i64>,
     pub created_at: String,
     pub used_at: Option<String>,
@@ -28,11 +28,11 @@ pub struct PendingOperation {
     pub id: i64,
     pub action: String,
     pub forge_mod_id: i64,
-    pub forge_version_id: i64,
+    pub forge_version_id: Option<i64>,
     pub mod_name: String,
     pub metadata: Option<String>,
     pub queued_at: String,
-    pub queued_by: Option<i64>,
+    pub queued_by: Option<String>,
 }
 
 impl Database {
@@ -41,12 +41,13 @@ impl Database {
     pub fn insert_user(
         &self,
         username: &str,
-        password_hash: &str,
+        spt_profile_id: &str,
+        password_hash: Option<&str>,
         role: &str,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            params![username, password_hash, role],
+            "INSERT INTO users (username, spt_profile_id, password_hash, role) VALUES (?1, ?2, ?3, ?4)",
+            params![username, spt_profile_id, password_hash, role],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -85,7 +86,7 @@ impl Database {
     pub fn create_invite(
         &self,
         code: &str,
-        created_by: i64,
+        created_by: Option<i64>,
         expires_at: Option<&str>,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
@@ -123,10 +124,10 @@ impl Database {
         &self,
         action: &str,
         forge_mod_id: i64,
-        forge_version_id: i64,
+        forge_version_id: Option<i64>,
         mod_name: &str,
         metadata: Option<&str>,
-        queued_by: Option<i64>,
+        queued_by: Option<&str>,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
             "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by)

@@ -8,10 +8,10 @@ pub struct InstalledMod {
     pub forge_mod_id: i64,
     pub forge_version_id: i64,
     pub name: String,
-    pub slug: String,
+    pub slug: Option<String>,
     pub version: String,
     pub installed_at: String,
-    pub updated_at: String,
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -19,8 +19,8 @@ pub struct InstalledFile {
     pub id: i64,
     pub mod_id: i64,
     pub file_path: String,
-    pub file_hash: String,
-    pub file_size: i64,
+    pub file_hash: Option<String>,
+    pub file_size: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,7 +39,7 @@ impl Database {
         forge_mod_id: i64,
         forge_version_id: i64,
         name: &str,
-        slug: &str,
+        slug: Option<&str>,
         version: &str,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
@@ -105,8 +105,8 @@ impl Database {
         &self,
         mod_id: i64,
         file_path: &str,
-        file_hash: &str,
-        file_size: i64,
+        file_hash: Option<&str>,
+        file_size: Option<i64>,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
             "INSERT INTO installed_files (mod_id, file_path, file_hash, file_size)

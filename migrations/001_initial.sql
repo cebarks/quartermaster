@@ -5,18 +5,18 @@ CREATE TABLE IF NOT EXISTS installed_mods (
     forge_mod_id    INTEGER NOT NULL UNIQUE,
     forge_version_id INTEGER NOT NULL,
     name            TEXT NOT NULL,
-    slug            TEXT NOT NULL,
+    slug            TEXT,
     version         TEXT NOT NULL,
     installed_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS installed_files (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     mod_id      INTEGER NOT NULL REFERENCES installed_mods(id) ON DELETE CASCADE,
     file_path   TEXT NOT NULL UNIQUE,
-    file_hash   TEXT NOT NULL,
-    file_size   INTEGER NOT NULL
+    file_hash   TEXT,
+    file_size   INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS mod_dependencies (
@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS mod_dependencies (
 CREATE TABLE IF NOT EXISTS users (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     username        TEXT NOT NULL UNIQUE,
-    spt_profile_id  TEXT,
-    password_hash   TEXT NOT NULL,
+    spt_profile_id  TEXT NOT NULL,
+    password_hash   TEXT,
     role            TEXT NOT NULL DEFAULT 'player',
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS invite_codes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     code        TEXT NOT NULL UNIQUE,
-    created_by  INTEGER NOT NULL REFERENCES users(id),
+    created_by  INTEGER REFERENCES users(id),
     used_by     INTEGER REFERENCES users(id),
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     used_at     TEXT,
@@ -50,9 +50,9 @@ CREATE TABLE IF NOT EXISTS pending_operations (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     action              TEXT NOT NULL,
     forge_mod_id        INTEGER NOT NULL,
-    forge_version_id    INTEGER NOT NULL,
+    forge_version_id    INTEGER,
     mod_name            TEXT NOT NULL,
     metadata            TEXT,
     queued_at           TEXT NOT NULL DEFAULT (datetime('now')),
-    queued_by           INTEGER REFERENCES users(id)
+    queued_by           TEXT
 );

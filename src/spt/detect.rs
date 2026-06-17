@@ -90,12 +90,12 @@ pub fn detect_spt_dir(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<Pat
         return Ok(p.to_path_buf());
     }
 
-    // 2. QUMA_SPT_DIR env
+    // 2. QUMA_SPT_DIR env — if set, it must be valid (don't silently fall through)
     if let Ok(env_val) = std::env::var("QUMA_SPT_DIR") {
         let env_path = PathBuf::from(&env_val);
-        if validate_spt_dir(&env_path).is_ok() {
-            return Ok(env_path);
-        }
+        validate_spt_dir(&env_path)
+            .with_context(|| format!("QUMA_SPT_DIR={env_val} is not a valid SPT directory"))?;
+        return Ok(env_path);
     }
 
     // 3. Walk up from cwd
@@ -266,5 +266,26 @@ mod tests {
         let spt = create_fake_spt_dir(tmp.path());
         // No http.json was created by the helper
         assert!(read_http_config(&spt).is_none());
+    }
+
+    #[test]
+    fn detect_errors_on_invalid_quma_spt_dir() {
+        let tmp = TempDir::new().unwrap();
+        let bad_dir = tmp.path().join("nonexistent");
+
+        unsafe {
+            std::env::set_var("QUMA_SPT_DIR", bad_dir.to_str().unwrap());
+        }
+        let result = detect_spt_dir(None, Some(tmp.path()));
+        unsafe {
+            std::env::remove_var("QUMA_SPT_DIR");
+        }
+
+        assert!(result.is_err(), "should error when QUMA_SPT_DIR is invalid");
+        let err_msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            err_msg.contains("QUMA_SPT_DIR"),
+            "error should mention QUMA_SPT_DIR: {err_msg}"
+        );
     }
 }

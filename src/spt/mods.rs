@@ -135,7 +135,24 @@ pub fn extract_mod(archive_path: &Path, spt_root: &Path) -> Result<Vec<Extracted
             continue;
         }
 
+        // Reject entries with path traversal components
+        if relative.contains("..") {
+            anyhow::bail!("ZIP entry contains path traversal: {raw_name}");
+        }
+
         let dest = spt_root.join(relative);
+
+        // Verify the resolved path is still under spt_root (defense in depth)
+        if let Ok(canonical_root) = spt_root.canonicalize() {
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).ok();
+                if let Ok(canonical_dest) = parent.canonicalize() {
+                    if !canonical_dest.starts_with(&canonical_root) {
+                        anyhow::bail!("ZIP entry escapes SPT root: {raw_name}");
+                    }
+                }
+            }
+        }
 
         if entry.is_dir() {
             fs::create_dir_all(&dest)
@@ -490,6 +507,22 @@ mod tests {
         assert!(
             files.contains(&"user/mods/TestMod/package.json".to_string()),
             "should find server mod package.json: {files:?}"
+        );
+    }
+
+    #[test]
+    fn extract_rejects_path_traversal() {
+        let zip = create_test_zip(&[
+            ("user/mods/../../etc/evil.txt", b"malicious"),
+            ("user/mods/../../../tmp/bad", b"also bad"),
+        ]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod(zip.path(), tmp_dir.path());
+        assert!(result.is_err(), "should reject path traversal entries");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("path traversal"),
+            "error should mention path traversal: {err}"
         );
     }
 }
