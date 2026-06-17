@@ -1,3 +1,7 @@
+// DB layer is incrementally used by CLI commands (tasks 7-12).
+// Some methods are not yet used but will be in subsequent tasks.
+#![allow(dead_code)]
+
 pub mod mods;
 pub mod schema;
 pub mod users;

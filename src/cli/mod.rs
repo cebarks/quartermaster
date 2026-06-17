@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+pub mod common;
+pub mod init;
+
 #[derive(Parser)]
 #[command(name = "quma", version, about = "Quartermaster — SPT/Fika mod manager")]
 pub struct Cli {

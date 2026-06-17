@@ -240,6 +240,11 @@ mod tests {
 
     #[test]
     fn detect_fails_when_not_found() {
+        // Clear QUMA_SPT_DIR to avoid interference from other tests
+        unsafe {
+            std::env::remove_var("QUMA_SPT_DIR");
+        }
+
         let tmp = TempDir::new().unwrap();
         // Empty dir — no SPT markers anywhere up the tree.
         let err = detect_spt_dir(None, Some(tmp.path())).unwrap_err();

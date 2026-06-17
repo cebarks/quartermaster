@@ -1,3 +1,7 @@
+// Config system is incrementally used by CLI commands (tasks 7-12).
+// load_with_env and apply_env_overrides are used by resolve_context in common.rs
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};

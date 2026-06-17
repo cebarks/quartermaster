@@ -15,9 +15,9 @@ use cli::{Cli, Command};
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
+    match &cli.command {
         Command::Setup { .. } => todo!("setup"),
-        Command::Init { .. } => todo!("init"),
+        Command::Init { path } => cli::init::run(path.clone(), &cli),
         Command::Install { .. } => todo!("install"),
         Command::Update { .. } => todo!("update"),
         Command::Remove { .. } => todo!("remove"),
