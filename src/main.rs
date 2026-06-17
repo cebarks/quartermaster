@@ -65,7 +65,10 @@ async fn main() -> Result<()> {
             let ctx = cli::common::resolve_context(&cli)?;
             cli::status::run(*json, &ctx).await
         }
-        Command::Server { .. } => todo!("server"),
+        Command::Server { action } => {
+            let ctx = cli::common::resolve_context(&cli)?;
+            cli::server::run(action, &ctx).await
+        }
         Command::Serve { .. } => todo!("serve"),
         Command::Generate { .. } => todo!("generate"),
         Command::Invite { .. } => todo!("invite"),

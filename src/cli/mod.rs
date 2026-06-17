@@ -9,6 +9,7 @@ pub mod init;
 pub mod install;
 pub mod list;
 pub mod remove;
+pub mod server;
 pub mod status;
 pub mod track;
 pub mod update;
