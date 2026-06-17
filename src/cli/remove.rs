@@ -89,7 +89,7 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
 
 /// Recursively collect all transitive reverse dependencies of a mod.
 /// Returns them in BFS order (direct dependents first, then their dependents, etc.).
-fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<InstalledMod>> {
+pub fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<InstalledMod>> {
     let mut result = Vec::new();
     let mut visited = std::collections::HashSet::new();
     let mut queue = std::collections::VecDeque::new();
@@ -111,7 +111,7 @@ fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<Inst
     Ok(result)
 }
 
-fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
+pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
     // Get tracked files
     let files = ctx.db.get_files_for_mod(installed.id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();

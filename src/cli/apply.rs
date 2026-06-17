@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use super::common::CliContext;
 
@@ -56,7 +56,10 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
             "install" => {
                 if let Some(version_id) = op.forge_version_id {
                     crate::cli::install::install_with_deps(ctx, op.forge_mod_id, version_id)
-                        .await?;
+                        .await
+                        .with_context(|| {
+                            format!("failed to apply queued install of {}", op.mod_name)
+                        })?;
                 } else {
                     println!("    Skipped — no version ID for install operation");
                     ctx.db.delete_pending_op(op.id)?;
@@ -65,11 +68,19 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
             }
             "remove" => {
                 if let Some(installed) = ctx.db.get_mod_by_forge_id(op.forge_mod_id)? {
-                    let files = ctx.db.get_files_for_mod(installed.id)?;
-                    let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
-                    crate::spt::mods::delete_mod_files(&ctx.spt_dir, &paths)?;
-                    ctx.db.delete_mod(installed.id)?;
-                    println!("    Removed {} ({} files)", op.mod_name, paths.len());
+                    // Check reverse dependencies like interactive remove does
+                    let reverse_deps =
+                        crate::cli::remove::collect_all_reverse_deps(installed.id, ctx)?;
+                    if !reverse_deps.is_empty() {
+                        let names: Vec<&str> =
+                            reverse_deps.iter().map(|m| m.name.as_str()).collect();
+                        println!("    Also removing dependents: {}", names.join(", "));
+                        for dep in reverse_deps.iter().rev() {
+                            crate::cli::remove::remove_single_mod(dep, ctx)?;
+                        }
+                    }
+                    crate::cli::remove::remove_single_mod(&installed, ctx)?;
+                    println!("    Removed {}", op.mod_name);
                 } else {
                     println!("    Skipped — {} not found in database", op.mod_name);
                     ctx.db.delete_pending_op(op.id)?;
@@ -82,7 +93,10 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                     op.forge_version_id,
                 ) {
                     crate::cli::update::apply_update_by_version(ctx, &installed, version_id)
-                        .await?;
+                        .await
+                        .with_context(|| {
+                            format!("failed to apply queued update of {}", op.mod_name)
+                        })?;
                 } else {
                     println!("    Skipped — mod not found or no version ID");
                     ctx.db.delete_pending_op(op.id)?;
