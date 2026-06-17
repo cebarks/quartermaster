@@ -28,7 +28,10 @@ async fn main() -> Result<()> {
             let ctx = cli::common::resolve_context(&cli)?;
             cli::install::run(mod_ref, *force, &ctx).await
         }
-        Command::Update { .. } => todo!("update"),
+        Command::Update { mod_ref, force } => {
+            let ctx = cli::common::resolve_context(&cli)?;
+            cli::update::run(mod_ref.as_deref(), *force, &ctx).await
+        }
         Command::Remove { mod_ref, force } => {
             let ctx = cli::common::resolve_context(&cli)?;
             cli::remove::run(mod_ref, *force, &ctx)
