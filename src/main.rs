@@ -29,7 +29,10 @@ async fn main() -> Result<()> {
             cli::install::run(mod_ref, *force, &ctx).await
         }
         Command::Update { .. } => todo!("update"),
-        Command::Remove { .. } => todo!("remove"),
+        Command::Remove { mod_ref, force } => {
+            let ctx = cli::common::resolve_context(&cli)?;
+            cli::remove::run(mod_ref, *force, &ctx)
+        }
         Command::List { .. } => todo!("list"),
         Command::Track { .. } => todo!("track"),
         Command::Check => todo!("check"),
