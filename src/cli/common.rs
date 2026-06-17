@@ -54,11 +54,7 @@ pub fn truncate_str(s: &str, max: usize) -> String {
     if char_count <= max {
         s.to_string()
     } else {
-        let end = s
-            .char_indices()
-            .nth(max - 1)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
+        let end = s.char_indices().nth(max).map(|(i, _)| i).unwrap_or(s.len());
         format!("{}…", &s[..end])
     }
 }
