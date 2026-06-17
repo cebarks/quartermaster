@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
         Command::Check => {
             let ctx = cli::common::resolve_context(&cli)?;
             let has_updates = cli::check::run(&ctx).await?;
+            drop(ctx);
             if has_updates {
                 std::process::exit(1);
             }

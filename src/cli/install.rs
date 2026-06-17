@@ -162,30 +162,20 @@ fn record_dependency_edges(
     main_mod_db_id: i64,
     deps: &[PendingInstall],
 ) -> Result<()> {
-    // Record all dependency edges — both direct and transitive
-    let installed_dep_ids: Vec<(i64, i64)> = deps
-        .iter()
-        .filter_map(|dep| {
-            ctx.db
-                .get_mod_by_forge_id(dep.mod_id)
-                .ok()?
-                .map(|m| (dep.mod_id, m.id))
-        })
-        .collect();
+    for dep in deps {
+        let dep_installed = ctx.db.get_mod_by_forge_id(dep.mod_id)?;
+        let dep_db_id = match dep_installed {
+            Some(m) => m.id,
+            None => continue,
+        };
 
-    // Main mod depends on its direct deps
-    for &(_, dep_db_id) in &installed_dep_ids {
         match ctx.db.insert_dependency(main_mod_db_id, dep_db_id, None) {
             Ok(_) => {}
-            Err(e) if e.to_string().contains("UNIQUE constraint") => {}
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}
             Err(e) => return Err(e.into()),
         }
     }
-
-    // Also record transitive edges from the dependency tree structure
-    // (each dep depends on its own sub-deps — reconstructed from the flat list order)
-    // Full transitive edge recording requires the original tree; for now, the flat list
-    // captures the main mod's full dependency closure.
 
     Ok(())
 }

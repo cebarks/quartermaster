@@ -151,12 +151,29 @@ async fn apply_single_update(
         .download_file(&download_url, &archive_path)
         .await?;
 
+    // Extract to staging dir first — if this fails, old files are untouched
+    let staging_dir = tempfile::tempdir()?;
+    let new_files = extract_mod(&archive_path, staging_dir.path())?;
+
+    // Extraction succeeded — now safe to remove old files
     let old_files = ctx.db.get_files_for_mod(installed.id)?;
     let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
     delete_mod_files(&ctx.spt_dir, &old_paths)?;
     ctx.db.delete_files_for_mod(installed.id)?;
 
-    let new_files = extract_mod(&archive_path, &ctx.spt_dir)?;
+    // Move staged files to SPT dir
+    for file in &new_files {
+        let src = staging_dir.path().join(&file.path);
+        let dest = ctx.spt_dir.join(&file.path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&src, &dest).or_else(|_| {
+            // rename fails across mount points; fall back to copy+delete
+            std::fs::copy(&src, &dest).map(|_| ())
+        })?;
+    }
+
     for file in &new_files {
         ctx.db.insert_file(
             installed.id,
