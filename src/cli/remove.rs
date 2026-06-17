@@ -7,9 +7,34 @@ use crate::spt::mods::delete_mod_files;
 
 use super::common::{resolve_installed_mod, CliContext};
 
-pub fn run(mod_ref: &str, _force: bool, ctx: &CliContext) -> Result<()> {
-    // TODO(debt): _force is accepted but unused until Phase 3 wires server-running detection
+pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
     let installed = resolve_installed_mod(mod_ref, ctx)?;
+
+    // Check if we should queue instead of applying
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir).await? {
+        ctx.db.insert_pending_op(
+            "remove",
+            installed.forge_mod_id,
+            None,
+            &installed.name,
+            None,
+            None,
+        )?;
+        println!(
+            "Server is running — removal of {} queued. Run `quma apply` when the server is stopped.",
+            installed.name
+        );
+        return Ok(());
+    }
+
+    if force {
+        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        if running {
+            println!(
+                "Warning: applying changes while the server is running may cause instability."
+            );
+        }
+    }
 
     let all_dependents = collect_all_reverse_deps(installed.id, ctx)?;
     if !all_dependents.is_empty() {
@@ -64,7 +89,7 @@ pub fn run(mod_ref: &str, _force: bool, ctx: &CliContext) -> Result<()> {
 
 /// Recursively collect all transitive reverse dependencies of a mod.
 /// Returns them in BFS order (direct dependents first, then their dependents, etc.).
-fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<InstalledMod>> {
+pub fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<InstalledMod>> {
     let mut result = Vec::new();
     let mut visited = std::collections::HashSet::new();
     let mut queue = std::collections::VecDeque::new();
@@ -86,7 +111,7 @@ fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<Inst
     Ok(result)
 }
 
-fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
+pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
     // Get tracked files
     let files = ctx.db.get_files_for_mod(installed.id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();

@@ -5,6 +5,45 @@ use crate::spt::mods::{detect_mod_type, extract_mod, ModType};
 
 use super::common::{confirm, resolve_mod, CliContext};
 
+/// Resolve dependencies and install a mod plus all its deps.
+/// Used by both the interactive `install` command and `apply::drain_all`.
+pub async fn install_with_deps(ctx: &CliContext, forge_mod_id: i64, version_id: i64) -> Result<()> {
+    let forge_mod = ctx.forge.get_mod(forge_mod_id, false).await?;
+
+    if let Some(existing) = ctx.db.get_mod_by_forge_id(forge_mod.id)? {
+        println!(
+            "  {} already installed (v{}), skipping",
+            existing.name, existing.version
+        );
+        return Ok(());
+    }
+
+    let versions = ctx.forge.get_versions(forge_mod_id, None).await?;
+
+    let selected = versions
+        .iter()
+        .find(|v| v.id == version_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "version ID {} not found for {} on Forge",
+                version_id,
+                forge_mod.name
+            )
+        })?
+        .clone();
+
+    let to_install = resolve_deps(ctx, &forge_mod, &selected).await?;
+    install_deps(ctx, &to_install).await?;
+    let db_id = install_main_mod(ctx, &forge_mod, &selected).await?;
+    record_dependency_edges(ctx, db_id, &to_install)?;
+
+    println!(
+        "  {} v{} installed successfully.",
+        forge_mod.name, selected.version
+    );
+    Ok(())
+}
+
 /// A dependency that needs to be installed.
 struct PendingInstall {
     mod_id: i64,
@@ -13,8 +52,7 @@ struct PendingInstall {
     version: String,
 }
 
-pub async fn run(mod_ref: &str, _force: bool, ctx: &CliContext) -> Result<()> {
-    // TODO(debt): _force is accepted but unused until Phase 3 wires server-running detection
+pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
     let forge_mod = resolve_mod(&ctx.forge, mod_ref).await?;
     println!("Found: {} (ID: {})", forge_mod.name, forge_mod.id);
 
@@ -35,6 +73,30 @@ pub async fn run(mod_ref: &str, _force: bool, ctx: &CliContext) -> Result<()> {
     if !confirm("Proceed with installation?")? {
         println!("Installation cancelled.");
         return Ok(());
+    }
+
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir).await? {
+        ctx.db.insert_pending_op(
+            "install",
+            forge_mod.id,
+            Some(selected_version.id),
+            &forge_mod.name,
+            None,
+            None,
+        )?;
+        println!(
+            "Server is running — operation queued. Run `quma apply` when the server is stopped."
+        );
+        return Ok(());
+    }
+
+    if force {
+        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        if running {
+            println!(
+                "Warning: applying changes while the server is running may cause instability."
+            );
+        }
     }
 
     install_deps(ctx, &to_install).await?;

@@ -13,7 +13,6 @@ use super::Cli;
 pub struct CliContext {
     pub spt_dir: PathBuf,
     pub spt_info: SptInfo,
-    #[allow(dead_code)] // TODO(debt): used by Phase 3+ (server lifecycle, config command)
     pub config: Config,
     #[allow(dead_code)] // TODO(debt): used by Phase 3+ (config command)
     pub config_path: PathBuf,

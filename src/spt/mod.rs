@@ -4,3 +4,4 @@
 
 pub mod detect;
 pub mod mods;
+pub mod server;
