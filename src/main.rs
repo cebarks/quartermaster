@@ -40,7 +40,10 @@ async fn main() -> Result<()> {
             let ctx = cli::common::resolve_context(&cli)?;
             cli::list::run(*json, &ctx)
         }
-        Command::Track { .. } => todo!("track"),
+        Command::Track { path, forge_mod_id } => {
+            let ctx = cli::common::resolve_context(&cli)?;
+            cli::track::run(path, forge_mod_id, &ctx).await
+        }
         Command::Check => {
             let ctx = cli::common::resolve_context(&cli)?;
             let has_updates = cli::check::run(&ctx).await?;
