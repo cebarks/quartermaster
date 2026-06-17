@@ -11,16 +11,14 @@ pub fn run(mod_ref: &str, _force: bool, ctx: &CliContext) -> Result<()> {
     // TODO(debt): _force is accepted but unused until Phase 3 wires server-running detection
     let installed = resolve_installed_mod(mod_ref, ctx)?;
 
-    let rev_deps = ctx.db.get_reverse_dependencies(installed.id)?;
-    if !rev_deps.is_empty() {
+    let all_dependents = collect_all_reverse_deps(installed.id, ctx)?;
+    if !all_dependents.is_empty() {
         println!(
             "Warning: the following installed mods depend on {}:",
             installed.name
         );
-        for dep in &rev_deps {
-            if let Some(dependent) = ctx.db.get_mod(dep.mod_id)? {
-                println!("  - {} (v{})", dependent.name, dependent.version);
-            }
+        for dep in &all_dependents {
+            println!("  - {} (v{})", dep.name, dep.version);
         }
 
         println!("\nOptions:");
@@ -28,7 +26,11 @@ pub fn run(mod_ref: &str, _force: bool, ctx: &CliContext) -> Result<()> {
             "  [1] Remove {} only (may break dependents)",
             installed.name
         );
-        println!("  [2] Remove {} and all dependents", installed.name);
+        println!(
+            "  [2] Remove {} and all {} dependents",
+            installed.name,
+            all_dependents.len()
+        );
         println!("  [3] Cancel");
 
         print!("Select [1-3]: ");
@@ -41,10 +43,9 @@ pub fn run(mod_ref: &str, _force: bool, ctx: &CliContext) -> Result<()> {
                 remove_single_mod(&installed, ctx)?;
             }
             "2" => {
-                for dep in &rev_deps {
-                    if let Some(dependent) = ctx.db.get_mod(dep.mod_id)? {
-                        remove_single_mod(&dependent, ctx)?;
-                    }
+                // Remove in reverse order (leaves before roots)
+                for dep in all_dependents.iter().rev() {
+                    remove_single_mod(dep, ctx)?;
                 }
                 remove_single_mod(&installed, ctx)?;
             }
@@ -59,6 +60,30 @@ pub fn run(mod_ref: &str, _force: bool, ctx: &CliContext) -> Result<()> {
 
     println!("{} removed successfully.", installed.name);
     Ok(())
+}
+
+/// Recursively collect all transitive reverse dependencies of a mod.
+/// Returns them in BFS order (direct dependents first, then their dependents, etc.).
+fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<InstalledMod>> {
+    let mut result = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(mod_db_id);
+    visited.insert(mod_db_id);
+
+    while let Some(current_id) = queue.pop_front() {
+        let rev_deps = ctx.db.get_reverse_dependencies(current_id)?;
+        for dep in rev_deps {
+            if visited.insert(dep.mod_id) {
+                if let Some(dependent) = ctx.db.get_mod(dep.mod_id)? {
+                    queue.push_back(dependent.id);
+                    result.push(dependent);
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
@@ -188,5 +213,43 @@ mod tests {
 
         // DB record should be gone
         assert!(ctx.db.get_mod_by_forge_id(100).unwrap().is_none());
+    }
+
+    #[test]
+    fn remove_mod_with_dependent_succeeds_via_cascade_fk() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = make_test_ctx(&tmp);
+
+        let mod_c = ctx.db.insert_mod(100, 200, "ModC", None, "1.0.0").unwrap();
+        let mod_b = ctx.db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        // B depends on C
+        ctx.db.insert_dependency(mod_b, mod_c, None).unwrap();
+
+        // Removing C directly should succeed (CASCADE on depends_on_mod_id cleans up the dep row)
+        remove_single_mod(&ctx.db.get_mod(mod_c).unwrap().unwrap(), &ctx).unwrap();
+
+        assert!(ctx.db.get_mod(mod_c).unwrap().is_none());
+        // B still exists but its dependency row on C is gone
+        assert!(ctx.db.get_mod(mod_b).unwrap().is_some());
+        assert!(ctx.db.get_dependencies(mod_b).unwrap().is_empty());
+    }
+
+    #[test]
+    fn collect_all_reverse_deps_transitive() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = make_test_ctx(&tmp);
+
+        let mod_c = ctx.db.insert_mod(100, 200, "ModC", None, "1.0.0").unwrap();
+        let mod_b = ctx.db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        let mod_a = ctx.db.insert_mod(102, 202, "ModA", None, "1.0.0").unwrap();
+        // A depends on B, B depends on C
+        ctx.db.insert_dependency(mod_a, mod_b, None).unwrap();
+        ctx.db.insert_dependency(mod_b, mod_c, None).unwrap();
+
+        let deps = collect_all_reverse_deps(mod_c, &ctx).unwrap();
+        assert_eq!(deps.len(), 2);
+        // BFS order: B first (direct), then A (transitive)
+        assert_eq!(deps[0].name, "ModB");
+        assert_eq!(deps[1].name, "ModA");
     }
 }
