@@ -18,7 +18,16 @@ async fn main() -> Result<()> {
     match &cli.command {
         Command::Setup { .. } => todo!("setup"),
         Command::Init { path } => cli::init::run(path.clone(), &cli),
-        Command::Install { .. } => todo!("install"),
+        Command::Install {
+            mod_ref,
+            version: _,
+            force,
+        } => {
+            // TODO(debt): version selection is handled inside run() for now;
+            // wire explicit version arg when CLI dispatch is refactored
+            let ctx = cli::common::resolve_context(&cli)?;
+            cli::install::run(mod_ref, *force, &ctx).await
+        }
         Command::Update { .. } => todo!("update"),
         Command::Remove { .. } => todo!("remove"),
         Command::List { .. } => todo!("list"),

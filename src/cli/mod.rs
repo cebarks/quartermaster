@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 
 pub mod common;
 pub mod init;
+pub mod install;
 
 #[derive(Parser)]
 #[command(name = "quma", version, about = "Quartermaster — SPT/Fika mod manager")]
