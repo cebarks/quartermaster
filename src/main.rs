@@ -3,6 +3,7 @@ mod config;
 mod db;
 mod error;
 mod forge;
+mod health;
 mod podman;
 mod queue;
 mod server_detect;
@@ -60,7 +61,10 @@ async fn main() -> Result<()> {
             let ctx = cli::common::resolve_context(&cli)?;
             cli::apply::run(*force, &ctx).await
         }
-        Command::Status { .. } => todo!("status"),
+        Command::Status { json } => {
+            let ctx = cli::common::resolve_context(&cli)?;
+            cli::status::run(*json, &ctx).await
+        }
         Command::Server { .. } => todo!("server"),
         Command::Serve { .. } => todo!("serve"),
         Command::Generate { .. } => todo!("generate"),
