@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+pub mod apply;
 pub mod check;
 pub mod common;
 pub mod init;

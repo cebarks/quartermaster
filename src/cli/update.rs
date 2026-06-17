@@ -5,8 +5,25 @@ use crate::spt::mods::{delete_mod_files, extract_mod};
 
 use super::common::{confirm, resolve_installed_mod, CliContext};
 
-pub async fn run(mod_ref: Option<&str>, _force: bool, ctx: &CliContext) -> Result<()> {
-    // TODO(debt): _force is accepted but unused until Phase 3 wires server-running detection
+pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result<()> {
+    // Spec: `quma update` drains pending operations before checking for updates
+    let pending = ctx.db.list_pending_ops()?;
+    if !pending.is_empty() {
+        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        if running && !force {
+            anyhow::bail!(
+                "{} pending operation(s) queued — stop the server first or use --force.\n\
+                 Run `quma apply` to apply pending operations.",
+                pending.len()
+            );
+        }
+        println!(
+            "Draining {} pending operation(s) before checking updates...",
+            pending.len()
+        );
+        crate::cli::apply::drain_all(ctx).await?;
+    }
+
     let mods_to_check: Vec<InstalledMod> = match mod_ref {
         Some(r) => vec![resolve_installed_mod(r, ctx)?],
         None => ctx.db.list_mods()?,
@@ -40,6 +57,38 @@ pub async fn run(mod_ref: Option<&str>, _force: bool, ctx: &CliContext) -> Resul
     if !confirm("Proceed with updates?")? {
         println!("Update cancelled.");
         return Ok(());
+    }
+
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir).await? {
+        for update_result in &updatable {
+            let installed = mods_to_check
+                .iter()
+                .find(|m| m.forge_mod_id == update_result.mod_id);
+            if let Some(m) = installed {
+                ctx.db.insert_pending_op(
+                    "update",
+                    m.forge_mod_id,
+                    update_result.latest_version_id,
+                    &m.name,
+                    None,
+                    None,
+                )?;
+            }
+        }
+        println!(
+            "Server is running — {} update(s) queued. Run `quma apply` when the server is stopped.",
+            updatable.len()
+        );
+        return Ok(());
+    }
+
+    if force {
+        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        if running {
+            println!(
+                "Warning: applying changes while the server is running may cause instability."
+            );
+        }
     }
 
     let mut updated_count = 0;
@@ -89,6 +138,83 @@ fn display_update_plan(
     }
 }
 
+/// Download, extract, and swap files for a specific version.
+/// Used by both the interactive `update` command and `apply::drain_all`.
+pub async fn apply_update_by_version(
+    ctx: &CliContext,
+    installed: &InstalledMod,
+    target_version_id: i64,
+) -> Result<bool> {
+    let versions = ctx.forge.get_versions(installed.forge_mod_id, None).await?;
+    let version_info = match versions.iter().find(|v| v.id == target_version_id) {
+        Some(v) => v,
+        None => {
+            println!(
+                "    Skipping {} — version {} not found",
+                installed.name, target_version_id
+            );
+            return Ok(false);
+        }
+    };
+
+    let download_url = match &version_info.link {
+        Some(url) => url.clone(),
+        None => {
+            println!(
+                "    Skipping {} — no download link for v{}",
+                installed.name, version_info.version
+            );
+            return Ok(false);
+        }
+    };
+
+    println!(
+        "  Updating {} to v{}...",
+        installed.name, version_info.version
+    );
+
+    let tmp_dir = tempfile::tempdir()?;
+    let archive_path = tmp_dir.path().join("mod.zip");
+    ctx.forge
+        .download_file(&download_url, &archive_path)
+        .await?;
+
+    let staging_dir = tempfile::tempdir()?;
+    let new_files = extract_mod(&archive_path, staging_dir.path())?;
+
+    let old_files = ctx.db.get_files_for_mod(installed.id)?;
+    let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
+    delete_mod_files(&ctx.spt_dir, &old_paths)?;
+    ctx.db.delete_files_for_mod(installed.id)?;
+
+    for file in &new_files {
+        let src = staging_dir.path().join(&file.path);
+        let dest = ctx.spt_dir.join(&file.path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&src, &dest).or_else(|_| std::fs::copy(&src, &dest).map(|_| ()))?;
+    }
+
+    for file in &new_files {
+        ctx.db.insert_file(
+            installed.id,
+            &file.path,
+            Some(&file.hash),
+            Some(file.size as i64),
+        )?;
+    }
+
+    ctx.db
+        .update_mod(installed.id, target_version_id, &version_info.version)?;
+    println!(
+        "    Updated {} files for {}",
+        new_files.len(),
+        installed.name
+    );
+    Ok(true)
+}
+
 async fn apply_single_update(
     update_result: &crate::forge::models::UpdateCheckResult,
     mods: &[InstalledMod],
@@ -115,78 +241,7 @@ async fn apply_single_update(
         }
     };
 
-    let latest_version_str = update_result.latest_version.as_deref().unwrap_or("unknown");
-
-    let versions = ctx.forge.get_versions(installed.forge_mod_id, None).await?;
-    let version_info = match versions.iter().find(|v| v.id == latest_version_id) {
-        Some(v) => v,
-        None => {
-            println!(
-                "  Skipping {} — version {} not found",
-                installed.name, latest_version_id
-            );
-            return Ok(false);
-        }
-    };
-
-    let download_url = match &version_info.link {
-        Some(url) => url.clone(),
-        None => {
-            println!(
-                "  Skipping {} — no download link for v{}",
-                installed.name, latest_version_str
-            );
-            return Ok(false);
-        }
-    };
-
-    println!(
-        "\nUpdating {} to v{}...",
-        installed.name, latest_version_str
-    );
-
-    let tmp_dir = tempfile::tempdir()?;
-    let archive_path = tmp_dir.path().join("mod.zip");
-    ctx.forge
-        .download_file(&download_url, &archive_path)
-        .await?;
-
-    // Extract to staging dir first — if this fails, old files are untouched
-    let staging_dir = tempfile::tempdir()?;
-    let new_files = extract_mod(&archive_path, staging_dir.path())?;
-
-    // Extraction succeeded — now safe to remove old files
-    let old_files = ctx.db.get_files_for_mod(installed.id)?;
-    let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
-    delete_mod_files(&ctx.spt_dir, &old_paths)?;
-    ctx.db.delete_files_for_mod(installed.id)?;
-
-    // Move staged files to SPT dir
-    for file in &new_files {
-        let src = staging_dir.path().join(&file.path);
-        let dest = ctx.spt_dir.join(&file.path);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(&src, &dest).or_else(|_| {
-            // rename fails across mount points; fall back to copy+delete
-            std::fs::copy(&src, &dest).map(|_| ())
-        })?;
-    }
-
-    for file in &new_files {
-        ctx.db.insert_file(
-            installed.id,
-            &file.path,
-            Some(&file.hash),
-            Some(file.size as i64),
-        )?;
-    }
-
-    ctx.db
-        .update_mod(installed.id, latest_version_id, latest_version_str)?;
-    println!("  Updated {} files for {}", new_files.len(), installed.name);
-    Ok(true)
+    apply_update_by_version(ctx, installed, latest_version_id).await
 }
 
 fn mod_name_for_id(mods: &[InstalledMod], forge_mod_id: i64) -> &str {

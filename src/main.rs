@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod forge;
 mod podman;
+mod queue;
 mod server_detect;
 mod spt;
 mod web;
@@ -36,7 +37,7 @@ async fn main() -> Result<()> {
         }
         Command::Remove { mod_ref, force } => {
             let ctx = cli::common::resolve_context(&cli)?;
-            cli::remove::run(mod_ref, *force, &ctx)
+            cli::remove::run(mod_ref, *force, &ctx).await
         }
         Command::List { json } => {
             let ctx = cli::common::resolve_context(&cli)?;
@@ -55,7 +56,10 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Apply { .. } => todo!("apply"),
+        Command::Apply { force } => {
+            let ctx = cli::common::resolve_context(&cli)?;
+            cli::apply::run(*force, &ctx).await
+        }
         Command::Status { .. } => todo!("status"),
         Command::Server { .. } => todo!("server"),
         Command::Serve { .. } => todo!("serve"),
