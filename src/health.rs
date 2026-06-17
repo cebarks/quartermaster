@@ -172,8 +172,13 @@ fn check_integrity(ctx: &CliContext) -> Result<IntegrityHealth> {
         }
 
         if let Some(ref expected_hash) = file.file_hash {
-            if let Ok(actual_hash) = compute_file_hash(&full_path) {
-                if actual_hash != *expected_hash {
+            match compute_file_hash(&full_path) {
+                Ok(actual_hash) => {
+                    if actual_hash != *expected_hash {
+                        modified_files.push(file.file_path.clone());
+                    }
+                }
+                Err(_) => {
                     modified_files.push(file.file_path.clone());
                 }
             }
@@ -194,10 +199,12 @@ fn check_integrity(ctx: &CliContext) -> Result<IntegrityHealth> {
         std::collections::BTreeMap::new();
     for path in &untracked {
         let parts: Vec<&str> = path.split('/').collect();
-        if parts.len() >= 3 {
-            let dir = format!("{}/{}/{}", parts[0], parts[1], parts[2]);
-            *dir_counts.entry(dir).or_default() += 1;
-        }
+        let dir = if parts.len() >= 3 {
+            format!("{}/{}/{}", parts[0], parts[1], parts[2])
+        } else {
+            path.to_string()
+        };
+        *dir_counts.entry(dir).or_default() += 1;
     }
 
     let untracked_dirs: Vec<UntrackedDir> = dir_counts
