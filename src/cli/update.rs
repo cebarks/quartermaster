@@ -97,7 +97,12 @@ async fn apply_single_update(
     let installed = mods
         .iter()
         .find(|m| m.forge_mod_id == update_result.mod_id)
-        .unwrap();
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "update result references unknown mod ID {}",
+                update_result.mod_id
+            )
+        })?;
 
     let latest_version_id = match update_result.latest_version_id {
         Some(id) => id,
