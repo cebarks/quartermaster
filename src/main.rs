@@ -36,9 +36,19 @@ async fn main() -> Result<()> {
             let ctx = cli::common::resolve_context(&cli)?;
             cli::remove::run(mod_ref, *force, &ctx)
         }
-        Command::List { .. } => todo!("list"),
+        Command::List { json } => {
+            let ctx = cli::common::resolve_context(&cli)?;
+            cli::list::run(*json, &ctx)
+        }
         Command::Track { .. } => todo!("track"),
-        Command::Check => todo!("check"),
+        Command::Check => {
+            let ctx = cli::common::resolve_context(&cli)?;
+            let has_updates = cli::check::run(&ctx).await?;
+            if has_updates {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Command::Apply { .. } => todo!("apply"),
         Command::Status { .. } => todo!("status"),
         Command::Server { .. } => todo!("server"),

@@ -2,9 +2,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+pub mod check;
 pub mod common;
 pub mod init;
 pub mod install;
+pub mod list;
 pub mod remove;
 pub mod update;
 
