@@ -3,6 +3,8 @@ mod config;
 mod db;
 mod error;
 mod forge;
+mod podman;
+mod server_detect;
 mod spt;
 mod web;
 
