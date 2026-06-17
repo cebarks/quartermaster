@@ -32,13 +32,14 @@ async fn start(ctx: &CliContext, timeout_secs: u64) -> Result<()> {
 async fn stop(ctx: &CliContext) -> Result<()> {
     let podman = require_container(ctx)?;
 
+    println!("Stopping SPT server container...");
+    podman.stop().await?;
+    println!("Server stopped.");
+
     if ctx.config.auto_drain_on_lifecycle {
         drain_if_pending(ctx).await?;
     }
 
-    println!("Stopping SPT server container...");
-    podman.stop().await?;
-    println!("Server stopped.");
     Ok(())
 }
 

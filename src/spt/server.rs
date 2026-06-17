@@ -20,6 +20,8 @@ impl SptClient {
     pub fn new(host: &str, port: u16) -> Result<Self> {
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
             .build()
             .context("failed to build SPT HTTP client")?;
 

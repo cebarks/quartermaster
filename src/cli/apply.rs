@@ -55,11 +55,20 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
         match op.action.as_str() {
             "install" => {
                 if let Some(version_id) = op.forge_version_id {
-                    crate::cli::install::install_with_deps(ctx, op.forge_mod_id, version_id)
-                        .await
-                        .with_context(|| {
-                            format!("failed to apply queued install of {}", op.mod_name)
-                        })?;
+                    if let Err(e) =
+                        crate::cli::install::install_with_deps(ctx, op.forge_mod_id, version_id)
+                            .await
+                            .with_context(|| {
+                                format!("failed to apply queued install of {}", op.mod_name)
+                            })
+                    {
+                        let remaining = pending.len() - applied - 1;
+                        eprintln!("\n  Error: {e:#}");
+                        eprintln!(
+                            "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                        );
+                        return Err(e);
+                    }
                 } else {
                     println!("    Skipped — no version ID for install operation");
                     ctx.db.delete_pending_op(op.id)?;
@@ -76,10 +85,24 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                             reverse_deps.iter().map(|m| m.name.as_str()).collect();
                         println!("    Also removing dependents: {}", names.join(", "));
                         for dep in reverse_deps.iter().rev() {
-                            crate::cli::remove::remove_single_mod(dep, ctx)?;
+                            if let Err(e) = crate::cli::remove::remove_single_mod(dep, ctx) {
+                                let remaining = pending.len() - applied - 1;
+                                eprintln!("\n  Error: {e:#}");
+                                eprintln!(
+                                    "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                                );
+                                return Err(e);
+                            }
                         }
                     }
-                    crate::cli::remove::remove_single_mod(&installed, ctx)?;
+                    if let Err(e) = crate::cli::remove::remove_single_mod(&installed, ctx) {
+                        let remaining = pending.len() - applied - 1;
+                        eprintln!("\n  Error: {e:#}");
+                        eprintln!(
+                            "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                        );
+                        return Err(e);
+                    }
                     println!("    Removed {}", op.mod_name);
                 } else {
                     println!("    Skipped — {} not found in database", op.mod_name);
@@ -92,11 +115,20 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                     ctx.db.get_mod_by_forge_id(op.forge_mod_id)?,
                     op.forge_version_id,
                 ) {
-                    crate::cli::update::apply_update_by_version(ctx, &installed, version_id)
-                        .await
-                        .with_context(|| {
-                            format!("failed to apply queued update of {}", op.mod_name)
-                        })?;
+                    if let Err(e) =
+                        crate::cli::update::apply_update_by_version(ctx, &installed, version_id)
+                            .await
+                            .with_context(|| {
+                                format!("failed to apply queued update of {}", op.mod_name)
+                            })
+                    {
+                        let remaining = pending.len() - applied - 1;
+                        eprintln!("\n  Error: {e:#}");
+                        eprintln!(
+                            "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                        );
+                        return Err(e);
+                    }
                 } else {
                     println!("    Skipped — mod not found or no version ID");
                     ctx.db.delete_pending_op(op.id)?;
