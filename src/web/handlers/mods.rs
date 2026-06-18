@@ -354,7 +354,9 @@ pub async fn install_mod(
             // Only hold the lock for DB writes
             let version_id = version.id;
             let version_str = version.version.clone();
-            actix_web::web::block(move || {
+            let spt_dir2 = spt_dir.clone();
+            let db2 = db.clone();
+            let db_id = actix_web::web::block(move || {
                 let db = db.lock();
                 let db_id = db.insert_mod(
                     mod_id,
@@ -369,6 +371,13 @@ pub async fn install_mod(
                 Ok::<_, anyhow::Error>(db_id)
             })
             .await??;
+
+            // Scan for runtime-generated files and track them separately
+            let _ = actix_web::web::block(move || {
+                crate::ops::scan_and_record_runtime_files(&db2, db_id, &spt_dir2)
+            })
+            .await;
+
             Ok::<_, anyhow::Error>(())
         }
         .await;

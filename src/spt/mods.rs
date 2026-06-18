@@ -393,6 +393,10 @@ pub fn scan_mod_directories(spt_root: &Path) -> Result<Vec<String>> {
 }
 
 /// Compute SHA256 of a byte slice, returned as a lowercase hex string.
+pub fn compute_hash_public(data: &[u8]) -> String {
+    compute_hash(data)
+}
+
 fn compute_hash(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);

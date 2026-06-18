@@ -174,9 +174,20 @@ pub fn find_unmanaged_mod_dirs(
     let total = unmanaged.len();
     let mut dirs = group_untracked_by_mod_dir(&unmanaged);
 
+    // Build set of mod directories that have any tracked files
+    let managed_dirs = group_untracked_by_mod_dir(
+        &tracked_files
+            .iter()
+            .map(|f| f.file_path.as_str())
+            .collect::<Vec<_>>(),
+    );
+
     // Exclude directories that belong to tracked mods (they have runtime-generated
     // files but the mod itself is managed by quartermaster)
-    dirs.retain(|dir, _| !tracked_paths.iter().any(|p| p.starts_with(dir.as_str())));
+    dirs.retain(|dir, _| !managed_dirs.contains_key(dir));
+
+    // Exclude core SPT directories — these ship with the server, not from mods
+    dirs.remove("BepInEx/plugins/spt");
 
     Ok((dirs, total))
 }
