@@ -1,68 +1,65 @@
-<div class="card">
-    <h2>SPT Server</h2>
-    <table>
-        <tr>
-            <th style="width:140px">Status</th>
-            <td>
-                {% if report.server.reachable %}
-                <span class="status-dot up"></span> Running
-                {% if let Some(ms) = report.server.latency_ms %} ({{ ms }}ms){% endif %}
-                {% else %}
-                <span class="status-dot down"></span> Down
-                {% if let Some(err) = &report.server.error %}<span class="text-muted text-sm"> — {{ err }}</span>{% endif %}
-                {% endif %}
-            </td>
-        </tr>
-        <tr><th>Address</th><td>{{ report.server.address }}</td></tr>
+<div class="hero-card {% if report.server.reachable %}up{% else %}down{% endif %}">
+    <div class="hero-status">
+        {% if report.server.reachable %}
+        <span class="status-dot up glow"></span> Running
+        {% if let Some(ms) = report.server.latency_ms %}<span class="text-muted" style="font-size: 0.85rem; font-weight: 400;"> — {{ ms }}ms</span>{% endif %}
+        {% else %}
+        <span class="status-dot down"></span> Down
+        {% if let Some(err) = &report.server.error %}<span class="text-muted" style="font-size: 0.85rem; font-weight: 400;"> — {{ err }}</span>{% endif %}
+        {% endif %}
+    </div>
+    <div class="hero-meta">
+        {{ report.server.address }}
         {% if let Some(v) = &report.server.version %}
-        <tr>
-            <th>Version</th>
-            <td>{{ v }}
-                {% if let Some(matches) = report.server.version_matches %}
-                    {% if matches %}<span class="badge badge-success">matches</span>
-                    {% else %}<span class="badge badge-danger">mismatch</span>
-                    {% endif %}
+         · v{{ v }}
+            {% if let Some(matches) = report.server.version_matches %}
+                {% if matches %}<span class="badge badge-success">matches</span>
+                {% else %}<span class="badge badge-danger">mismatch</span>
                 {% endif %}
-            </td>
-        </tr>
-        {% endif %}
-    </table>
-</div>
-
-<div class="card">
-    <h2>Mods</h2>
-    <table>
-        <tr><th style="width:140px">Installed</th><td>{{ report.mods.installed_count }}</td></tr>
-        <tr><th>Updates</th><td>
-            {% if report.mods.updates_available > 0 %}
-            <span class="badge badge-warning">{{ report.mods.updates_available }} available</span>
-            {% else %}
-            <span class="text-muted">All up to date</span>
             {% endif %}
-        </td></tr>
-        {% if !report.mods.incompatible_mods.is_empty() %}
-        <tr><th>Incompatible</th><td>
-            {% for name in &report.mods.incompatible_mods %}
-            <span class="badge badge-danger">{{ name }}</span>
-            {% endfor %}
-        </td></tr>
         {% endif %}
-    </table>
+    </div>
 </div>
 
-<div class="card">
-    <h2>Integrity ({{ report.integrity.tracked_files }} tracked files)</h2>
-    {% if report.integrity.missing_files.is_empty() && report.integrity.modified_files.is_empty() && report.integrity.untracked_dirs.is_empty() %}
-    <p class="text-muted">All mod files present, hashes match.</p>
-    {% else %}
-        {% if !report.integrity.missing_files.is_empty() %}
-        <p><span class="badge badge-danger">{{ report.integrity.missing_files.len() }} missing</span></p>
+<div class="status-grid">
+    <div class="card" style="border-left: 3px solid {% if report.mods.updates_available > 0 %}var(--warning){% else %}var(--success){% endif %}">
+        <h2>Mods</h2>
+        <table>
+            <tr><th style="width:140px">Installed</th><td><strong>{{ report.mods.installed_count }}</strong></td></tr>
+            <tr><th>Updates</th><td>
+                {% if report.mods.updates_available > 0 %}
+                <span class="badge badge-warning">{{ report.mods.updates_available }} available</span>
+                {% else %}
+                <span class="text-muted">All up to date</span>
+                {% endif %}
+            </td></tr>
+            {% if !report.mods.incompatible_mods.is_empty() %}
+            <tr><th>Incompatible</th><td>
+                {% for name in &report.mods.incompatible_mods %}
+                <span class="badge badge-danger">{{ name }}</span>
+                {% endfor %}
+            </td></tr>
+            {% endif %}
+        </table>
+    </div>
+
+    <div class="card" style="border-left: 3px solid {% if report.integrity.missing_files.is_empty() && report.integrity.modified_files.is_empty() %}var(--success){% else %}var(--danger){% endif %}">
+        <h2>Integrity</h2>
+        {% if report.integrity.missing_files.is_empty() && report.integrity.modified_files.is_empty() && report.integrity.untracked_dirs.is_empty() %}
+        <p class="text-muted">{{ report.integrity.tracked_files }} tracked files — all present, hashes match.</p>
+        {% else %}
+        <table>
+            <tr><th style="width:140px">Tracked</th><td>{{ report.integrity.tracked_files }} files</td></tr>
+            {% if !report.integrity.missing_files.is_empty() %}
+            <tr><th>Missing</th><td><span class="badge badge-danger">{{ report.integrity.missing_files.len() }}</span></td></tr>
+            {% endif %}
+            {% if !report.integrity.modified_files.is_empty() %}
+            <tr><th>Modified</th><td><span class="badge badge-warning">{{ report.integrity.modified_files.len() }}</span></td></tr>
+            {% endif %}
+            {% if !report.integrity.untracked_dirs.is_empty() %}
+            <tr><th>Untracked</th><td class="text-muted">{{ report.integrity.untracked_dirs.len() }} director{% if report.integrity.untracked_dirs.len() != 1 %}ies{% else %}y{% endif %}</td></tr>
+            {% endif %}
+        </table>
         {% endif %}
-        {% if !report.integrity.modified_files.is_empty() %}
-        <p><span class="badge badge-warning">{{ report.integrity.modified_files.len() }} modified</span></p>
-        {% endif %}
-        {% if !report.integrity.untracked_dirs.is_empty() %}
-        <p class="mt-1"><span class="text-muted text-sm">{{ report.integrity.untracked_dirs.len() }} untracked director{% if report.integrity.untracked_dirs.len() != 1 %}ies{% else %}y{% endif %}</span></p>
-        {% endif %}
-    {% endif %}
+    </div>
 </div>

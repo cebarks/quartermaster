@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
 {% block title %}Status — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("status", user) %}{% endcall %}{% endblock %}
 {% block content %}
@@ -8,19 +9,21 @@
     {% if user.is_admin() %}
     <div class="flex gap-1">
         <form method="post" action="/server/start" style="display:inline">
-            <button type="submit" class="btn btn-sm btn-success">Start</button>
+            <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
         </form>
-        <form method="post" action="/server/restart" style="display:inline">
-            <button type="submit" class="btn btn-sm btn-warning">Restart</button>
+        <form method="post" action="/server/restart" style="display:inline"
+              onsubmit="return confirm('Restart the server?')">
+            <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Restart</button>
         </form>
-        <form method="post" action="/server/stop" style="display:inline">
-            <button type="submit" class="btn btn-sm btn-danger">Stop</button>
+        <form method="post" action="/server/stop" style="display:inline"
+              onsubmit="return confirm('Stop the server?')">
+            <button type="submit" class="btn btn-sm btn-danger">{% call icons::stop() %}{% endcall %} Stop</button>
         </form>
     </div>
     {% endif %}
 </div>
 
 <div hx-get="/api/status" hx-trigger="load, every 30s" hx-swap="innerHTML" id="status-content">
-    <p class="text-muted">Loading status...</p>
+    <p class="text-muted loading-pulse">Loading status...</p>
 </div>
 {% endblock %}
