@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Logs — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("logs", user, csrf_token) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Logs</h1>
+
+<div class="tab-bar">
+    <button class="tab-btn active" data-tab="app">Application Logs</button>
+    <button class="tab-btn" data-tab="server">Server Logs</button>
+</div>
+
+<div id="tab-app" class="tab-panel">
+    <div class="log-controls">
+        <div class="log-controls-left">
+            <button id="app-follow-btn" class="btn btn-sm btn-outline">Follow</button>
+            <button id="app-refresh-btn" class="btn btn-sm btn-outline">Refresh</button>
+            <button id="app-clear-btn" class="btn btn-sm btn-outline">Clear</button>
+        </div>
+        <div class="log-controls-right">
+            <span class="log-filter-group">
+                <button class="log-level-btn active" data-level="error">Error</button>
+                <button class="log-level-btn active" data-level="warn">Warn</button>
+                <button class="log-level-btn active" data-level="info">Info</button>
+                <button class="log-level-btn" data-level="debug">Debug</button>
+                <button class="log-level-btn" data-level="trace">Trace</button>
+            </span>
+            <input type="text" id="app-search" class="log-search" placeholder="Search...">
+        </div>
+    </div>
+    <div id="app-log-container" class="log-container">
+        <div class="empty-state"><p>Loading...</p></div>
+    </div>
+</div>
+
+<div id="tab-server" class="tab-panel" style="display:none">
+    <div class="log-controls">
+        <div class="log-controls-left">
+            <button id="server-follow-btn" class="btn btn-sm btn-outline">Follow</button>
+            <button id="server-refresh-btn" class="btn btn-sm btn-outline">Refresh</button>
+            <button id="server-clear-btn" class="btn btn-sm btn-outline">Clear</button>
+        </div>
+        <div class="log-controls-right">
+            <input type="text" id="server-search" class="log-search" placeholder="Search...">
+        </div>
+    </div>
+    <div id="server-status" style="display:none" class="text-muted text-sm"></div>
+    <div id="server-log-container" class="log-container">
+        <div class="empty-state"><p>Loading...</p></div>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+            btn.classList.add('active');
+            document.getElementById('tab-' + btn.dataset.tab).style.display = '';
+        });
+    });
+
+    // --- App Logs ---
+    const appContainer = document.getElementById('app-log-container');
+    const appFollowBtn = document.getElementById('app-follow-btn');
+    const appRefreshBtn = document.getElementById('app-refresh-btn');
+    const appClearBtn = document.getElementById('app-clear-btn');
+    const appSearch = document.getElementById('app-search');
+    let appFollowing = false;
+    let appEventSource = null;
+    const activeLevels = new Set(['error', 'warn', 'info']);
+
+    function levelClass(level) {
+        const l = level.toLowerCase();
+        if (l === 'error') return 'log-error';
+        if (l === 'warn') return 'log-warn';
+        if (l === 'debug') return 'log-debug';
+        if (l === 'trace') return 'log-trace';
+        return '';
+    }
+
+    function formatFields(fields) {
+        return Object.entries(fields || {}).map(([k,v]) => k + '=' + v).join(' ');
+    }
+
+    function renderAppEntry(entry) {
+        const div = document.createElement('div');
+        div.className = 'log-entry ' + levelClass(entry.level);
+        div.dataset.level = entry.level.toLowerCase();
+        const ts = new Date(entry.timestamp).toLocaleTimeString();
+        const fieldsStr = formatFields(entry.fields);
+        div.innerHTML = '<span class="log-ts">' + ts + '</span> '
+            + '<span class="log-level">' + entry.level + '</span> '
+            + '<span class="log-target">' + entry.target + '</span> '
+            + entry.message
+            + (fieldsStr ? ' <span class="log-fields">' + fieldsStr + '</span>' : '');
+        return div;
+    }
+
+    function applyFilters() {
+        const search = appSearch.value.toLowerCase();
+        appContainer.querySelectorAll('.log-entry').forEach(el => {
+            const matchesLevel = activeLevels.has(el.dataset.level);
+            const matchesSearch = !search || el.textContent.toLowerCase().includes(search);
+            el.style.display = (matchesLevel && matchesSearch) ? '' : 'none';
+        });
+    }
+
+    function loadAppLogs() {
+        fetch('/api/logs/app?limit=100')
+            .then(r => r.json())
+            .then(entries => {
+                appContainer.innerHTML = '';
+                entries.forEach(e => appContainer.appendChild(renderAppEntry(e)));
+                if (entries.length === 0) {
+                    appContainer.innerHTML = '<div class="empty-state"><p>No log entries</p></div>';
+                }
+                applyFilters();
+                appContainer.scrollTop = appContainer.scrollHeight;
+            });
+    }
+
+    function startAppFollow() {
+        if (appEventSource) return;
+        appFollowing = true;
+        appFollowBtn.classList.add('active');
+        appEventSource = new EventSource('/api/logs/app/stream');
+        appEventSource.onmessage = function(e) {
+            const entry = JSON.parse(e.data);
+            appContainer.appendChild(renderAppEntry(entry));
+            applyFilters();
+            appContainer.scrollTop = appContainer.scrollHeight;
+        };
+        appEventSource.onerror = function() {
+            stopAppFollow();
+        };
+    }
+
+    function stopAppFollow() {
+        if (appEventSource) {
+            appEventSource.close();
+            appEventSource = null;
+        }
+        appFollowing = false;
+        appFollowBtn.classList.remove('active');
+    }
+
+    appFollowBtn.addEventListener('click', () => {
+        if (appFollowing) stopAppFollow();
+        else startAppFollow();
+    });
+    appRefreshBtn.addEventListener('click', loadAppLogs);
+    appClearBtn.addEventListener('click', () => { appContainer.innerHTML = ''; });
+    appSearch.addEventListener('input', applyFilters);
+
+    // Level filter buttons
+    document.querySelectorAll('.log-level-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const level = btn.dataset.level;
+            if (activeLevels.has(level)) {
+                activeLevels.delete(level);
+                btn.classList.remove('active');
+            } else {
+                activeLevels.add(level);
+                btn.classList.add('active');
+            }
+            applyFilters();
+        });
+    });
+
+    loadAppLogs();
+
+    // --- Server Logs ---
+    const serverContainer = document.getElementById('server-log-container');
+    const serverFollowBtn = document.getElementById('server-follow-btn');
+    const serverRefreshBtn = document.getElementById('server-refresh-btn');
+    const serverClearBtn = document.getElementById('server-clear-btn');
+    const serverSearch = document.getElementById('server-search');
+    const serverStatus = document.getElementById('server-status');
+    let serverFollowing = false;
+    let serverEventSource = null;
+
+    function renderServerLine(line) {
+        const div = document.createElement('div');
+        div.className = 'log-entry';
+        div.textContent = line;
+        return div;
+    }
+
+    function applyServerFilters() {
+        const search = serverSearch.value.toLowerCase();
+        serverContainer.querySelectorAll('.log-entry').forEach(el => {
+            el.style.display = (!search || el.textContent.toLowerCase().includes(search)) ? '' : 'none';
+        });
+    }
+
+    function loadServerLogs() {
+        fetch('/api/logs/server?limit=100')
+            .then(r => {
+                if (!r.ok) throw new Error('not available');
+                return r.json();
+            })
+            .then(lines => {
+                serverContainer.innerHTML = '';
+                serverStatus.style.display = 'none';
+                lines.forEach(l => serverContainer.appendChild(renderServerLine(l)));
+                if (lines.length === 0) {
+                    serverContainer.innerHTML = '<div class="empty-state"><p>No server logs</p></div>';
+                }
+                serverContainer.scrollTop = serverContainer.scrollHeight;
+            })
+            .catch(() => {
+                serverContainer.innerHTML = '';
+                serverStatus.textContent = 'No server container configured or container not available.';
+                serverStatus.style.display = '';
+            });
+    }
+
+    function startServerFollow() {
+        if (serverEventSource) return;
+        serverFollowing = true;
+        serverFollowBtn.classList.add('active');
+        serverEventSource = new EventSource('/api/logs/server/stream');
+        serverEventSource.onmessage = function(e) {
+            serverContainer.appendChild(renderServerLine(e.data));
+            applyServerFilters();
+            serverContainer.scrollTop = serverContainer.scrollHeight;
+        };
+        serverEventSource.addEventListener('error', function(e) {
+            if (e.data) {
+                serverStatus.textContent = e.data;
+                serverStatus.style.display = '';
+            }
+            stopServerFollow();
+        });
+    }
+
+    function stopServerFollow() {
+        if (serverEventSource) {
+            serverEventSource.close();
+            serverEventSource = null;
+        }
+        serverFollowing = false;
+        serverFollowBtn.classList.remove('active');
+    }
+
+    serverFollowBtn.addEventListener('click', () => {
+        if (serverFollowing) stopServerFollow();
+        else startServerFollow();
+    });
+    serverRefreshBtn.addEventListener('click', loadServerLogs);
+    serverClearBtn.addEventListener('click', () => { serverContainer.innerHTML = ''; });
+    serverSearch.addEventListener('input', applyServerFilters);
+
+    loadServerLogs();
+})();
+</script>
+{% endblock %}

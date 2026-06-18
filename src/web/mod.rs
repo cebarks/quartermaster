@@ -161,6 +161,7 @@ pub async fn start_server(
                     .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
                     .route("/status", web::get().to(handlers::status::status_page))
                     .route("/queue", web::get().to(handlers::queue::queue_page))
+                    .route("/logs", web::get().to(handlers::logs::logs_page))
                     .route("/mods", web::get().to(handlers::mods::list_mods))
                     .route("/mods/install", web::post().to(handlers::mods::install_mod))
                     .route(

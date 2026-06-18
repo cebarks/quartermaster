@@ -5,6 +5,7 @@
     <a href="/mods"{% if active == "mods" %} class="active"{% endif %}>{% call icons::package() %}{% endcall %} Mods</a>
     <a href="/queue"{% if active == "queue" %} class="active"{% endif %}>{% call icons::list() %}{% endcall %} Queue</a>
     <a href="/status"{% if active == "status" %} class="active"{% endif %}>{% call icons::activity() %}{% endcall %} Status</a>
+    <a href="/logs"{% if active == "logs" %} class="active"{% endif %}>{% call icons::terminal() %}{% endcall %} Logs</a>
 </div>
 <div class="user-info">
     {{ user.username }} ({{ user.role }})

@@ -2,14 +2,16 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use actix_session::Session;
-use actix_web::web::{Data, Query};
+use actix_web::web::{Data, Html, Query};
 use actix_web::HttpResponse;
 use actix_web_lab::sse;
+use askama::Template;
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::web::auth::require_auth;
+use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
+use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::state::AppState;
 
 #[derive(Deserialize)]
@@ -139,4 +141,29 @@ pub async fn server_logs_stream(
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
     Ok(sse::Sse::from_infallible_stream(stream).with_keep_alive(Duration::from_secs(15)))
+}
+
+// ---------------------------------------------------------------------------
+// Log viewer page
+// ---------------------------------------------------------------------------
+
+#[derive(Template)]
+#[template(path = "logs.html")]
+struct LogsTemplate {
+    user: SessionUser,
+    flash: Option<FlashMessage>,
+    csrf_token: String,
+}
+
+pub async fn logs_page(_state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
+    let user = require_auth(&session)?;
+    let flash = take_flash(&session);
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let tmpl = LogsTemplate {
+        user,
+        flash,
+        csrf_token,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
