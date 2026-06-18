@@ -172,7 +172,11 @@ pub fn find_unmanaged_mod_dirs(
         .collect();
 
     let total = unmanaged.len();
-    let dirs = group_untracked_by_mod_dir(&unmanaged);
+    let mut dirs = group_untracked_by_mod_dir(&unmanaged);
+
+    // Exclude directories that belong to tracked mods (they have runtime-generated
+    // files but the mod itself is managed by quartermaster)
+    dirs.retain(|dir, _| !tracked_paths.iter().any(|p| p.starts_with(dir.as_str())));
 
     Ok((dirs, total))
 }
