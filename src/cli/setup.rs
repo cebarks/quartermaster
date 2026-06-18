@@ -324,6 +324,34 @@ async fn first_boot(config: &Config, spt_dir: &Path, non_interactive: bool) -> R
     Ok(())
 }
 
+/// Replace a boolean value in raw JSONC text, preserving comments and formatting.
+fn replace_json_bool(raw: &str, key: &str, value: bool) -> String {
+    let pattern = format!("\"{}\"", key);
+    let mut result = String::with_capacity(raw.len());
+    let remaining = raw;
+
+    if let Some(key_pos) = remaining.find(&pattern) {
+        let after_key = key_pos + pattern.len();
+        if let Some(colon_offset) = remaining[after_key..].find(':') {
+            let after_colon = after_key + colon_offset + 1;
+            let rest = &remaining[after_colon..];
+            let trimmed = rest.trim_start();
+            let ws_len = rest.len() - trimmed.len();
+            let old_val = if trimmed.starts_with("true") {
+                "true"
+            } else {
+                "false"
+            };
+            result.push_str(&remaining[..after_colon + ws_len]);
+            result.push_str(if value { "true" } else { "false" });
+            result.push_str(&remaining[after_colon + ws_len + old_val.len()..]);
+            return result;
+        }
+    }
+
+    remaining.to_string()
+}
+
 /// Configure key fika.jsonc settings after first boot generates the file.
 fn configure_fika(spt_dir: &Path, non_interactive: bool) -> Result<()> {
     println!("\n--- Fika Configuration ---");
@@ -335,25 +363,11 @@ fn configure_fika(spt_dir: &Path, non_interactive: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Read fika.jsonc — strip // comments to parse as JSON
     let raw = std::fs::read_to_string(&fika_config_path)
         .with_context(|| format!("failed to read {}", fika_config_path.display()))?;
-    let stripped: String = raw
-        .lines()
-        .map(|line| {
-            // Naive comment stripping: remove everything after // that's not inside a string
-            // This works for fika.jsonc's simple structure (no URLs in values)
-            if let Some(pos) = line.find("//") {
-                &line[..pos]
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let mut json: serde_json::Value =
-        serde_json::from_str(&stripped).with_context(|| "failed to parse fika.jsonc")?;
+    let stripped = json_comments::StripComments::new(raw.as_bytes());
+    let json: serde_json::Value =
+        serde_json::from_reader(stripped).with_context(|| "failed to parse fika.jsonc")?;
 
     if non_interactive {
         println!("Using Fika defaults (non-interactive mode).");
@@ -362,66 +376,41 @@ fn configure_fika(spt_dir: &Path, non_interactive: bool) -> Result<()> {
 
     println!("Configure Fika settings (press Enter to keep default):\n");
 
-    // friendlyFire (default: true)
-    let ff_current = json
-        .get("friendlyFire")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    print!(
-        "  Friendly fire [{}]: ",
-        if ff_current { "Y/n" } else { "y/N" }
-    );
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let input_trimmed = input.trim();
-    if !input_trimmed.is_empty() {
-        json["friendlyFire"] = serde_json::Value::Bool(
-            input_trimmed.eq_ignore_ascii_case("y") || input_trimmed.eq_ignore_ascii_case("yes"),
-        );
+    let settings = [
+        ("friendlyFire", "Friendly fire", true),
+        ("forceSaveOnDeath", "Force save on death", true),
+        ("sharedQuestProgression", "Shared quest progression", false),
+    ];
+
+    let mut updated_raw = raw.clone();
+    let mut changed = false;
+
+    for (key, label, fallback) in &settings {
+        let current = json
+            .get(*key)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(*fallback);
+        print!("  {} [{}]: ", label, if current { "Y/n" } else { "y/N" });
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input_trimmed = input.trim();
+        if !input_trimmed.is_empty() {
+            let new_val = input_trimmed.eq_ignore_ascii_case("y")
+                || input_trimmed.eq_ignore_ascii_case("yes");
+            if new_val != current {
+                updated_raw = replace_json_bool(&updated_raw, key, new_val);
+                changed = true;
+            }
+        }
     }
 
-    // forceSaveOnDeath (default: true)
-    let fsd_current = json
-        .get("forceSaveOnDeath")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    print!(
-        "  Force save on death [{}]: ",
-        if fsd_current { "Y/n" } else { "y/N" }
-    );
-    std::io::stdout().flush()?;
-    input.clear();
-    std::io::stdin().read_line(&mut input)?;
-    let input_trimmed = input.trim();
-    if !input_trimmed.is_empty() {
-        json["forceSaveOnDeath"] = serde_json::Value::Bool(
-            input_trimmed.eq_ignore_ascii_case("y") || input_trimmed.eq_ignore_ascii_case("yes"),
-        );
+    if changed {
+        std::fs::write(&fika_config_path, updated_raw)?;
+        println!("Fika config updated.");
+    } else {
+        println!("No changes made.");
     }
-
-    // sharedQuestProgression (default: false)
-    let sqp_current = json
-        .get("sharedQuestProgression")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    print!(
-        "  Shared quest progression [{}]: ",
-        if sqp_current { "Y/n" } else { "y/N" }
-    );
-    std::io::stdout().flush()?;
-    input.clear();
-    std::io::stdin().read_line(&mut input)?;
-    let input_trimmed = input.trim();
-    if !input_trimmed.is_empty() {
-        json["sharedQuestProgression"] = serde_json::Value::Bool(
-            input_trimmed.eq_ignore_ascii_case("y") || input_trimmed.eq_ignore_ascii_case("yes"),
-        );
-    }
-
-    let updated = serde_json::to_string_pretty(&json)?;
-    std::fs::write(&fika_config_path, updated)?;
-    println!("Fika config updated.");
 
     Ok(())
 }

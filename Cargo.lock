@@ -1661,6 +1661,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_comments"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dbbfed4e59ba9750e15ba154fdfd9329cee16ff3df539c2666b70f58cc32105"
+
+[[package]]
 name = "language-tags"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2068,6 +2074,7 @@ dependencies = [
  "clap",
  "futures-util",
  "indicatif",
+ "json_comments",
  "parking_lot",
  "predicates",
  "rand 0.9.4",
