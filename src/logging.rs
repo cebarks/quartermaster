@@ -575,4 +575,51 @@ mod tests {
         assert_eq!(received.message, "hello");
         assert_eq!(received.level, "ERROR");
     }
+
+    // --- BroadcastLayer integration tests ---
+
+    #[test]
+    fn broadcast_layer_captures_tracing_events() {
+        let lb = Arc::new(LogBroadcast::new(100));
+        let layer = BroadcastLayer::new(Arc::clone(&lb));
+        let mut rx = lb.subscribe();
+
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        tracing::info!(target: "test_target", key = "value", "hello world");
+
+        let entry = rx.try_recv().unwrap();
+        assert_eq!(entry.level, "INFO");
+        assert_eq!(entry.target, "test_target");
+        assert_eq!(entry.message, "hello world");
+        assert_eq!(
+            entry.fields.get("key"),
+            Some(&serde_json::Value::String("value".to_string()))
+        );
+
+        let recent = lb.recent(10);
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].message, "hello world");
+    }
+
+    #[test]
+    fn broadcast_layer_captures_multiple_levels() {
+        let lb = Arc::new(LogBroadcast::new(100));
+        let layer = BroadcastLayer::new(Arc::clone(&lb));
+        let filter = tracing_subscriber::EnvFilter::new("trace");
+
+        let subscriber = tracing_subscriber::registry().with(filter).with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        tracing::error!("err msg");
+        tracing::warn!("warn msg");
+        tracing::debug!("debug msg");
+
+        let recent = lb.recent(10);
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].level, "ERROR");
+        assert_eq!(recent[1].level, "WARN");
+        assert_eq!(recent[2].level, "DEBUG");
+    }
 }
