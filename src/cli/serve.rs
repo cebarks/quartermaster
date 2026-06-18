@@ -36,5 +36,5 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     let forge = ForgeClient::new(config.forge_token.clone())?;
 
-    crate::web::start_server(config, config_path, db, forge, spt_dir, spt_info).await
+    crate::web::start_server(config, db, forge, spt_dir, spt_info).await
 }

@@ -127,7 +127,6 @@ mod tests {
                 tarkov_version: "0.16.9-40087".to_string(),
             },
             config: Config::default(),
-            config_path: tmp.path().join("quartermaster.toml"),
             db: Database::open_in_memory().unwrap(),
             forge: ForgeClient::new(None).unwrap(),
         }

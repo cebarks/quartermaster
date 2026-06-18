@@ -565,7 +565,6 @@ mod tests {
                 tarkov_version: "0.16.9-40087".to_string(),
             },
             config: Config::default(),
-            config_path: tmp.path().join("quartermaster.toml"),
             db,
             forge: ForgeClient::new(None).unwrap(),
         };
@@ -618,7 +617,6 @@ mod tests {
                 tarkov_version: "0.16.9-40087".to_string(),
             },
             config: Config::default(),
-            config_path: tmp.path().join("quartermaster.toml"),
             db,
             forge: ForgeClient::new(None).unwrap(),
         };
@@ -658,7 +656,6 @@ mod tests {
                 tarkov_version: "0.16.9-40087".to_string(),
             },
             config: Config::default(),
-            config_path: tmp.path().join("quartermaster.toml"),
             db,
             forge: ForgeClient::new(None).unwrap(),
         };

@@ -39,7 +39,6 @@ async fn serve_asset(path: web::Path<String>) -> impl Responder {
 
 pub async fn start_server(
     config: Config,
-    config_path: std::path::PathBuf,
     db: Database,
     forge: ForgeClient,
     spt_dir: std::path::PathBuf,
@@ -54,7 +53,6 @@ pub async fn start_server(
         db,
         forge,
         config: config.clone(),
-        config_path,
         spt_dir,
         spt_info,
     });
