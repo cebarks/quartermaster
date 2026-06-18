@@ -286,8 +286,7 @@ pub async fn register_submit(
             ));
         }
 
-        // Consume the invite BEFORE creating the user to prevent orphaned accounts
-        // when concurrent requests race on the same invite code
+        // Consume the invite atomically (prevents race with concurrent registrations)
         let used = db.use_invite(&code, 0)?;
         if used == 0 {
             return Ok(Err("Invite code is invalid or expired".to_string()));
@@ -295,8 +294,8 @@ pub async fn register_submit(
 
         let user_id = db.insert_user(&username, &profile_id, Some(&password_hash), "player")?;
 
-        // Update the invite to point to the real user_id
-        db.use_invite(&code, user_id).ok();
+        // Update the invite to point to the real user_id (no IS NULL guard needed)
+        db.update_invite_user(&code, user_id)?;
 
         Ok(Ok(user_id))
     })

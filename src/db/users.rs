@@ -118,6 +118,15 @@ impl Database {
         )
     }
 
+    /// Update an invite code's user_id unconditionally (no IS NULL guard).
+    /// Used after creating a user to replace the temporary 0 with the real user_id.
+    pub fn update_invite_user(&self, code: &str, user_id: i64) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE invite_codes SET used_by = ?1 WHERE code = ?2",
+            params![user_id, code],
+        )
+    }
+
     // ── Pending Operations CRUD ───────────────────────────────────────
 
     pub fn insert_pending_op(
