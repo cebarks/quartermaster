@@ -127,11 +127,8 @@ async fn configure_container(
 ) -> Result<()> {
     println!("\n--- Container Configuration ---");
 
-    if config.server_container.is_some() {
-        println!(
-            "Container already configured: {}",
-            config.server_container.as_deref().unwrap()
-        );
+    if let Some(name) = config.server_container.as_deref() {
+        println!("Container already configured: {name}");
         return Ok(());
     }
 
@@ -187,7 +184,7 @@ async fn configure_container(
 }
 
 /// Read and optionally update SPT's http.json networking config.
-/// Returns (ip, port) of the final server binding.
+/// Read and optionally update SPT's http.json networking config.
 fn configure_networking(spt_dir: &Path, config: &mut Config, non_interactive: bool) -> Result<()> {
     println!("\n--- Network Configuration ---");
 
