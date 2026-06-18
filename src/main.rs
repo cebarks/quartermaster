@@ -20,7 +20,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Command::Setup { .. } => todo!("setup"),
+        Command::Setup {
+            non_interactive,
+            skip_fika,
+        } => cli::setup::run(*non_interactive, *skip_fika, &cli).await,
         Command::Init { path } => cli::init::run(path.clone(), &cli),
         Command::Install {
             mod_ref,

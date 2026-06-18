@@ -14,6 +14,7 @@ pub mod list;
 pub mod remove;
 pub mod serve;
 pub mod server;
+pub mod setup;
 pub mod status;
 pub mod track;
 pub mod update;

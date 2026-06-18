@@ -59,6 +59,9 @@ actix-web-rust-embed-responder = "2.4"
 # Password hashing
 argon2 = "0.5"
 
+# Secure password input (no terminal echo)
+rpassword = "5"
+
 # Non-poisoning Mutex for web DB access
 parking_lot = "0.12"
 
