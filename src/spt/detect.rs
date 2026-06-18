@@ -277,16 +277,13 @@ mod tests {
 
     #[test]
     fn detect_fails_when_not_found() {
-        // Clear QUMA_SPT_DIR to avoid interference from other tests
-        unsafe {
-            std::env::remove_var("QUMA_SPT_DIR");
-        }
-
-        let tmp = TempDir::new().unwrap();
-        // Empty dir — no SPT markers anywhere up the tree.
-        let err = detect_spt_dir(None, Some(tmp.path())).unwrap_err();
-        let quma_err = err.downcast_ref::<QumaError>().unwrap();
-        assert!(matches!(quma_err, QumaError::SptDirNotFound));
+        temp_env::with_vars_unset(["QUMA_SPT_DIR"], || {
+            let tmp = TempDir::new().unwrap();
+            // Empty dir — no SPT markers anywhere up the tree.
+            let err = detect_spt_dir(None, Some(tmp.path())).unwrap_err();
+            let quma_err = err.downcast_ref::<QumaError>().unwrap();
+            assert!(matches!(quma_err, QumaError::SptDirNotFound));
+        });
     }
 
     #[test]
@@ -315,19 +312,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let bad_dir = tmp.path().join("nonexistent");
 
-        unsafe {
-            std::env::set_var("QUMA_SPT_DIR", bad_dir.to_str().unwrap());
-        }
-        let result = detect_spt_dir(None, Some(tmp.path()));
-        unsafe {
-            std::env::remove_var("QUMA_SPT_DIR");
-        }
-
-        assert!(result.is_err(), "should error when QUMA_SPT_DIR is invalid");
-        let err_msg = format!("{:#}", result.unwrap_err());
-        assert!(
-            err_msg.contains("QUMA_SPT_DIR"),
-            "error should mention QUMA_SPT_DIR: {err_msg}"
-        );
+        temp_env::with_vars([("QUMA_SPT_DIR", Some(bad_dir.to_str().unwrap()))], || {
+            let result = detect_spt_dir(None, Some(tmp.path()));
+            assert!(result.is_err(), "should error when QUMA_SPT_DIR is invalid");
+            let err_msg = format!("{:#}", result.unwrap_err());
+            assert!(
+                err_msg.contains("QUMA_SPT_DIR"),
+                "error should mention QUMA_SPT_DIR: {err_msg}"
+            );
+        });
     }
 }

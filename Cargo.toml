@@ -72,3 +72,4 @@ json_comments = "0.2.2"
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+temp-env = "0.3"

@@ -272,40 +272,29 @@ web_port = 3000
 
     #[test]
     fn env_var_overlay() {
-        // Safety: tests run single-threaded with `cargo test -- --test-threads=1` or
-        // we accept the risk here. `set_var` is unsafe in Rust 2024 edition due to
-        // potential data races, but our tests are isolated enough.
-        unsafe {
-            std::env::set_var("QUMA_SPT_DIR", "/env/spt");
-            std::env::set_var("QUMA_FORGE_TOKEN", "env_token");
-            std::env::set_var("QUMA_WEB_PORT", "4000");
-            std::env::set_var("QUMA_WEB_BIND", "10.0.0.1");
-            std::env::set_var("QUMA_SERVER_CONTAINER", "env-container");
-            std::env::set_var("QUMA_SERVER_HOST", "env-host");
-            std::env::set_var("QUMA_SERVER_PORT", "6970");
-        }
+        temp_env::with_vars(
+            [
+                ("QUMA_SPT_DIR", Some("/env/spt")),
+                ("QUMA_FORGE_TOKEN", Some("env_token")),
+                ("QUMA_WEB_PORT", Some("4000")),
+                ("QUMA_WEB_BIND", Some("10.0.0.1")),
+                ("QUMA_SERVER_CONTAINER", Some("env-container")),
+                ("QUMA_SERVER_HOST", Some("env-host")),
+                ("QUMA_SERVER_PORT", Some("6970")),
+            ],
+            || {
+                let mut config = Config::default();
+                config.apply_env_overrides();
 
-        let mut config = Config::default();
-        config.apply_env_overrides();
-
-        assert_eq!(config.spt_dir, Some(PathBuf::from("/env/spt")));
-        assert_eq!(config.forge_token, Some("env_token".to_string()));
-        assert_eq!(config.web_port, 4000);
-        assert_eq!(config.web_bind, "10.0.0.1");
-        assert_eq!(config.server_container, Some("env-container".to_string()));
-        assert_eq!(config.server_host, Some("env-host".to_string()));
-        assert_eq!(config.server_port, Some(6970));
-
-        // Clean up
-        unsafe {
-            std::env::remove_var("QUMA_SPT_DIR");
-            std::env::remove_var("QUMA_FORGE_TOKEN");
-            std::env::remove_var("QUMA_WEB_PORT");
-            std::env::remove_var("QUMA_WEB_BIND");
-            std::env::remove_var("QUMA_SERVER_CONTAINER");
-            std::env::remove_var("QUMA_SERVER_HOST");
-            std::env::remove_var("QUMA_SERVER_PORT");
-        }
+                assert_eq!(config.spt_dir, Some(PathBuf::from("/env/spt")));
+                assert_eq!(config.forge_token, Some("env_token".to_string()));
+                assert_eq!(config.web_port, 4000);
+                assert_eq!(config.web_bind, "10.0.0.1");
+                assert_eq!(config.server_container, Some("env-container".to_string()));
+                assert_eq!(config.server_host, Some("env-host".to_string()));
+                assert_eq!(config.server_port, Some(6970));
+            },
+        );
     }
 
     #[test]
