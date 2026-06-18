@@ -1,5 +1,16 @@
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
+use askama::Template;
+
+use crate::web::flash::FlashMessage;
+
+#[derive(Template)]
+#[template(path = "error.html")]
+struct ErrorTemplate {
+    title: String,
+    message: String,
+    flash: Option<FlashMessage>,
+}
 
 #[derive(Debug)]
 pub enum WebError {
@@ -34,13 +45,34 @@ impl ResponseError for WebError {
         if let WebError::Internal(e) = self {
             tracing::error!(error = %e, "internal server error");
         }
-        let body = match self {
-            WebError::Internal(_) => "an internal server error occurred".to_string(),
-            WebError::NotFound => "not found".to_string(),
-            WebError::Forbidden => "forbidden".to_string(),
-            WebError::BadRequest(msg) => format!("bad request: {msg}"),
+
+        let (title, message) = match self {
+            WebError::Internal(_) => (
+                "Internal Server Error".to_string(),
+                "An unexpected error occurred. Please try again.".to_string(),
+            ),
+            WebError::NotFound => (
+                "Not Found".to_string(),
+                "The page you're looking for doesn't exist.".to_string(),
+            ),
+            WebError::Forbidden => (
+                "Forbidden".to_string(),
+                "You don't have permission to access this page.".to_string(),
+            ),
+            WebError::BadRequest(msg) => ("Bad Request".to_string(), msg.clone()),
         };
-        HttpResponse::build(self.status_code()).body(body)
+
+        let tmpl = ErrorTemplate {
+            title: title.clone(),
+            message,
+            flash: None,
+        };
+        match tmpl.render() {
+            Ok(body) => HttpResponse::build(self.status_code())
+                .content_type("text/html")
+                .body(body),
+            Err(_) => HttpResponse::build(self.status_code()).body(title),
+        }
     }
 }
 
