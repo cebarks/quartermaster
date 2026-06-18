@@ -76,6 +76,9 @@ tracing-actix-web = "0.7"
 tracing-appender = "0.2"
 rolling-file = "0.2"
 actix-web-lab = "0.24"
+async-stream = "0.3"
+tokio-stream = "0.1"
+bytestring = "1"
 
 [dev-dependencies]
 assert_cmd = "2"

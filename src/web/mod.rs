@@ -138,6 +138,19 @@ pub async fn start_server(
                     .route(
                         "/tasks/{id}/dismiss",
                         web::post().to(handlers::tasks::dismiss_task),
+                    )
+                    .route("/logs/app", web::get().to(handlers::logs::app_logs_json))
+                    .route(
+                        "/logs/app/stream",
+                        web::get().to(handlers::logs::app_logs_stream),
+                    )
+                    .route(
+                        "/logs/server",
+                        web::get().to(handlers::logs::server_logs_json),
+                    )
+                    .route(
+                        "/logs/server/stream",
+                        web::get().to(handlers::logs::server_logs_stream),
                     ),
             )
             // Authenticated routes — admin checks are per-handler via require_admin()
