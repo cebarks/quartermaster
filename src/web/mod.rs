@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod error;
+pub mod flash;
 pub mod handlers;
 pub mod state;
 
