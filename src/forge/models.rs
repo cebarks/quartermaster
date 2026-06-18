@@ -51,10 +51,11 @@ pub struct ForgeMod {
 }
 
 /// A specific version of a mod.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ForgeVersion {
     pub id: i64,
     pub version: String,
+    #[serde(alias = "spt_version_constraint")]
     pub spt_version: Option<String>,
     pub link: Option<String>,
     pub content_length: Option<u64>,
@@ -101,27 +102,75 @@ pub struct ForgeVersionsResponse {
 /// A node in the resolved dependency tree.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DependencyNode {
-    pub mod_id: i64,
-    pub version_id: i64,
-    pub name: Option<String>,
-    pub version: Option<String>,
-    pub resolved_dependencies: Option<Vec<DependencyNode>>,
+    pub id: i64,
+    pub name: String,
+    pub slug: Option<String>,
+    pub latest_compatible_version: Option<ForgeVersion>,
+    pub dependencies: Vec<DependencyNode>,
+    pub conflict: bool,
 }
 
-/// Result of checking a single mod for updates.
+/// Response envelope for the dependencies endpoint.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct UpdateCheckResult {
-    pub mod_id: i64,
-    pub current_version: String,
-    pub latest_version: Option<String>,
-    pub latest_version_id: Option<i64>,
-    pub status: String,
+pub struct DependencyResponse {
+    pub data: Vec<DependencyNode>,
 }
 
-/// Response envelope for update checks.
+// ---------------------------------------------------------------------------
+// Update check types
+// ---------------------------------------------------------------------------
+
+/// A mod entry in the update check response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateCheckMod {
+    pub id: i64,
+    pub mod_id: i64,
+    pub name: String,
+    pub slug: Option<String>,
+    pub version: String,
+}
+
+/// Recommended version information for an update.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateRecommendedVersion {
+    pub id: i64,
+    pub version: String,
+    pub link: Option<String>,
+    pub content_length: Option<u64>,
+    pub fika_compatibility: Option<FikaCompat>,
+}
+
+/// A single update entry.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateEntry {
+    pub current_version: UpdateCheckMod,
+    pub recommended_version: UpdateRecommendedVersion,
+    pub update_reason: String,
+}
+
+/// A mod incompatible with the given SPT version.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct IncompatibleMod {
+    pub id: i64,
+    pub mod_id: i64,
+    pub name: String,
+    pub version: String,
+}
+
+/// The data portion of the updates response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdatesResponseData {
+    pub spt_version: String,
+    pub updates: Vec<UpdateEntry>,
+    pub blocked_updates: Vec<serde_json::Value>,
+    pub up_to_date: Vec<serde_json::Value>,
+    pub incompatible_with_spt: Vec<IncompatibleMod>,
+}
+
+/// Response envelope for the updates endpoint.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UpdatesResponse {
-    pub data: Vec<UpdateCheckResult>,
+    pub data: UpdatesResponseData,
 }
 
 // ---------------------------------------------------------------------------
@@ -272,45 +321,57 @@ mod tests {
     #[test]
     fn deserialize_dependency_node() {
         let json = r#"{
-            "mod_id": 10,
-            "version_id": 20,
-            "name": "ParentMod",
-            "version": "1.0.0",
-            "resolved_dependencies": [
+            "id": 902,
+            "name": "BigBrain",
+            "slug": "bigbrain",
+            "latest_compatible_version": {
+                "id": 11761,
+                "version": "1.4.0",
+                "link": "https://github.com/.../BigBrain-1.4.0.7z",
+                "content_length": 16741,
+                "spt_version_constraint": "~4.0.0",
+                "fika_compatibility": "unknown"
+            },
+            "dependencies": [
                 {
-                    "mod_id": 30,
-                    "version_id": 40,
+                    "id": 123,
                     "name": "ChildMod",
-                    "version": "0.5.0",
-                    "resolved_dependencies": [
-                        {
-                            "mod_id": 50,
-                            "version_id": 60,
-                            "name": "GrandchildMod",
-                            "version": "0.1.0",
-                            "resolved_dependencies": null
-                        }
-                    ]
+                    "slug": "child-mod",
+                    "latest_compatible_version": {
+                        "id": 456,
+                        "version": "0.5.0",
+                        "link": "https://example.com/child.7z",
+                        "content_length": 1024,
+                        "spt_version_constraint": "~4.0.0",
+                        "fika_compatibility": "compatible"
+                    },
+                    "dependencies": [],
+                    "conflict": false
                 }
-            ]
+            ],
+            "conflict": false
         }"#;
 
         let node: DependencyNode = serde_json::from_str(json).unwrap();
-        assert_eq!(node.mod_id, 10);
-        assert_eq!(node.version_id, 20);
-        assert_eq!(node.name.as_deref(), Some("ParentMod"));
+        assert_eq!(node.id, 902);
+        assert_eq!(node.name, "BigBrain");
+        assert_eq!(node.slug.as_deref(), Some("bigbrain"));
+        assert_eq!(node.conflict, false);
 
-        let children = node.resolved_dependencies.expect("should have children");
-        assert_eq!(children.len(), 1);
-        assert_eq!(children[0].mod_id, 30);
-        assert_eq!(children[0].name.as_deref(), Some("ChildMod"));
+        let version = node
+            .latest_compatible_version
+            .expect("should have latest_compatible_version");
+        assert_eq!(version.id, 11761);
+        assert_eq!(version.version, "1.4.0");
+        assert_eq!(
+            version.spt_version.as_deref(),
+            Some("~4.0.0"),
+            "spt_version_constraint should deserialize via alias"
+        );
 
-        let grandchildren = children[0]
-            .resolved_dependencies
-            .as_ref()
-            .expect("should have grandchildren");
-        assert_eq!(grandchildren.len(), 1);
-        assert_eq!(grandchildren[0].mod_id, 50);
-        assert_eq!(grandchildren[0].resolved_dependencies, None);
+        assert_eq!(node.dependencies.len(), 1);
+        assert_eq!(node.dependencies[0].id, 123);
+        assert_eq!(node.dependencies[0].name, "ChildMod");
+        assert!(node.dependencies[0].dependencies.is_empty());
     }
 }

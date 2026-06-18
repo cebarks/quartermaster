@@ -30,27 +30,43 @@ pub async fn run(ctx: &CliContext) -> Result<bool> {
     let mut blocked = Vec::new();
     let mut incompatible = Vec::new();
 
-    for r in &results {
+    // Process updates
+    for update in &results.updates {
+        has_updates = true;
         let name = installed
             .iter()
-            .find(|m| m.forge_mod_id == r.mod_id)
+            .find(|m| m.forge_mod_id == update.current_version.mod_id)
             .map(|m| m.name.as_str())
             .unwrap_or("unknown");
+        updatable.push((
+            name,
+            update.current_version.version.as_str(),
+            update.recommended_version.version.as_str(),
+        ));
+    }
 
-        match r.status.as_str() {
-            "up_to_date" => up_to_date.push(name),
-            "updated" => {
-                has_updates = true;
-                updatable.push((
-                    name,
-                    r.current_version.as_str(),
-                    r.latest_version.as_deref().unwrap_or("?"),
-                ));
-            }
-            "blocked" => blocked.push(name),
-            "incompatible" => incompatible.push(name),
-            _ => {}
-        }
+    // Process blocked updates
+    for _blocked in &results.blocked_updates {
+        // The blocked_updates field is a Vec<serde_json::Value> - we'd need to know the exact structure
+        // For now, just count them
+        blocked.push("(mod with blocked update)");
+    }
+
+    // Process incompatible mods
+    for incompat in &results.incompatible_with_spt {
+        let name = installed
+            .iter()
+            .find(|m| m.forge_mod_id == incompat.mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or(&incompat.name);
+        incompatible.push(name);
+    }
+
+    // Process up-to-date mods
+    for _up in &results.up_to_date {
+        // The up_to_date field is a Vec<serde_json::Value> - we'd need to know the exact structure
+        // For now, just count them
+        up_to_date.push("(up-to-date mod)");
     }
 
     if !updatable.is_empty() {

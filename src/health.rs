@@ -137,17 +137,10 @@ async fn check_mods_compat(
             .check_updates(&check_list, &ctx.spt_info.spt_version)
             .await
         {
-            updates_available = results.iter().filter(|r| r.status == "updated").count();
+            updates_available = results.updates.len();
 
-            for r in &results {
-                if r.status == "incompatible" {
-                    let name = installed_mods
-                        .iter()
-                        .find(|m| m.forge_mod_id == r.mod_id)
-                        .map(|m| m.name.as_str())
-                        .unwrap_or("unknown");
-                    incompatible_mods.push(name.to_string());
-                }
+            for m in &results.incompatible_with_spt {
+                incompatible_mods.push(m.name.clone());
             }
         }
     }

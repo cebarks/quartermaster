@@ -2,7 +2,6 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
-use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
 use super::models::*;
@@ -121,30 +120,30 @@ impl ForgeClient {
         Ok(body.data)
     }
 
-    /// Resolve the dependency tree for a set of (mod_id, version_id) pairs.
-    pub async fn get_dependencies(&self, mods: &[(i64, i64)]) -> Result<Vec<DependencyNode>> {
+    /// Resolve the dependency tree for a set of (mod_id, version_string) pairs.
+    pub async fn get_dependencies(&self, mods: &[(i64, &str)]) -> Result<Vec<DependencyNode>> {
         let url = format!("{}/mods/dependencies", self.base_url);
-
-        let payload: Vec<_> = mods
+        let mods_param: String = mods
             .iter()
-            .map(|(mod_id, version_id)| json!({ "mod_id": mod_id, "version_id": version_id }))
-            .collect();
+            .map(|(id, ver)| format!("{id}:{ver}"))
+            .collect::<Vec<_>>()
+            .join(",");
 
         let resp = self
             .client
-            .request(reqwest::Method::GET, &url)
-            .json(&payload)
+            .get(&url)
+            .query(&[("mods", &mods_param)])
             .send()
             .await
             .context("get_dependencies request failed")?
             .error_for_status()
             .context("get_dependencies returned error status")?;
 
-        let nodes: Vec<DependencyNode> = resp
+        let body: DependencyResponse = resp
             .json()
             .await
             .context("get_dependencies: failed to parse response")?;
-        Ok(nodes)
+        Ok(body.data)
     }
 
     /// Check for available updates for the given mods.
@@ -153,20 +152,21 @@ impl ForgeClient {
         &self,
         mods: &[(i64, String)],
         spt_version: &str,
-    ) -> Result<Vec<UpdateCheckResult>> {
+    ) -> Result<UpdatesResponseData> {
         let url = format!("{}/mods/updates", self.base_url);
-
-        let payload = json!({
-            "spt_version": spt_version,
-            "mods": mods.iter().map(|(id, ver)| {
-                json!({ "mod_id": id, "current_version": ver })
-            }).collect::<Vec<_>>(),
-        });
+        let mods_param: String = mods
+            .iter()
+            .map(|(id, ver)| format!("{id}:{ver}"))
+            .collect::<Vec<_>>()
+            .join(",");
 
         let resp = self
             .client
-            .request(reqwest::Method::GET, &url)
-            .json(&payload)
+            .get(&url)
+            .query(&[
+                ("mods", &mods_param),
+                ("spt_version", &spt_version.to_string()),
+            ])
             .send()
             .await
             .context("check_updates request failed")?

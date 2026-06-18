@@ -44,15 +44,13 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
         .check_updates(&check_list, &ctx.spt_info.spt_version)
         .await?;
 
-    let updatable: Vec<_> = results.iter().filter(|r| r.status == "updated").collect();
-
-    if updatable.is_empty() {
+    if results.updates.is_empty() {
         println!("All mods are up to date.");
         report_non_updatable(&results, &mods_to_check, &ctx.spt_info.spt_version);
         return Ok(());
     }
 
-    display_update_plan(&updatable, &mods_to_check);
+    display_update_plan(&results.updates, &mods_to_check);
 
     if !confirm("Proceed with updates?")? {
         println!("Update cancelled.");
@@ -60,15 +58,15 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
     }
 
     if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir).await? {
-        for update_result in &updatable {
+        for update in &results.updates {
             let installed = mods_to_check
                 .iter()
-                .find(|m| m.forge_mod_id == update_result.mod_id);
+                .find(|m| m.forge_mod_id == update.current_version.mod_id);
             if let Some(m) = installed {
                 ctx.db.insert_pending_op(
                     "update",
                     m.forge_mod_id,
-                    update_result.latest_version_id,
+                    Some(update.recommended_version.id),
                     &m.name,
                     None,
                     None,
@@ -77,7 +75,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
         }
         println!(
             "Server is running — {} update(s) queued. Run `quma apply` when the server is stopped.",
-            updatable.len()
+            results.updates.len()
         );
         return Ok(());
     }
@@ -92,8 +90,8 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
     }
 
     let mut updated_count = 0;
-    for update_result in &updatable {
-        if apply_single_update(update_result, &mods_to_check, ctx).await? {
+    for update in &results.updates {
+        if apply_single_update(update, &mods_to_check, ctx).await? {
             updated_count += 1;
         }
     }
@@ -103,37 +101,34 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
 }
 
 fn report_non_updatable(
-    results: &[crate::forge::models::UpdateCheckResult],
+    results: &crate::forge::models::UpdatesResponseData,
     mods: &[InstalledMod],
     spt_version: &str,
 ) {
-    for r in results {
-        match r.status.as_str() {
-            "blocked" => println!(
-                "  {} — blocked (dependency conflict)",
-                mod_name_for_id(mods, r.mod_id)
-            ),
-            "incompatible" => println!(
-                "  {} — incompatible with SPT {}",
-                mod_name_for_id(mods, r.mod_id),
-                spt_version
-            ),
-            _ => {}
-        }
+    if !results.blocked_updates.is_empty() {
+        println!(
+            "  {} mod(s) blocked (dependency conflict)",
+            results.blocked_updates.len()
+        );
+    }
+
+    for incompat in &results.incompatible_with_spt {
+        println!(
+            "  {} — incompatible with SPT {}",
+            mod_name_for_id(mods, incompat.mod_id),
+            spt_version
+        );
     }
 }
 
-fn display_update_plan(
-    updatable: &[&crate::forge::models::UpdateCheckResult],
-    mods: &[InstalledMod],
-) {
+fn display_update_plan(updates: &[crate::forge::models::UpdateEntry], mods: &[InstalledMod]) {
     println!("Updates available:");
-    for r in updatable {
+    for update in updates {
         println!(
             "  {} — {} → {}",
-            mod_name_for_id(mods, r.mod_id),
-            r.current_version,
-            r.latest_version.as_deref().unwrap_or("?")
+            mod_name_for_id(mods, update.current_version.mod_id),
+            update.current_version.version,
+            update.recommended_version.version
         );
     }
 }
@@ -216,32 +211,21 @@ pub async fn apply_update_by_version(
 }
 
 async fn apply_single_update(
-    update_result: &crate::forge::models::UpdateCheckResult,
+    update: &crate::forge::models::UpdateEntry,
     mods: &[InstalledMod],
     ctx: &CliContext,
 ) -> Result<bool> {
     let installed = mods
         .iter()
-        .find(|m| m.forge_mod_id == update_result.mod_id)
+        .find(|m| m.forge_mod_id == update.current_version.mod_id)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "update result references unknown mod ID {}",
-                update_result.mod_id
+                update.current_version.mod_id
             )
         })?;
 
-    let latest_version_id = match update_result.latest_version_id {
-        Some(id) => id,
-        None => {
-            println!(
-                "  Skipping {} — no version ID in update response",
-                installed.name
-            );
-            return Ok(false);
-        }
-    };
-
-    apply_update_by_version(ctx, installed, latest_version_id).await
+    apply_update_by_version(ctx, installed, update.recommended_version.id).await
 }
 
 fn mod_name_for_id(mods: &[InstalledMod], forge_mod_id: i64) -> &str {

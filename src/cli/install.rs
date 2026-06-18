@@ -143,7 +143,7 @@ async fn resolve_deps(
 ) -> Result<Vec<PendingInstall>> {
     let dep_nodes = ctx
         .forge
-        .get_dependencies(&[(forge_mod.id, selected_version.id)])
+        .get_dependencies(&[(forge_mod.id, &selected_version.version)])
         .await?;
 
     let mut to_install = Vec::new();
@@ -317,29 +317,32 @@ fn collect_deps_to_install(
     out: &mut Vec<PendingInstall>,
 ) -> Result<()> {
     for node in nodes {
-        if db.get_mod_by_forge_id(node.mod_id)?.is_some() {
+        if db.get_mod_by_forge_id(node.id)?.is_some() {
             continue;
         }
-        if out.iter().any(|p| p.mod_id == node.mod_id) {
+        if out.iter().any(|p| p.mod_id == node.id) {
             continue;
         }
 
         // Recurse into children first so deps install before their parents
-        if let Some(ref children) = node.resolved_dependencies {
-            collect_deps_to_install(children, db, out)?;
-        }
+        collect_deps_to_install(&node.dependencies, db, out)?;
+
+        // Extract version_id and version string from latest_compatible_version
+        let (version_id, version) = match &node.latest_compatible_version {
+            Some(v) => (v.id, v.version.clone()),
+            None => {
+                anyhow::bail!(
+                    "dependency {} has no compatible version available",
+                    node.name
+                );
+            }
+        };
 
         out.push(PendingInstall {
-            mod_id: node.mod_id,
-            version_id: node.version_id,
-            name: node
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("mod-{}", node.mod_id)),
-            version: node
-                .version
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
+            mod_id: node.id,
+            version_id,
+            name: node.name.clone(),
+            version,
         });
     }
     Ok(())
@@ -353,16 +356,27 @@ mod tests {
 
     #[test]
     fn collect_deps_skips_already_installed() {
+        use crate::forge::models::ForgeVersion;
+
         let db = Database::open_in_memory().unwrap();
         db.insert_mod(10, 20, "AlreadyInstalled", None, "1.0.0")
             .unwrap();
 
         let nodes = vec![DependencyNode {
-            mod_id: 10,
-            version_id: 20,
-            name: Some("AlreadyInstalled".to_string()),
-            version: Some("1.0.0".to_string()),
-            resolved_dependencies: None,
+            id: 10,
+            name: "AlreadyInstalled".to_string(),
+            slug: None,
+            latest_compatible_version: Some(ForgeVersion {
+                id: 20,
+                version: "1.0.0".to_string(),
+                spt_version: None,
+                link: None,
+                content_length: None,
+                fika_compatibility: None,
+                dependencies: None,
+            }),
+            dependencies: vec![],
+            conflict: false,
         }];
 
         let mut out = Vec::new();
@@ -373,20 +387,40 @@ mod tests {
 
     #[test]
     fn collect_deps_flattens_tree_children_first() {
+        use crate::forge::models::ForgeVersion;
+
         let db = Database::open_in_memory().unwrap();
 
         let nodes = vec![DependencyNode {
-            mod_id: 10,
-            version_id: 20,
-            name: Some("Parent".to_string()),
-            version: Some("1.0.0".to_string()),
-            resolved_dependencies: Some(vec![DependencyNode {
-                mod_id: 30,
-                version_id: 40,
-                name: Some("Child".to_string()),
-                version: Some("0.5.0".to_string()),
-                resolved_dependencies: None,
-            }]),
+            id: 10,
+            name: "Parent".to_string(),
+            slug: None,
+            latest_compatible_version: Some(ForgeVersion {
+                id: 20,
+                version: "1.0.0".to_string(),
+                spt_version: None,
+                link: None,
+                content_length: None,
+                fika_compatibility: None,
+                dependencies: None,
+            }),
+            dependencies: vec![DependencyNode {
+                id: 30,
+                name: "Child".to_string(),
+                slug: None,
+                latest_compatible_version: Some(ForgeVersion {
+                    id: 40,
+                    version: "0.5.0".to_string(),
+                    spt_version: None,
+                    link: None,
+                    content_length: None,
+                    fika_compatibility: None,
+                    dependencies: None,
+                }),
+                dependencies: vec![],
+                conflict: false,
+            }],
+            conflict: false,
         }];
 
         let mut out = Vec::new();
@@ -399,36 +433,74 @@ mod tests {
 
     #[test]
     fn collect_deps_deduplicates() {
+        use crate::forge::models::ForgeVersion;
+
         let db = Database::open_in_memory().unwrap();
 
         let shared_dep = DependencyNode {
-            mod_id: 99,
-            version_id: 100,
-            name: Some("SharedLib".to_string()),
-            version: Some("1.0.0".to_string()),
-            resolved_dependencies: None,
+            id: 99,
+            name: "SharedLib".to_string(),
+            slug: None,
+            latest_compatible_version: Some(ForgeVersion {
+                id: 100,
+                version: "1.0.0".to_string(),
+                spt_version: None,
+                link: None,
+                content_length: None,
+                fika_compatibility: None,
+                dependencies: None,
+            }),
+            dependencies: vec![],
+            conflict: false,
         };
 
         let nodes = vec![
             DependencyNode {
-                mod_id: 10,
-                version_id: 20,
-                name: Some("ModA".to_string()),
-                version: Some("1.0.0".to_string()),
-                resolved_dependencies: Some(vec![shared_dep.clone()]),
+                id: 10,
+                name: "ModA".to_string(),
+                slug: None,
+                latest_compatible_version: Some(ForgeVersion {
+                    id: 20,
+                    version: "1.0.0".to_string(),
+                    spt_version: None,
+                    link: None,
+                    content_length: None,
+                    fika_compatibility: None,
+                    dependencies: None,
+                }),
+                dependencies: vec![shared_dep.clone()],
+                conflict: false,
             },
             DependencyNode {
-                mod_id: 30,
-                version_id: 40,
-                name: Some("ModB".to_string()),
-                version: Some("2.0.0".to_string()),
-                resolved_dependencies: Some(vec![DependencyNode {
-                    mod_id: 99,
-                    version_id: 100,
-                    name: Some("SharedLib".to_string()),
-                    version: Some("1.0.0".to_string()),
-                    resolved_dependencies: None,
-                }]),
+                id: 30,
+                name: "ModB".to_string(),
+                slug: None,
+                latest_compatible_version: Some(ForgeVersion {
+                    id: 40,
+                    version: "2.0.0".to_string(),
+                    spt_version: None,
+                    link: None,
+                    content_length: None,
+                    fika_compatibility: None,
+                    dependencies: None,
+                }),
+                dependencies: vec![DependencyNode {
+                    id: 99,
+                    name: "SharedLib".to_string(),
+                    slug: None,
+                    latest_compatible_version: Some(ForgeVersion {
+                        id: 100,
+                        version: "1.0.0".to_string(),
+                        spt_version: None,
+                        link: None,
+                        content_length: None,
+                        fika_compatibility: None,
+                        dependencies: None,
+                    }),
+                    dependencies: vec![],
+                    conflict: false,
+                }],
+                conflict: false,
             },
         ];
 
