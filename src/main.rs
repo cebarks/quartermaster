@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod forge;
 mod health;
+mod ops;
 mod podman;
 mod queue;
 mod server_detect;
