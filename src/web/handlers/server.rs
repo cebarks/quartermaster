@@ -17,21 +17,29 @@ pub async fn start_server(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let container = state
-        .config
-        .server_container
-        .as_deref()
-        .ok_or(WebError::BadRequest(
-            "No server_container configured".to_string(),
-        ))?;
+    let container = match state.config.server_container.as_deref() {
+        Some(c) => c,
+        None => {
+            set_flash(
+                &session,
+                "No server_container configured. Set it in quartermaster.toml.",
+                "error",
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/status"))
+                .finish());
+        }
+    };
 
     let podman = PodmanClient::new(container);
+    if let Err(e) = podman.start().await {
+        tracing::error!(container, error = %e, "failed to start server");
+        set_flash(&session, &format!("Failed to start server: {e}"), "error");
+    } else {
+        tracing::info!(container, "server started");
+        set_flash(&session, "Server starting", "success");
+    }
 
-    tracing::info!(container, "starting server");
-
-    podman.start().await.map_err(WebError::from)?;
-
-    set_flash(&session, "Server starting", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
         .finish())
@@ -46,21 +54,29 @@ pub async fn stop_server(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let container = state
-        .config
-        .server_container
-        .as_deref()
-        .ok_or(WebError::BadRequest(
-            "No server_container configured".to_string(),
-        ))?;
+    let container = match state.config.server_container.as_deref() {
+        Some(c) => c,
+        None => {
+            set_flash(
+                &session,
+                "No server_container configured. Set it in quartermaster.toml.",
+                "error",
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/status"))
+                .finish());
+        }
+    };
 
     let podman = PodmanClient::new(container);
+    if let Err(e) = podman.stop().await {
+        tracing::error!(container, error = %e, "failed to stop server");
+        set_flash(&session, &format!("Failed to stop server: {e}"), "error");
+    } else {
+        tracing::info!(container, "server stopped");
+        set_flash(&session, "Server stopped", "success");
+    }
 
-    tracing::info!(container, "stopping server");
-
-    podman.stop().await.map_err(WebError::from)?;
-
-    set_flash(&session, "Server stopped", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
         .finish())
@@ -75,20 +91,32 @@ pub async fn restart_server(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let container = state
-        .config
-        .server_container
-        .as_deref()
-        .ok_or(WebError::BadRequest(
-            "No server_container configured".to_string(),
-        ))?;
+    let container = match state.config.server_container.as_deref() {
+        Some(c) => c,
+        None => {
+            set_flash(
+                &session,
+                "No server_container configured. Set it in quartermaster.toml.",
+                "error",
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/status"))
+                .finish());
+        }
+    };
 
     let podman = PodmanClient::new(container);
 
-    tracing::info!(container, "restarting server");
+    // Stop first
+    if let Err(e) = podman.stop().await {
+        tracing::error!(container, error = %e, "failed to stop server for restart");
+        set_flash(&session, &format!("Failed to stop server: {e}"), "error");
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/status"))
+            .finish());
+    }
 
-    podman.stop().await.map_err(WebError::from)?;
-
+    // Drain queue if configured (existing logic preserved)
     if state.config.auto_drain_on_lifecycle {
         let db = state.db.clone();
         let ops = web::block(move || {
@@ -118,9 +146,19 @@ pub async fn restart_server(
         }
     }
 
-    podman.start().await.map_err(WebError::from)?;
+    // Start
+    if let Err(e) = podman.start().await {
+        tracing::error!(container, error = %e, "failed to start server after restart");
+        set_flash(
+            &session,
+            &format!("Server stopped but failed to start: {e}"),
+            "error",
+        );
+    } else {
+        tracing::info!(container, "server restarted");
+        set_flash(&session, "Server restarting", "success");
+    }
 
-    set_flash(&session, "Server restarting", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
         .finish())
