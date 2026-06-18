@@ -36,6 +36,8 @@ struct ModListTemplate {
     user: SessionUser,
     mods: Vec<ModListEntry>,
     grand_total_size: i64,
+    spt_version: String,
+    tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
 }
@@ -132,6 +134,8 @@ pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Re
         user,
         mods,
         grand_total_size,
+        spt_version: state.spt_info.spt_version.clone(),
+        tarkov_version: state.spt_info.tarkov_version.clone(),
         flash,
         csrf_token,
     };
