@@ -3,6 +3,7 @@
 *.db-journal
 *.db-wal
 quartermaster.toml
+.superpowers/
 
 # Override global gitignore to track plans/specs for this repo
 !docs/superpowers/
