@@ -52,7 +52,12 @@ struct PendingInstall {
     version: String,
 }
 
-pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
+pub async fn run(
+    mod_ref: &str,
+    version: Option<&str>,
+    force: bool,
+    ctx: &CliContext,
+) -> Result<()> {
     let forge_mod = resolve_mod(&ctx.forge, mod_ref).await?;
     println!("Found: {} (ID: {})", forge_mod.name, forge_mod.id);
 
@@ -64,7 +69,7 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
         );
     }
 
-    let selected_version = pick_version(ctx, &forge_mod).await?;
+    let selected_version = pick_version(ctx, &forge_mod, version).await?;
     check_fika_compat(&forge_mod.name, &selected_version)?;
 
     let to_install = resolve_deps(ctx, &forge_mod, &selected_version).await?;
@@ -113,20 +118,43 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
 async fn pick_version(
     ctx: &CliContext,
     forge_mod: &crate::forge::models::ForgeMod,
+    explicit_version: Option<&str>,
 ) -> Result<ForgeVersion> {
     let versions = ctx
         .forge
         .get_versions(forge_mod.id, Some(&ctx.spt_info.spt_version))
         .await?;
 
-    // TODO: accept explicit version arg when we refactor CLI dispatch
-    let selected = versions.into_iter().next().ok_or_else(|| {
-        anyhow::anyhow!(
-            "no versions of {} are compatible with SPT {}",
-            forge_mod.name,
-            ctx.spt_info.spt_version
-        )
-    })?;
+    let selected = match explicit_version {
+        Some(ver) => {
+            // If explicit version doesn't match any SPT-compatible version,
+            // try fetching all versions unfiltered
+            let found = versions.iter().find(|v| v.version == ver);
+            match found {
+                Some(v) => v.clone(),
+                None => {
+                    let all_versions = ctx.forge.get_versions(forge_mod.id, None).await?;
+                    all_versions
+                        .into_iter()
+                        .find(|v| v.version == ver)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "version '{}' not found for {} on Forge",
+                                ver,
+                                forge_mod.name
+                            )
+                        })?
+                }
+            }
+        }
+        None => versions.into_iter().next().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no versions of {} are compatible with SPT {}",
+                forge_mod.name,
+                ctx.spt_info.spt_version
+            )
+        })?,
+    };
 
     println!(
         "Selected version: {} (SPT {})",

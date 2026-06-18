@@ -28,13 +28,11 @@ async fn main() -> Result<()> {
         Command::Init { path } => cli::init::run(path.clone(), &cli),
         Command::Install {
             mod_ref,
-            version: _,
+            version,
             force,
         } => {
-            // TODO(debt): version selection is handled inside run() for now;
-            // wire explicit version arg when CLI dispatch is refactored
             let ctx = cli::common::resolve_context(&cli)?;
-            cli::install::run(mod_ref, *force, &ctx).await
+            cli::install::run(mod_ref, version.as_deref(), *force, &ctx).await
         }
         Command::Update { mod_ref, force } => {
             let ctx = cli::common::resolve_context(&cli)?;
