@@ -71,9 +71,10 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
     let server = check_server(&spt_client, &ctx.spt_info.spt_version, &address).await;
 
     let installed_mods = ctx.db.list_mods()?;
-    let mods = check_mods_compat(&installed_mods, ctx).await;
+    let mods = check_mods_health(&installed_mods, &ctx.forge, &ctx.spt_info.spt_version).await;
 
-    let integrity = check_integrity(ctx)?;
+    let tracked_files = ctx.db.get_all_tracked_files()?;
+    let integrity = check_integrity_from(&tracked_files, &ctx.spt_dir)?;
 
     Ok(HealthReport {
         server,
@@ -82,7 +83,7 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
     })
 }
 
-async fn check_server(
+pub async fn check_server(
     spt_client: &SptClient,
     expected_version: &str,
     address: &str,
@@ -119,9 +120,10 @@ async fn check_server(
     }
 }
 
-async fn check_mods_compat(
+pub async fn check_mods_health(
     installed_mods: &[crate::db::mods::InstalledMod],
-    ctx: &CliContext,
+    forge: &crate::forge::client::ForgeClient,
+    spt_version: &str,
 ) -> ModsHealth {
     let mut updates_available = 0;
     let mut incompatible_mods = Vec::new();
@@ -132,11 +134,7 @@ async fn check_mods_compat(
             .map(|m| (m.forge_mod_id, m.version.clone()))
             .collect();
 
-        if let Ok(results) = ctx
-            .forge
-            .check_updates(&check_list, &ctx.spt_info.spt_version)
-            .await
-        {
+        if let Ok(results) = forge.check_updates(&check_list, spt_version).await {
             updates_available = results.updates.len();
 
             for m in &results.incompatible_with_spt {
@@ -152,13 +150,15 @@ async fn check_mods_compat(
     }
 }
 
-fn check_integrity(ctx: &CliContext) -> Result<IntegrityHealth> {
-    let tracked_files = ctx.db.get_all_tracked_files()?;
+pub fn check_integrity_from(
+    tracked_files: &[crate::db::mods::InstalledFile],
+    spt_dir: &std::path::Path,
+) -> Result<IntegrityHealth> {
     let mut missing_files = Vec::new();
     let mut modified_files = Vec::new();
 
-    for file in &tracked_files {
-        let full_path = ctx.spt_dir.join(&file.file_path);
+    for file in tracked_files {
+        let full_path = spt_dir.join(&file.file_path);
         if !full_path.exists() {
             missing_files.push(file.file_path.clone());
             continue;
@@ -178,7 +178,7 @@ fn check_integrity(ctx: &CliContext) -> Result<IntegrityHealth> {
         }
     }
 
-    let all_disk_files = scan_mod_directories(&ctx.spt_dir)?;
+    let all_disk_files = scan_mod_directories(spt_dir)?;
     let tracked_paths: std::collections::HashSet<&str> =
         tracked_files.iter().map(|f| f.file_path.as_str()).collect();
 
@@ -386,7 +386,10 @@ mod tests {
             forge: ForgeClient::new(None).unwrap(),
         };
 
-        let result = check_integrity(&ctx).unwrap();
+        let result = {
+            let tracked = ctx.db.get_all_tracked_files().unwrap();
+            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+        };
         assert_eq!(result.tracked_files, 1);
         assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
         assert!(result.modified_files.is_empty());
@@ -436,7 +439,10 @@ mod tests {
             forge: ForgeClient::new(None).unwrap(),
         };
 
-        let result = check_integrity(&ctx).unwrap();
+        let result = {
+            let tracked = ctx.db.get_all_tracked_files().unwrap();
+            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+        };
         assert!(result.missing_files.is_empty());
         assert_eq!(
             result.modified_files,
@@ -473,7 +479,10 @@ mod tests {
             forge: ForgeClient::new(None).unwrap(),
         };
 
-        let result = check_integrity(&ctx).unwrap();
+        let result = {
+            let tracked = ctx.db.get_all_tracked_files().unwrap();
+            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+        };
         assert_eq!(result.tracked_files, 0);
         assert_eq!(result.untracked_dirs.len(), 1);
         assert_eq!(result.untracked_dirs[0].path, "SPT/user/mods/UnknownMod");

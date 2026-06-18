@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Mods — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("mods", user) %}{% endcall %}{% endblock %}
+{% block content %}
+<div class="flex-between">
+    <h1>Installed Mods</h1>
+    {% if user.is_admin() %}
+    <div class="flex gap-1">
+        <form method="post" action="/mods/update-all" style="display:inline">
+            <button type="submit" class="btn btn-sm btn-outline">Update All</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+{% if mods.is_empty() %}
+<div class="card">
+    <p class="text-muted">No mods installed.</p>
+</div>
+{% else %}
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Version</th>
+                <th>Files</th>
+                <th>Installed</th>
+                {% if user.is_admin() %}<th>Actions</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in &mods %}
+            <tr>
+                <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}</a></td>
+                <td>{{ m.mod_info.version }}</td>
+                <td class="text-muted">{{ m.file_count }}</td>
+                <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
+                {% if user.is_admin() %}
+                <td>
+                    <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
+                        <button type="submit" class="btn btn-sm btn-outline">Update</button>
+                    </form>
+                    <form method="post" action="/mods/{{ m.mod_info.id }}/remove" style="display:inline"
+                          data-name="{{ m.mod_info.name }}"
+                          onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
+                        <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+                    </form>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if user.is_admin() %}
+<div class="card">
+    <h2>Install Mod</h2>
+    <form method="post" action="/mods/install">
+        <label for="mod_ref">Forge Mod ID or Name</label>
+        <input type="text" id="mod_ref" name="mod_ref" placeholder="e.g. 2326 or SAIN" required>
+        <button type="submit" class="btn">Install</button>
+    </form>
+</div>
+{% endif %}
+{% endblock %}

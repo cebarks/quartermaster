@@ -45,6 +45,23 @@ tempfile = "3"
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# Web server
+actix-web = "4"
+actix-session = { version = "0.11", features = ["cookie-session"] }
+
+# Templating
+askama = "0.16"
+
+# Static asset embedding
+rust-embed = "8"
+actix-web-rust-embed-responder = "2.4"
+
+# Password hashing
+argon2 = "0.5"
+
+# Non-poisoning Mutex for web DB access
+parking_lot = "0.12"
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

@@ -1,0 +1,14 @@
+{% macro nav(active, user) %}
+<div class="links">
+    <a href="/"{% if active == "dashboard" %} class="active"{% endif %}>Dashboard</a>
+    <a href="/mods"{% if active == "mods" %} class="active"{% endif %}>Mods</a>
+    <a href="/queue"{% if active == "queue" %} class="active"{% endif %}>Queue</a>
+    <a href="/status"{% if active == "status" %} class="active"{% endif %}>Status</a>
+</div>
+<div class="user-info">
+    {{ user.username }} ({{ user.role }})
+    <form method="post" action="/logout" style="display:inline">
+        <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">Logout</button>
+    </form>
+</div>
+{% endmacro %}

@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
             let ctx = cli::common::resolve_context(&cli)?;
             cli::server::run(action, &ctx).await
         }
-        Command::Serve { .. } => todo!("serve"),
+        Command::Serve { bind, port } => cli::serve::run(bind.as_deref(), *port, &cli).await,
         Command::Generate { .. } => todo!("generate"),
         Command::Invite { .. } => todo!("invite"),
         Command::Config { .. } => todo!("config"),

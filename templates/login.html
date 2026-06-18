@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Login — Quartermaster{% endblock %}
+{% block content %}
+<div class="card auth-card" style="max-width: 400px; margin: 4rem auto;">
+    <h2>Login</h2>
+    {% if let Some(error) = error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="/login">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required autofocus>
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required>
+        <button type="submit" class="btn">Login</button>
+    </form>
+</div>
+{% endblock %}

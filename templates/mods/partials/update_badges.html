@@ -1,0 +1,5 @@
+{% if updates_available > 0 %}
+<span class="badge badge-warning">{{ updates_available }} update{% if updates_available != 1 %}s{% endif %} available</span>
+{% else %}
+<span class="badge badge-success">All up to date</span>
+{% endif %}

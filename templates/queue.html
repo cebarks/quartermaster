@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Queue — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("queue", user) %}{% endcall %}{% endblock %}
+{% block content %}
+<div class="flex-between">
+    <h1>Pending Operations</h1>
+    {% if user.is_admin() && !ops.is_empty() %}
+    <form method="post" action="/queue/apply">
+        <button type="submit" class="btn btn-success">Apply All</button>
+    </form>
+    {% endif %}
+</div>
+
+{% if ops.is_empty() %}
+<div class="card">
+    <p class="text-muted">No pending operations.</p>
+</div>
+{% else %}
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Action</th>
+                <th>Mod</th>
+                <th>Queued</th>
+                <th>By</th>
+                {% if user.is_admin() %}<th>Actions</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for op in &ops %}
+            <tr>
+                <td>
+                    {% if op.action == "install" %}<span class="badge badge-success">install</span>
+                    {% else if op.action == "update" %}<span class="badge badge-warning">update</span>
+                    {% else if op.action == "remove" %}<span class="badge badge-danger">remove</span>
+                    {% else %}<span class="badge badge-muted">{{ op.action }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ op.mod_name }}</td>
+                <td class="text-muted text-sm">{{ op.queued_at }}</td>
+                <td class="text-muted text-sm">{{ op.queued_by.as_deref().unwrap_or("-") }}</td>
+                {% if user.is_admin() %}
+                <td>
+                    <form method="post" action="/queue/{{ op.id }}/cancel" style="display:inline">
+                        <button type="submit" class="btn btn-sm btn-outline">Cancel</button>
+                    </form>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

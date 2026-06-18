@@ -4,4 +4,5 @@
 
 pub mod detect;
 pub mod mods;
+pub mod profiles;
 pub mod server;

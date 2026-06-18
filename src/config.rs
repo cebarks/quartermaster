@@ -94,8 +94,16 @@ impl Config {
         }
         let contents =
             toml::to_string_pretty(self).with_context(|| "failed to serialize config to TOML")?;
-        std::fs::write(path, contents)
+        std::fs::write(path, &contents)
             .with_context(|| format!("failed to write config file: {}", path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms).ok();
+        }
+
         Ok(())
     }
 
