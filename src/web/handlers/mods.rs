@@ -344,20 +344,29 @@ pub async fn install_mod(
             let archive_path = tmp_dir.path().join("mod.zip");
             forge.download_file(link, &archive_path).await?;
 
+            // Extract outside the DB lock — this is the slow part (file I/O)
+            let spt_dir2 = spt_dir.clone();
+            let extracted = actix_web::web::block(move || {
+                crate::spt::mods::extract_mod(&archive_path, &spt_dir2)
+            })
+            .await??;
+
+            // Only hold the lock for DB writes
             let version_id = version.id;
             let version_str = version.version.clone();
             actix_web::web::block(move || {
                 let db = db.lock();
-                crate::ops::install_mod_from_archive(
-                    &db,
-                    &spt_dir,
+                let db_id = db.insert_mod(
                     mod_id,
                     version_id,
                     &mod_name,
                     mod_slug.as_deref(),
                     &version_str,
-                    &archive_path,
-                )
+                )?;
+                for file in &extracted {
+                    db.insert_file(db_id, &file.path, Some(&file.hash), Some(file.size as i64))?;
+                }
+                Ok::<_, anyhow::Error>(db_id)
             })
             .await??;
             Ok::<_, anyhow::Error>(())
@@ -478,18 +487,46 @@ pub async fn update_mod(
             let archive_path = tmp_dir.path().join("mod.zip");
             forge.download_file(link, &archive_path).await?;
 
+            // Extract to staging outside the DB lock — this is the slow part
+            let staging_dir = tempfile::tempdir()?;
+            let staging_path = staging_dir.path().to_path_buf();
+            let archive = archive_path.clone();
+            let extracted = actix_web::web::block(move || {
+                crate::spt::mods::extract_mod(&archive, &staging_path)
+            })
+            .await??;
+
+            // Hold the lock only for file swap + DB writes
             let version_id = version.id;
             let version_str = version.version.clone();
+            let staging_path = staging_dir.path().to_path_buf();
             actix_web::web::block(move || {
                 let db = db.lock();
-                crate::ops::update_mod_from_archive(
-                    &db,
-                    &spt_dir,
-                    mod_db_id,
-                    version_id,
-                    &version_str,
-                    &archive_path,
-                )
+                let old_files = db.get_files_for_mod(mod_db_id)?;
+                let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
+                crate::spt::mods::delete_mod_files(&spt_dir, &old_paths)?;
+                db.delete_files_for_mod(mod_db_id)?;
+
+                for file in &extracted {
+                    let src = staging_path.join(&file.path);
+                    let dst = spt_dir.join(&file.path);
+                    if let Some(parent) = dst.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::rename(&src, &dst)
+                        .or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
+                }
+
+                for file in &extracted {
+                    db.insert_file(
+                        mod_db_id,
+                        &file.path,
+                        Some(&file.hash),
+                        Some(file.size as i64),
+                    )?;
+                }
+                db.update_mod(mod_db_id, version_id, &version_str)?;
+                Ok::<_, anyhow::Error>(())
             })
             .await??;
             Ok::<_, anyhow::Error>(())
@@ -687,21 +724,50 @@ pub async fn update_all_mods(
                 let archive_path = tmp_dir.path().join("mod.zip");
                 forge.download_file(&link, &archive_path).await?;
 
+                // Extract to staging outside the DB lock
+                let staging_dir = tempfile::tempdir()?;
+                let staging_path = staging_dir.path().to_path_buf();
+                let archive = archive_path.clone();
+                let extracted = actix_web::web::block(move || {
+                    crate::spt::mods::extract_mod(&archive, &staging_path)
+                })
+                .await??;
+
+                // Hold the lock only for file swap + DB writes
                 let spt_dir = spt_dir.clone();
                 let db = db.clone();
                 let version_id = update.recommended_version.id;
                 let version_str = update.recommended_version.version.clone();
+                let staging_path = staging_dir.path().to_path_buf();
 
                 actix_web::web::block(move || {
                     let db = db.lock();
-                    crate::ops::update_mod_from_archive(
-                        &db,
-                        &spt_dir,
-                        mod_db_id,
-                        version_id,
-                        &version_str,
-                        &archive_path,
-                    )
+                    let old_files = db.get_files_for_mod(mod_db_id)?;
+                    let old_paths: Vec<String> =
+                        old_files.into_iter().map(|f| f.file_path).collect();
+                    crate::spt::mods::delete_mod_files(&spt_dir, &old_paths)?;
+                    db.delete_files_for_mod(mod_db_id)?;
+
+                    for file in &extracted {
+                        let src = staging_path.join(&file.path);
+                        let dst = spt_dir.join(&file.path);
+                        if let Some(parent) = dst.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::rename(&src, &dst)
+                            .or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
+                    }
+
+                    for file in &extracted {
+                        db.insert_file(
+                            mod_db_id,
+                            &file.path,
+                            Some(&file.hash),
+                            Some(file.size as i64),
+                        )?;
+                    }
+                    db.update_mod(mod_db_id, version_id, &version_str)?;
+                    Ok::<_, anyhow::Error>(())
                 })
                 .await??;
                 Ok::<_, anyhow::Error>(())
