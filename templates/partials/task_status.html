@@ -6,7 +6,7 @@
         <span>{{ task.message }}</span>
         {% if !task.is_running %}
             <form method="post" action="/api/tasks/{{ task.id }}/dismiss" style="display:inline"
-                  hx-post="/api/tasks/{{ task.id }}/dismiss" hx-target="closest .alert" hx-swap="delete">
+                  hx-post="/api/tasks/{{ task.id }}/dismiss" hx-target="#task-status" hx-swap="outerHTML">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-sm">Dismiss</button>
             </form>

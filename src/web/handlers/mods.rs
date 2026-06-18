@@ -643,6 +643,17 @@ pub async fn update_all_mods(
             .finish());
     }
 
+    if state.tasks.has_active() {
+        set_flash(
+            &session,
+            "Please wait for current operations to finish before updating all",
+            "warning",
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/mods"))
+            .finish());
+    }
+
     let task_id = state.tasks.start("Updating", "all mods", 0);
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
