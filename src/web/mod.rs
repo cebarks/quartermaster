@@ -4,6 +4,7 @@ pub mod error;
 pub mod flash;
 pub mod handlers;
 pub mod state;
+pub mod tasks;
 
 use std::sync::Arc;
 
@@ -56,6 +57,7 @@ pub async fn start_server(
         config: config.clone(),
         spt_dir,
         spt_info,
+        tasks: crate::web::tasks::TaskTracker::new(),
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
@@ -114,6 +116,14 @@ pub async fn start_server(
                     .route(
                         "/dashboard/server-status",
                         web::get().to(handlers::dashboard::server_status_partial),
+                    )
+                    .route(
+                        "/tasks/status",
+                        web::get().to(handlers::tasks::task_status_partial),
+                    )
+                    .route(
+                        "/tasks/{id}/dismiss",
+                        web::post().to(handlers::tasks::dismiss_task),
                     ),
             )
             // Authenticated routes — admin checks are per-handler via require_admin()

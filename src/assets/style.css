@@ -127,6 +127,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .alert-error { background: rgba(233,69,96,0.15); border: 1px solid var(--danger); color: var(--danger); }
 .alert-success { background: rgba(78,204,163,0.15); border: 1px solid var(--success); color: var(--success); }
 .alert-warning { background: rgba(240,192,64,0.15); border: 1px solid var(--warning); color: var(--warning); }
+.alert-info { background: rgba(100,149,237,0.15); border: 1px solid var(--accent); color: var(--accent); }
 
 /* Status indicators */
 .status-dot {

@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::spt::detect::SptInfo;
+use crate::web::tasks::TaskTracker;
 
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
@@ -14,4 +15,5 @@ pub struct AppState {
     pub config: Config,
     pub spt_dir: PathBuf,
     pub spt_info: SptInfo,
+    pub tasks: TaskTracker,
 }

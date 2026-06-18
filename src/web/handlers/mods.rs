@@ -253,47 +253,6 @@ pub async fn install_mod(
         .await
         .map_err(WebError::from)?;
 
-    const FIKA_FORGE_MOD_ID: i64 = 2326;
-
-    // Check Fika compatibility if Fika is installed
-    {
-        let db = state.db.clone();
-        let fika_installed = web::block(move || {
-            let db = db.lock();
-            Ok::<_, anyhow::Error>(db.get_mod_by_forge_id(FIKA_FORGE_MOD_ID)?.is_some())
-        })
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-        if fika_installed {
-            use crate::forge::models::FikaCompat;
-            match &version.fika_compatibility {
-                Some(FikaCompat::Incompatible) => {
-                    set_flash(
-                        &session,
-                        &format!(
-                            "Warning: {} v{} is marked as Fika INCOMPATIBLE. It may cause issues with multiplayer.",
-                            mod_info.name, version.version
-                        ),
-                        "warning",
-                    );
-                }
-                Some(FikaCompat::Unknown) => {
-                    set_flash(
-                        &session,
-                        &format!(
-                            "Note: Fika compatibility for {} v{} is unknown.",
-                            mod_info.name, version.version
-                        ),
-                        "warning",
-                    );
-                }
-                _ => {}
-            }
-        }
-    }
-
     // Check if the operation should be queued (server running + queue enabled)
     let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
         .await
@@ -335,8 +294,6 @@ pub async fn install_mod(
     let version_str = version.version.clone();
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
-
-    tracing::info!(mod_id, mod_name = %mod_name, version = %version_str, "installing mod");
 
     web::block(move || {
         let db = db.lock();
@@ -448,8 +405,6 @@ pub async fn update_mod(
     let version_id = version.id;
     let version_str = version.version.clone();
 
-    tracing::info!(mod_db_id, mod_name = %installed.name, version = %version_str, "updating mod");
-
     web::block(move || {
         let db = db.lock();
         crate::ops::update_mod_from_archive(
@@ -519,8 +474,6 @@ pub async fn remove_mod(
 
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
-
-    tracing::info!(mod_db_id, mod_name = %installed.name, "removing mod");
 
     web::block(move || {
         let db = db.lock();
