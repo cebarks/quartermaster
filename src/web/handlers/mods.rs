@@ -73,15 +73,14 @@ pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Re
 
     let mods = web::block(move || {
         let db = db.lock();
-        let mods = db.list_mods()?;
-        let mut entries = Vec::new();
-        for m in mods {
-            let file_count = db.get_files_for_mod(m.id)?.len();
-            entries.push(ModListEntry {
-                mod_info: m,
+        let mods_with_counts = db.list_mods_with_file_counts()?;
+        let entries = mods_with_counts
+            .into_iter()
+            .map(|(mod_info, file_count)| ModListEntry {
+                mod_info,
                 file_count,
-            });
-        }
+            })
+            .collect();
         Ok::<_, anyhow::Error>(entries)
     })
     .await

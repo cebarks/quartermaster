@@ -105,6 +105,23 @@ impl Database {
         rows.collect()
     }
 
+    pub fn list_mods_with_file_counts(&self) -> rusqlite::Result<Vec<(InstalledMod, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
+                    m.installed_at, m.updated_at, COUNT(f.id) as file_count
+             FROM installed_mods m
+             LEFT JOIN installed_files f ON f.mod_id = m.id
+             GROUP BY m.id
+             ORDER BY m.name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let m = row_to_installed_mod(row)?;
+            let count: usize = row.get(8)?;
+            Ok((m, count))
+        })?;
+        rows.collect()
+    }
+
     pub fn update_mod(
         &self,
         id: i64,
