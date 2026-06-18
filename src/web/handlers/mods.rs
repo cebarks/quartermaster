@@ -253,6 +253,47 @@ pub async fn install_mod(
         .await
         .map_err(WebError::from)?;
 
+    const FIKA_FORGE_MOD_ID: i64 = 2326;
+
+    // Check Fika compatibility if Fika is installed
+    {
+        let db = state.db.clone();
+        let fika_installed = web::block(move || {
+            let db = db.lock();
+            Ok::<_, anyhow::Error>(db.get_mod_by_forge_id(FIKA_FORGE_MOD_ID)?.is_some())
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if fika_installed {
+            use crate::forge::models::FikaCompat;
+            match &version.fika_compatibility {
+                Some(FikaCompat::Incompatible) => {
+                    set_flash(
+                        &session,
+                        &format!(
+                            "Warning: {} v{} is marked as Fika INCOMPATIBLE. It may cause issues with multiplayer.",
+                            mod_info.name, version.version
+                        ),
+                        "warning",
+                    );
+                }
+                Some(FikaCompat::Unknown) => {
+                    set_flash(
+                        &session,
+                        &format!(
+                            "Note: Fika compatibility for {} v{} is unknown.",
+                            mod_info.name, version.version
+                        ),
+                        "warning",
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Check if the operation should be queued (server running + queue enabled)
     let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
         .await
@@ -276,43 +317,65 @@ pub async fn install_mod(
             .finish());
     }
 
-    let link = version.link.as_deref().ok_or(WebError::BadRequest(
-        "Version has no download link".to_string(),
-    ))?;
+    // Prevent duplicate installs
+    if state.tasks.has_running_for_mod(mod_id) {
+        set_flash(&session, "This mod is already being installed", "warning");
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/mods"))
+            .finish());
+    }
 
-    let tmp_dir = tempfile::tempdir().map_err(|e| WebError::Internal(e.into()))?;
-    let archive_path = tmp_dir.path().join("mod.zip");
-    state
-        .forge
-        .download_file(link, &archive_path)
-        .await
-        .map_err(WebError::from)?;
-
+    let task_id = state.tasks.start("Install", &mod_info.name, mod_id);
+    let tasks = state.tasks.clone();
+    let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
-    let version_id = version.id;
-    let version_str = version.version.clone();
+    let version = version.clone();
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
 
-    web::block(move || {
-        let db = db.lock();
-        crate::ops::install_mod_from_archive(
-            &db,
-            &spt_dir,
-            mod_id,
-            version_id,
-            &mod_name,
-            mod_slug.as_deref(),
-            &version_str,
-            &archive_path,
-        )
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    tokio::spawn(async move {
+        let result = async {
+            let link = version
+                .link
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+            let tmp_dir = tempfile::tempdir()?;
+            let archive_path = tmp_dir.path().join("mod.zip");
+            forge.download_file(link, &archive_path).await?;
 
-    set_flash(&session, "Mod installed successfully", "success");
+            let version_id = version.id;
+            let version_str = version.version.clone();
+            actix_web::web::block(move || {
+                let db = db.lock();
+                crate::ops::install_mod_from_archive(
+                    &db,
+                    &spt_dir,
+                    mod_id,
+                    version_id,
+                    &mod_name,
+                    mod_slug.as_deref(),
+                    &version_str,
+                    &archive_path,
+                )
+            })
+            .await??;
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                tracing::info!(mod_id, "mod installed successfully");
+                tasks.complete(task_id, "Mod installed successfully".to_string());
+            }
+            Err(e) => {
+                tracing::error!(mod_id, error = %e, "mod install failed");
+                tasks.fail(task_id, format!("Install failed: {e}"));
+            }
+        }
+    });
+
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/mods"))
         .finish())
@@ -388,39 +451,63 @@ pub async fn update_mod(
             .finish());
     }
 
-    let link = version.link.as_deref().ok_or(WebError::BadRequest(
-        "Version has no download link".to_string(),
-    ))?;
+    // Prevent duplicate updates
+    if state.tasks.has_running_for_mod(installed.forge_mod_id) {
+        set_flash(&session, "This mod is already being updated", "warning");
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", format!("/mods/{mod_db_id}")))
+            .finish());
+    }
 
-    let tmp_dir = tempfile::tempdir().map_err(|e| WebError::Internal(e.into()))?;
-    let archive_path = tmp_dir.path().join("mod.zip");
-    state
-        .forge
-        .download_file(link, &archive_path)
-        .await
-        .map_err(WebError::from)?;
-
+    let task_id = state
+        .tasks
+        .start("Updat", &installed.name, installed.forge_mod_id);
+    let tasks = state.tasks.clone();
+    let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
-    let version_id = version.id;
-    let version_str = version.version.clone();
+    let version = version.clone();
 
-    web::block(move || {
-        let db = db.lock();
-        crate::ops::update_mod_from_archive(
-            &db,
-            &spt_dir,
-            mod_db_id,
-            version_id,
-            &version_str,
-            &archive_path,
-        )
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    tokio::spawn(async move {
+        let result = async {
+            let link = version
+                .link
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+            let tmp_dir = tempfile::tempdir()?;
+            let archive_path = tmp_dir.path().join("mod.zip");
+            forge.download_file(link, &archive_path).await?;
 
-    set_flash(&session, "Mod updated successfully", "success");
+            let version_id = version.id;
+            let version_str = version.version.clone();
+            actix_web::web::block(move || {
+                let db = db.lock();
+                crate::ops::update_mod_from_archive(
+                    &db,
+                    &spt_dir,
+                    mod_db_id,
+                    version_id,
+                    &version_str,
+                    &archive_path,
+                )
+            })
+            .await??;
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                tracing::info!(mod_db_id, "mod updated successfully");
+                tasks.complete(task_id, "Mod updated successfully".to_string());
+            }
+            Err(e) => {
+                tracing::error!(mod_db_id, error = %e, "mod update failed");
+                tasks.fail(task_id, format!("Update failed: {e}"));
+            }
+        }
+    });
+
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", format!("/mods/{mod_db_id}")))
         .finish())
@@ -555,51 +642,73 @@ pub async fn update_all_mods(
             .finish());
     }
 
-    for update in &results.updates {
-        let link = match &update.recommended_version.link {
-            Some(l) => l.clone(),
-            None => continue,
-        };
+    let task_id = state.tasks.start("Updat", "all mods", 0);
+    let tasks = state.tasks.clone();
+    let forge = state.forge.clone();
+    let spt_dir = state.spt_dir.clone();
+    let db = state.db.clone();
+    let installed = installed.clone();
 
-        let mod_db = installed
-            .iter()
-            .find(|m| m.forge_mod_id == update.current_version.mod_id);
-        let mod_db = match mod_db {
-            Some(m) => m,
-            None => continue,
-        };
-        let mod_db_id = mod_db.id;
+    tokio::spawn(async move {
+        let total = results.updates.len();
+        let mut success_count = 0;
 
-        let tmp_dir = tempfile::tempdir().map_err(|e| WebError::Internal(e.into()))?;
-        let archive_path = tmp_dir.path().join("mod.zip");
-        state
-            .forge
-            .download_file(&link, &archive_path)
-            .await
-            .map_err(WebError::from)?;
+        for (i, update) in results.updates.iter().enumerate() {
+            tasks.update_message(task_id, format!("Updating mod {} of {}...", i + 1, total));
 
-        let spt_dir = state.spt_dir.clone();
-        let db = state.db.clone();
-        let version_id = update.recommended_version.id;
-        let version_str = update.recommended_version.version.clone();
+            let link = match &update.recommended_version.link {
+                Some(l) => l.clone(),
+                None => continue,
+            };
 
-        web::block(move || {
-            let db = db.lock();
-            crate::ops::update_mod_from_archive(
-                &db,
-                &spt_dir,
-                mod_db_id,
-                version_id,
-                &version_str,
-                &archive_path,
-            )
-        })
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-    }
+            let mod_db = match installed
+                .iter()
+                .find(|m| m.forge_mod_id == update.current_version.mod_id)
+            {
+                Some(m) => m,
+                None => continue,
+            };
+            let mod_db_id = mod_db.id;
 
-    set_flash(&session, "All mods updated", "success");
+            let result = async {
+                let tmp_dir = tempfile::tempdir()?;
+                let archive_path = tmp_dir.path().join("mod.zip");
+                forge.download_file(&link, &archive_path).await?;
+
+                let spt_dir = spt_dir.clone();
+                let db = db.clone();
+                let version_id = update.recommended_version.id;
+                let version_str = update.recommended_version.version.clone();
+
+                actix_web::web::block(move || {
+                    let db = db.lock();
+                    crate::ops::update_mod_from_archive(
+                        &db,
+                        &spt_dir,
+                        mod_db_id,
+                        version_id,
+                        &version_str,
+                        &archive_path,
+                    )
+                })
+                .await??;
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+
+            match result {
+                Ok(()) => success_count += 1,
+                Err(e) => tracing::error!(mod_db_id, error = %e, "update failed during update-all"),
+            }
+        }
+
+        if success_count == total {
+            tasks.complete(task_id, format!("All {total} mods updated successfully"));
+        } else {
+            tasks.fail(task_id, format!("{success_count}/{total} mods updated"));
+        }
+    });
+
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/mods"))
         .finish())
