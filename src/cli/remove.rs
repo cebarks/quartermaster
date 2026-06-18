@@ -3,7 +3,6 @@ use std::io::{self, Write};
 use anyhow::Result;
 
 use crate::db::mods::InstalledMod;
-use crate::spt::mods::delete_mod_files;
 
 use super::common::{resolve_installed_mod, CliContext};
 
@@ -112,22 +111,13 @@ pub fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<
 }
 
 pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
-    // Get tracked files
-    let files = ctx.db.get_files_for_mod(installed.id)?;
-    let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
+    let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
 
-    // Delete files from disk
-    if !file_paths.is_empty() {
-        delete_mod_files(&ctx.spt_dir, &file_paths)?;
-        println!(
-            "  Deleted {} files for {}",
-            file_paths.len(),
-            installed.name
-        );
+    crate::ops::remove_mod_by_id(&ctx.db, &ctx.spt_dir, installed.id)?;
+
+    if file_count > 0 {
+        println!("  Deleted {} files for {}", file_count, installed.name);
     }
-
-    // Remove from database (cascades to files and dependencies)
-    ctx.db.delete_mod(installed.id)?;
 
     Ok(())
 }

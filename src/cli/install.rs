@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 
 use crate::forge::models::{DependencyNode, FikaCompat, ForgeVersion};
-use crate::spt::mods::{detect_mod_type, extract_mod, ModType};
+use crate::spt::mods::{detect_mod_type, ModType};
 
 use super::common::{confirm, resolve_mod, CliContext};
 
@@ -274,17 +274,19 @@ pub async fn install_single_mod(
     }
 
     println!("  Extracting...");
-    let extracted_files = extract_mod(&archive_path, &ctx.spt_dir)?;
-    println!("  Extracted {} files", extracted_files.len());
+    let db_id = crate::ops::install_mod_from_archive(
+        &ctx.db,
+        &ctx.spt_dir,
+        forge_mod_id,
+        forge_version_id,
+        name,
+        slug,
+        version,
+        &archive_path,
+    )?;
 
-    let db_id = ctx
-        .db
-        .insert_mod(forge_mod_id, forge_version_id, name, slug, version)?;
-
-    for file in &extracted_files {
-        ctx.db
-            .insert_file(db_id, &file.path, Some(&file.hash), Some(file.size as i64))?;
-    }
+    let file_count = ctx.db.get_files_for_mod(db_id)?.len();
+    println!("  Extracted {} files", file_count);
 
     Ok(db_id)
 }

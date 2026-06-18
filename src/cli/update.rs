@@ -1,7 +1,6 @@
 use anyhow::Result;
 
 use crate::db::mods::InstalledMod;
-use crate::spt::mods::{delete_mod_files, extract_mod};
 
 use super::common::{confirm, resolve_installed_mod, CliContext};
 
@@ -174,39 +173,17 @@ pub async fn apply_update_by_version(
         .download_file(&download_url, &archive_path)
         .await?;
 
-    let staging_dir = tempfile::tempdir()?;
-    let new_files = extract_mod(&archive_path, staging_dir.path())?;
+    crate::ops::update_mod_from_archive(
+        &ctx.db,
+        &ctx.spt_dir,
+        installed.id,
+        target_version_id,
+        &version_info.version,
+        &archive_path,
+    )?;
 
-    let old_files = ctx.db.get_files_for_mod(installed.id)?;
-    let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
-    delete_mod_files(&ctx.spt_dir, &old_paths)?;
-    ctx.db.delete_files_for_mod(installed.id)?;
-
-    for file in &new_files {
-        let src = staging_dir.path().join(&file.path);
-        let dest = ctx.spt_dir.join(&file.path);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(&src, &dest).or_else(|_| std::fs::copy(&src, &dest).map(|_| ()))?;
-    }
-
-    for file in &new_files {
-        ctx.db.insert_file(
-            installed.id,
-            &file.path,
-            Some(&file.hash),
-            Some(file.size as i64),
-        )?;
-    }
-
-    ctx.db
-        .update_mod(installed.id, target_version_id, &version_info.version)?;
-    println!(
-        "    Updated {} files for {}",
-        new_files.len(),
-        installed.name
-    );
+    let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
+    println!("    Updated {} files for {}", file_count, installed.name);
     Ok(true)
 }
 
