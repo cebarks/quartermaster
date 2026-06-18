@@ -1,12 +1,21 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 
 use super::Cli;
 use crate::config::Config;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
+use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::{detect_spt_dir, read_spt_version};
 
-pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()> {
+pub async fn run(
+    bind: Option<&str>,
+    port: Option<u16>,
+    cli: &Cli,
+    log_broadcast: &Arc<LogBroadcast>,
+    reload_handles: &ReloadHandles,
+) -> Result<()> {
     let spt_dir = detect_spt_dir(cli.spt_dir.as_deref(), None)?;
     let spt_info = read_spt_version(&spt_dir)?;
 
@@ -20,6 +29,11 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     if let Some(p) = port {
         config.web_port = p;
     }
+
+    // Reconfigure logging now that config is loaded
+    let filter =
+        crate::logging::resolve_log_filter(&config.logging, cli.verbose, cli.log_level.as_deref());
+    reload_handles.reconfigure(&config.logging, &filter, Some(&spt_dir));
 
     config.ensure_session_secret();
     config
@@ -36,5 +50,13 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     let forge = ForgeClient::new(config.forge_token.clone())?;
 
-    crate::web::start_server(config, db, forge, spt_dir, spt_info).await
+    crate::web::start_server(
+        config,
+        db,
+        forge,
+        spt_dir,
+        spt_info,
+        Arc::clone(log_broadcast),
+    )
+    .await
 }

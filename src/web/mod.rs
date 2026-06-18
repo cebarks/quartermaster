@@ -24,6 +24,7 @@ use actix_governor::{Governor, GovernorConfigBuilder};
 use crate::config::Config;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
+use crate::logging::LogBroadcast;
 use crate::spt::detect::SptInfo;
 
 use state::AppState;
@@ -45,6 +46,7 @@ pub async fn start_server(
     forge: ForgeClient,
     spt_dir: std::path::PathBuf,
     spt_info: SptInfo,
+    log_broadcast: Arc<LogBroadcast>,
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
 
@@ -58,6 +60,7 @@ pub async fn start_server(
         spt_dir,
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(),
+        log_broadcast,
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
