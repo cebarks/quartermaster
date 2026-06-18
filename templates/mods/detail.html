@@ -1,19 +1,7 @@
 {% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
 {% block title %}{{ mod_info.name }} — Quartermaster{% endblock %}
-{% block nav %}
-<div class="links">
-    <a href="/">Dashboard</a>
-    <a href="/mods" class="active">Mods</a>
-    <a href="/queue">Queue</a>
-    <a href="/status">Status</a>
-</div>
-<div class="user-info">
-    {{ user.username }} ({{ user.role }})
-    <form method="post" action="/logout" style="display:inline">
-        <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">Logout</button>
-    </form>
-</div>
-{% endblock %}
+{% block nav %}{% call nav::nav("mods", user) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>{{ mod_info.name }}</h1>
 
@@ -75,7 +63,8 @@
         <button type="submit" class="btn">Update</button>
     </form>
     <form method="post" action="/mods/{{ mod_info.id }}/remove"
-          onsubmit="return confirm('Remove {{ mod_info.name }}?')">
+          data-name="{{ mod_info.name }}"
+          onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
         <button type="submit" class="btn btn-danger">Remove</button>
     </form>
 </div>

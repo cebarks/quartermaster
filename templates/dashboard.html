@@ -1,19 +1,7 @@
 {% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
 {% block title %}Dashboard — Quartermaster{% endblock %}
-{% block nav %}
-<div class="links">
-    <a href="/" class="active">Dashboard</a>
-    <a href="/mods">Mods</a>
-    <a href="/queue">Queue</a>
-    <a href="/status">Status</a>
-</div>
-<div class="user-info">
-    {{ user.username }} ({{ user.role }})
-    <form method="post" action="/logout" style="display:inline">
-        <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">Logout</button>
-    </form>
-</div>
-{% endblock %}
+{% block nav %}{% call nav::nav("dashboard", user) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>Dashboard</h1>
 

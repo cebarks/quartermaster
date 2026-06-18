@@ -147,7 +147,7 @@ async fn download_to_temp(state: &AppState, link: &str) -> anyhow::Result<tempfi
     Ok(tmp_dir)
 }
 
-async fn apply_install(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("install op missing version_id"))?;
@@ -181,7 +181,7 @@ async fn apply_install(op: &PendingOperation, state: &AppState) -> anyhow::Resul
     Ok(())
 }
 
-async fn apply_update(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("update op missing version_id"))?;
@@ -246,7 +246,7 @@ async fn apply_update(op: &PendingOperation, state: &AppState) -> anyhow::Result
     Ok(())
 }
 
-async fn apply_remove(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
     let forge_mod_id = op.forge_mod_id;

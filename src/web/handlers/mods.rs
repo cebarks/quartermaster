@@ -182,26 +182,32 @@ pub async fn install_mod(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
-    let mod_ref = &form.mod_ref;
+    let mod_ref = form.mod_ref.trim();
+
+    if mod_ref.is_empty() {
+        return Err(WebError::BadRequest("Mod reference is required".to_string()).into());
+    }
 
     let mod_id: i64 = match mod_ref.parse() {
         Ok(id) => id,
         Err(_) => match state.forge.search_mods(mod_ref).await {
             Ok(results) if results.len() == 1 => results[0].id,
             Ok(results) if results.is_empty() => {
-                return Ok(
-                    HttpResponse::BadRequest().body(format!("No mods found matching '{mod_ref}'"))
+                return Err(
+                    WebError::BadRequest(format!("No mods found matching '{mod_ref}'")).into(),
                 );
             }
             Ok(_) => {
-                return Ok(HttpResponse::BadRequest().body(format!(
+                return Err(WebError::BadRequest(format!(
                     "Multiple mods match '{mod_ref}' — use a Forge mod ID instead"
-                )));
+                ))
+                .into());
             }
-            Err(e) => {
-                return Ok(
-                    HttpResponse::InternalServerError().body(format!("Forge API error: {e}"))
-                );
+            Err(_) => {
+                return Err(WebError::BadRequest(
+                    "Failed to search mods. Please try again.".to_string(),
+                )
+                .into());
             }
         },
     };
@@ -210,7 +216,7 @@ pub async fn install_mod(
         .forge
         .get_versions(mod_id, Some(&state.spt_info.spt_version))
         .await
-        .map_err(|e| WebError::Internal(e))?;
+        .map_err(WebError::from)?;
 
     let version = versions.first().ok_or(WebError::BadRequest(
         "No compatible version found for current SPT version".to_string(),
@@ -220,7 +226,7 @@ pub async fn install_mod(
         .forge
         .get_mod(mod_id, false)
         .await
-        .map_err(|e| WebError::Internal(e))?;
+        .map_err(WebError::from)?;
 
     // Check if the operation should be queued (server running + queue enabled)
     let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
@@ -254,7 +260,7 @@ pub async fn install_mod(
         .forge
         .download_file(link, &archive_path)
         .await
-        .map_err(|e| WebError::Internal(e))?;
+        .map_err(WebError::from)?;
 
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
@@ -319,7 +325,7 @@ pub async fn update_mod(
         .forge
         .get_versions(installed.forge_mod_id, Some(&state.spt_info.spt_version))
         .await
-        .map_err(|e| WebError::Internal(e))?;
+        .map_err(WebError::from)?;
 
     let version = versions.first().ok_or(WebError::BadRequest(
         "No compatible update found".to_string(),
@@ -371,7 +377,7 @@ pub async fn update_mod(
         .forge
         .download_file(link, &archive_path)
         .await
-        .map_err(|e| WebError::Internal(e))?;
+        .map_err(WebError::from)?;
 
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
@@ -502,7 +508,7 @@ pub async fn update_all_mods(
         .forge
         .check_updates(&check_list, &state.spt_info.spt_version)
         .await
-        .map_err(|e| WebError::Internal(e))?;
+        .map_err(WebError::from)?;
 
     // Check if operations should be queued (server running + queue enabled)
     let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
@@ -514,14 +520,14 @@ pub async fn update_all_mods(
         web::block(move || {
             let db = db.lock();
             for update in &results.updates {
-                let _ = db.insert_pending_op(
+                db.insert_pending_op(
                     "update",
                     update.current_version.mod_id,
                     Some(update.recommended_version.id),
                     &update.current_version.name,
                     None,
                     None,
-                );
+                )?;
             }
             Ok::<_, anyhow::Error>(())
         })
@@ -555,7 +561,7 @@ pub async fn update_all_mods(
             .forge
             .download_file(&link, &archive_path)
             .await
-            .map_err(|e| WebError::Internal(e))?;
+            .map_err(WebError::from)?;
 
         let spt_dir = state.spt_dir.clone();
         let db = state.db.clone();

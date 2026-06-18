@@ -1,19 +1,7 @@
 {% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
 {% block title %}Queue — Quartermaster{% endblock %}
-{% block nav %}
-<div class="links">
-    <a href="/">Dashboard</a>
-    <a href="/mods">Mods</a>
-    <a href="/queue" class="active">Queue</a>
-    <a href="/status">Status</a>
-</div>
-<div class="user-info">
-    {{ user.username }} ({{ user.role }})
-    <form method="post" action="/logout" style="display:inline">
-        <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">Logout</button>
-    </form>
-</div>
-{% endblock %}
+{% block nav %}{% call nav::nav("queue", user) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
     <h1>Pending Operations</h1>

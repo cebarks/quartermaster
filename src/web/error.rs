@@ -67,3 +67,9 @@ impl From<actix_web::error::BlockingError> for WebError {
         WebError::Internal(anyhow::anyhow!("blocking error: {e}"))
     }
 }
+
+impl From<std::io::Error> for WebError {
+    fn from(e: std::io::Error) -> Self {
+        WebError::Internal(e.into())
+    }
+}
