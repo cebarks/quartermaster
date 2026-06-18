@@ -13,7 +13,7 @@
         <span class="brand">Quartermaster</span>
         {% block nav %}{% endblock %}
     </nav>
-    <div id="sse-source" hx-ext="sse" sse-connect="/api/events" style="display:none"></div>
+    <div id="sse-source" hx-ext="sse" sse-connect="/api/events">
     <main>
         {% block flash %}
         {% if let Some(flash) = flash %}
@@ -22,5 +22,6 @@
         {% endblock %}
         {% block content %}{% endblock %}
     </main>
+    </div>
 </body>
 </html>

@@ -40,12 +40,12 @@
         </thead>
         <tbody id="mod-list-body"
                hx-get="/api/mods/list"
-               hx-trigger="sse:modsChanged from:#sse-source"
+               hx-trigger="sse:modsChanged"
                hx-swap="innerHTML">
             {% for m in &mods %}
             <tr>
                 <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}</a></td>
-                <td id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</td>
+                <td><span id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</span></td>
                 <td class="text-muted">{{ m.file_count }}</td>
                 <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
                 <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
@@ -74,7 +74,7 @@
             </tr>
         </tbody>
     </table>
-    <span hx-get="/api/mods/update-status" hx-trigger="load, sse:modsChanged from:#sse-source" hx-swap="none"></span>
+    <span hx-get="/api/mods/update-status" hx-trigger="load, sse:modsChanged" hx-swap="none"></span>
 </div>
 {% endif %}
 

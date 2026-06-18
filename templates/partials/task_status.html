@@ -1,6 +1,6 @@
 {% if !tasks.is_empty() %}
 <div id="task-status"
-     hx-get="/api/tasks/status" hx-trigger="sse:taskChanged from:#sse-source" hx-swap="outerHTML">
+     hx-get="/api/tasks/status" hx-trigger="sse:taskChanged" hx-swap="outerHTML">
     {% for task in &tasks %}
     <div class="alert {{ task.css_class }}">
         <span>{{ task.message }}</span>

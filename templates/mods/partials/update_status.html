@@ -1,9 +1,9 @@
 {% import "partials/icons.html" as icons %}
 {% for e in &entries %}
 {% if let Some(new_ver) = &e.new_version %}
-<td id="mod-version-{{ e.db_id }}" hx-swap-oob="true">
+<span id="mod-version-{{ e.db_id }}" hx-swap-oob="true">
     {{ e.installed_version }} <span style="color: var(--success)">→ {{ new_ver }}</span>
-</td>
+</span>
 <span id="mod-update-{{ e.db_id }}" hx-swap-oob="true">
     <form method="post" action="/mods/{{ e.db_id }}/update" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ e.csrf_token }}">

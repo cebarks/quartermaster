@@ -277,22 +277,38 @@ pub async fn update_status_partial(
         }
     };
 
-    let entries: Vec<UpdateStatusEntry> = installed
-        .iter()
-        .map(|m| {
-            let new_version = updates_data
-                .updates
-                .iter()
-                .find(|u| u.current_version.mod_id == m.forge_mod_id)
-                .map(|u| u.recommended_version.version.clone());
-            UpdateStatusEntry {
-                db_id: m.id,
-                installed_version: m.version.clone(),
-                new_version,
-                csrf_token: csrf_token.clone(),
+    let mut entries = Vec::with_capacity(installed.len());
+    for m in &installed {
+        let candidate = updates_data
+            .updates
+            .iter()
+            .find(|u| u.current_version.mod_id == m.forge_mod_id)
+            .map(|u| u.recommended_version.version.clone())
+            .filter(|v| v != &m.version);
+
+        let new_version = if candidate.is_some() {
+            match state
+                .forge
+                .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
+                .await
+            {
+                Ok(versions) => versions
+                    .first()
+                    .map(|v| v.version.clone())
+                    .filter(|v| v != &m.version),
+                Err(_) => None,
             }
-        })
-        .collect();
+        } else {
+            None
+        };
+
+        entries.push(UpdateStatusEntry {
+            db_id: m.id,
+            installed_version: m.version.clone(),
+            new_version,
+            csrf_token: csrf_token.clone(),
+        });
+    }
 
     let tmpl = UpdateStatusTemplate { entries };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))

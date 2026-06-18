@@ -2,7 +2,7 @@
 {% for m in &mods %}
 <tr>
     <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}</a></td>
-    <td id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</td>
+    <td><span id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</span></td>
     <td class="text-muted">{{ m.file_count }}</td>
     <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
     <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
