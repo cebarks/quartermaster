@@ -29,7 +29,7 @@ pub async fn app_logs_json(
     query: Query<LogQuery>,
 ) -> actix_web::Result<HttpResponse> {
     require_auth(&session)?;
-    let limit = query.limit.unwrap_or(100);
+    let limit = query.limit.unwrap_or(100).min(10000);
     let entries = state.log_broadcast.recent(limit);
     Ok(HttpResponse::Ok().json(entries))
 }
@@ -76,7 +76,7 @@ pub async fn server_logs_json(
         .server_container
         .as_deref()
         .ok_or(WebError::NotFound)?;
-    let tail = query.limit.unwrap_or(100);
+    let tail = query.limit.unwrap_or(100).min(10000);
 
     let output = tokio::process::Command::new("podman")
         .args(["logs", "--tail", &tail.to_string(), container])
@@ -84,10 +84,17 @@ pub async fn server_logs_json(
         .await
         .map_err(|e| WebError::Internal(anyhow::anyhow!("podman logs failed: {e}")))?;
 
-    let lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
+    // Merge stdout and stderr lines
+    let mut lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(String::from)
         .collect();
+    let stderr_lines: Vec<String> = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(String::from)
+        .collect();
+    lines.extend(stderr_lines);
+
     Ok(HttpResponse::Ok().json(lines))
 }
 
@@ -122,19 +129,48 @@ pub async fn server_logs_stream(
             }
         };
 
-        if let Some(stdout) = child.stdout.take() {
-            use tokio::io::{AsyncBufReadExt, BufReader};
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if tx
-                    .send(sse::Event::Data(sse::Data::new(line)))
-                    .await
-                    .is_err()
-                {
-                    break;
+        // Take stdout and stderr before spawning tasks
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        // Spawn separate tasks for stdout and stderr, both feeding into the same channel
+        let tx_stdout = tx.clone();
+        let tx_stderr = tx.clone();
+
+        let stdout_handle = tokio::spawn(async move {
+            if let Some(stdout) = stdout {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut lines = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if tx_stdout
+                        .send(sse::Event::Data(sse::Data::new(line)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
             }
-        }
+        });
+
+        let stderr_handle = tokio::spawn(async move {
+            if let Some(stderr) = stderr {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if tx_stderr
+                        .send(sse::Event::Data(sse::Data::new(line)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Wait for both streams to complete
+        let _ = tokio::join!(stdout_handle, stderr_handle);
 
         let _ = child.kill().await;
     });

@@ -34,89 +34,125 @@ fn reconfigure_logging(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Early bootstrap: init subscriber with defaults + broadcast layer.
-    // Config hasn't loaded yet, so we start with "info,quartermaster=debug".
-    let log_broadcast = Arc::new(logging::LogBroadcast::new(1000));
-    let reload_handles = logging::init_subscriber(&log_broadcast);
-
     let cli = Cli::parse();
 
+    // For Serve command, we'll create LogBroadcast after config loads.
+    // For other commands, create with default buffer size (doesn't matter for non-web commands).
     match &cli.command {
-        Command::Setup {
-            non_interactive,
-            skip_fika,
-        } => cli::setup::run(*non_interactive, *skip_fika, &cli).await,
-        Command::Init { path } => cli::init::run(path.clone(), &cli),
-        Command::Install {
-            mod_ref,
-            version,
-            force,
-        } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::install::run(mod_ref, version.as_deref(), *force, &ctx).await
-        }
-        Command::Update { mod_ref, force } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::update::run(mod_ref.as_deref(), *force, &ctx).await
-        }
-        Command::Remove { mod_ref, force } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::remove::run(mod_ref, *force, &ctx).await
-        }
-        Command::List { json } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::list::run(*json, &ctx)
-        }
-        Command::Track { path, forge_mod_id } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::track::run(path, forge_mod_id, &ctx).await
-        }
-        Command::Check => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            let has_updates = cli::check::run(&ctx).await?;
-            drop(ctx);
-            if has_updates {
-                std::process::exit(1);
-            }
-            Ok(())
-        }
-        Command::Apply { force } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::apply::run(*force, &ctx).await
-        }
-        Command::Status { json } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::status::run(*json, &ctx).await
-        }
-        Command::Server { action } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::server::run(action, &ctx).await
-        }
         Command::Serve { bind, port } => {
-            cli::serve::run(
-                bind.as_deref(),
-                *port,
-                &cli,
-                &log_broadcast,
-                &reload_handles,
-            )
-            .await
+            // Serve command creates LogBroadcast in serve.rs after loading config
+            cli::serve::run(bind.as_deref(), *port, &cli).await
         }
-        Command::Generate { target } => cli::generate::run(target, &cli),
-        Command::Invite { expires } => {
-            let ctx = cli::common::resolve_context(&cli)?;
-            reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-            cli::invite::run(expires.as_deref(), &ctx)
+        _ => {
+            // For non-serve commands, use default buffer size
+            let log_broadcast = Arc::new(logging::LogBroadcast::new(1000));
+            let reload_handles = logging::init_subscriber(&log_broadcast);
+
+            match &cli.command {
+                Command::Setup {
+                    non_interactive,
+                    skip_fika,
+                } => {
+                    // Apply CLI verbosity to default config for early commands
+                    let filter = logging::resolve_log_filter(
+                        &config::LoggingConfig::default(),
+                        cli.verbose,
+                        cli.log_level.as_deref(),
+                    );
+                    reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
+                    cli::setup::run(*non_interactive, *skip_fika, &cli).await
+                }
+                Command::Init { path } => {
+                    // Apply CLI verbosity to default config for early commands
+                    let filter = logging::resolve_log_filter(
+                        &config::LoggingConfig::default(),
+                        cli.verbose,
+                        cli.log_level.as_deref(),
+                    );
+                    reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
+                    cli::init::run(path.clone(), &cli)
+                }
+                Command::Install {
+                    mod_ref,
+                    version,
+                    force,
+                } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::install::run(mod_ref, version.as_deref(), *force, &ctx).await
+                }
+                Command::Update { mod_ref, force } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::update::run(mod_ref.as_deref(), *force, &ctx).await
+                }
+                Command::Remove { mod_ref, force } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::remove::run(mod_ref, *force, &ctx).await
+                }
+                Command::List { json } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::list::run(*json, &ctx)
+                }
+                Command::Track { path, forge_mod_id } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::track::run(path, forge_mod_id, &ctx).await
+                }
+                Command::Check => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    let has_updates = cli::check::run(&ctx).await?;
+                    drop(ctx);
+                    if has_updates {
+                        std::process::exit(1);
+                    }
+                    Ok(())
+                }
+                Command::Apply { force } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::apply::run(*force, &ctx).await
+                }
+                Command::Status { json } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::status::run(*json, &ctx).await
+                }
+                Command::Server { action } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::server::run(action, &ctx).await
+                }
+                Command::Generate { target } => {
+                    // Apply CLI verbosity to default config for early commands
+                    let filter = logging::resolve_log_filter(
+                        &config::LoggingConfig::default(),
+                        cli.verbose,
+                        cli.log_level.as_deref(),
+                    );
+                    reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
+                    cli::generate::run(target, &cli)
+                }
+                Command::Invite { expires } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::invite::run(expires.as_deref(), &ctx)
+                }
+                Command::Config { action } => {
+                    // Apply CLI verbosity to default config for early commands
+                    let filter = logging::resolve_log_filter(
+                        &config::LoggingConfig::default(),
+                        cli.verbose,
+                        cli.log_level.as_deref(),
+                    );
+                    reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
+                    cli::config_cmd::run(action, &cli)
+                }
+                Command::Serve { .. } => unreachable!(),
+            }
         }
-        Command::Config { action } => cli::config_cmd::run(action, &cli),
     }
 }

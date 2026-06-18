@@ -197,6 +197,8 @@ pub struct ReloadHandles {
     filter_handle: reload::Handle<EnvFilter, S0>,
     console_handle: reload::Handle<BoxedConsole, S1>,
     file_handle: reload::Handle<BoxedFile, S2>,
+    // Store the file worker guard to prevent premature flush/drop
+    file_guard: std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>,
 }
 
 impl ReloadHandles {
@@ -229,10 +231,14 @@ impl ReloadHandles {
                     .unwrap_or_else(|| std::path::PathBuf::from(&config.file.path))
             };
 
-            let file_layer = build_file_layer(&config.file, &file_path);
+            let (file_layer, guard) = build_file_layer(&config.file, &file_path);
             let _ = self.file_handle.reload(Some(file_layer));
+            // Store the new guard, dropping the old one (if any)
+            *self.file_guard.lock().unwrap() = Some(guard);
         } else {
             let _ = self.file_handle.reload(None);
+            // Clear the guard when file logging is disabled
+            *self.file_guard.lock().unwrap() = None;
         }
     }
 }
@@ -268,6 +274,7 @@ pub fn init_subscriber(log_broadcast: &Arc<LogBroadcast>) -> ReloadHandles {
         filter_handle,
         console_handle,
         file_handle,
+        file_guard: std::sync::Mutex::new(None),
     }
 }
 
@@ -338,7 +345,10 @@ fn strip_crate_directive(filter: &str, crate_name: &str) -> String {
 fn build_file_layer(
     config: &crate::config::FileLogConfig,
     path: &Path,
-) -> Box<dyn Layer<S2> + Send + Sync> {
+) -> (
+    Box<dyn Layer<S2> + Send + Sync>,
+    tracing_appender::non_blocking::WorkerGuard,
+) {
     let dir = path.parent().unwrap_or(Path::new("."));
     let filename = path
         .file_name()
@@ -349,13 +359,11 @@ fn build_file_layer(
         RotationPolicy::Daily => {
             let appender = tracing_appender::rolling::daily(dir, filename);
             let (non_blocking, guard) = tracing_appender::non_blocking(appender);
-            // Guard must live for program lifetime. Box::leak is acceptable here —
-            // the file layer is created at most a few times during process lifetime.
-            Box::leak(Box::new(guard));
-            match config.format {
+            let layer: Box<dyn Layer<S2> + Send + Sync> = match config.format {
                 LogFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
                 LogFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
-            }
+            };
+            (layer, guard)
         }
         RotationPolicy::Size => {
             let max_bytes = config.max_size_mb * 1024 * 1024;
@@ -366,11 +374,11 @@ fn build_file_layer(
             )
             .expect("failed to create rolling file appender");
             let (non_blocking, guard) = tracing_appender::non_blocking(appender);
-            Box::leak(Box::new(guard));
-            match config.format {
+            let layer: Box<dyn Layer<S2> + Send + Sync> = match config.format {
                 LogFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
                 LogFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
-            }
+            };
+            (layer, guard)
         }
         RotationPolicy::None => {
             // No rotation — use a single-file appender (max_size = u64::MAX, 1 file)
@@ -381,11 +389,11 @@ fn build_file_layer(
             )
             .expect("failed to create file appender");
             let (non_blocking, guard) = tracing_appender::non_blocking(appender);
-            Box::leak(Box::new(guard));
-            match config.format {
+            let layer: Box<dyn Layer<S2> + Send + Sync> = match config.format {
                 LogFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
                 LogFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
-            }
+            };
+            (layer, guard)
         }
     }
 }
