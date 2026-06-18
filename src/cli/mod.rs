@@ -6,6 +6,7 @@ pub mod apply;
 pub mod check;
 pub mod common;
 pub mod config_cmd;
+pub mod generate;
 pub mod init;
 pub mod install;
 pub mod invite;

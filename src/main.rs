@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
             cli::server::run(action, &ctx).await
         }
         Command::Serve { bind, port } => cli::serve::run(bind.as_deref(), *port, &cli).await,
-        Command::Generate { .. } => todo!("generate"),
+        Command::Generate { target } => cli::generate::run(target, &cli),
         Command::Invite { expires } => {
             let ctx = cli::common::resolve_context(&cli)?;
             cli::invite::run(expires.as_deref(), &ctx)
