@@ -6,6 +6,7 @@ pub mod handlers;
 pub mod state;
 pub mod tasks;
 pub mod template_filters;
+pub mod update_cache;
 
 use std::sync::Arc;
 
@@ -59,6 +60,7 @@ pub async fn start_server(
         spt_dir,
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(),
+        update_cache: crate::web::update_cache::UpdateCache::new(config.update_check_interval),
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
