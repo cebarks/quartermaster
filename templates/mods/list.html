@@ -42,16 +42,18 @@
             {% for m in &mods %}
             <tr>
                 <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}</a></td>
-                <td>{{ m.mod_info.version }}</td>
+                <td id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</td>
                 <td class="text-muted">{{ m.file_count }}</td>
                 <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
                 <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
                 {% if user.is_admin() %}
                 <td>
-                    <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
-                    </form>
+                    <span id="mod-update-{{ m.mod_info.id }}">
+                        <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
+                        </form>
+                    </span>
                     <form method="post" action="/mods/{{ m.mod_info.id }}/remove" style="display:inline"
                           data-name="{{ m.mod_info.name }}"
                           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
@@ -71,6 +73,7 @@
             </tr>
         </tfoot>
     </table>
+    <span hx-get="/api/mods/update-status" hx-trigger="load, sse:modsChanged from:#sse-source" hx-swap="none"></span>
 </div>
 {% endif %}
 

@@ -117,6 +117,10 @@ pub async fn start_server(
                         web::get().to(handlers::mods::check_updates_partial),
                     )
                     .route(
+                        "/mods/update-status",
+                        web::get().to(handlers::mods::update_status_partial),
+                    )
+                    .route(
                         "/mods/dep-tree",
                         web::get().to(handlers::mods::dep_tree_partial),
                     )

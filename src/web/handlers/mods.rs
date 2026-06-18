@@ -64,6 +64,19 @@ struct DependencyTreeTemplate {
     deps: Vec<DependencyNode>,
 }
 
+struct UpdateStatusEntry {
+    db_id: i64,
+    installed_version: String,
+    new_version: Option<String>,
+    csrf_token: String,
+}
+
+#[derive(Template)]
+#[template(path = "mods/partials/update_status.html")]
+struct UpdateStatusTemplate {
+    entries: Vec<UpdateStatusEntry>,
+}
+
 // -- Form structs --
 
 #[derive(serde::Deserialize)]
@@ -174,6 +187,58 @@ pub async fn check_updates_partial(
     .map_err(WebError::from)?;
 
     let updates_available = if !installed.is_empty() {
+        if let Some(cached) = state.update_cache.get() {
+            cached.updates.len()
+        } else {
+            let check_list: Vec<(i64, String)> = installed
+                .iter()
+                .map(|m| (m.forge_mod_id, m.version.clone()))
+                .collect();
+            match state
+                .forge
+                .check_updates(&check_list, &state.spt_info.spt_version)
+                .await
+            {
+                Ok(data) => {
+                    let count = data.updates.len();
+                    state.update_cache.set(data);
+                    count
+                }
+                Err(_) => 0,
+            }
+        }
+    } else {
+        0
+    };
+
+    let tmpl = UpdateBadgesTemplate { updates_available };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn update_status_partial(
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<Html> {
+    require_auth(&session)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let db = state.db.clone();
+    let installed = web::block(move || {
+        let db = db.lock();
+        db.list_mods()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    if installed.is_empty() {
+        let tmpl = UpdateStatusTemplate { entries: vec![] };
+        return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+    }
+
+    let updates_data = if let Some(cached) = state.update_cache.get() {
+        cached
+    } else {
         let check_list: Vec<(i64, String)> = installed
             .iter()
             .map(|m| (m.forge_mod_id, m.version.clone()))
@@ -183,14 +248,44 @@ pub async fn check_updates_partial(
             .check_updates(&check_list, &state.spt_info.spt_version)
             .await
         {
-            Ok(result) => result.updates.len(),
-            Err(_) => 0,
+            Ok(data) => {
+                state.update_cache.set(data.clone());
+                data
+            }
+            Err(_) => {
+                let entries = installed
+                    .iter()
+                    .map(|m| UpdateStatusEntry {
+                        db_id: m.id,
+                        installed_version: m.version.clone(),
+                        new_version: None,
+                        csrf_token: csrf_token.clone(),
+                    })
+                    .collect();
+                let tmpl = UpdateStatusTemplate { entries };
+                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+            }
         }
-    } else {
-        0
     };
 
-    let tmpl = UpdateBadgesTemplate { updates_available };
+    let entries: Vec<UpdateStatusEntry> = installed
+        .iter()
+        .map(|m| {
+            let new_version = updates_data
+                .updates
+                .iter()
+                .find(|u| u.current_version.mod_id == m.forge_mod_id)
+                .map(|u| u.recommended_version.version.clone());
+            UpdateStatusEntry {
+                db_id: m.id,
+                installed_version: m.version.clone(),
+                new_version,
+                csrf_token: csrf_token.clone(),
+            }
+        })
+        .collect();
+
+    let tmpl = UpdateStatusTemplate { entries };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
