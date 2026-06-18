@@ -270,29 +270,17 @@ pub async fn install_mod(
     let mod_slug = mod_info.slug.clone();
 
     web::block(move || {
-        use crate::spt::mods::extract_mod;
-
-        let extracted = extract_mod(&archive_path, &spt_dir)?;
         let db = db.lock();
-
-        let installed_id = db.insert_mod(
+        crate::ops::install_mod_from_archive(
+            &db,
+            &spt_dir,
             mod_id,
             version_id,
             &mod_name,
             mod_slug.as_deref(),
             &version_str,
-        )?;
-
-        for file in &extracted {
-            db.insert_file(
-                installed_id,
-                &file.path,
-                Some(&file.hash),
-                Some(file.size as i64),
-            )?;
-        }
-
-        Ok::<_, anyhow::Error>(())
+            &archive_path,
+        )
     })
     .await
     .map_err(WebError::from)?
@@ -385,27 +373,15 @@ pub async fn update_mod(
     let version_str = version.version.clone();
 
     web::block(move || {
-        use crate::spt::mods::{delete_mod_files, extract_mod};
-
         let db = db.lock();
-
-        let old_files = db.get_files_for_mod(mod_db_id)?;
-        let old_paths: Vec<String> = old_files.iter().map(|f| f.file_path.clone()).collect();
-        delete_mod_files(&spt_dir, &old_paths)?;
-        db.delete_files_for_mod(mod_db_id)?;
-
-        let extracted = extract_mod(&archive_path, &spt_dir)?;
-        for file in &extracted {
-            db.insert_file(
-                mod_db_id,
-                &file.path,
-                Some(&file.hash),
-                Some(file.size as i64),
-            )?;
-        }
-
-        db.update_mod(mod_db_id, version_id, &version_str)?;
-        Ok::<_, anyhow::Error>(())
+        crate::ops::update_mod_from_archive(
+            &db,
+            &spt_dir,
+            mod_db_id,
+            version_id,
+            &version_str,
+            &archive_path,
+        )
     })
     .await
     .map_err(WebError::from)?
@@ -461,14 +437,8 @@ pub async fn remove_mod(
     let db = state.db.clone();
 
     web::block(move || {
-        use crate::spt::mods::delete_mod_files;
-
         let db = db.lock();
-        let files = db.get_files_for_mod(mod_db_id)?;
-        let paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
-        delete_mod_files(&spt_dir, &paths)?;
-        db.delete_mod(mod_db_id)?;
-        Ok::<_, anyhow::Error>(())
+        crate::ops::remove_mod_by_id(&db, &spt_dir, mod_db_id)
     })
     .await
     .map_err(WebError::from)?
@@ -569,26 +539,15 @@ pub async fn update_all_mods(
         let version_str = update.recommended_version.version.clone();
 
         web::block(move || {
-            use crate::spt::mods::{delete_mod_files, extract_mod};
-
             let db = db.lock();
-            let old_files = db.get_files_for_mod(mod_db_id)?;
-            let old_paths: Vec<String> = old_files.iter().map(|f| f.file_path.clone()).collect();
-            delete_mod_files(&spt_dir, &old_paths)?;
-            db.delete_files_for_mod(mod_db_id)?;
-
-            let extracted = extract_mod(&archive_path, &spt_dir)?;
-            for file in &extracted {
-                db.insert_file(
-                    mod_db_id,
-                    &file.path,
-                    Some(&file.hash),
-                    Some(file.size as i64),
-                )?;
-            }
-
-            db.update_mod(mod_db_id, version_id, &version_str)?;
-            Ok::<_, anyhow::Error>(())
+            crate::ops::update_mod_from_archive(
+                &db,
+                &spt_dir,
+                mod_db_id,
+                version_id,
+                &version_str,
+                &archive_path,
+            )
         })
         .await
         .map_err(WebError::from)?
