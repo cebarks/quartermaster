@@ -188,21 +188,7 @@ fn check_integrity(ctx: &CliContext) -> Result<IntegrityHealth> {
         .map(|f| f.as_str())
         .collect();
 
-    let mut dir_counts: std::collections::BTreeMap<String, usize> =
-        std::collections::BTreeMap::new();
-    for path in &untracked {
-        let parts: Vec<&str> = path.split('/').collect();
-        // For server mods: SPT/user/mods/ModName/... -> SPT/user/mods/ModName
-        // For client mods: BepInEx/plugins/ModName/... -> BepInEx/plugins/ModName
-        let dir = if path.starts_with("SPT/") && parts.len() >= 4 {
-            format!("{}/{}/{}/{}", parts[0], parts[1], parts[2], parts[3])
-        } else if path.starts_with("BepInEx/") && parts.len() >= 3 {
-            format!("{}/{}/{}", parts[0], parts[1], parts[2])
-        } else {
-            path.to_string()
-        };
-        *dir_counts.entry(dir).or_default() += 1;
-    }
+    let dir_counts = crate::cli::common::group_untracked_by_mod_dir(&untracked);
 
     let untracked_dirs: Vec<UntrackedDir> = dir_counts
         .into_iter()
