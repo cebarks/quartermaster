@@ -45,6 +45,36 @@ pub struct RegisterQuery {
     code: Option<String>,
 }
 
+const MIN_PASSWORD_LEN: usize = 8;
+const MAX_PASSWORD_LEN: usize = 128;
+
+// -- Helpers --
+
+fn render_register_error(
+    msg: &str,
+    code: String,
+    profiles: Vec<SptProfile>,
+) -> actix_web::Result<HttpResponse> {
+    let tmpl = RegisterTemplate {
+        error: Some(msg.to_string()),
+        code,
+        profiles,
+    };
+    Ok(HttpResponse::BadRequest()
+        .content_type("text/html")
+        .body(tmpl.render().map_err(WebError::from)?))
+}
+
+fn is_invite_expired(expires_at: Option<&str>) -> bool {
+    let Some(exp) = expires_at else {
+        return false;
+    };
+    match chrono::DateTime::parse_from_rfc3339(exp) {
+        Ok(dt) => dt < chrono::Utc::now(),
+        Err(_) => exp < chrono::Utc::now().to_rfc3339().as_str(),
+    }
+}
+
 // -- Handlers --
 
 pub async fn login_page() -> actix_web::Result<HttpResponse> {
@@ -83,10 +113,10 @@ pub async fn login_submit(
         }
     };
 
-    // Argon2 verification is CPU-intensive — run on blocking thread pool
-    let valid = match user.password_hash.clone() {
-        Some(hash) => {
+    let valid = match user.password_hash {
+        Some(ref hash) => {
             let password = form.password.clone();
+            let hash = hash.clone();
             web::block(move || verify_password(&password, &hash))
                 .await
                 .map_err(WebError::from)?
@@ -163,12 +193,7 @@ pub async fn register_page(
                 .content_type("text/html")
                 .body(tmpl.render().map_err(WebError::from)?))
         }
-        Some(ref inv)
-            if inv
-                .expires_at
-                .as_deref()
-                .is_some_and(|exp| exp < chrono::Utc::now().to_rfc3339().as_str()) =>
-        {
+        Some(ref inv) if is_invite_expired(inv.expires_at.as_deref()) => {
             let tmpl = RegisterTemplate {
                 error: Some("This invite code has expired".to_string()),
                 code,
@@ -179,7 +204,11 @@ pub async fn register_page(
                 .body(tmpl.render().map_err(WebError::from)?))
         }
         Some(_) => {
-            let profiles = list_profiles(&state.spt_dir).unwrap_or_default();
+            let spt_dir = state.spt_dir.clone();
+            let profiles = web::block(move || list_profiles(&spt_dir))
+                .await
+                .map_err(WebError::from)?
+                .unwrap_or_default();
             let tmpl = RegisterTemplate {
                 error: None,
                 code,
@@ -199,48 +228,45 @@ pub async fn register_submit(
 ) -> actix_web::Result<HttpResponse> {
     let form = form.into_inner();
 
-    if form.password != form.password_confirm {
-        let profiles = list_profiles(&state.spt_dir).unwrap_or_default();
-        let tmpl = RegisterTemplate {
-            error: Some("Passwords do not match".to_string()),
-            code: form.code,
+    let spt_dir = state.spt_dir.clone();
+    let profiles = web::block(move || list_profiles(&spt_dir))
+        .await
+        .map_err(WebError::from)?
+        .unwrap_or_default();
+
+    if form.password.len() < MIN_PASSWORD_LEN {
+        return render_register_error(
+            &format!("Password must be at least {MIN_PASSWORD_LEN} characters"),
+            form.code,
             profiles,
-        };
-        return Ok(HttpResponse::Ok()
-            .content_type("text/html")
-            .body(tmpl.render().map_err(WebError::from)?));
+        );
+    }
+
+    if form.password.len() > MAX_PASSWORD_LEN {
+        return render_register_error(
+            &format!("Password must be at most {MAX_PASSWORD_LEN} characters"),
+            form.code,
+            profiles,
+        );
+    }
+
+    if form.password != form.password_confirm {
+        return render_register_error("Passwords do not match", form.code, profiles);
     }
 
     if form.profile_id.is_empty() {
-        let profiles = list_profiles(&state.spt_dir).unwrap_or_default();
-        let tmpl = RegisterTemplate {
-            error: Some("Please select your SPT profile".to_string()),
-            code: form.code,
-            profiles,
-        };
-        return Ok(HttpResponse::Ok()
-            .content_type("text/html")
-            .body(tmpl.render().map_err(WebError::from)?));
+        return render_register_error("Please select your SPT profile", form.code, profiles);
     }
 
-    let profiles = list_profiles(&state.spt_dir).unwrap_or_default();
     let profile = profiles.iter().find(|p| p.aid == form.profile_id);
 
     let username = match profile {
         Some(p) => p.username.clone(),
         None => {
-            let tmpl = RegisterTemplate {
-                error: Some("Invalid profile selection".to_string()),
-                code: form.code,
-                profiles,
-            };
-            return Ok(HttpResponse::Ok()
-                .content_type("text/html")
-                .body(tmpl.render().map_err(WebError::from)?));
+            return render_register_error("Invalid profile selection", form.code, profiles);
         }
     };
 
-    // Argon2 hashing is CPU-intensive — run on blocking thread pool
     let password = form.password.clone();
     let password_hash = web::block(move || hash_password(&password))
         .await
@@ -260,11 +286,17 @@ pub async fn register_submit(
             ));
         }
 
-        let user_id = db.insert_user(&username, &profile_id, Some(&password_hash), "player")?;
-        let used = db.use_invite(&code, user_id)?;
+        // Consume the invite BEFORE creating the user to prevent orphaned accounts
+        // when concurrent requests race on the same invite code
+        let used = db.use_invite(&code, 0)?;
         if used == 0 {
             return Ok(Err("Invite code is invalid or expired".to_string()));
         }
+
+        let user_id = db.insert_user(&username, &profile_id, Some(&password_hash), "player")?;
+
+        // Update the invite to point to the real user_id
+        db.use_invite(&code, user_id).ok();
 
         Ok(Ok(user_id))
     })
@@ -276,17 +308,7 @@ pub async fn register_submit(
         Ok(_user_id) => Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/login"))
             .finish()),
-        Err(msg) => {
-            let profiles = list_profiles(&state.spt_dir).unwrap_or_default();
-            let tmpl = RegisterTemplate {
-                error: Some(msg),
-                code: form.code,
-                profiles,
-            };
-            Ok(HttpResponse::Ok()
-                .content_type("text/html")
-                .body(tmpl.render().map_err(WebError::from)?))
-        }
+        Err(msg) => render_register_error(&msg, form.code, profiles),
     }
 }
 
