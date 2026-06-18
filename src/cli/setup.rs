@@ -277,9 +277,13 @@ async fn first_boot(config: &Config, spt_dir: &Path, non_interactive: bool) -> R
     };
     let podman = PodmanClient::new(container);
 
-    // TODO(debt): is_running errors (permissions, missing socket) are swallowed here —
-    // if this becomes confusing, log them or let start() surface the real error
-    let running = podman.is_running().await.unwrap_or(false);
+    let running = match podman.is_running().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Warning: could not check if server is running: {e:#}");
+            false
+        }
+    };
     if running {
         println!("Server is already running.");
         return Ok(());
