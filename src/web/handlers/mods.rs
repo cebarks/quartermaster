@@ -228,7 +228,7 @@ pub async fn update_status_partial(
     state: Data<AppState>,
     session: Session,
 ) -> actix_web::Result<Html> {
-    require_auth(&session)?;
+    require_admin(&session)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let db = state.db.clone();
@@ -505,8 +505,8 @@ pub async fn install_mod(
         match result {
             Ok(()) => {
                 tracing::info!(mod_id, "mod installed successfully");
-                tasks.complete(task_id, "Mod installed successfully".to_string());
                 update_cache.invalidate();
+                tasks.complete(task_id, "Mod installed successfully".to_string());
             }
             Err(e) => {
                 tracing::error!(mod_id, error = %e, "mod install failed");
@@ -667,8 +667,8 @@ pub async fn update_mod(
         match result {
             Ok(()) => {
                 tracing::info!(mod_db_id, "mod updated successfully");
-                tasks.complete(task_id, "Mod updated successfully".to_string());
                 update_cache.invalidate();
+                tasks.complete(task_id, "Mod updated successfully".to_string());
             }
             Err(e) => {
                 tracing::error!(mod_db_id, error = %e, "mod update failed");
@@ -934,7 +934,7 @@ pub async fn update_all_mods(
 }
 
 pub async fn list_body_partial(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = require_auth(&session)?;
+    let user = require_admin(&session)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
 
