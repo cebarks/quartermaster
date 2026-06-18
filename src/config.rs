@@ -335,27 +335,17 @@ web_port = 3000
 
     #[test]
     fn resolve_config_path_fallback() {
-        // No CLI flag, no spt_dir -> falls back to "quartermaster.toml"
-        // First, clear QUMA_CONFIG if it's set
-        unsafe {
-            std::env::remove_var("QUMA_CONFIG");
-        }
-        let result = Config::resolve_path(None, None);
-        assert_eq!(result, PathBuf::from("quartermaster.toml"));
+        temp_env::with_vars_unset(["QUMA_CONFIG"], || {
+            let result = Config::resolve_path(None, None);
+            assert_eq!(result, PathBuf::from("quartermaster.toml"));
+        });
     }
 
     #[test]
     fn resolve_config_path_env_override() {
-        // QUMA_CONFIG env var should be used when no CLI flag is given
-        unsafe {
-            std::env::set_var("QUMA_CONFIG", "/env/path/config.toml");
-        }
-
-        let result = Config::resolve_path(None, Some(Path::new("/opt/spt")));
-        assert_eq!(result, PathBuf::from("/env/path/config.toml"));
-
-        unsafe {
-            std::env::remove_var("QUMA_CONFIG");
-        }
+        temp_env::with_vars([("QUMA_CONFIG", Some("/env/path/config.toml"))], || {
+            let result = Config::resolve_path(None, Some(Path::new("/opt/spt")));
+            assert_eq!(result, PathBuf::from("/env/path/config.toml"));
+        });
     }
 }

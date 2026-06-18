@@ -115,79 +115,64 @@ mod tests {
 
     #[test]
     fn init_creates_config_and_db() {
-        // Clear QUMA_CONFIG env var to avoid interference from other tests
-        unsafe {
-            std::env::remove_var("QUMA_CONFIG");
-        }
+        temp_env::with_vars_unset(["QUMA_CONFIG"], || {
+            let tmp = TempDir::new().unwrap();
+            let spt_dir = create_fake_spt_dir(tmp.path());
 
-        let tmp = TempDir::new().unwrap();
-        let spt_dir = create_fake_spt_dir(tmp.path());
+            let cli = Cli {
+                spt_dir: None,
+                config: None,
+                command: crate::cli::Command::Init { path: None },
+            };
 
-        let cli = Cli {
-            spt_dir: None,
-            config: None,
-            command: crate::cli::Command::Init { path: None },
-        };
+            run(Some(spt_dir.clone()), &cli).unwrap();
 
-        run(Some(spt_dir.clone()), &cli).unwrap();
+            let config_path = spt_dir.join("quartermaster.toml");
+            assert!(config_path.exists(), "config file should be created");
 
-        // Config file should exist
-        let config_path = spt_dir.join("quartermaster.toml");
-        assert!(config_path.exists(), "config file should be created");
+            let db_path = spt_dir.join("quartermaster.db");
+            assert!(db_path.exists(), "database should be created");
 
-        // DB file should exist
-        let db_path = spt_dir.join("quartermaster.db");
-        assert!(db_path.exists(), "database should be created");
-
-        // Config should have spt_dir set and a session secret
-        let config = Config::load(&config_path).unwrap();
-        assert_eq!(config.spt_dir, Some(spt_dir));
-        assert!(!config.session_secret.is_empty());
+            let config = Config::load(&config_path).unwrap();
+            assert_eq!(config.spt_dir, Some(spt_dir));
+            assert!(!config.session_secret.is_empty());
+        });
     }
 
     #[test]
     fn init_detects_unmanaged_mods() {
-        // Clear QUMA_CONFIG env var to avoid interference from other tests
-        unsafe {
-            std::env::remove_var("QUMA_CONFIG");
-        }
+        temp_env::with_vars_unset(["QUMA_CONFIG"], || {
+            let tmp = TempDir::new().unwrap();
+            let spt_dir = create_fake_spt_dir(tmp.path());
 
-        let tmp = TempDir::new().unwrap();
-        let spt_dir = create_fake_spt_dir(tmp.path());
+            let mod_dir = spt_dir.join("SPT/user/mods/SomeMod");
+            std::fs::create_dir_all(&mod_dir).unwrap();
+            std::fs::write(mod_dir.join("package.json"), b"{}").unwrap();
 
-        // Create some existing mod files
-        let mod_dir = spt_dir.join("SPT/user/mods/SomeMod");
-        std::fs::create_dir_all(&mod_dir).unwrap();
-        std::fs::write(mod_dir.join("package.json"), b"{}").unwrap();
+            let cli = Cli {
+                spt_dir: None,
+                config: None,
+                command: crate::cli::Command::Init { path: None },
+            };
 
-        let cli = Cli {
-            spt_dir: None,
-            config: None,
-            command: crate::cli::Command::Init { path: None },
-        };
-
-        // Should succeed and report unmanaged files (output goes to stdout)
-        run(Some(spt_dir), &cli).unwrap();
+            run(Some(spt_dir), &cli).unwrap();
+        });
     }
 
     #[test]
     fn init_idempotent_with_existing_config() {
-        // Clear QUMA_CONFIG env var to avoid interference from other tests
-        unsafe {
-            std::env::remove_var("QUMA_CONFIG");
-        }
+        temp_env::with_vars_unset(["QUMA_CONFIG"], || {
+            let tmp = TempDir::new().unwrap();
+            let spt_dir = create_fake_spt_dir(tmp.path());
 
-        let tmp = TempDir::new().unwrap();
-        let spt_dir = create_fake_spt_dir(tmp.path());
+            let cli = Cli {
+                spt_dir: None,
+                config: None,
+                command: crate::cli::Command::Init { path: None },
+            };
 
-        let cli = Cli {
-            spt_dir: None,
-            config: None,
-            command: crate::cli::Command::Init { path: None },
-        };
-
-        // Run init twice
-        run(Some(spt_dir.clone()), &cli).unwrap();
-        run(Some(spt_dir), &cli).unwrap();
+            run(Some(spt_dir.clone()), &cli).unwrap();
+            run(Some(spt_dir), &cli).unwrap();
+        });
     }
 }
