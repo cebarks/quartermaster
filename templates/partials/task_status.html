@@ -1,0 +1,19 @@
+{% if !tasks.is_empty() %}
+<div id="task-status"
+     {% if has_active %}hx-get="/api/tasks/status" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+    {% for task in &tasks %}
+    <div class="alert {{ task.css_class }}">
+        <span>{{ task.message }}</span>
+        {% if !task.is_running %}
+            <form method="post" action="/api/tasks/{{ task.id }}/dismiss" style="display:inline"
+                  hx-post="/api/tasks/{{ task.id }}/dismiss" hx-target="#task-status" hx-swap="outerHTML">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm">Dismiss</button>
+            </form>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div id="task-status"></div>
+{% endif %}

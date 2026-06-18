@@ -21,6 +21,7 @@ pub struct InstalledFile {
     pub file_path: String,
     pub file_hash: Option<String>,
     pub file_size: Option<i64>,
+    pub source: String,
 }
 
 #[derive(Debug, Clone)]
@@ -157,9 +158,25 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn insert_file_with_source(
+        &self,
+        mod_id: i64,
+        file_path: &str,
+        file_hash: Option<&str>,
+        file_size: Option<i64>,
+        source: &str,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO installed_files (mod_id, file_path, file_hash, file_size, source)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![mod_id, file_path, file_hash, file_size, source],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
     pub fn get_files_for_mod(&self, mod_id: i64) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, file_path, file_hash, file_size
+            "SELECT id, mod_id, file_path, file_hash, file_size, source
              FROM installed_files WHERE mod_id = ?1 ORDER BY file_path",
         )?;
         let rows = stmt.query_map(params![mod_id], row_to_installed_file)?;
@@ -175,7 +192,7 @@ impl Database {
 
     pub fn get_all_tracked_files(&self) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, file_path, file_hash, file_size
+            "SELECT id, mod_id, file_path, file_hash, file_size, source
              FROM installed_files ORDER BY file_path",
         )?;
         let rows = stmt.query_map([], row_to_installed_file)?;
@@ -244,6 +261,7 @@ fn row_to_installed_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledF
         file_path: row.get(2)?,
         file_hash: row.get(3)?,
         file_size: row.get(4)?,
+        source: row.get(5)?,
     })
 }
 

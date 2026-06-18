@@ -2,7 +2,7 @@ use actix_session::Session;
 use actix_web::web::{self, Data, Html};
 use askama::Template;
 
-use crate::health::{self, HealthReport};
+use crate::health::{self, IntegrityHealth, ModsHealth, ServerHealth};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
@@ -17,9 +17,21 @@ struct StatusPageTemplate {
 }
 
 #[derive(Template)]
-#[template(path = "partials/status_detail.html")]
-struct StatusDetailTemplate {
-    report: HealthReport,
+#[template(path = "partials/status_server.html")]
+struct StatusServerTemplate {
+    report: ServerHealth,
+}
+
+#[derive(Template)]
+#[template(path = "partials/status_mods.html")]
+struct StatusModsTemplate {
+    report: ModsHealth,
+}
+
+#[derive(Template)]
+#[template(path = "partials/status_integrity.html")]
+struct StatusIntegrityTemplate {
+    report: IntegrityHealth,
 }
 
 pub async fn status_page(session: Session) -> actix_web::Result<Html> {
@@ -34,52 +46,60 @@ pub async fn status_page(session: Session) -> actix_web::Result<Html> {
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-pub async fn status_partial(state: Data<AppState>) -> actix_web::Result<Html> {
-    let report = build_health_report(&state).await.map_err(WebError::from)?;
-    let tmpl = StatusDetailTemplate { report };
+pub async fn server_partial(state: Data<AppState>) -> actix_web::Result<Html> {
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let spt_client = crate::spt::server::SptClient::new(&host, port).map_err(WebError::from)?;
+    let address = spt_client.base_url().to_string();
+    let report = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
+    let tmpl = StatusServerTemplate { report };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-async fn build_health_report(state: &AppState) -> anyhow::Result<HealthReport> {
-    use crate::server_detect::resolve_server_addr;
-    use crate::spt::server::SptClient;
+pub async fn mods_partial(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
+    require_auth(&session)?;
+    let db = state.db.clone();
+    let installed_mods = web::block(move || {
+        let db = db.lock();
+        db.list_mods()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
 
-    let (host, port) = resolve_server_addr(&state.config, &state.spt_dir);
-    let spt_client = SptClient::new(&host, port)?;
-    let address = spt_client.base_url().to_string();
-
-    let server = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
-
-    let loaded_mods = if server.reachable {
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let loaded_mods = if let Ok(spt_client) = crate::spt::server::SptClient::new(&host, port) {
         spt_client.loaded_server_mods().await.ok()
     } else {
         None
     };
 
-    let db = state.db.clone();
-    let (installed_mods, tracked_files) = web::block(move || {
-        let db = db.lock();
-        let mods = db.list_mods()?;
-        let files = db.get_all_tracked_files()?;
-        Ok::<_, anyhow::Error>((mods, files))
-    })
-    .await??;
-
-    let mods = health::check_mods_health(
+    let report = health::check_mods_health(
         &installed_mods,
         loaded_mods.as_ref(),
         &state.forge,
         &state.spt_info.spt_version,
     )
     .await;
+    let tmpl = StatusModsTemplate { report };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn integrity_partial(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
+    require_auth(&session)?;
+    let db = state.db.clone();
+    let tracked_files = web::block(move || {
+        let db = db.lock();
+        db.get_all_tracked_files()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
 
     let spt_dir = state.spt_dir.clone();
-    let integrity =
-        web::block(move || health::check_integrity_from(&tracked_files, &spt_dir)).await??;
-
-    Ok(HealthReport {
-        server,
-        mods,
-        integrity,
-    })
+    let report = web::block(move || health::check_integrity_from(&tracked_files, &spt_dir))
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+    let tmpl = StatusIntegrityTemplate { report };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

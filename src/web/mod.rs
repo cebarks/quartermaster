@@ -4,6 +4,7 @@ pub mod error;
 pub mod flash;
 pub mod handlers;
 pub mod state;
+pub mod tasks;
 
 use std::sync::Arc;
 
@@ -56,9 +57,10 @@ pub async fn start_server(
         config: config.clone(),
         spt_dir,
         spt_info,
+        tasks: crate::web::tasks::TaskTracker::new(),
     });
 
-    println!("Quartermaster web UI starting on http://{bind_addr}");
+    tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
 
     let governor_conf = GovernorConfigBuilder::default()
         .seconds_per_request(12) // 5 per minute = 1 per 12 seconds replenish
@@ -80,6 +82,7 @@ pub async fn start_server(
                     .build(),
             )
             .wrap(middleware::NormalizePath::trim())
+            .wrap(tracing_actix_web::TracingLogger::default())
             // Static assets (public, before auth scope to avoid shadowing)
             .route("/assets/{path:.*}", web::get().to(serve_asset))
             // Auth routes (public)
@@ -109,10 +112,29 @@ pub async fn start_server(
                         "/mods/dep-tree",
                         web::get().to(handlers::mods::dep_tree_partial),
                     )
-                    .route("/status", web::get().to(handlers::status::status_partial))
+                    .route(
+                        "/status/server",
+                        web::get().to(handlers::status::server_partial),
+                    )
+                    .route(
+                        "/status/mods",
+                        web::get().to(handlers::status::mods_partial),
+                    )
+                    .route(
+                        "/status/integrity",
+                        web::get().to(handlers::status::integrity_partial),
+                    )
                     .route(
                         "/dashboard/server-status",
                         web::get().to(handlers::dashboard::server_status_partial),
+                    )
+                    .route(
+                        "/tasks/status",
+                        web::get().to(handlers::tasks::task_status_partial),
+                    )
+                    .route(
+                        "/tasks/{id}/dismiss",
+                        web::post().to(handlers::tasks::dismiss_task),
                     ),
             )
             // Authenticated routes — admin checks are per-handler via require_admin()

@@ -73,6 +73,81 @@ pub fn remove_mod_by_id(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result
     Ok(())
 }
 
+/// Scan a mod's directories on disk and record any files not already tracked
+/// as runtime-generated files (source = 'runtime').
+pub fn scan_and_record_runtime_files(
+    db: &std::sync::Arc<parking_lot::Mutex<Database>>,
+    mod_db_id: i64,
+    spt_dir: &Path,
+) -> Result<()> {
+    let db = db.lock();
+    let tracked = db.get_files_for_mod(mod_db_id)?;
+    let tracked_paths: std::collections::HashSet<&str> =
+        tracked.iter().map(|f| f.file_path.as_str()).collect();
+
+    // Determine which top-level directories this mod occupies
+    let mut mod_dirs: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
+    for file in &tracked {
+        let p = Path::new(&file.file_path);
+        // For SPT/user/mods/ModName/... take first 4 components
+        // For BepInEx/plugins/ModName/... take first 3 components
+        let parts: Vec<&str> = file.file_path.split('/').collect();
+        let dir = if file.file_path.starts_with("SPT/") && parts.len() >= 4 {
+            format!("{}/{}/{}/{}", parts[0], parts[1], parts[2], parts[3])
+        } else if file.file_path.starts_with("BepInEx/") && parts.len() >= 3 {
+            format!("{}/{}/{}", parts[0], parts[1], parts[2])
+        } else if let Some(parent) = p.parent() {
+            parent.to_string_lossy().to_string()
+        } else {
+            continue;
+        };
+        mod_dirs.insert(spt_dir.join(dir));
+    }
+
+    // Scan each directory for untracked files
+    for dir in &mod_dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        scan_runtime_recursive(dir, spt_dir, mod_db_id, &tracked_paths, &db)?;
+    }
+
+    Ok(())
+}
+
+fn scan_runtime_recursive(
+    dir: &Path,
+    spt_root: &Path,
+    mod_db_id: i64,
+    tracked: &std::collections::HashSet<&str>,
+    db: &Database,
+) -> Result<()> {
+    let entries = std::fs::read_dir(dir)?;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            scan_runtime_recursive(&path, spt_root, mod_db_id, tracked, db)?;
+        } else if let Ok(relative) = path.strip_prefix(spt_root) {
+            let rel_str = relative.to_string_lossy();
+            if !tracked.contains(rel_str.as_ref()) {
+                let content = std::fs::read(&path).unwrap_or_default();
+                let hash = crate::spt::mods::compute_hash_public(&content);
+                let size = content.len() as i64;
+                let _ = db.insert_file_with_source(
+                    mod_db_id,
+                    &rel_str,
+                    Some(&hash),
+                    Some(size),
+                    "runtime",
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Recursively collect all transitive reverse dependencies of a mod.
 /// Returns them in BFS order (direct dependents first, then their dependents, etc.).
 pub fn collect_all_reverse_deps(db: &Database, mod_db_id: i64) -> Result<Vec<InstalledMod>> {

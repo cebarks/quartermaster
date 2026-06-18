@@ -124,10 +124,7 @@ pub async fn apply_queue(
                 .map_err(WebError::from)?;
             }
             Err(e) => {
-                eprintln!(
-                    "queue apply failed for {} '{}': {e}",
-                    op.action, op.mod_name
-                );
+                tracing::error!(action = %op.action, mod_name = %op.mod_name, error = %e, "queue apply failed");
                 failures.push(op.mod_name.clone());
             }
         }

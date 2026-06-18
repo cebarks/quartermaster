@@ -8,6 +8,7 @@ use super::models::*;
 
 const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
 
+#[derive(Clone)]
 pub struct ForgeClient {
     client: reqwest::Client,
     base_url: String,
