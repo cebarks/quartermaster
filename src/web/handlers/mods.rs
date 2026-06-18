@@ -295,6 +295,8 @@ pub async fn install_mod(
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
 
+    tracing::info!(mod_id, mod_name = %mod_name, version = %version_str, "installing mod");
+
     web::block(move || {
         let db = db.lock();
         crate::ops::install_mod_from_archive(
@@ -405,6 +407,8 @@ pub async fn update_mod(
     let version_id = version.id;
     let version_str = version.version.clone();
 
+    tracing::info!(mod_db_id, mod_name = %installed.name, version = %version_str, "updating mod");
+
     web::block(move || {
         let db = db.lock();
         crate::ops::update_mod_from_archive(
@@ -474,6 +478,8 @@ pub async fn remove_mod(
 
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+
+    tracing::info!(mod_db_id, mod_name = %installed.name, "removing mod");
 
     web::block(move || {
         let db = db.lock();

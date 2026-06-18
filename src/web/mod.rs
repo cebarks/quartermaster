@@ -58,7 +58,7 @@ pub async fn start_server(
         spt_info,
     });
 
-    println!("Quartermaster web UI starting on http://{bind_addr}");
+    tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
 
     let governor_conf = GovernorConfigBuilder::default()
         .seconds_per_request(12) // 5 per minute = 1 per 12 seconds replenish
@@ -80,6 +80,7 @@ pub async fn start_server(
                     .build(),
             )
             .wrap(middleware::NormalizePath::trim())
+            .wrap(tracing_actix_web::TracingLogger::default())
             // Static assets (public, before auth scope to avoid shadowing)
             .route("/assets/{path:.*}", web::get().to(serve_asset))
             // Auth routes (public)

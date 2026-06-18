@@ -69,6 +69,11 @@ parking_lot = "0.12"
 # JSONC comment stripping (for Fika config)
 json_comments = "0.2.2"
 
+# Structured logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-actix-web = "0.7"
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

@@ -26,6 +26,9 @@ pub async fn start_server(
         ))?;
 
     let podman = PodmanClient::new(container);
+
+    tracing::info!(container, "starting server");
+
     podman.start().await.map_err(WebError::from)?;
 
     set_flash(&session, "Server starting", "success");
@@ -52,6 +55,9 @@ pub async fn stop_server(
         ))?;
 
     let podman = PodmanClient::new(container);
+
+    tracing::info!(container, "stopping server");
+
     podman.stop().await.map_err(WebError::from)?;
 
     set_flash(&session, "Server stopped", "success");
@@ -78,6 +84,9 @@ pub async fn restart_server(
         ))?;
 
     let podman = PodmanClient::new(container);
+
+    tracing::info!(container, "restarting server");
+
     podman.stop().await.map_err(WebError::from)?;
 
     if state.config.auto_drain_on_lifecycle {

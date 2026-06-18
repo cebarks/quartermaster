@@ -32,7 +32,7 @@ impl ResponseError for WebError {
 
     fn error_response(&self) -> HttpResponse {
         if let WebError::Internal(e) = self {
-            eprintln!("internal error: {e:#}");
+            tracing::error!(error = %e, "internal server error");
         }
         let body = match self {
             WebError::Internal(_) => "an internal server error occurred".to_string(),
