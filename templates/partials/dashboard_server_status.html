@@ -1,0 +1,10 @@
+{% if reachable %}
+<div class="stat-value" style="font-size: 1rem; display: flex; align-items: center; gap: 0.4rem;">
+    <span class="status-dot up glow"></span> Running
+</div>
+<div class="stat-detail">{% if let Some(ms) = latency_ms %}{{ ms }}ms latency{% endif %}</div>
+{% else %}
+<div class="stat-value" style="font-size: 1rem; display: flex; align-items: center; gap: 0.4rem;">
+    <span class="status-dot down"></span> Down
+</div>
+{% endif %}

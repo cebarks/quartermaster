@@ -4,6 +4,9 @@ use askama::Template;
 
 use crate::cli::common::find_unmanaged_mod_dirs;
 use crate::db::mods::InstalledMod;
+use crate::health;
+use crate::server_detect::resolve_server_addr;
+use crate::spt::server::SptClient;
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
@@ -44,6 +47,27 @@ pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Re
         pending_count,
         unmanaged_dirs,
         flash,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+#[derive(Template)]
+#[template(path = "partials/dashboard_server_status.html")]
+struct DashboardServerStatusTemplate {
+    reachable: bool,
+    latency_ms: Option<u64>,
+}
+
+pub async fn server_status_partial(state: Data<AppState>) -> actix_web::Result<Html> {
+    let (host, port) = resolve_server_addr(&state.config, &state.spt_dir);
+    let spt_client = SptClient::new(&host, port).map_err(WebError::from)?;
+    let address = spt_client.base_url().to_string();
+
+    let server = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
+
+    let tmpl = DashboardServerStatusTemplate {
+        reachable: server.reachable,
+        latency_ms: server.latency_ms,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

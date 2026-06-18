@@ -5,6 +5,25 @@
 {% block content %}
 <h1>Dashboard</h1>
 
+<div class="stat-card-grid">
+    <a href="/mods" class="stat-card" style="border-left-color: var(--success)">
+        <div class="stat-label">Mods</div>
+        <div class="stat-value">{{ mods.len() }}</div>
+        <div class="stat-detail">installed</div>
+    </a>
+    <a href="/queue" class="stat-card" style="border-left-color: {% if pending_count > 0 %}var(--warning){% else %}var(--success){% endif %}">
+        <div class="stat-label">Queue</div>
+        <div class="stat-value">{{ pending_count }}</div>
+        <div class="stat-detail">{% if pending_count > 0 %}pending{% else %}all clear{% endif %}</div>
+    </a>
+    <a href="/status" class="stat-card" style="border-left-color: var(--border)">
+        <div class="stat-label">Server</div>
+        <div hx-get="/api/dashboard/server-status" hx-trigger="load" hx-swap="innerHTML">
+            <span class="text-muted text-sm loading-pulse">Checking...</span>
+        </div>
+    </a>
+</div>
+
 <div class="card">
     <div class="flex-between mb-1">
         <h2>Installed Mods ({{ mods.len() }})</h2>
@@ -13,7 +32,10 @@
         </span>
     </div>
     {% if mods.is_empty() %}
-    <p class="text-muted">No mods installed. {% if user.is_admin() %}Use <code>quma install</code> or the <a href="/mods">Mods</a> page to install mods.{% endif %}</p>
+    <div class="empty-state">
+        <p>No mods installed.</p>
+        {% if user.is_admin() %}<p class="mt-1"><a href="/mods">Go to Mods</a> to install your first mod.</p>{% endif %}
+    </div>
     {% else %}
     <table>
         <thead>
