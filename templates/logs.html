@@ -90,12 +90,29 @@
         div.className = 'log-entry ' + levelClass(entry.level);
         div.dataset.level = entry.level.toLowerCase();
         const ts = new Date(entry.timestamp).toLocaleTimeString();
+        const tsSpan = document.createElement('span');
+        tsSpan.className = 'log-ts';
+        tsSpan.textContent = ts;
+        const lvlSpan = document.createElement('span');
+        lvlSpan.className = 'log-level';
+        lvlSpan.textContent = entry.level;
+        const tgtSpan = document.createElement('span');
+        tgtSpan.className = 'log-target';
+        tgtSpan.textContent = entry.target;
+        div.appendChild(tsSpan);
+        div.appendChild(document.createTextNode(' '));
+        div.appendChild(lvlSpan);
+        div.appendChild(document.createTextNode(' '));
+        div.appendChild(tgtSpan);
+        div.appendChild(document.createTextNode(' ' + entry.message));
         const fieldsStr = formatFields(entry.fields);
-        div.innerHTML = '<span class="log-ts">' + ts + '</span> '
-            + '<span class="log-level">' + entry.level + '</span> '
-            + '<span class="log-target">' + entry.target + '</span> '
-            + entry.message
-            + (fieldsStr ? ' <span class="log-fields">' + fieldsStr + '</span>' : '');
+        if (fieldsStr) {
+            const fSpan = document.createElement('span');
+            fSpan.className = 'log-fields';
+            fSpan.textContent = fieldsStr;
+            div.appendChild(document.createTextNode(' '));
+            div.appendChild(fSpan);
+        }
         return div;
     }
 
