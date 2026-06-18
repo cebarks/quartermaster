@@ -26,6 +26,9 @@ pub struct ServerHealth {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModsHealth {
     pub installed_count: usize,
+    pub loaded_count: Option<usize>,
+    pub load_failures: Vec<String>,
+    pub untracked_loaded: Vec<String>,
     pub updates_available: usize,
     pub incompatible_mods: Vec<String>,
 }
@@ -54,6 +57,7 @@ impl HealthReport {
             return 1;
         }
         if !self.mods.incompatible_mods.is_empty()
+            || !self.mods.load_failures.is_empty()
             || !self.integrity.missing_files.is_empty()
             || !self.integrity.modified_files.is_empty()
         {
@@ -70,8 +74,20 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
 
     let server = check_server(&spt_client, &ctx.spt_info.spt_version, &address).await;
 
+    let loaded_mods = if server.reachable {
+        spt_client.loaded_server_mods().await.ok()
+    } else {
+        None
+    };
+
     let installed_mods = ctx.db.list_mods()?;
-    let mods = check_mods_health(&installed_mods, &ctx.forge, &ctx.spt_info.spt_version).await;
+    let mods = check_mods_health(
+        &installed_mods,
+        loaded_mods.as_ref(),
+        &ctx.forge,
+        &ctx.spt_info.spt_version,
+    )
+    .await;
 
     let tracked_files = ctx.db.get_all_tracked_files()?;
     let integrity = check_integrity_from(&tracked_files, &ctx.spt_dir)?;
@@ -122,6 +138,7 @@ pub async fn check_server(
 
 pub async fn check_mods_health(
     installed_mods: &[crate::db::mods::InstalledMod],
+    loaded_mods: Option<&std::collections::HashMap<String, serde_json::Value>>,
     forge: &crate::forge::client::ForgeClient,
     spt_version: &str,
 ) -> ModsHealth {
@@ -143,8 +160,19 @@ pub async fn check_mods_health(
         }
     }
 
+    let (loaded_count, load_failures, untracked_loaded) = match loaded_mods {
+        Some(loaded) => {
+            let (failures, untracked) = check_mod_loads(installed_mods, loaded);
+            (Some(loaded.len()), failures, untracked)
+        }
+        None => (None, vec![], vec![]),
+    };
+
     ModsHealth {
         installed_count: installed_mods.len(),
+        loaded_count,
+        load_failures,
+        untracked_loaded,
         updates_available,
         incompatible_mods,
     }
@@ -203,9 +231,41 @@ pub fn check_integrity_from(
     })
 }
 
+/// Compare installed mods (from DB) against loaded mods (from SPT server).
+/// Uses case-insensitive name matching because the SPT server may report
+/// mod names using the package.json `name` field which can differ in casing
+/// from the Forge display name stored in the DB.
+pub fn check_mod_loads(
+    installed_mods: &[crate::db::mods::InstalledMod],
+    loaded_mods: &std::collections::HashMap<String, serde_json::Value>,
+) -> (Vec<String>, Vec<String>) {
+    let installed_lower: std::collections::HashSet<String> = installed_mods
+        .iter()
+        .map(|m| m.name.to_lowercase())
+        .collect();
+
+    let loaded_lower: std::collections::HashSet<String> =
+        loaded_mods.keys().map(|k| k.to_lowercase()).collect();
+
+    let load_failures: Vec<String> = installed_mods
+        .iter()
+        .filter(|m| !loaded_lower.contains(&m.name.to_lowercase()))
+        .map(|m| m.name.clone())
+        .collect();
+
+    let untracked_loaded: Vec<String> = loaded_mods
+        .keys()
+        .filter(|name| !installed_lower.contains(&name.to_lowercase()))
+        .cloned()
+        .collect();
+
+    (load_failures, untracked_loaded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::mods::InstalledMod;
 
     fn good_server() -> ServerHealth {
         ServerHealth {
@@ -221,6 +281,9 @@ mod tests {
     fn good_mods() -> ModsHealth {
         ModsHealth {
             installed_count: 5,
+            loaded_count: Some(5),
+            load_failures: vec![],
+            untracked_loaded: vec![],
             updates_available: 0,
             incompatible_mods: vec![],
         }
@@ -233,6 +296,118 @@ mod tests {
             modified_files: vec![],
             untracked_dirs: vec![],
         }
+    }
+
+    #[test]
+    fn check_mod_loads_all_matching() {
+        let installed = vec![
+            InstalledMod {
+                id: 1,
+                forge_mod_id: 100,
+                forge_version_id: 200,
+                name: "ModA".to_string(),
+                slug: None,
+                version: "1.0.0".to_string(),
+                installed_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: None,
+            },
+            InstalledMod {
+                id: 2,
+                forge_mod_id: 101,
+                forge_version_id: 201,
+                name: "ModB".to_string(),
+                slug: None,
+                version: "2.0.0".to_string(),
+                installed_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: None,
+            },
+        ];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("ModA".to_string(), serde_json::json!({}));
+        loaded.insert("ModB".to_string(), serde_json::json!({}));
+
+        let (failures, untracked) = check_mod_loads(&installed, &loaded);
+        assert!(failures.is_empty());
+        assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn check_mod_loads_detects_load_failure() {
+        let installed = vec![
+            InstalledMod {
+                id: 1,
+                forge_mod_id: 100,
+                forge_version_id: 200,
+                name: "WorkingMod".to_string(),
+                slug: None,
+                version: "1.0.0".to_string(),
+                installed_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: None,
+            },
+            InstalledMod {
+                id: 2,
+                forge_mod_id: 101,
+                forge_version_id: 201,
+                name: "BrokenMod".to_string(),
+                slug: None,
+                version: "2.0.0".to_string(),
+                installed_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: None,
+            },
+        ];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("WorkingMod".to_string(), serde_json::json!({}));
+
+        let (failures, untracked) = check_mod_loads(&installed, &loaded);
+        assert_eq!(failures, vec!["BrokenMod"]);
+        assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn check_mod_loads_detects_untracked() {
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "TrackedMod".to_string(),
+            slug: None,
+            version: "1.0.0".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("TrackedMod".to_string(), serde_json::json!({}));
+        loaded.insert("ManualMod".to_string(), serde_json::json!({}));
+
+        let (failures, untracked) = check_mod_loads(&installed, &loaded);
+        assert!(failures.is_empty());
+        assert_eq!(untracked, vec!["ManualMod"]);
+    }
+
+    #[test]
+    fn check_mod_loads_case_insensitive() {
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "SAIN".to_string(),
+            slug: None,
+            version: "1.0.0".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("sain".to_string(), serde_json::json!({}));
+
+        let (failures, untracked) = check_mod_loads(&installed, &loaded);
+        assert!(
+            failures.is_empty(),
+            "case-insensitive match should not report failure"
+        );
+        assert!(
+            untracked.is_empty(),
+            "case-insensitive match should not report untracked"
+        );
     }
 
     #[test]
@@ -268,6 +443,9 @@ mod tests {
             server: good_server(),
             mods: ModsHealth {
                 installed_count: 5,
+                loaded_count: None,
+                load_failures: vec![],
+                untracked_loaded: vec![],
                 updates_available: 0,
                 incompatible_mods: vec!["OldMod".to_string()],
             },
@@ -307,6 +485,23 @@ mod tests {
     }
 
     #[test]
+    fn exit_code_load_failures() {
+        let report = HealthReport {
+            server: good_server(),
+            mods: ModsHealth {
+                installed_count: 5,
+                loaded_count: Some(4),
+                load_failures: vec!["BrokenMod".to_string()],
+                untracked_loaded: vec![],
+                updates_available: 0,
+                incompatible_mods: vec![],
+            },
+            integrity: good_integrity(),
+        };
+        assert_eq!(report.exit_code(), 2);
+    }
+
+    #[test]
     fn exit_code_server_down_trumps_mod_issues() {
         let report = HealthReport {
             server: ServerHealth {
@@ -319,6 +514,9 @@ mod tests {
             },
             mods: ModsHealth {
                 installed_count: 5,
+                loaded_count: None,
+                load_failures: vec![],
+                untracked_loaded: vec![],
                 updates_available: 0,
                 incompatible_mods: vec!["X".to_string()],
             },

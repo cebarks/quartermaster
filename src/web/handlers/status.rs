@@ -41,6 +41,12 @@ async fn build_health_report(state: &AppState) -> anyhow::Result<HealthReport> {
 
     let server = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
 
+    let loaded_mods = if server.reachable {
+        spt_client.loaded_server_mods().await.ok()
+    } else {
+        None
+    };
+
     let db = state.db.clone();
     let (installed_mods, tracked_files) = web::block(move || {
         let db = db.lock();
@@ -50,8 +56,13 @@ async fn build_health_report(state: &AppState) -> anyhow::Result<HealthReport> {
     })
     .await??;
 
-    let mods =
-        health::check_mods_health(&installed_mods, &state.forge, &state.spt_info.spt_version).await;
+    let mods = health::check_mods_health(
+        &installed_mods,
+        loaded_mods.as_ref(),
+        &state.forge,
+        &state.spt_info.spt_version,
+    )
+    .await;
 
     let spt_dir = state.spt_dir.clone();
     let integrity =

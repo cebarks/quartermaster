@@ -33,6 +33,23 @@
     <h2>Mods</h2>
     <table>
         <tr><th style="width:140px">Installed</th><td>{{ report.mods.installed_count }}</td></tr>
+        {% if let Some(loaded) = report.mods.loaded_count %}
+        <tr><th>Loaded</th><td>{{ loaded }}</td></tr>
+        {% endif %}
+        {% if !report.mods.load_failures.is_empty() %}
+        <tr><th>Load Failures</th><td>
+            {% for name in &report.mods.load_failures %}
+            <span class="badge badge-danger">{{ name }}</span>
+            {% endfor %}
+        </td></tr>
+        {% endif %}
+        {% if !report.mods.untracked_loaded.is_empty() %}
+        <tr><th>Untracked</th><td>
+            {% for name in &report.mods.untracked_loaded %}
+            <span class="badge badge-warning">{{ name }}</span>
+            {% endfor %}
+        </td></tr>
+        {% endif %}
         <tr><th>Updates</th><td>
             {% if report.mods.updates_available > 0 %}
             <span class="badge badge-warning">{{ report.mods.updates_available }} available</span>

@@ -1,6 +1,3 @@
-// SPT server client is used by health checks and server lifecycle (tasks 15-16).
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::time::Instant;
 
