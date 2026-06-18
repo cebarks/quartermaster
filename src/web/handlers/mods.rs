@@ -488,6 +488,36 @@ pub async fn update_all_mods(state: Data<AppState>) -> actix_web::Result<HttpRes
         .await
         .map_err(|e| WebError::Internal(e))?;
 
+    // Check if operations should be queued (server running + queue enabled)
+    let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
+        .await
+        .unwrap_or(false);
+
+    if should_queue {
+        let db = state.db.clone();
+        web::block(move || {
+            let db = db.lock();
+            for update in &results.updates {
+                let _ = db.insert_pending_op(
+                    "update",
+                    update.current_version.mod_id,
+                    Some(update.recommended_version.id),
+                    &update.current_version.name,
+                    None,
+                    None,
+                );
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/queue"))
+            .finish());
+    }
+
     for update in &results.updates {
         let link = match &update.recommended_version.link {
             Some(l) => l.clone(),
