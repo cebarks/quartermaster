@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Quartermaster{% endblock %}
+{% block nav %}
+<div class="links">
+    <a href="/" class="active">Dashboard</a>
+    <a href="/mods">Mods</a>
+    <a href="/queue">Queue</a>
+    <a href="/status">Status</a>
+</div>
+<div class="user-info">
+    {{ user.username }} ({{ user.role }})
+    <form method="post" action="/logout" style="display:inline">
+        <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">Logout</button>
+    </form>
+</div>
+{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="card">
+    <div class="flex-between mb-1">
+        <h2>Installed Mods ({{ mods.len() }})</h2>
+        <span hx-get="/api/mods/check-updates" hx-trigger="load, every 60s" hx-swap="innerHTML">
+            <span class="text-muted text-sm">Checking for updates...</span>
+        </span>
+    </div>
+    {% if mods.is_empty() %}
+    <p class="text-muted">No mods installed. {% if user.is_admin() %}Use <code>quma install</code> or the <a href="/mods">Mods</a> page to install mods.{% endif %}</p>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Version</th>
+                <th>Installed</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in mods %}
+            <tr>
+                <td><a href="/mods/{{ m.id }}">{{ m.name }}</a></td>
+                <td>{{ m.version }}</td>
+                <td class="text-muted text-sm">{{ m.installed_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+{% if pending_count > 0 %}
+<div class="card">
+    <h2>Pending Operations</h2>
+    <p>{{ pending_count }} operation(s) queued. <a href="/queue">View queue</a></p>
+</div>
+{% endif %}
+
+{% if !unmanaged_dirs.is_empty() %}
+<div class="card">
+    <h2>Unmanaged Mods</h2>
+    <p class="text-muted text-sm mb-1">These mod directories are not tracked by Quartermaster. Use <code>quma track</code> to manage them.</p>
+    <table>
+        <thead><tr><th>Directory</th><th>Files</th></tr></thead>
+        <tbody>
+            {% for (dir, count) in &unmanaged_dirs %}
+            <tr><td>{{ dir }}</td><td>{{ count }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

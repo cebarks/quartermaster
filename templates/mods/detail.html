@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}{{ mod_info.name }} — Quartermaster{% endblock %}
+{% block nav %}
+<div class="links">
+    <a href="/">Dashboard</a>
+    <a href="/mods" class="active">Mods</a>
+    <a href="/queue">Queue</a>
+    <a href="/status">Status</a>
+</div>
+<div class="user-info">
+    {{ user.username }} ({{ user.role }})
+    <form method="post" action="/logout" style="display:inline">
+        <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">Logout</button>
+    </form>
+</div>
+{% endblock %}
+{% block content %}
+<h1>{{ mod_info.name }}</h1>
+
+<div class="card">
+    <table>
+        <tr><th style="width:140px">Forge ID</th><td>{{ mod_info.forge_mod_id }}</td></tr>
+        <tr><th>Version</th><td>{{ mod_info.version }}</td></tr>
+        {% if let Some(slug) = &mod_info.slug %}
+        <tr><th>Slug</th><td>{{ slug }}</td></tr>
+        {% endif %}
+        <tr><th>Installed</th><td>{{ mod_info.installed_at }}</td></tr>
+        {% if let Some(updated) = &mod_info.updated_at %}
+        <tr><th>Updated</th><td>{{ updated }}</td></tr>
+        {% endif %}
+    </table>
+</div>
+
+{% if !dependencies.is_empty() %}
+<div class="card">
+    <h2>Dependencies</h2>
+    <table>
+        <thead><tr><th>Mod</th><th>Constraint</th></tr></thead>
+        <tbody>
+            {% for dep in &dependencies %}
+            <tr>
+                <td>
+                    {% if let Some(dep_mod) = &dep.dep_mod %}
+                    <a href="/mods/{{ dep_mod.id }}">{{ dep_mod.name }}</a>
+                    {% else %}
+                    <span class="text-muted">Unknown (ID: {{ dep.dep.depends_on_mod_id }})</span>
+                    {% endif %}
+                </td>
+                <td class="text-muted">{{ dep.dep.version_constraint.as_deref().unwrap_or("any") }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>Files ({{ files.len() }})</h2>
+    <table>
+        <thead><tr><th>Path</th><th>Size</th></tr></thead>
+        <tbody>
+            {% for f in &files %}
+            <tr>
+                <td class="text-sm">{{ f.file_path }}</td>
+                <td class="text-muted text-sm">{% if let Some(size) = f.file_size %}{{ size }}{% else %}-{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if user.is_admin() %}
+<div class="flex gap-1 mt-2">
+    <form method="post" action="/mods/{{ mod_info.id }}/update">
+        <button type="submit" class="btn">Update</button>
+    </form>
+    <form method="post" action="/mods/{{ mod_info.id }}/remove"
+          onsubmit="return confirm('Remove {{ mod_info.name }}?')">
+        <button type="submit" class="btn btn-danger">Remove</button>
+    </form>
+</div>
+{% endif %}
+{% endblock %}

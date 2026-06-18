@@ -34,6 +34,10 @@ async fn serve_asset(path: web::Path<String>) -> impl Responder {
     }
 }
 
+async fn todo_handler() -> Html {
+    Html::new("Coming soon".to_string())
+}
+
 pub async fn start_server(
     config: Config,
     config_path: std::path::PathBuf,
@@ -79,13 +83,47 @@ pub async fn start_server(
             .route("/register", web::get().to(handlers::auth::register_page))
             .route("/register", web::post().to(handlers::auth::register_submit))
             .route("/logout", web::post().to(handlers::auth::logout))
-            // Authenticated routes — dashboard added in Task 19
-            .service(web::scope("").wrap(auth::RequireAuth).route(
-                "/",
-                web::get().to(|| async {
-                    Html::new("Logged in. Dashboard coming in Task 19.".to_string())
-                }),
-            ))
+            // Admin routes (must come before authenticated routes to avoid being shadowed)
+            .service(
+                web::scope("")
+                    .wrap(auth::RequireAdmin)
+                    .route("/mods", web::get().to(handlers::mods::list_mods))
+                    .route("/mods/install", web::post().to(handlers::mods::install_mod))
+                    .route(
+                        "/mods/update-all",
+                        web::post().to(handlers::mods::update_all_mods),
+                    )
+                    .route(
+                        "/mods/{id}/update",
+                        web::post().to(handlers::mods::update_mod),
+                    )
+                    .route(
+                        "/mods/{id}/remove",
+                        web::post().to(handlers::mods::remove_mod),
+                    ),
+            )
+            // Authenticated routes (all users)
+            .service(
+                web::scope("")
+                    .wrap(auth::RequireAuth)
+                    .route("/", web::get().to(handlers::dashboard::dashboard))
+                    .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
+                    .route("/status", web::get().to(todo_handler))
+                    .route("/queue", web::get().to(todo_handler)),
+            )
+            // HTMX API (authenticated)
+            .service(
+                web::scope("/api")
+                    .wrap(auth::RequireAuth)
+                    .route(
+                        "/mods/check-updates",
+                        web::get().to(handlers::mods::check_updates_partial),
+                    )
+                    .route(
+                        "/mods/dep-tree",
+                        web::get().to(handlers::mods::dep_tree_partial),
+                    ),
+            )
             // Static assets (public)
             .route("/assets/{path:.*}", web::get().to(serve_asset))
     })

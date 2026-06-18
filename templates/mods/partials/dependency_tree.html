@@ -1,0 +1,11 @@
+{% if deps.is_empty() %}
+<p class="text-muted">No dependencies.</p>
+{% else %}
+<ul>
+    {% for dep in &deps %}
+    <li>{{ dep.name }}{% if let Some(v) = &dep.latest_compatible_version %} v{{ v.version }}{% endif %}
+        {% if dep.conflict %}<span class="badge badge-danger">conflict</span>{% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
