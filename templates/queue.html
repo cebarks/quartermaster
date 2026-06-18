@@ -1,20 +1,25 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
 {% block title %}Queue — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("queue", user) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
     <h1>Pending Operations</h1>
     {% if user.is_admin() && !ops.is_empty() %}
-    <form method="post" action="/queue/apply">
-        <button type="submit" class="btn btn-success">Apply All</button>
+    <form method="post" action="/queue/apply"
+          onsubmit="return confirm('Apply all pending operations?')">
+        <button type="submit" class="btn btn-success">{% call icons::play() %}{% endcall %} Apply All</button>
     </form>
     {% endif %}
 </div>
 
 {% if ops.is_empty() %}
 <div class="card">
-    <p class="text-muted">No pending operations.</p>
+    <div class="empty-state">
+        {% call icons::check() %}{% endcall %}
+        <p>All clear — no pending operations.</p>
+    </div>
 </div>
 {% else %}
 <div class="card">
@@ -43,8 +48,9 @@
                 <td class="text-muted text-sm">{{ op.queued_by.as_deref().unwrap_or("-") }}</td>
                 {% if user.is_admin() %}
                 <td>
-                    <form method="post" action="/queue/{{ op.id }}/cancel" style="display:inline">
-                        <button type="submit" class="btn btn-sm btn-outline">Cancel</button>
+                    <form method="post" action="/queue/{{ op.id }}/cancel" style="display:inline"
+                          onsubmit="return confirm('Cancel this operation?')">
+                        <button type="submit" class="btn btn-sm btn-outline">{% call icons::x() %}{% endcall %} Cancel</button>
                     </form>
                 </td>
                 {% endif %}

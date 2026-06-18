@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod error;
+pub mod flash;
 pub mod handlers;
 pub mod state;
 
@@ -110,7 +111,11 @@ pub async fn start_server(
                         "/mods/dep-tree",
                         web::get().to(handlers::mods::dep_tree_partial),
                     )
-                    .route("/status", web::get().to(handlers::status::status_partial)),
+                    .route("/status", web::get().to(handlers::status::status_partial))
+                    .route(
+                        "/dashboard/server-status",
+                        web::get().to(handlers::dashboard::server_status_partial),
+                    ),
             )
             // Authenticated routes — admin checks are per-handler via require_admin()
             .service(

@@ -7,6 +7,7 @@ use crate::db::mods::{InstalledFile, InstalledMod, ModDependency};
 use crate::forge::models::DependencyNode;
 use crate::web::auth::{require_admin, require_auth, SessionUser};
 use crate::web::error::WebError;
+use crate::web::flash::{set_flash, take_flash, FlashMessage};
 use crate::web::state::AppState;
 
 // -- View models --
@@ -28,6 +29,7 @@ struct DepEntry {
 struct ModListTemplate {
     user: SessionUser,
     mods: Vec<ModListEntry>,
+    flash: Option<FlashMessage>,
 }
 
 #[derive(Template)]
@@ -37,6 +39,7 @@ struct ModDetailTemplate {
     mod_info: InstalledMod,
     files: Vec<InstalledFile>,
     dependencies: Vec<DepEntry>,
+    flash: Option<FlashMessage>,
 }
 
 #[derive(Template)]
@@ -69,6 +72,7 @@ pub struct DepTreeQuery {
 
 pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
     let user = require_admin(&session)?;
+    let flash = take_flash(&session);
     let db = state.db.clone();
 
     let mods = web::block(move || {
@@ -87,7 +91,7 @@ pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Re
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = ModListTemplate { user, mods };
+    let tmpl = ModListTemplate { user, mods, flash };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
@@ -97,6 +101,7 @@ pub async fn mod_detail(
     path: Path<i64>,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&session)?;
+    let flash = take_flash(&session);
     let mod_id = path.into_inner();
     let db = state.db.clone();
 
@@ -123,6 +128,7 @@ pub async fn mod_detail(
         mod_info,
         files,
         dependencies,
+        flash,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -250,6 +256,7 @@ pub async fn install_mod(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
+        set_flash(&session, "Mod queued for install", "success");
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/queue"))
             .finish());
@@ -291,6 +298,7 @@ pub async fn install_mod(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    set_flash(&session, "Mod installed successfully", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/mods"))
         .finish())
@@ -325,6 +333,7 @@ pub async fn update_mod(
     ))?;
 
     if version.version == installed.version {
+        set_flash(&session, "Already up to date", "warning");
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", format!("/mods/{mod_db_id}")))
             .finish());
@@ -355,6 +364,7 @@ pub async fn update_mod(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
+        set_flash(&session, "Update queued", "success");
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/queue"))
             .finish());
@@ -392,6 +402,7 @@ pub async fn update_mod(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    set_flash(&session, "Mod updated successfully", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", format!("/mods/{mod_db_id}")))
         .finish())
@@ -433,6 +444,7 @@ pub async fn remove_mod(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
+        set_flash(&session, "Mod queued for removal", "success");
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/queue"))
             .finish());
@@ -449,6 +461,7 @@ pub async fn remove_mod(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    set_flash(&session, "Mod removed", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/mods"))
         .finish())
@@ -510,6 +523,7 @@ pub async fn update_all_mods(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
+        set_flash(&session, "All updates queued", "success");
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/queue"))
             .finish());
@@ -559,6 +573,7 @@ pub async fn update_all_mods(
         .map_err(WebError::from)?;
     }
 
+    set_flash(&session, "All mods updated", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/mods"))
         .finish())

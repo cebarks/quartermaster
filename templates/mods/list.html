@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
 {% block title %}Mods — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("mods", user) %}{% endcall %}{% endblock %}
 {% block content %}
@@ -7,8 +8,9 @@
     <h1>Installed Mods</h1>
     {% if user.is_admin() %}
     <div class="flex gap-1">
-        <form method="post" action="/mods/update-all" style="display:inline">
-            <button type="submit" class="btn btn-sm btn-outline">Update All</button>
+        <form method="post" action="/mods/update-all" style="display:inline"
+              onsubmit="return confirm('Update all mods?')">
+            <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update All</button>
         </form>
     </div>
     {% endif %}
@@ -16,7 +18,10 @@
 
 {% if mods.is_empty() %}
 <div class="card">
-    <p class="text-muted">No mods installed.</p>
+    <div class="empty-state">
+        <p>No mods installed.</p>
+        {% if user.is_admin() %}<p class="mt-1">Use the form below to install your first mod.</p>{% endif %}
+    </div>
 </div>
 {% else %}
 <div class="card">
@@ -40,12 +45,12 @@
                 {% if user.is_admin() %}
                 <td>
                     <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
-                        <button type="submit" class="btn btn-sm btn-outline">Update</button>
+                        <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
                     </form>
                     <form method="post" action="/mods/{{ m.mod_info.id }}/remove" style="display:inline"
                           data-name="{{ m.mod_info.name }}"
                           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
-                        <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+                        <button type="submit" class="btn btn-sm btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
                     </form>
                 </td>
                 {% endif %}
@@ -62,7 +67,7 @@
     <form method="post" action="/mods/install">
         <label for="mod_ref">Forge Mod ID or Name</label>
         <input type="text" id="mod_ref" name="mod_ref" placeholder="e.g. 2326 or SAIN" required>
-        <button type="submit" class="btn">Install</button>
+        <button type="submit" class="btn">{% call icons::download() %}{% endcall %} Install</button>
     </form>
 </div>
 {% endif %}

@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Register — Quartermaster{% endblock %}
+{% block flash %}{% endblock %}
 {% block content %}
-<div class="card auth-card" style="max-width: 400px; margin: 4rem auto;">
+<div class="card auth-card auth-center">
     <h2>Register</h2>
     {% if let Some(error) = error %}
     <div class="alert alert-error">{{ error }}</div>

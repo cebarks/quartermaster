@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
 {% block title %}{{ mod_info.name }} — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("mods", user) %}{% endcall %}{% endblock %}
 {% block content %}
@@ -60,12 +61,12 @@
 {% if user.is_admin() %}
 <div class="flex gap-1 mt-2">
     <form method="post" action="/mods/{{ mod_info.id }}/update">
-        <button type="submit" class="btn">Update</button>
+        <button type="submit" class="btn">{% call icons::refresh() %}{% endcall %} Update</button>
     </form>
     <form method="post" action="/mods/{{ mod_info.id }}/remove"
           data-name="{{ mod_info.name }}"
           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
-        <button type="submit" class="btn btn-danger">Remove</button>
+        <button type="submit" class="btn btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
     </form>
 </div>
 {% endif %}

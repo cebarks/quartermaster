@@ -5,12 +5,14 @@ use askama::Template;
 use crate::health::{self, HealthReport};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
+use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::state::AppState;
 
 #[derive(Template)]
 #[template(path = "status.html")]
 struct StatusPageTemplate {
     user: SessionUser,
+    flash: Option<FlashMessage>,
 }
 
 #[derive(Template)]
@@ -21,7 +23,8 @@ struct StatusDetailTemplate {
 
 pub async fn status_page(session: Session) -> actix_web::Result<Html> {
     let user = require_auth(&session)?;
-    let tmpl = StatusPageTemplate { user };
+    let flash = take_flash(&session);
+    let tmpl = StatusPageTemplate { user, flash };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
