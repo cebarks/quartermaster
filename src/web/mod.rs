@@ -16,6 +16,8 @@ use actix_web_rust_embed_responder::IntoResponse;
 use anyhow::{Context, Result};
 use rust_embed::RustEmbed;
 
+use actix_governor::{Governor, GovernorConfigBuilder};
+
 use crate::config::Config;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
@@ -58,6 +60,12 @@ pub async fn start_server(
 
     println!("Quartermaster web UI starting on http://{bind_addr}");
 
+    let governor_conf = GovernorConfigBuilder::default()
+        .seconds_per_request(12) // 5 per minute = 1 per 12 seconds replenish
+        .burst_size(5) // allow bursting up to 5
+        .finish()
+        .expect("invalid governor config");
+
     HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
@@ -74,14 +82,22 @@ pub async fn start_server(
             .wrap(middleware::NormalizePath::trim())
             // Static assets (public, before auth scope to avoid shadowing)
             .route("/assets/{path:.*}", web::get().to(serve_asset))
-            // Auth routes (public)
-            // TODO(debt): add rate limiting via actix-governor (5 req/min/IP on /login and /register)
             // TODO(debt): add CSRF protection on state-mutating POST forms (SameSite=Strict mitigates most vectors)
+            // Auth routes (public)
             .route("/login", web::get().to(handlers::auth::login_page))
-            .route("/login", web::post().to(handlers::auth::login_submit))
-            .route("/register", web::get().to(handlers::auth::register_page))
-            .route("/register", web::post().to(handlers::auth::register_submit))
             .route("/logout", web::post().to(handlers::auth::logout))
+            // Rate-limited auth routes (5 req/min/IP on login POST + register)
+            .service(
+                web::resource("/login")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::post().to(handlers::auth::login_submit)),
+            )
+            .service(
+                web::resource("/register")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::auth::register_page))
+                    .route(web::post().to(handlers::auth::register_submit)),
+            )
             // HTMX API (authenticated, registered before catch-all scope)
             .service(
                 web::scope("/api")
