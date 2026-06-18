@@ -1,4 +1,6 @@
+pub mod auth;
 pub mod error;
+pub mod handlers;
 pub mod state;
 
 use std::sync::Arc;
@@ -70,13 +72,21 @@ pub async fn start_server(
                     .build(),
             )
             .wrap(middleware::NormalizePath::trim())
-            // Placeholder — replaced by dashboard route in Task 18
-            .route(
+            // Auth routes (public)
+            // TODO(debt): add rate limiting via actix-governor (5 req/min/IP on /login and /register)
+            .route("/login", web::get().to(handlers::auth::login_page))
+            .route("/login", web::post().to(handlers::auth::login_submit))
+            .route("/register", web::get().to(handlers::auth::register_page))
+            .route("/register", web::post().to(handlers::auth::register_submit))
+            .route("/logout", web::post().to(handlers::auth::logout))
+            // Authenticated routes — dashboard added in Task 19
+            .service(web::scope("").wrap(auth::RequireAuth).route(
                 "/",
                 web::get().to(|| async {
-                    Html::new("Quartermaster is running. Login at /login".to_string())
+                    Html::new("Logged in. Dashboard coming in Task 19.".to_string())
                 }),
-            )
+            ))
+            // Static assets (public)
             .route("/assets/{path:.*}", web::get().to(serve_asset))
     })
     .bind(&bind_addr)
