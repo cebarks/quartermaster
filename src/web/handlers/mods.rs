@@ -68,7 +68,7 @@ pub struct DepTreeQuery {
 // -- Handlers --
 
 pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).unwrap();
+    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
     let db = state.db.clone();
 
     let mods = web::block(move || {
@@ -97,7 +97,7 @@ pub async fn mod_detail(
     session: Session,
     path: Path<i64>,
 ) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).unwrap();
+    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
     let mod_id = path.into_inner();
     let db = state.db.clone();
 

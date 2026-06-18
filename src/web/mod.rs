@@ -74,6 +74,7 @@ pub async fn start_server(
             .wrap(middleware::NormalizePath::trim())
             // Auth routes (public)
             // TODO(debt): add rate limiting via actix-governor (5 req/min/IP on /login and /register)
+            // TODO(debt): add CSRF protection on state-mutating POST forms (SameSite=Strict mitigates most vectors)
             .route("/login", web::get().to(handlers::auth::login_page))
             .route("/login", web::post().to(handlers::auth::login_submit))
             .route("/register", web::get().to(handlers::auth::register_page))

@@ -195,7 +195,7 @@ pub async fn register_page(
 pub async fn register_submit(
     form: Form<RegisterForm>,
     state: Data<AppState>,
-    session: Session,
+    _session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let form = form.into_inner();
 

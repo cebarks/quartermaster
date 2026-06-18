@@ -18,7 +18,7 @@ struct DashboardTemplate {
 }
 
 pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).unwrap();
+    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();

@@ -16,7 +16,7 @@ struct QueueTemplate {
 }
 
 pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).unwrap();
+    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
     let db = state.db.clone();
 
     let ops = web::block(move || {
@@ -106,6 +106,60 @@ pub async fn apply_queue(state: Data<AppState>) -> actix_web::Result<HttpRespons
                                                     &file.path,
                                                     Some(&file.hash),
                                                     Some(file.size as i64),
+                                                )?;
+                                            }
+                                            Ok::<_, anyhow::Error>(())
+                                        })
+                                        .await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "update" => {
+                if let Some(version_id) = op.forge_version_id {
+                    let forge_mod = state.forge.get_mod(forge_mod_id, true).await;
+                    if let Ok(forge_mod) = forge_mod {
+                        let versions = forge_mod.versions.unwrap_or_default();
+                        if let Some(version) = versions.iter().find(|v| v.id == version_id) {
+                            if let Some(link) = &version.link {
+                                let tmp_dir = tempfile::tempdir().ok();
+                                if let Some(tmp_dir) = tmp_dir {
+                                    let archive_path = tmp_dir.path().join("mod.zip");
+                                    if state.forge.download_file(link, &archive_path).await.is_ok()
+                                    {
+                                        let version_str = version.version.clone();
+                                        let _ = web::block(move || {
+                                            use crate::spt::mods::{delete_mod_files, extract_mod};
+                                            let db = db.lock();
+                                            if let Ok(Some(installed)) =
+                                                db.get_mod_by_forge_id(forge_mod_id)
+                                            {
+                                                let old_files =
+                                                    db.get_files_for_mod(installed.id)?;
+                                                let old_paths: Vec<String> = old_files
+                                                    .iter()
+                                                    .map(|f| f.file_path.clone())
+                                                    .collect();
+                                                delete_mod_files(&spt_dir, &old_paths)?;
+                                                db.delete_files_for_mod(installed.id)?;
+
+                                                let extracted =
+                                                    extract_mod(&archive_path, &spt_dir)?;
+                                                for file in &extracted {
+                                                    db.insert_file(
+                                                        installed.id,
+                                                        &file.path,
+                                                        Some(&file.hash),
+                                                        Some(file.size as i64),
+                                                    )?;
+                                                }
+                                                db.update_mod(
+                                                    installed.id,
+                                                    version_id,
+                                                    &version_str,
                                                 )?;
                                             }
                                             Ok::<_, anyhow::Error>(())

@@ -20,7 +20,7 @@ struct StatusDetailTemplate {
 }
 
 pub async fn status_page(session: Session) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).unwrap();
+    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
     let tmpl = StatusPageTemplate { user };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
