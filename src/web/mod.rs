@@ -10,7 +10,7 @@ use actix_session::storage::CookieSessionStore;
 use actix_session::SessionMiddleware;
 use actix_web::cookie::time::Duration as CookieDuration;
 use actix_web::cookie::Key;
-use actix_web::web::{self, Html};
+use actix_web::web;
 use actix_web::{middleware, App, Either, HttpResponse, HttpServer, Responder};
 use actix_web_rust_embed_responder::IntoResponse;
 use anyhow::{Context, Result};
@@ -32,10 +32,6 @@ async fn serve_asset(path: web::Path<String>) -> impl Responder {
         Some(file) => Either::Left(file.into_response()),
         None => Either::Right(HttpResponse::NotFound().body("asset not found")),
     }
-}
-
-async fn todo_handler() -> Html {
-    Html::new("Coming soon".to_string())
 }
 
 pub async fn start_server(
@@ -83,7 +79,7 @@ pub async fn start_server(
             .route("/register", web::get().to(handlers::auth::register_page))
             .route("/register", web::post().to(handlers::auth::register_submit))
             .route("/logout", web::post().to(handlers::auth::logout))
-            // Admin routes (must come before authenticated routes to avoid being shadowed)
+            // Admin-only routes
             .service(
                 web::scope("")
                     .wrap(auth::RequireAdmin)
@@ -100,7 +96,24 @@ pub async fn start_server(
                     .route(
                         "/mods/{id}/remove",
                         web::post().to(handlers::mods::remove_mod),
-                    ),
+                    )
+                    .route(
+                        "/server/start",
+                        web::post().to(handlers::server::start_server),
+                    )
+                    .route(
+                        "/server/stop",
+                        web::post().to(handlers::server::stop_server),
+                    )
+                    .route(
+                        "/server/restart",
+                        web::post().to(handlers::server::restart_server),
+                    )
+                    .route(
+                        "/queue/{id}/cancel",
+                        web::post().to(handlers::queue::cancel_op),
+                    )
+                    .route("/queue/apply", web::post().to(handlers::queue::apply_queue)),
             )
             // Authenticated routes (all users)
             .service(
@@ -108,8 +121,8 @@ pub async fn start_server(
                     .wrap(auth::RequireAuth)
                     .route("/", web::get().to(handlers::dashboard::dashboard))
                     .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
-                    .route("/status", web::get().to(todo_handler))
-                    .route("/queue", web::get().to(todo_handler)),
+                    .route("/status", web::get().to(handlers::status::status_page))
+                    .route("/queue", web::get().to(handlers::queue::queue_page)),
             )
             // HTMX API (authenticated)
             .service(
@@ -122,7 +135,8 @@ pub async fn start_server(
                     .route(
                         "/mods/dep-tree",
                         web::get().to(handlers::mods::dep_tree_partial),
-                    ),
+                    )
+                    .route("/status", web::get().to(handlers::status::status_partial)),
             )
             // Static assets (public)
             .route("/assets/{path:.*}", web::get().to(serve_asset))
