@@ -18,6 +18,7 @@ fn record_extracted_files(db: &Database, mod_db_id: i64, files: &[ExtractedFile]
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn install_mod_from_archive(
     db: &Database,
     spt_dir: &Path,
