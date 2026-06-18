@@ -67,6 +67,13 @@ fn print_report(report: &health::HealthReport, spt_info: &crate::spt::detect::Sp
         }
     }
 
+    if report.mods.loaded_count.is_some()
+        && report.mods.load_failures.is_empty()
+        && report.mods.untracked_loaded.is_empty()
+    {
+        println!("  All installed mods loaded successfully.");
+    }
+
     if !report.mods.incompatible_mods.is_empty() {
         for name in &report.mods.incompatible_mods {
             println!(

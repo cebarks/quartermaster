@@ -134,7 +134,7 @@ async fn pick_version(
                 Some(v) => v.clone(),
                 None => {
                     let all_versions = ctx.forge.get_versions(forge_mod.id, None).await?;
-                    all_versions
+                    let v = all_versions
                         .into_iter()
                         .find(|v| v.version == ver)
                         .ok_or_else(|| {
@@ -143,7 +143,12 @@ async fn pick_version(
                                 ver,
                                 forge_mod.name
                             )
-                        })?
+                        })?;
+                    println!(
+                        "Warning: {} v{} is not listed as compatible with SPT {}.",
+                        forge_mod.name, ver, ctx.spt_info.spt_version
+                    );
+                    v
                 }
             }
         }
