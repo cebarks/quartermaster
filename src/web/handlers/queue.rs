@@ -113,13 +113,14 @@ pub async fn apply_queue(
                     "queue apply failed for {} '{}': {e}",
                     op.action, op.mod_name
                 );
-                failures.push(format!("{} '{}': {e}", op.action, op.mod_name));
+                failures.push(op.mod_name.clone());
             }
         }
     }
 
     if !failures.is_empty() {
-        let msg = format!("{} operation(s) failed", failures.len());
+        let names = failures.join(", ");
+        let msg = format!("{} operation(s) failed: {names}", failures.len());
         set_flash(&session, &msg, "error");
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/queue"))

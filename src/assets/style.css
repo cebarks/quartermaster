@@ -38,7 +38,7 @@ nav {
 nav .brand { font-weight: 700; font-size: 1.1rem; color: var(--text); }
 nav .links { display: flex; gap: 1rem; flex: 1; }
 nav .links a { color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 0.35rem; text-decoration: none; }
-nav .links a:hover, nav .links a.active { color: var(--text); }
+nav .links a:hover, nav .links a.active { color: var(--text); text-decoration: none; }
 nav .user-info { font-size: 0.85rem; color: var(--text-muted); }
 
 /* Layout */
@@ -148,7 +148,9 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .flex { display: flex; }
 .flex-between { display: flex; justify-content: space-between; align-items: center; }
 .gap-1 { gap: 0.5rem; }
-h1 { font-size: 1.4rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+h1 { font-size: 1.4rem; margin-bottom: 1.25rem; padding-bottom: 0.5rem; }
+.flex-between h1 { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+main > h1 { border-bottom: 1px solid var(--border); }
 
 /* Stat cards (dashboard, status) */
 .stat-card-grid {
@@ -216,7 +218,7 @@ h1 { font-size: 1.4rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--b
 .toast-error { background: rgba(233,69,96,0.15); border: 1px solid rgba(233,69,96,0.3); color: var(--danger); }
 .toast-warning { background: rgba(240,192,64,0.15); border: 1px solid rgba(240,192,64,0.3); color: var(--warning); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes toast-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes toast-out { from { opacity: 1; } to { opacity: 0; height: 0; margin: 0; padding: 0; overflow: hidden; } }
 
 /* Auth page centering */
 .auth-center { max-width: 400px; margin: 4rem auto; }
