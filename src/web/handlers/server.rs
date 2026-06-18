@@ -5,6 +5,7 @@ use actix_web::HttpResponse;
 use crate::podman::PodmanClient;
 use crate::web::auth::require_admin;
 use crate::web::error::WebError;
+use crate::web::flash::set_flash;
 use crate::web::state::AppState;
 
 pub async fn start_server(
@@ -23,6 +24,7 @@ pub async fn start_server(
     let podman = PodmanClient::new(container);
     podman.start().await.map_err(WebError::from)?;
 
+    set_flash(&session, "Server starting", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
         .finish())
@@ -44,6 +46,7 @@ pub async fn stop_server(
     let podman = PodmanClient::new(container);
     podman.stop().await.map_err(WebError::from)?;
 
+    set_flash(&session, "Server stopped", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
         .finish())
@@ -96,6 +99,7 @@ pub async fn restart_server(
 
     podman.start().await.map_err(WebError::from)?;
 
+    set_flash(&session, "Server restarting", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
         .finish())

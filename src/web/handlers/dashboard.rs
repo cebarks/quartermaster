@@ -6,6 +6,7 @@ use crate::cli::common::find_unmanaged_mod_dirs;
 use crate::db::mods::InstalledMod;
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
+use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::state::AppState;
 
 #[derive(Template)]
@@ -15,10 +16,12 @@ struct DashboardTemplate {
     mods: Vec<InstalledMod>,
     pending_count: usize,
     unmanaged_dirs: Vec<(String, usize)>,
+    flash: Option<FlashMessage>,
 }
 
 pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
     let user = require_auth(&session)?;
+    let flash = take_flash(&session);
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
@@ -40,6 +43,7 @@ pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Re
         mods,
         pending_count,
         unmanaged_dirs,
+        flash,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

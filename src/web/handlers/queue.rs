@@ -6,6 +6,7 @@ use askama::Template;
 use crate::db::users::PendingOperation;
 use crate::web::auth::{require_admin, require_auth, SessionUser};
 use crate::web::error::WebError;
+use crate::web::flash::{set_flash, take_flash, FlashMessage};
 use crate::web::state::AppState;
 
 #[derive(Template)]
@@ -13,10 +14,12 @@ use crate::web::state::AppState;
 struct QueueTemplate {
     user: SessionUser,
     ops: Vec<PendingOperation>,
+    flash: Option<FlashMessage>,
 }
 
 pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
     let user = require_auth(&session)?;
+    let flash = take_flash(&session);
     let db = state.db.clone();
 
     let ops = web::block(move || {
@@ -27,7 +30,7 @@ pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::R
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = QueueTemplate { user, ops };
+    let tmpl = QueueTemplate { user, ops, flash };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
@@ -48,6 +51,7 @@ pub async fn cancel_op(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    set_flash(&session, "Operation cancelled", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/queue"))
         .finish())
@@ -63,8 +67,14 @@ pub async fn apply_queue(
         .unwrap_or(false);
 
     if server_running {
-        return Ok(HttpResponse::BadRequest()
-            .body("Cannot apply queue while SPT server is running. Stop the server first."));
+        set_flash(
+            &session,
+            "Cannot apply queue while server is running. Stop the server first.",
+            "error",
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/queue"))
+            .finish());
     }
 
     let db = state.db.clone();
@@ -109,14 +119,14 @@ pub async fn apply_queue(
     }
 
     if !failures.is_empty() {
-        let msg = format!(
-            "{} operation(s) failed and remain in queue:\n{}",
-            failures.len(),
-            failures.join("\n")
-        );
-        return Ok(HttpResponse::InternalServerError().body(msg));
+        let msg = format!("{} operation(s) failed", failures.len());
+        set_flash(&session, &msg, "error");
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/queue"))
+            .finish());
     }
 
+    set_flash(&session, "Queue applied successfully", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/queue"))
         .finish())
