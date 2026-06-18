@@ -4,7 +4,7 @@ use askama::Template;
 
 use crate::cli::common::find_unmanaged_mod_dirs;
 use crate::db::mods::InstalledMod;
-use crate::web::auth::{get_session_user, SessionUser};
+use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::state::AppState;
 
@@ -18,7 +18,7 @@ struct DashboardTemplate {
 }
 
 pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
+    let user = require_auth(&session)?;
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();

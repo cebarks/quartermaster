@@ -4,7 +4,7 @@ use actix_web::HttpResponse;
 use askama::Template;
 
 use crate::db::users::PendingOperation;
-use crate::web::auth::{get_session_user, SessionUser};
+use crate::web::auth::{require_admin, require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::state::AppState;
 
@@ -16,7 +16,7 @@ struct QueueTemplate {
 }
 
 pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
+    let user = require_auth(&session)?;
     let db = state.db.clone();
 
     let ops = web::block(move || {
@@ -31,7 +31,12 @@ pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::R
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-pub async fn cancel_op(state: Data<AppState>, path: Path<i64>) -> actix_web::Result<HttpResponse> {
+pub async fn cancel_op(
+    state: Data<AppState>,
+    path: Path<i64>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let op_id = path.into_inner();
     let db = state.db.clone();
 
@@ -48,7 +53,11 @@ pub async fn cancel_op(state: Data<AppState>, path: Path<i64>) -> actix_web::Res
         .finish())
 }
 
-pub async fn apply_queue(state: Data<AppState>) -> actix_web::Result<HttpResponse> {
+pub async fn apply_queue(
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let server_running = crate::server_detect::is_server_running(&state.config, &state.spt_dir)
         .await
         .unwrap_or(false);

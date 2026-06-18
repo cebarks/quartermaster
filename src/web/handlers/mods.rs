@@ -5,7 +5,7 @@ use askama::Template;
 
 use crate::db::mods::{InstalledFile, InstalledMod, ModDependency};
 use crate::forge::models::DependencyNode;
-use crate::web::auth::{get_session_user, SessionUser};
+use crate::web::auth::{require_admin, require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::state::AppState;
 
@@ -68,7 +68,7 @@ pub struct DepTreeQuery {
 // -- Handlers --
 
 pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
+    let user = require_admin(&session)?;
     let db = state.db.clone();
 
     let mods = web::block(move || {
@@ -97,7 +97,7 @@ pub async fn mod_detail(
     session: Session,
     path: Path<i64>,
 ) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
+    let user = require_auth(&session)?;
     let mod_id = path.into_inner();
     let db = state.db.clone();
 
@@ -179,7 +179,9 @@ pub async fn dep_tree_partial(
 pub async fn install_mod(
     form: Form<InstallForm>,
     state: Data<AppState>,
+    session: Session,
 ) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let mod_ref = &form.mod_ref;
 
     let mod_id: i64 = match mod_ref.parse() {
@@ -295,7 +297,12 @@ pub async fn install_mod(
         .finish())
 }
 
-pub async fn update_mod(state: Data<AppState>, path: Path<i64>) -> actix_web::Result<HttpResponse> {
+pub async fn update_mod(
+    state: Data<AppState>,
+    path: Path<i64>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let mod_db_id = path.into_inner();
     let db = state.db.clone();
 
@@ -403,7 +410,12 @@ pub async fn update_mod(state: Data<AppState>, path: Path<i64>) -> actix_web::Re
         .finish())
 }
 
-pub async fn remove_mod(state: Data<AppState>, path: Path<i64>) -> actix_web::Result<HttpResponse> {
+pub async fn remove_mod(
+    state: Data<AppState>,
+    path: Path<i64>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let mod_db_id = path.into_inner();
 
     // Look up the installed mod for queue metadata
@@ -461,7 +473,11 @@ pub async fn remove_mod(state: Data<AppState>, path: Path<i64>) -> actix_web::Re
         .finish())
 }
 
-pub async fn update_all_mods(state: Data<AppState>) -> actix_web::Result<HttpResponse> {
+pub async fn update_all_mods(
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let db = state.db.clone();
     let installed = web::block(move || {
         let db = db.lock();

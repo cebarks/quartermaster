@@ -3,7 +3,7 @@ use actix_web::web::{self, Data, Html};
 use askama::Template;
 
 use crate::health::{self, HealthReport};
-use crate::web::auth::{get_session_user, SessionUser};
+use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::state::AppState;
 
@@ -20,7 +20,7 @@ struct StatusDetailTemplate {
 }
 
 pub async fn status_page(session: Session) -> actix_web::Result<Html> {
-    let user = get_session_user(&session).ok_or(WebError::Forbidden)?;
+    let user = require_auth(&session)?;
     let tmpl = StatusPageTemplate { user };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

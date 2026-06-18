@@ -80,10 +80,16 @@ pub async fn start_server(
             .route("/register", web::get().to(handlers::auth::register_page))
             .route("/register", web::post().to(handlers::auth::register_submit))
             .route("/logout", web::post().to(handlers::auth::logout))
-            // Admin-only routes
+            // Authenticated routes — admin checks are per-handler via require_admin()
             .service(
                 web::scope("")
-                    .wrap(auth::RequireAdmin)
+                    .wrap(auth::RequireAuth)
+                    // All-user pages
+                    .route("/", web::get().to(handlers::dashboard::dashboard))
+                    .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
+                    .route("/status", web::get().to(handlers::status::status_page))
+                    .route("/queue", web::get().to(handlers::queue::queue_page))
+                    // Admin-only pages and actions
                     .route("/mods", web::get().to(handlers::mods::list_mods))
                     .route("/mods/install", web::post().to(handlers::mods::install_mod))
                     .route(
@@ -115,15 +121,6 @@ pub async fn start_server(
                         web::post().to(handlers::queue::cancel_op),
                     )
                     .route("/queue/apply", web::post().to(handlers::queue::apply_queue)),
-            )
-            // Authenticated routes (all users)
-            .service(
-                web::scope("")
-                    .wrap(auth::RequireAuth)
-                    .route("/", web::get().to(handlers::dashboard::dashboard))
-                    .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
-                    .route("/status", web::get().to(handlers::status::status_page))
-                    .route("/queue", web::get().to(handlers::queue::queue_page)),
             )
             // HTMX API (authenticated)
             .service(

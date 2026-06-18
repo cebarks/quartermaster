@@ -53,6 +53,22 @@ pub fn get_session_user(session: &Session) -> Option<SessionUser> {
     })
 }
 
+pub fn require_auth(
+    session: &Session,
+) -> std::result::Result<SessionUser, crate::web::error::WebError> {
+    get_session_user(session).ok_or(crate::web::error::WebError::Forbidden)
+}
+
+pub fn require_admin(
+    session: &Session,
+) -> std::result::Result<SessionUser, crate::web::error::WebError> {
+    let user = require_auth(session)?;
+    if !user.is_admin() {
+        return Err(crate::web::error::WebError::Forbidden);
+    }
+    Ok(user)
+}
+
 pub fn set_session_user(session: &Session, user: &SessionUser) -> Result<()> {
     session
         .insert("user_id", user.user_id)
@@ -118,66 +134,6 @@ where
 
         let fut = self.service.call(req);
         Box::pin(async move { fut.await.map(|res| res.map_into_boxed_body()) })
-    }
-}
-
-// -- RequireAdmin middleware --
-
-pub struct RequireAdmin;
-
-impl<S, B> Transform<S, ServiceRequest> for RequireAdmin
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    B: MessageBody + 'static,
-{
-    type Response = ServiceResponse<BoxBody>;
-    type Error = Error;
-    type Transform = RequireAdminMiddleware<S>;
-    type InitError = ();
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
-
-    fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(RequireAdminMiddleware { service }))
-    }
-}
-
-pub struct RequireAdminMiddleware<S> {
-    service: S,
-}
-
-impl<S, B> Service<ServiceRequest> for RequireAdminMiddleware<S>
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    B: MessageBody + 'static,
-{
-    type Response = ServiceResponse<BoxBody>;
-    type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
-
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
-    }
-
-    fn call(&self, req: ServiceRequest) -> Self::Future {
-        let session = req.get_session();
-        let user = get_session_user(&session);
-
-        match user {
-            None => Box::pin(async move {
-                let resp = HttpResponse::SeeOther()
-                    .insert_header(("Location", "/login"))
-                    .finish();
-                Ok(req.into_response(resp).map_into_boxed_body())
-            }),
-            Some(u) if !u.is_admin() => Box::pin(async move {
-                let resp = HttpResponse::Forbidden().body("admin access required");
-                Ok(req.into_response(resp).map_into_boxed_body())
-            }),
-            Some(_) => {
-                let fut = self.service.call(req);
-                Box::pin(async move { fut.await.map(|res| res.map_into_boxed_body()) })
-            }
-        }
     }
 }
 

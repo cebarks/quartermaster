@@ -1,11 +1,17 @@
+use actix_session::Session;
 use actix_web::web::Data;
 use actix_web::HttpResponse;
 
 use crate::podman::PodmanClient;
+use crate::web::auth::require_admin;
 use crate::web::error::WebError;
 use crate::web::state::AppState;
 
-pub async fn start_server(state: Data<AppState>) -> actix_web::Result<HttpResponse> {
+pub async fn start_server(
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let container = state
         .config
         .server_container
@@ -22,7 +28,11 @@ pub async fn start_server(state: Data<AppState>) -> actix_web::Result<HttpRespon
         .finish())
 }
 
-pub async fn stop_server(state: Data<AppState>) -> actix_web::Result<HttpResponse> {
+pub async fn stop_server(
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let container = state
         .config
         .server_container
@@ -39,7 +49,11 @@ pub async fn stop_server(state: Data<AppState>) -> actix_web::Result<HttpRespons
         .finish())
 }
 
-pub async fn restart_server(state: Data<AppState>) -> actix_web::Result<HttpResponse> {
+pub async fn restart_server(
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    require_admin(&session)?;
     let container = state
         .config
         .server_container
