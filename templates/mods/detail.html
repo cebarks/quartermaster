@@ -51,7 +51,7 @@
             {% for f in &archive_files %}
             <tr>
                 <td class="text-sm">{{ f.file_path }}</td>
-                <td class="text-muted text-sm">{% if let Some(size) = f.file_size %}{{ size }}{% else %}-{% endif %}</td>
+                <td class="text-muted text-sm">{{ f.file_size|format_size }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -68,7 +68,7 @@
             {% for f in &runtime_files %}
             <tr>
                 <td class="text-sm">{{ f.file_path }}</td>
-                <td class="text-muted text-sm">{% if let Some(size) = f.file_size %}{{ size }}{% else %}-{% endif %}</td>
+                <td class="text-muted text-sm">{{ f.file_size|format_size }}</td>
             </tr>
             {% endfor %}
         </tbody>

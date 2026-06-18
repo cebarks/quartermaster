@@ -10,6 +10,11 @@ use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage};
 use crate::web::state::AppState;
 
+#[allow(unused_imports)] // Used by Askama template macro expansion
+mod filters {
+    pub use crate::web::template_filters::*;
+}
+
 // -- View models --
 
 struct ModListEntry {

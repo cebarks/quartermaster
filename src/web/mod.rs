@@ -5,6 +5,7 @@ pub mod flash;
 pub mod handlers;
 pub mod state;
 pub mod tasks;
+pub mod template_filters;
 
 use std::sync::Arc;
 
