@@ -83,7 +83,7 @@ pub async fn apply_queue(
             "install" => apply_install(op, &state).await,
             "update" => apply_update(op, &state).await,
             "remove" => apply_remove(op, &state).await,
-            _ => Ok(()),
+            _ => Err(anyhow::anyhow!("unknown queue action: {}", op.action)),
         };
 
         match result {
@@ -161,19 +161,20 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
-        use crate::spt::mods::extract_mod;
-        let extracted = extract_mod(&archive_path, &spt_dir)?;
         let db = db.lock();
-        let installed_id =
-            db.insert_mod(forge_mod_id, version_id, &mod_name, None, &version_str)?;
-        for file in &extracted {
-            db.insert_file(
-                installed_id,
-                &file.path,
-                Some(&file.hash),
-                Some(file.size as i64),
-            )?;
+        if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
+            return Ok(());
         }
+        crate::ops::install_mod_from_archive(
+            &db,
+            &spt_dir,
+            forge_mod_id,
+            version_id,
+            &mod_name,
+            None,
+            &version_str,
+            &archive_path,
+        )?;
         Ok::<_, anyhow::Error>(())
     })
     .await??;
@@ -186,60 +187,26 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("update op missing version_id"))?;
     let (link, version_str) = resolve_version_link(state, op.forge_mod_id, version_id).await?;
-
-    // Extract new version to staging BEFORE deleting old files
     let tmp_dir = download_to_temp(state, &link).await?;
     let archive_path = tmp_dir.path().join("mod.zip");
-    let staging_dir = tempfile::tempdir()?;
-    let staging_path = staging_dir.path().to_path_buf();
 
-    let archive_for_staging = archive_path.clone();
-    let staging_for_extract = staging_path.clone();
-    let extracted = web::block(move || {
-        crate::spt::mods::extract_mod(&archive_for_staging, &staging_for_extract)
-    })
-    .await??;
-
-    // Now safe to delete old and move new into place
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
     let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
-        use crate::spt::mods::delete_mod_files;
-
         let db = db.lock();
         let installed = db
             .get_mod_by_forge_id(forge_mod_id)?
             .ok_or_else(|| anyhow::anyhow!("mod not found for forge_id {forge_mod_id}"))?;
-
-        let old_files = db.get_files_for_mod(installed.id)?;
-        let old_paths: Vec<String> = old_files.iter().map(|f| f.file_path.clone()).collect();
-        delete_mod_files(&spt_dir, &old_paths)?;
-        db.delete_files_for_mod(installed.id)?;
-
-        // Move staged files into real location
-        for file in &extracted {
-            let src = staging_path.join(&file.path);
-            let dst = spt_dir.join(&file.path);
-            if let Some(parent) = dst.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            if src.exists() {
-                std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-            }
-        }
-
-        for file in &extracted {
-            db.insert_file(
-                installed.id,
-                &file.path,
-                Some(&file.hash),
-                Some(file.size as i64),
-            )?;
-        }
-        db.update_mod(installed.id, version_id, &version_str)?;
-        Ok::<_, anyhow::Error>(())
+        crate::ops::update_mod_from_archive(
+            &db,
+            &spt_dir,
+            installed.id,
+            version_id,
+            &version_str,
+            &archive_path,
+        )
     })
     .await??;
 
@@ -252,16 +219,18 @@ pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> any
     let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
-        use crate::spt::mods::delete_mod_files;
         let db = db.lock();
         let installed = db
             .get_mod_by_forge_id(forge_mod_id)?
             .ok_or_else(|| anyhow::anyhow!("mod not found for forge_id {forge_mod_id}"))?;
-        let files = db.get_files_for_mod(installed.id)?;
-        let paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
-        delete_mod_files(&spt_dir, &paths)?;
-        db.delete_mod(installed.id)?;
-        Ok::<_, anyhow::Error>(())
+
+        // Collect and remove reverse dependencies (same as CLI drain_all)
+        let reverse_deps = crate::ops::collect_all_reverse_deps(&db, installed.id)?;
+        for dep in reverse_deps.iter().rev() {
+            crate::ops::remove_mod_by_id(&db, &spt_dir, dep.id)?;
+        }
+
+        crate::ops::remove_mod_by_id(&db, &spt_dir, installed.id)
     })
     .await??;
 

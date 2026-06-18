@@ -89,25 +89,7 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
 /// Recursively collect all transitive reverse dependencies of a mod.
 /// Returns them in BFS order (direct dependents first, then their dependents, etc.).
 pub fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<InstalledMod>> {
-    let mut result = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-    let mut queue = std::collections::VecDeque::new();
-    queue.push_back(mod_db_id);
-    visited.insert(mod_db_id);
-
-    while let Some(current_id) = queue.pop_front() {
-        let rev_deps = ctx.db.get_reverse_dependencies(current_id)?;
-        for dep in rev_deps {
-            if visited.insert(dep.mod_id) {
-                if let Some(dependent) = ctx.db.get_mod(dep.mod_id)? {
-                    queue.push_back(dependent.id);
-                    result.push(dependent);
-                }
-            }
-        }
-    }
-
-    Ok(result)
+    crate::ops::collect_all_reverse_deps(&ctx.db, mod_db_id)
 }
 
 pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
