@@ -106,10 +106,11 @@ impl Database {
         rows.collect()
     }
 
-    pub fn list_mods_with_file_counts(&self) -> rusqlite::Result<Vec<(InstalledMod, usize)>> {
+    pub fn list_mods_with_file_counts(&self) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
-                    m.installed_at, m.updated_at, COUNT(f.id) as file_count
+                    m.installed_at, m.updated_at, COUNT(f.id) as file_count,
+                    COALESCE(SUM(f.file_size), 0) as total_size
              FROM installed_mods m
              LEFT JOIN installed_files f ON f.mod_id = m.id
              GROUP BY m.id
@@ -118,7 +119,8 @@ impl Database {
         let rows = stmt.query_map([], |row| {
             let m = row_to_installed_mod(row)?;
             let count: usize = row.get(8)?;
-            Ok((m, count))
+            let size: i64 = row.get(9)?;
+            Ok((m, count, size))
         })?;
         rows.collect()
     }
@@ -272,4 +274,40 @@ fn row_to_mod_dependency(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModDepende
         depends_on_mod_id: row.get(2)?,
         version_constraint: row.get(3)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::Database;
+
+    #[test]
+    fn list_mods_with_file_counts_includes_total_size() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(100, 200, "TestMod", Some("test-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(mod_id, "file1.dll", None, Some(1024))
+            .unwrap();
+        db.insert_file(mod_id, "file2.dll", None, Some(2048))
+            .unwrap();
+
+        let results = db.list_mods_with_file_counts().unwrap();
+        assert_eq!(results.len(), 1);
+        let (m, count, size) = &results[0];
+        assert_eq!(m.name, "TestMod");
+        assert_eq!(*count, 2);
+        assert_eq!(*size, 3072);
+    }
+
+    #[test]
+    fn list_mods_with_file_counts_zero_size_when_no_files() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(100, 200, "EmptyMod", None, "1.0.0").unwrap();
+
+        let results = db.list_mods_with_file_counts().unwrap();
+        assert_eq!(results.len(), 1);
+        let (_, count, size) = &results[0];
+        assert_eq!(*count, 0);
+        assert_eq!(*size, 0);
+    }
 }

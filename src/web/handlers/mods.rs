@@ -20,6 +20,7 @@ mod filters {
 struct ModListEntry {
     mod_info: InstalledMod,
     file_count: usize,
+    total_size: i64,
 }
 
 struct DepEntry {
@@ -34,6 +35,7 @@ struct DepEntry {
 struct ModListTemplate {
     user: SessionUser,
     mods: Vec<ModListEntry>,
+    grand_total_size: i64,
     flash: Option<FlashMessage>,
     csrf_token: String,
 }
@@ -88,11 +90,12 @@ pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Re
     let mods = web::block(move || {
         let db = db.lock();
         let mods_with_counts = db.list_mods_with_file_counts()?;
-        let entries = mods_with_counts
+        let entries: Vec<ModListEntry> = mods_with_counts
             .into_iter()
-            .map(|(mod_info, file_count)| ModListEntry {
+            .map(|(mod_info, file_count, total_size)| ModListEntry {
                 mod_info,
                 file_count,
+                total_size,
             })
             .collect();
         Ok::<_, anyhow::Error>(entries)
@@ -101,9 +104,12 @@ pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Re
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
+
     let tmpl = ModListTemplate {
         user,
         mods,
+        grand_total_size,
         flash,
         csrf_token,
     };
