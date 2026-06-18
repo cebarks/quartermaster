@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod csrf;
 pub mod error;
 pub mod flash;
 pub mod handlers;
@@ -39,7 +40,6 @@ async fn serve_asset(path: web::Path<String>) -> impl Responder {
 
 pub async fn start_server(
     config: Config,
-    config_path: std::path::PathBuf,
     db: Database,
     forge: ForgeClient,
     spt_dir: std::path::PathBuf,
@@ -54,7 +54,6 @@ pub async fn start_server(
         db,
         forge,
         config: config.clone(),
-        config_path,
         spt_dir,
         spt_info,
     });
@@ -83,7 +82,6 @@ pub async fn start_server(
             .wrap(middleware::NormalizePath::trim())
             // Static assets (public, before auth scope to avoid shadowing)
             .route("/assets/{path:.*}", web::get().to(serve_asset))
-            // TODO(debt): add CSRF protection on state-mutating POST forms (SameSite=Strict mitigates most vectors)
             // Auth routes (public)
             .route("/login", web::get().to(handlers::auth::login_page))
             .route("/logout", web::post().to(handlers::auth::logout))

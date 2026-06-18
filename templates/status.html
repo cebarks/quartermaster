@@ -2,21 +2,24 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}Status — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("status", user) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("status", user, csrf_token) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
     <h1>Server Status</h1>
     {% if user.is_admin() %}
     <div class="flex gap-1">
         <form method="post" action="/server/start" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
         </form>
         <form method="post" action="/server/restart" style="display:inline"
               onsubmit="return confirm('Restart the server?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Restart</button>
         </form>
         <form method="post" action="/server/stop" style="display:inline"
               onsubmit="return confirm('Stop the server?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-danger">{% call icons::stop() %}{% endcall %} Stop</button>
         </form>
     </div>

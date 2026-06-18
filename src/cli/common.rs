@@ -14,8 +14,6 @@ pub struct CliContext {
     pub spt_dir: PathBuf,
     pub spt_info: SptInfo,
     pub config: Config,
-    #[allow(dead_code)] // TODO(debt): used by Phase 3+ (config command)
-    pub config_path: PathBuf,
     pub db: Database,
     pub forge: ForgeClient,
 }
@@ -38,7 +36,6 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
         spt_dir,
         spt_info,
         config,
-        config_path,
         db,
         forge,
     })

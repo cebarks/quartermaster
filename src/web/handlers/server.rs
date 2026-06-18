@@ -1,5 +1,5 @@
 use actix_session::Session;
-use actix_web::web::{self, Data};
+use actix_web::web::{self, Data, Form};
 use actix_web::HttpResponse;
 
 use crate::podman::PodmanClient;
@@ -11,8 +11,12 @@ use crate::web::state::AppState;
 pub async fn start_server(
     state: Data<AppState>,
     session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let container = state
         .config
         .server_container
@@ -33,8 +37,12 @@ pub async fn start_server(
 pub async fn stop_server(
     state: Data<AppState>,
     session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let container = state
         .config
         .server_container
@@ -55,8 +63,12 @@ pub async fn stop_server(
 pub async fn restart_server(
     state: Data<AppState>,
     session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let container = state
         .config
         .server_container

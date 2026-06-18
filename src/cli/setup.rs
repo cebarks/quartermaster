@@ -62,7 +62,6 @@ pub async fn run(non_interactive: bool, skip_fika: bool, cli: &Cli) -> Result<()
         spt_dir: spt_dir.clone(),
         spt_info: spt_info.clone(),
         config: config.clone(),
-        config_path: config_path.clone(),
         db,
         forge,
     };

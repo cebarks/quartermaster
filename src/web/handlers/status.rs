@@ -13,6 +13,7 @@ use crate::web::state::AppState;
 struct StatusPageTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
+    csrf_token: String,
 }
 
 #[derive(Template)]
@@ -24,7 +25,12 @@ struct StatusDetailTemplate {
 pub async fn status_page(session: Session) -> actix_web::Result<Html> {
     let user = require_auth(&session)?;
     let flash = take_flash(&session);
-    let tmpl = StatusPageTemplate { user, flash };
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let tmpl = StatusPageTemplate {
+        user,
+        flash,
+        csrf_token,
+    };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 

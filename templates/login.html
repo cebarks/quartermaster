@@ -8,6 +8,7 @@
     <div class="alert alert-error">{{ error }}</div>
     {% endif %}
     <form method="post" action="/login">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="username">Username</label>
         <input type="text" id="username" name="username" required autofocus>
         <label for="password">Password</label>

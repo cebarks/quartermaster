@@ -2,7 +2,7 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}Mods — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("mods", user) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
     <h1>Installed Mods</h1>
@@ -10,6 +10,7 @@
     <div class="flex gap-1">
         <form method="post" action="/mods/update-all" style="display:inline"
               onsubmit="return confirm('Update all mods?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update All</button>
         </form>
     </div>
@@ -45,11 +46,13 @@
                 {% if user.is_admin() %}
                 <td>
                     <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
                     </form>
                     <form method="post" action="/mods/{{ m.mod_info.id }}/remove" style="display:inline"
                           data-name="{{ m.mod_info.name }}"
                           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-sm btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
                     </form>
                 </td>
@@ -65,6 +68,7 @@
 <div class="card">
     <h2>Install Mod</h2>
     <form method="post" action="/mods/install">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="mod_ref">Forge Mod ID or Name</label>
         <input type="text" id="mod_ref" name="mod_ref" placeholder="e.g. 2326 or SAIN" required>
         <button type="submit" class="btn">{% call icons::download() %}{% endcall %} Install</button>

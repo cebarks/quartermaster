@@ -2,13 +2,14 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}Queue — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("queue", user) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("queue", user, csrf_token) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
     <h1>Pending Operations</h1>
     {% if user.is_admin() && !ops.is_empty() %}
     <form method="post" action="/queue/apply"
           onsubmit="return confirm('Apply all pending operations?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-success">{% call icons::play() %}{% endcall %} Apply All</button>
     </form>
     {% endif %}
@@ -50,6 +51,7 @@
                 <td>
                     <form method="post" action="/queue/{{ op.id }}/cancel" style="display:inline"
                           onsubmit="return confirm('Cancel this operation?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-sm btn-outline">{% call icons::x() %}{% endcall %} Cancel</button>
                     </form>
                 </td>
