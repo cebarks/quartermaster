@@ -253,6 +253,47 @@ pub async fn install_mod(
         .await
         .map_err(WebError::from)?;
 
+    const FIKA_FORGE_MOD_ID: i64 = 2326;
+
+    // Check Fika compatibility if Fika is installed
+    {
+        let db = state.db.clone();
+        let fika_installed = web::block(move || {
+            let db = db.lock();
+            Ok::<_, anyhow::Error>(db.get_mod_by_forge_id(FIKA_FORGE_MOD_ID)?.is_some())
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if fika_installed {
+            use crate::forge::models::FikaCompat;
+            match &version.fika_compatibility {
+                Some(FikaCompat::Incompatible) => {
+                    set_flash(
+                        &session,
+                        &format!(
+                            "Warning: {} v{} is marked as Fika INCOMPATIBLE. It may cause issues with multiplayer.",
+                            mod_info.name, version.version
+                        ),
+                        "warning",
+                    );
+                }
+                Some(FikaCompat::Unknown) => {
+                    set_flash(
+                        &session,
+                        &format!(
+                            "Note: Fika compatibility for {} v{} is unknown.",
+                            mod_info.name, version.version
+                        ),
+                        "warning",
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Check if the operation should be queued (server running + queue enabled)
     let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
         .await
