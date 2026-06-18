@@ -26,6 +26,144 @@ fn default_session_secret() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LogFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RotationPolicy {
+    None,
+    Size,
+    Daily,
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_console_enabled() -> bool {
+    true
+}
+
+fn default_log_format_text() -> LogFormat {
+    LogFormat::Text
+}
+
+fn default_log_format_json() -> LogFormat {
+    LogFormat::Json
+}
+
+fn default_file_path() -> String {
+    "quartermaster.log".to_string()
+}
+
+fn default_rotation() -> RotationPolicy {
+    RotationPolicy::None
+}
+
+fn default_max_size_mb() -> u64 {
+    10
+}
+
+fn default_max_files() -> usize {
+    5
+}
+
+fn default_buffer_size() -> usize {
+    1000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConsoleLogConfig {
+    #[serde(default = "default_console_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_log_format_text")]
+    pub format: LogFormat,
+}
+
+impl Default for ConsoleLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            format: LogFormat::Text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileLogConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_file_path")]
+    pub path: String,
+    #[serde(default = "default_log_format_json")]
+    pub format: LogFormat,
+    #[serde(default = "default_rotation")]
+    pub rotation: RotationPolicy,
+    #[serde(default = "default_max_size_mb")]
+    pub max_size_mb: u64,
+    #[serde(default = "default_max_files")]
+    pub max_files: usize,
+}
+
+impl Default for FileLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: "quartermaster.log".to_string(),
+            format: LogFormat::Json,
+            rotation: RotationPolicy::None,
+            max_size_mb: 10,
+            max_files: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WebLogConfig {
+    #[serde(default = "default_buffer_size")]
+    pub buffer_size: usize,
+}
+
+impl Default for WebLogConfig {
+    fn default() -> Self {
+        Self { buffer_size: 1000 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LoggingConfig {
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    #[serde(default)]
+    pub console: ConsoleLogConfig,
+    #[serde(default)]
+    pub file: FileLogConfig,
+    #[serde(default)]
+    pub web: WebLogConfig,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: "info".to_string(),
+            console: ConsoleLogConfig::default(),
+            file: FileLogConfig::default(),
+            web: WebLogConfig::default(),
+        }
+    }
+}
+
+impl LoggingConfig {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
     pub spt_dir: Option<PathBuf>,
@@ -56,6 +194,10 @@ pub struct Config {
 
     #[serde(default = "default_web_port")]
     pub web_port: u16,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "LoggingConfig::is_default")]
+    pub logging: LoggingConfig,
 }
 
 impl Default for Config {
@@ -71,6 +213,7 @@ impl Default for Config {
             server_port: None,
             web_bind: "0.0.0.0".to_string(),
             web_port: 9190,
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -124,6 +267,9 @@ impl Config {
     /// - `QUMA_SERVER_CONTAINER` -> `server_container`
     /// - `QUMA_SERVER_HOST` -> `server_host`
     /// - `QUMA_SERVER_PORT` -> `server_port`
+    /// - `QUMA_LOG_LEVEL` -> `logging.level`
+    /// - `QUMA_LOG_FILE_PATH` -> `logging.file.path`
+    /// - `QUMA_LOG_FILE_ENABLED` -> `logging.file.enabled`
     pub fn apply_env_overrides(&mut self) {
         if let Ok(val) = std::env::var("QUMA_SPT_DIR") {
             self.spt_dir = Some(PathBuf::from(val));
@@ -148,6 +294,19 @@ impl Config {
         if let Ok(val) = std::env::var("QUMA_SERVER_PORT") {
             if let Ok(port) = val.parse::<u16>() {
                 self.server_port = Some(port);
+            }
+        }
+        if let Ok(val) = std::env::var("QUMA_LOG_LEVEL") {
+            self.logging.level = val;
+        }
+        if let Ok(val) = std::env::var("QUMA_LOG_FILE_PATH") {
+            self.logging.file.path = val;
+        }
+        if let Ok(val) = std::env::var("QUMA_LOG_FILE_ENABLED") {
+            if val.eq_ignore_ascii_case("true") {
+                self.logging.file.enabled = true;
+            } else if val.eq_ignore_ascii_case("false") {
+                self.logging.file.enabled = false;
             }
         }
     }
@@ -347,5 +506,94 @@ web_port = 3000
             let result = Config::resolve_path(None, Some(Path::new("/opt/spt")));
             assert_eq!(result, PathBuf::from("/env/path/config.toml"));
         });
+    }
+
+    #[test]
+    fn logging_config_defaults() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert_eq!(config.logging, LoggingConfig::default());
+        assert_eq!(config.logging.level, "info");
+        assert!(config.logging.console.enabled);
+        assert_eq!(config.logging.console.format, LogFormat::Text);
+        assert!(!config.logging.file.enabled);
+        assert_eq!(config.logging.file.path, "quartermaster.log");
+        assert_eq!(config.logging.file.format, LogFormat::Json);
+        assert_eq!(config.logging.file.rotation, RotationPolicy::None);
+        assert_eq!(config.logging.file.max_size_mb, 10);
+        assert_eq!(config.logging.file.max_files, 5);
+        assert_eq!(config.logging.web.buffer_size, 1000);
+    }
+
+    #[test]
+    fn logging_config_full_deserialization() {
+        let toml_str = r#"
+[logging]
+level = "debug"
+
+[logging.console]
+enabled = false
+format = "json"
+
+[logging.file]
+enabled = true
+path = "/var/log/quma.log"
+format = "text"
+rotation = "size"
+max_size_mb = 50
+max_files = 10
+
+[logging.web]
+buffer_size = 5000
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(config.logging.level, "debug");
+        assert!(!config.logging.console.enabled);
+        assert_eq!(config.logging.console.format, LogFormat::Json);
+        assert!(config.logging.file.enabled);
+        assert_eq!(config.logging.file.path, "/var/log/quma.log");
+        assert_eq!(config.logging.file.format, LogFormat::Text);
+        assert_eq!(config.logging.file.rotation, RotationPolicy::Size);
+        assert_eq!(config.logging.file.max_size_mb, 50);
+        assert_eq!(config.logging.file.max_files, 10);
+        assert_eq!(config.logging.web.buffer_size, 5000);
+    }
+
+    #[test]
+    fn logging_config_skip_serializing_when_default() {
+        let config = Config::default();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(
+            !serialized.contains("[logging]"),
+            "default logging config should not be serialized"
+        );
+    }
+
+    #[test]
+    fn logging_config_serialized_when_non_default() {
+        let mut config = Config::default();
+        config.logging.level = "debug".to_string();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(
+            serialized.contains("[logging]"),
+            "non-default logging config should be serialized"
+        );
+    }
+
+    #[test]
+    fn logging_env_var_overrides() {
+        temp_env::with_vars(
+            [
+                ("QUMA_LOG_LEVEL", Some("trace")),
+                ("QUMA_LOG_FILE_PATH", Some("/tmp/test.log")),
+                ("QUMA_LOG_FILE_ENABLED", Some("true")),
+            ],
+            || {
+                let mut config = Config::default();
+                config.apply_env_overrides();
+                assert_eq!(config.logging.level, "trace");
+                assert_eq!(config.logging.file.path, "/tmp/test.log");
+                assert!(config.logging.file.enabled);
+            },
+        );
     }
 }
