@@ -72,6 +72,8 @@ pub async fn start_server(
                     .build(),
             )
             .wrap(middleware::NormalizePath::trim())
+            // Static assets (public, before auth scope to avoid shadowing)
+            .route("/assets/{path:.*}", web::get().to(serve_asset))
             // Auth routes (public)
             // TODO(debt): add rate limiting via actix-governor (5 req/min/IP on /login and /register)
             // TODO(debt): add CSRF protection on state-mutating POST forms (SameSite=Strict mitigates most vectors)
@@ -80,16 +82,28 @@ pub async fn start_server(
             .route("/register", web::get().to(handlers::auth::register_page))
             .route("/register", web::post().to(handlers::auth::register_submit))
             .route("/logout", web::post().to(handlers::auth::logout))
+            // HTMX API (authenticated, registered before catch-all scope)
+            .service(
+                web::scope("/api")
+                    .wrap(auth::RequireAuth)
+                    .route(
+                        "/mods/check-updates",
+                        web::get().to(handlers::mods::check_updates_partial),
+                    )
+                    .route(
+                        "/mods/dep-tree",
+                        web::get().to(handlers::mods::dep_tree_partial),
+                    )
+                    .route("/status", web::get().to(handlers::status::status_partial)),
+            )
             // Authenticated routes — admin checks are per-handler via require_admin()
             .service(
                 web::scope("")
                     .wrap(auth::RequireAuth)
-                    // All-user pages
                     .route("/", web::get().to(handlers::dashboard::dashboard))
                     .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
                     .route("/status", web::get().to(handlers::status::status_page))
                     .route("/queue", web::get().to(handlers::queue::queue_page))
-                    // Admin-only pages and actions
                     .route("/mods", web::get().to(handlers::mods::list_mods))
                     .route("/mods/install", web::post().to(handlers::mods::install_mod))
                     .route(
@@ -122,22 +136,6 @@ pub async fn start_server(
                     )
                     .route("/queue/apply", web::post().to(handlers::queue::apply_queue)),
             )
-            // HTMX API (authenticated)
-            .service(
-                web::scope("/api")
-                    .wrap(auth::RequireAuth)
-                    .route(
-                        "/mods/check-updates",
-                        web::get().to(handlers::mods::check_updates_partial),
-                    )
-                    .route(
-                        "/mods/dep-tree",
-                        web::get().to(handlers::mods::dep_tree_partial),
-                    )
-                    .route("/status", web::get().to(handlers::status::status_partial)),
-            )
-            // Static assets (public)
-            .route("/assets/{path:.*}", web::get().to(serve_asset))
     })
     .bind(&bind_addr)
     .with_context(|| format!("failed to bind to {bind_addr}"))?
