@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod csrf;
 pub mod error;
 pub mod flash;
 pub mod handlers;
@@ -81,7 +82,6 @@ pub async fn start_server(
             .wrap(middleware::NormalizePath::trim())
             // Static assets (public, before auth scope to avoid shadowing)
             .route("/assets/{path:.*}", web::get().to(serve_asset))
-            // TODO(debt): add CSRF protection on state-mutating POST forms (SameSite=Strict mitigates most vectors)
             // Auth routes (public)
             .route("/login", web::get().to(handlers::auth::login_page))
             .route("/logout", web::post().to(handlers::auth::logout))

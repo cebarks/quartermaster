@@ -1,5 +1,5 @@
 use actix_session::Session;
-use actix_web::web::{self, Data, Html, Path};
+use actix_web::web::{self, Data, Form, Html, Path};
 use actix_web::HttpResponse;
 use askama::Template;
 
@@ -15,11 +15,13 @@ struct QueueTemplate {
     user: SessionUser,
     ops: Vec<PendingOperation>,
     flash: Option<FlashMessage>,
+    csrf_token: String,
 }
 
 pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
     let user = require_auth(&session)?;
     let flash = take_flash(&session);
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
 
     let ops = web::block(move || {
@@ -30,7 +32,12 @@ pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::R
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = QueueTemplate { user, ops, flash };
+    let tmpl = QueueTemplate {
+        user,
+        ops,
+        flash,
+        csrf_token,
+    };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
@@ -38,8 +45,12 @@ pub async fn cancel_op(
     state: Data<AppState>,
     path: Path<i64>,
     session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let op_id = path.into_inner();
     let db = state.db.clone();
 
@@ -60,8 +71,12 @@ pub async fn cancel_op(
 pub async fn apply_queue(
     state: Data<AppState>,
     session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let server_running = crate::server_detect::is_server_running(&state.config, &state.spt_dir)
         .await
         .unwrap_or(false);

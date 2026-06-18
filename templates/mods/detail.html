@@ -2,7 +2,7 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}{{ mod_info.name }} — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("mods", user) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>{{ mod_info.name }}</h1>
 
@@ -61,11 +61,13 @@
 {% if user.is_admin() %}
 <div class="flex gap-1 mt-2">
     <form method="post" action="/mods/{{ mod_info.id }}/update">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn">{% call icons::refresh() %}{% endcall %} Update</button>
     </form>
     <form method="post" action="/mods/{{ mod_info.id }}/remove"
           data-name="{{ mod_info.name }}"
           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
     </form>
 </div>

@@ -20,11 +20,13 @@ struct DashboardTemplate {
     pending_count: usize,
     unmanaged_dirs: Vec<(String, usize)>,
     flash: Option<FlashMessage>,
+    csrf_token: String,
 }
 
 pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
     let user = require_auth(&session)?;
     let flash = take_flash(&session);
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
@@ -47,6 +49,7 @@ pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Re
         pending_count,
         unmanaged_dirs,
         flash,
+        csrf_token,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

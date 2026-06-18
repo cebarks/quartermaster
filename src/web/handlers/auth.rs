@@ -14,6 +14,7 @@ use crate::web::state::AppState;
 #[template(path = "login.html")]
 struct LoginTemplate {
     error: Option<String>,
+    csrf_token: String,
 }
 
 #[derive(Template)]
@@ -22,6 +23,7 @@ struct RegisterTemplate {
     error: Option<String>,
     code: String,
     profiles: Vec<SptProfile>,
+    csrf_token: String,
 }
 
 // -- Form structs --
@@ -30,6 +32,7 @@ struct RegisterTemplate {
 pub struct LoginForm {
     username: String,
     password: String,
+    csrf_token: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -38,6 +41,7 @@ pub struct RegisterForm {
     profile_id: String,
     password: String,
     password_confirm: String,
+    csrf_token: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -54,11 +58,13 @@ fn render_register_error(
     msg: &str,
     code: String,
     profiles: Vec<SptProfile>,
+    csrf_token: String,
 ) -> actix_web::Result<HttpResponse> {
     let tmpl = RegisterTemplate {
         error: Some(msg.to_string()),
         code,
         profiles,
+        csrf_token,
     };
     Ok(HttpResponse::BadRequest()
         .content_type("text/html")
@@ -77,8 +83,12 @@ fn is_invite_expired(expires_at: Option<&str>) -> bool {
 
 // -- Handlers --
 
-pub async fn login_page() -> actix_web::Result<HttpResponse> {
-    let tmpl = LoginTemplate { error: None };
+pub async fn login_page(session: Session) -> actix_web::Result<HttpResponse> {
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let tmpl = LoginTemplate {
+        error: None,
+        csrf_token,
+    };
     Ok(HttpResponse::Ok()
         .content_type("text/html")
         .body(tmpl.render().map_err(WebError::from)?))
@@ -90,6 +100,12 @@ pub async fn login_submit(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let form = form.into_inner();
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
     let username = form.username.clone();
 
@@ -106,6 +122,7 @@ pub async fn login_submit(
         None => {
             let tmpl = LoginTemplate {
                 error: Some("Invalid username or password".to_string()),
+                csrf_token,
             };
             return Ok(HttpResponse::Ok()
                 .content_type("text/html")
@@ -127,6 +144,7 @@ pub async fn login_submit(
     if !valid {
         let tmpl = LoginTemplate {
             error: Some("Invalid username or password".to_string()),
+            csrf_token,
         };
         return Ok(HttpResponse::Ok()
             .content_type("text/html")
@@ -149,7 +167,9 @@ pub async fn login_submit(
 pub async fn register_page(
     query: Query<RegisterQuery>,
     state: Data<AppState>,
+    session: Session,
 ) -> actix_web::Result<HttpResponse> {
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let code = query.code.clone().unwrap_or_default();
 
     if code.is_empty() {
@@ -157,6 +177,7 @@ pub async fn register_page(
             error: Some("Invite code required".to_string()),
             code: String::new(),
             profiles: vec![],
+            csrf_token,
         };
         return Ok(HttpResponse::BadRequest()
             .content_type("text/html")
@@ -179,6 +200,7 @@ pub async fn register_page(
                 error: Some("Invalid invite code".to_string()),
                 code,
                 profiles: vec![],
+                csrf_token,
             };
             Ok(HttpResponse::BadRequest()
                 .content_type("text/html")
@@ -189,6 +211,7 @@ pub async fn register_page(
                 error: Some("This invite code has already been used".to_string()),
                 code,
                 profiles: vec![],
+                csrf_token,
             };
             Ok(HttpResponse::BadRequest()
                 .content_type("text/html")
@@ -199,6 +222,7 @@ pub async fn register_page(
                 error: Some("This invite code has expired".to_string()),
                 code,
                 profiles: vec![],
+                csrf_token,
             };
             Ok(HttpResponse::BadRequest()
                 .content_type("text/html")
@@ -214,6 +238,7 @@ pub async fn register_page(
                 error: None,
                 code,
                 profiles,
+                csrf_token,
             };
             Ok(HttpResponse::Ok()
                 .content_type("text/html")
@@ -225,9 +250,15 @@ pub async fn register_page(
 pub async fn register_submit(
     form: Form<RegisterForm>,
     state: Data<AppState>,
-    _session: Session,
+    session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let form = form.into_inner();
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let spt_dir = state.spt_dir.clone();
     let profiles = web::block(move || list_profiles(&spt_dir))
@@ -240,6 +271,7 @@ pub async fn register_submit(
             &format!("Password must be at least {MIN_PASSWORD_LEN} characters"),
             form.code,
             profiles,
+            csrf_token,
         );
     }
 
@@ -248,15 +280,21 @@ pub async fn register_submit(
             &format!("Password must be at most {MAX_PASSWORD_LEN} characters"),
             form.code,
             profiles,
+            csrf_token,
         );
     }
 
     if form.password != form.password_confirm {
-        return render_register_error("Passwords do not match", form.code, profiles);
+        return render_register_error("Passwords do not match", form.code, profiles, csrf_token);
     }
 
     if form.profile_id.is_empty() {
-        return render_register_error("Please select your SPT profile", form.code, profiles);
+        return render_register_error(
+            "Please select your SPT profile",
+            form.code,
+            profiles,
+            csrf_token,
+        );
     }
 
     let profile = profiles.iter().find(|p| p.aid == form.profile_id);
@@ -264,7 +302,12 @@ pub async fn register_submit(
     let username = match profile {
         Some(p) => p.username.clone(),
         None => {
-            return render_register_error("Invalid profile selection", form.code, profiles);
+            return render_register_error(
+                "Invalid profile selection",
+                form.code,
+                profiles,
+                csrf_token,
+            );
         }
     };
 
@@ -308,11 +351,14 @@ pub async fn register_submit(
         Ok(_user_id) => Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/login"))
             .finish()),
-        Err(msg) => render_register_error(&msg, form.code, profiles),
+        Err(msg) => render_register_error(&msg, form.code, profiles, csrf_token),
     }
 }
 
-pub async fn logout(session: Session) -> HttpResponse {
+pub async fn logout(session: Session, form: Form<crate::web::csrf::CsrfForm>) -> HttpResponse {
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return HttpResponse::Forbidden().body("forbidden");
+    }
     session.purge();
     HttpResponse::SeeOther()
         .insert_header(("Location", "/login"))

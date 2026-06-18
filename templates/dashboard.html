@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}Dashboard — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("dashboard", user) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("dashboard", user, csrf_token) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>Dashboard</h1>
 

@@ -30,6 +30,7 @@ struct ModListTemplate {
     user: SessionUser,
     mods: Vec<ModListEntry>,
     flash: Option<FlashMessage>,
+    csrf_token: String,
 }
 
 #[derive(Template)]
@@ -40,6 +41,7 @@ struct ModDetailTemplate {
     files: Vec<InstalledFile>,
     dependencies: Vec<DepEntry>,
     flash: Option<FlashMessage>,
+    csrf_token: String,
 }
 
 #[derive(Template)]
@@ -59,6 +61,7 @@ struct DependencyTreeTemplate {
 #[derive(serde::Deserialize)]
 pub struct InstallForm {
     mod_ref: String,
+    csrf_token: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -73,6 +76,7 @@ pub struct DepTreeQuery {
 pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
     let user = require_admin(&session)?;
     let flash = take_flash(&session);
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
 
     let mods = web::block(move || {
@@ -91,7 +95,12 @@ pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Re
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = ModListTemplate { user, mods, flash };
+    let tmpl = ModListTemplate {
+        user,
+        mods,
+        flash,
+        csrf_token,
+    };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
@@ -102,6 +111,7 @@ pub async fn mod_detail(
 ) -> actix_web::Result<Html> {
     let user = require_auth(&session)?;
     let flash = take_flash(&session);
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let mod_id = path.into_inner();
     let db = state.db.clone();
 
@@ -129,6 +139,7 @@ pub async fn mod_detail(
         files,
         dependencies,
         flash,
+        csrf_token,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -193,6 +204,9 @@ pub async fn install_mod(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let mod_ref = form.mod_ref.trim();
 
     if mod_ref.is_empty() {
@@ -308,8 +322,12 @@ pub async fn update_mod(
     state: Data<AppState>,
     path: Path<i64>,
     session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let mod_db_id = path.into_inner();
     let db = state.db.clone();
 
@@ -412,8 +430,12 @@ pub async fn remove_mod(
     state: Data<AppState>,
     path: Path<i64>,
     session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let mod_db_id = path.into_inner();
 
     // Look up the installed mod for queue metadata
@@ -470,8 +492,12 @@ pub async fn remove_mod(
 pub async fn update_all_mods(
     state: Data<AppState>,
     session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     require_admin(&session)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
     let db = state.db.clone();
     let installed = web::block(move || {
         let db = db.lock();

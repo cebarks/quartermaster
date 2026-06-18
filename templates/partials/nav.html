@@ -1,5 +1,5 @@
 {% import "partials/icons.html" as icons %}
-{% macro nav(active, user) %}
+{% macro nav(active, user, csrf_token) %}
 <div class="links">
     <a href="/"{% if active == "dashboard" %} class="active"{% endif %}>{% call icons::home() %}{% endcall %} Dashboard</a>
     <a href="/mods"{% if active == "mods" %} class="active"{% endif %}>{% call icons::package() %}{% endcall %} Mods</a>
@@ -9,6 +9,7 @@
 <div class="user-info">
     {{ user.username }} ({{ user.role }})
     <form method="post" action="/logout" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">{% call icons::log_out() %}{% endcall %} Logout</button>
     </form>
 </div>
