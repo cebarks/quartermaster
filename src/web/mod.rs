@@ -3,6 +3,7 @@ pub mod csrf;
 pub mod error;
 pub mod flash;
 pub mod handlers;
+pub mod sse;
 pub mod state;
 pub mod tasks;
 pub mod template_filters;
@@ -52,6 +53,8 @@ pub async fn start_server(
 
     let session_key = Key::derive_from(config.session_secret.as_bytes());
 
+    let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
+
     let db = Arc::new(parking_lot::Mutex::new(db));
     let app_state = web::Data::new(AppState {
         db,
@@ -59,8 +62,9 @@ pub async fn start_server(
         config: config.clone(),
         spt_dir,
         spt_info,
-        tasks: crate::web::tasks::TaskTracker::new(),
+        tasks: crate::web::tasks::TaskTracker::new(events_tx.clone()),
         update_cache: crate::web::update_cache::UpdateCache::new(config.update_check_interval),
+        events: events_tx,
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
@@ -107,6 +111,7 @@ pub async fn start_server(
             .service(
                 web::scope("/api")
                     .wrap(auth::RequireAuth)
+                    .route("/events", web::get().to(crate::web::sse::events_stream))
                     .route(
                         "/mods/check-updates",
                         web::get().to(handlers::mods::check_updates_partial),

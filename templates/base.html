@@ -6,12 +6,14 @@
     <title>{% block title %}Quartermaster{% endblock %}</title>
     <link rel="stylesheet" href="/assets/style.css">
     <script src="/assets/htmx.min.js"></script>
+    <script src="/assets/sse.js"></script>
 </head>
 <body>
     <nav>
         <span class="brand">Quartermaster</span>
         {% block nav %}{% endblock %}
     </nav>
+    <div id="sse-source" hx-ext="sse" sse-connect="/api/events" style="display:none"></div>
     <main>
         {% block flash %}
         {% if let Some(flash) = flash %}
