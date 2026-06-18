@@ -77,6 +77,15 @@ struct UpdateStatusTemplate {
     entries: Vec<UpdateStatusEntry>,
 }
 
+#[derive(Template)]
+#[template(path = "mods/partials/list_body.html")]
+struct ListBodyTemplate {
+    user: SessionUser,
+    mods: Vec<ModListEntry>,
+    grand_total_size: i64,
+    csrf_token: String,
+}
+
 // -- Form structs --
 
 #[derive(serde::Deserialize)]
@@ -443,6 +452,7 @@ pub async fn install_mod(
     let version = version.clone();
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
+    let update_cache = state.update_cache.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -496,6 +506,7 @@ pub async fn install_mod(
             Ok(()) => {
                 tracing::info!(mod_id, "mod installed successfully");
                 tasks.complete(task_id, "Mod installed successfully".to_string());
+                update_cache.invalidate();
             }
             Err(e) => {
                 tracing::error!(mod_id, error = %e, "mod install failed");
@@ -595,6 +606,7 @@ pub async fn update_mod(
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
     let version = version.clone();
+    let update_cache = state.update_cache.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -656,6 +668,7 @@ pub async fn update_mod(
             Ok(()) => {
                 tracing::info!(mod_db_id, "mod updated successfully");
                 tasks.complete(task_id, "Mod updated successfully".to_string());
+                update_cache.invalidate();
             }
             Err(e) => {
                 tracing::error!(mod_db_id, error = %e, "mod update failed");
@@ -727,6 +740,7 @@ pub async fn remove_mod(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    state.update_cache.invalidate();
     set_flash(&session, "Mod removed", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/mods"))
@@ -816,6 +830,7 @@ pub async fn update_all_mods(
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
     let installed = installed.clone();
+    let update_cache = state.update_cache.clone();
 
     tokio::spawn(async move {
         let total = results.updates.len();
@@ -899,6 +914,8 @@ pub async fn update_all_mods(
             }
         }
 
+        update_cache.invalidate();
+
         if success_count == total {
             tasks.complete(task_id, format!("All {total} mods updated successfully"));
         } else if success_count > 0 {
@@ -914,4 +931,37 @@ pub async fn update_all_mods(
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/mods"))
         .finish())
+}
+
+pub async fn list_body_partial(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
+    let user = require_auth(&session)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let db = state.db.clone();
+
+    let mods = web::block(move || {
+        let db = db.lock();
+        let mods_with_counts = db.list_mods_with_file_counts()?;
+        let entries: Vec<ModListEntry> = mods_with_counts
+            .into_iter()
+            .map(|(mod_info, file_count, total_size)| ModListEntry {
+                mod_info,
+                file_count,
+                total_size,
+            })
+            .collect();
+        Ok::<_, anyhow::Error>(entries)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
+
+    let tmpl = ListBodyTemplate {
+        user,
+        mods,
+        grand_total_size,
+        csrf_token,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

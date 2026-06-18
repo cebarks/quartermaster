@@ -228,6 +228,12 @@ main > h1 { border-bottom: 1px solid var(--border); }
 .icon { display: inline-block; width: 16px; height: 16px; vertical-align: middle; flex-shrink: 0; }
 .icon-sm { width: 14px; height: 14px; }
 
+/* Table footer row */
+.tfoot-row td {
+    border-top: 1px solid var(--border);
+    font-style: italic;
+}
+
 /* HTMX loading indicator */
 .htmx-indicator { display: none; }
 .htmx-request .htmx-indicator { display: inline-block; }

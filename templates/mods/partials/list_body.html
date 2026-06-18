@@ -1,0 +1,31 @@
+{% import "partials/icons.html" as icons %}
+{% for m in &mods %}
+<tr>
+    <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}</a></td>
+    <td id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</td>
+    <td class="text-muted">{{ m.file_count }}</td>
+    <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
+    <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
+    {% if user.is_admin() %}
+    <td>
+        <span id="mod-update-{{ m.mod_info.id }}">
+            <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
+            </form>
+        </span>
+        <form method="post" action="/mods/{{ m.mod_info.id }}/remove" style="display:inline"
+              data-name="{{ m.mod_info.name }}"
+              onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
+        </form>
+    </td>
+    {% endif %}
+</tr>
+{% endfor %}
+<tr class="tfoot-row">
+    <td colspan="{% if user.is_admin() %}6{% else %}5{% endif %}" class="text-muted text-sm">
+        Total: {{ mods.len() }} mods — {{ grand_total_size|format_size_i64 }}
+    </td>
+</tr>

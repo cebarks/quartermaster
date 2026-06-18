@@ -38,7 +38,10 @@
                 {% if user.is_admin() %}<th>Actions</th>{% endif %}
             </tr>
         </thead>
-        <tbody>
+        <tbody id="mod-list-body"
+               hx-get="/api/mods/list"
+               hx-trigger="sse:modsChanged from:#sse-source"
+               hx-swap="innerHTML">
             {% for m in &mods %}
             <tr>
                 <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}</a></td>
@@ -64,14 +67,12 @@
                 {% endif %}
             </tr>
             {% endfor %}
-        </tbody>
-        <tfoot>
-            <tr>
+            <tr class="tfoot-row">
                 <td colspan="{% if user.is_admin() %}6{% else %}5{% endif %}" class="text-muted text-sm">
                     Total: {{ mods.len() }} mods — {{ grand_total_size|format_size_i64 }}
                 </td>
             </tr>
-        </tfoot>
+        </tbody>
     </table>
     <span hx-get="/api/mods/update-status" hx-trigger="load, sse:modsChanged from:#sse-source" hx-swap="none"></span>
 </div>
