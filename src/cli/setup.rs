@@ -184,7 +184,6 @@ async fn configure_container(
 }
 
 /// Read and optionally update SPT's http.json networking config.
-/// Read and optionally update SPT's http.json networking config.
 fn configure_networking(spt_dir: &Path, config: &mut Config, non_interactive: bool) -> Result<()> {
     println!("\n--- Network Configuration ---");
 
@@ -278,6 +277,8 @@ async fn first_boot(config: &Config, spt_dir: &Path, non_interactive: bool) -> R
     };
     let podman = PodmanClient::new(container);
 
+    // TODO(debt): is_running errors (permissions, missing socket) are swallowed here —
+    // if this becomes confusing, log them or let start() surface the real error
     let running = podman.is_running().await.unwrap_or(false);
     if running {
         println!("Server is already running.");
