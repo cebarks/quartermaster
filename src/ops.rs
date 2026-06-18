@@ -29,9 +29,15 @@ pub fn install_mod_from_archive(
     version: &str,
     archive_path: &Path,
 ) -> Result<i64> {
+    tracing::info!(name, forge_mod_id, version, "installing mod from archive");
     let extracted = crate::spt::mods::extract_mod(archive_path, spt_dir)?;
     let db_id = db.insert_mod(forge_mod_id, version_id, name, slug, version)?;
     record_extracted_files(db, db_id, &extracted)?;
+    tracing::debug!(
+        db_id,
+        file_count = extracted.len(),
+        "mod installed, files recorded"
+    );
     Ok(db_id)
 }
 
@@ -43,11 +49,17 @@ pub fn update_mod_from_archive(
     version_str: &str,
     archive_path: &Path,
 ) -> Result<()> {
+    tracing::info!(mod_db_id, version_str, "updating mod from archive");
     let staging_dir = tempfile::tempdir()?;
     let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
 
     let old_files = db.get_files_for_mod(mod_db_id)?;
     let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
+    tracing::debug!(
+        old_file_count = old_paths.len(),
+        new_file_count = extracted.len(),
+        "replacing mod files"
+    );
     crate::spt::mods::delete_mod_files(spt_dir, &old_paths)?;
     db.delete_files_for_mod(mod_db_id)?;
 
@@ -66,8 +78,10 @@ pub fn update_mod_from_archive(
 }
 
 pub fn remove_mod_by_id(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
+    tracing::info!(mod_db_id, "removing mod");
     let files = db.get_files_for_mod(mod_db_id)?;
     let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
+    tracing::debug!(file_count = paths.len(), "deleting mod files");
     crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
     db.delete_mod(mod_db_id)?;
     Ok(())
@@ -105,6 +119,12 @@ pub fn scan_and_record_runtime_files(
         mod_dirs.insert(spt_dir.join(dir));
     }
 
+    tracing::debug!(
+        mod_db_id,
+        dir_count = mod_dirs.len(),
+        "scanning for runtime files"
+    );
+
     // Scan each directory for untracked files
     for dir in &mod_dirs {
         if !dir.is_dir() {
@@ -132,6 +152,7 @@ fn scan_runtime_recursive(
         } else if let Ok(relative) = path.strip_prefix(spt_root) {
             let rel_str = relative.to_string_lossy();
             if !tracked.contains(rel_str.as_ref()) {
+                tracing::trace!(path = %rel_str, "recording runtime file");
                 let content = std::fs::read(&path).unwrap_or_default();
                 let hash = crate::spt::mods::compute_hash_public(&content);
                 let size = content.len() as i64;

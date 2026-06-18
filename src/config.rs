@@ -221,6 +221,7 @@ impl Default for Config {
 impl Config {
     /// Load config from a TOML file at `path`.
     pub fn load(path: &Path) -> Result<Self> {
+        tracing::debug!(path = %path.display(), "loading config file");
         let contents = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read config file: {}", path.display()))?;
         let config: Config =
@@ -254,6 +255,17 @@ impl Config {
     pub fn load_with_env(path: &Path) -> Result<Self> {
         let mut config = Self::load(path)?;
         config.apply_env_overrides();
+        tracing::debug!("applied environment variable overrides to config");
+        tracing::trace!(
+            spt_dir = ?config.spt_dir,
+            forge_token = "<redacted>",
+            queue_changes = config.queue_changes,
+            auto_drain_on_lifecycle = config.auto_drain_on_lifecycle,
+            session_secret = "<redacted>",
+            web_bind = %config.web_bind,
+            web_port = config.web_port,
+            "loaded config"
+        );
         Ok(config)
     }
 
@@ -272,40 +284,55 @@ impl Config {
     /// - `QUMA_LOG_FILE_ENABLED` -> `logging.file.enabled`
     pub fn apply_env_overrides(&mut self) {
         if let Ok(val) = std::env::var("QUMA_SPT_DIR") {
+            tracing::debug!(var = "QUMA_SPT_DIR", value = %val, "env var override applied");
             self.spt_dir = Some(PathBuf::from(val));
         }
         if let Ok(val) = std::env::var("QUMA_FORGE_TOKEN") {
+            tracing::debug!(
+                var = "QUMA_FORGE_TOKEN",
+                value = "<redacted>",
+                "env var override applied"
+            );
             self.forge_token = Some(val);
         }
         if let Ok(val) = std::env::var("QUMA_WEB_BIND") {
+            tracing::debug!(var = "QUMA_WEB_BIND", value = %val, "env var override applied");
             self.web_bind = val;
         }
         if let Ok(val) = std::env::var("QUMA_WEB_PORT") {
             if let Ok(port) = val.parse::<u16>() {
+                tracing::debug!(var = "QUMA_WEB_PORT", value = %val, "env var override applied");
                 self.web_port = port;
             }
         }
         if let Ok(val) = std::env::var("QUMA_SERVER_CONTAINER") {
+            tracing::debug!(var = "QUMA_SERVER_CONTAINER", value = %val, "env var override applied");
             self.server_container = Some(val);
         }
         if let Ok(val) = std::env::var("QUMA_SERVER_HOST") {
+            tracing::debug!(var = "QUMA_SERVER_HOST", value = %val, "env var override applied");
             self.server_host = Some(val);
         }
         if let Ok(val) = std::env::var("QUMA_SERVER_PORT") {
             if let Ok(port) = val.parse::<u16>() {
+                tracing::debug!(var = "QUMA_SERVER_PORT", value = %val, "env var override applied");
                 self.server_port = Some(port);
             }
         }
         if let Ok(val) = std::env::var("QUMA_LOG_LEVEL") {
+            tracing::debug!(var = "QUMA_LOG_LEVEL", value = %val, "env var override applied");
             self.logging.level = val;
         }
         if let Ok(val) = std::env::var("QUMA_LOG_FILE_PATH") {
+            tracing::debug!(var = "QUMA_LOG_FILE_PATH", value = %val, "env var override applied");
             self.logging.file.path = val;
         }
         if let Ok(val) = std::env::var("QUMA_LOG_FILE_ENABLED") {
             if val.eq_ignore_ascii_case("true") {
+                tracing::debug!(var = "QUMA_LOG_FILE_ENABLED", value = %val, "env var override applied");
                 self.logging.file.enabled = true;
             } else if val.eq_ignore_ascii_case("false") {
+                tracing::debug!(var = "QUMA_LOG_FILE_ENABLED", value = %val, "env var override applied");
                 self.logging.file.enabled = false;
             }
         }

@@ -22,6 +22,7 @@ impl PodmanClient {
     }
 
     pub async fn is_running(&self) -> Result<bool> {
+        tracing::debug!(container = %self.container, "checking container status");
         let output = tokio::process::Command::new("podman")
             .args(["inspect", "--format", "{{.State.Status}}", &self.container])
             .stdout(Stdio::piped())
@@ -30,14 +31,24 @@ impl PodmanClient {
             .await
             .context("failed to run podman inspect")?;
 
+        tracing::trace!(
+            container = %self.container,
+            stdout = %String::from_utf8_lossy(&output.stdout),
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            status = %output.status,
+            "podman inspect output"
+        );
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if stderr.contains("no such container") || stderr.contains("not found") {
+                tracing::warn!(container = %self.container, "container not found");
                 bail!(
                     "container '{}' not found — check server_container config",
                     self.container
                 );
             }
+            tracing::error!(container = %self.container, stderr = %stderr.trim(), "podman inspect failed");
             bail!("podman inspect failed: {}", stderr.trim());
         }
 
@@ -46,6 +57,7 @@ impl PodmanClient {
     }
 
     pub async fn start(&self) -> Result<()> {
+        tracing::debug!(container = %self.container, command = "start", "starting container");
         let output = tokio::process::Command::new("podman")
             .args(["start", &self.container])
             .stdout(Stdio::piped())
@@ -54,14 +66,24 @@ impl PodmanClient {
             .await
             .context("failed to run podman start")?;
 
+        tracing::trace!(
+            container = %self.container,
+            stdout = %String::from_utf8_lossy(&output.stdout),
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            status = %output.status,
+            "podman start output"
+        );
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(container = %self.container, stderr = %stderr.trim(), "podman start failed");
             bail!("podman start failed: {}", stderr.trim());
         }
         Ok(())
     }
 
     pub async fn stop(&self) -> Result<()> {
+        tracing::debug!(container = %self.container, command = "stop", "stopping container");
         let output = tokio::process::Command::new("podman")
             .args(["stop", &self.container])
             .stdout(Stdio::piped())
@@ -70,8 +92,17 @@ impl PodmanClient {
             .await
             .context("failed to run podman stop")?;
 
+        tracing::trace!(
+            container = %self.container,
+            stdout = %String::from_utf8_lossy(&output.stdout),
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            status = %output.status,
+            "podman stop output"
+        );
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(container = %self.container, stderr = %stderr.trim(), "podman stop failed");
             bail!("podman stop failed: {}", stderr.trim());
         }
         Ok(())
@@ -84,6 +115,8 @@ impl PodmanClient {
         }
         args.push(self.container.clone());
 
+        tracing::debug!(container = %self.container, ?args, "fetching container logs");
+
         let status = tokio::process::Command::new("podman")
             .args(&args)
             .stdout(Stdio::inherit())
@@ -93,12 +126,14 @@ impl PodmanClient {
             .context("failed to run podman logs")?;
 
         if !status.success() {
+            tracing::error!(container = %self.container, status = %status, "podman logs failed");
             bail!("podman logs exited with {}", status);
         }
         Ok(())
     }
 
     pub async fn detect_spt_containers(spt_dir: &Path) -> Result<Vec<String>> {
+        tracing::debug!(spt_dir = %spt_dir.display(), "detecting SPT containers");
         let output = tokio::process::Command::new("podman")
             .args(["ps", "-a", "--format", "{{.Names}}\t{{.Mounts}}"])
             .stdout(Stdio::piped())
@@ -107,7 +142,15 @@ impl PodmanClient {
             .await
             .context("failed to run podman ps")?;
 
+        tracing::trace!(
+            stdout = %String::from_utf8_lossy(&output.stdout),
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            status = %output.status,
+            "podman ps output"
+        );
+
         if !output.status.success() {
+            tracing::error!("podman ps failed, returning empty list");
             return Ok(Vec::new());
         }
 
@@ -128,6 +171,7 @@ impl PodmanClient {
             })
             .collect();
 
+        tracing::debug!(container_count = matches.len(), "found SPT containers");
         Ok(matches)
     }
 }

@@ -20,9 +20,11 @@ pub struct CliContext {
 
 pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
     let spt_dir = detect_spt_dir(cli.spt_dir.as_deref(), None)?;
+    tracing::debug!(spt_dir = %spt_dir.display(), "resolved SPT directory");
     let spt_info = read_spt_version(&spt_dir)?;
 
     let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
+    tracing::debug!(config_path = %config_path.display(), "resolved config path");
     let config = Config::load_with_env(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
 
