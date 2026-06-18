@@ -38,7 +38,8 @@ struct ModListTemplate {
 struct ModDetailTemplate {
     user: SessionUser,
     mod_info: InstalledMod,
-    files: Vec<InstalledFile>,
+    archive_files: Vec<InstalledFile>,
+    runtime_files: Vec<InstalledFile>,
     dependencies: Vec<DepEntry>,
     flash: Option<FlashMessage>,
     csrf_token: String,
@@ -115,19 +116,21 @@ pub async fn mod_detail(
     let mod_id = path.into_inner();
     let db = state.db.clone();
 
-    let (mod_info, files, dependencies) = web::block(move || {
+    let (mod_info, archive_files, runtime_files, dependencies) = web::block(move || {
         let db = db.lock();
         let mod_info = db
             .get_mod(mod_id)?
             .ok_or_else(|| anyhow::anyhow!("mod not found"))?;
-        let files = db.get_files_for_mod(mod_id)?;
+        let all_files = db.get_files_for_mod(mod_id)?;
+        let (archive_files, runtime_files): (Vec<_>, Vec<_>) =
+            all_files.into_iter().partition(|f| f.source != "runtime");
         let deps = db.get_dependencies(mod_id)?;
         let mut dep_entries = Vec::new();
         for dep in deps {
             let dep_mod = db.get_mod(dep.depends_on_mod_id)?;
             dep_entries.push(DepEntry { dep, dep_mod });
         }
-        Ok::<_, anyhow::Error>((mod_info, files, dep_entries))
+        Ok::<_, anyhow::Error>((mod_info, archive_files, runtime_files, dep_entries))
     })
     .await
     .map_err(WebError::from)?
@@ -136,7 +139,8 @@ pub async fn mod_detail(
     let tmpl = ModDetailTemplate {
         user,
         mod_info,
-        files,
+        archive_files,
+        runtime_files,
         dependencies,
         flash,
         csrf_token,
