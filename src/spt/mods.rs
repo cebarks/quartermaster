@@ -3,8 +3,70 @@ use std::io::Read;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use sevenz_rust2::{Password, SevenZReader};
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ArchiveFormat {
+    Zip,
+    SevenZ,
+}
+
+/// Detect archive format by reading magic bytes from the file header.
+fn detect_format(archive_path: &Path) -> Result<ArchiveFormat> {
+    let mut file = fs::File::open(archive_path)
+        .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
+    let mut magic = [0u8; 6];
+    file.read_exact(&mut magic)
+        .with_context(|| format!("failed to read archive header: {}", archive_path.display()))?;
+
+    // 7z magic: 37 7A BC AF 27 1C
+    if magic == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C] {
+        return Ok(ArchiveFormat::SevenZ);
+    }
+    // ZIP magic: 50 4B 03 04 (PK\x03\x04)
+    if magic[..4] == [0x50, 0x4B, 0x03, 0x04] {
+        return Ok(ArchiveFormat::Zip);
+    }
+
+    anyhow::bail!(
+        "unsupported archive format (not ZIP or 7z): {}",
+        archive_path.display()
+    )
+}
+
+/// List all entry names in an archive (ZIP or 7z).
+fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
+    match detect_format(archive_path)? {
+        ArchiveFormat::Zip => {
+            let file = fs::File::open(archive_path)
+                .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
+            let archive = ZipArchive::new(file)
+                .with_context(|| format!("failed to read ZIP: {}", archive_path.display()))?;
+            Ok(archive.file_names().map(String::from).collect())
+        }
+        ArchiveFormat::SevenZ => {
+            let mut file = fs::File::open(archive_path)
+                .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
+            let pwd = Password::empty();
+            let archive = sevenz_rust2::Archive::read(&mut file, pwd.as_slice())
+                .with_context(|| format!("failed to read 7z: {}", archive_path.display()))?;
+            Ok(archive
+                .files
+                .iter()
+                .map(|entry| {
+                    let name = entry.name().to_string();
+                    if entry.is_directory() && !name.ends_with('/') {
+                        format!("{name}/")
+                    } else {
+                        name
+                    }
+                })
+                .collect())
+        }
+    }
+}
 
 /// Classification of a mod based on its archive contents.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,17 +96,12 @@ const CLIENT_PREFIX: &str = "BepInEx/plugins/";
 /// - Has both -> Hybrid
 /// - Has neither -> Ambiguous
 pub fn detect_mod_type(archive_path: &Path) -> Result<ModType> {
-    let file = fs::File::open(archive_path)
-        .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
-    let archive = ZipArchive::new(file)
-        .with_context(|| format!("failed to read ZIP: {}", archive_path.display()))?;
+    let names = list_entry_names(archive_path)?;
 
     let mut has_server = false;
     let mut has_client = false;
 
-    for name in archive.file_names() {
-        // Normalize: strip a wrapper directory if present by checking the
-        // effective path after any single top-level dir.
+    for name in &names {
         let effective = strip_known_prefix_from_name(name);
 
         if effective.starts_with(SERVER_PREFIX) {
@@ -67,24 +124,17 @@ pub fn detect_mod_type(archive_path: &Path) -> Result<ModType> {
 /// known prefix (`SPT/` or `BepInEx/`), return that directory as the prefix to
 /// strip (e.g. `"SAIN/"`). Otherwise return an empty string.
 pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
-    let file = fs::File::open(archive_path)
-        .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
-    let archive = ZipArchive::new(file)
-        .with_context(|| format!("failed to read ZIP: {}", archive_path.display()))?;
-
+    let names = list_entry_names(archive_path)?;
     let mut common_prefix: Option<String> = None;
 
-    for name in archive.file_names() {
-        // Extract first path component
+    for name in &names {
         let top_dir = match name.find('/') {
-            Some(idx) => &name[..=idx], // includes the trailing '/'
+            Some(idx) => &name[..=idx],
             None => {
-                // Flat file at root level — no common wrapper dir
                 return Ok(String::new());
             }
         };
 
-        // If the top-level dir is a known prefix, no stripping needed
         if top_dir == "SPT/" || top_dir == "BepInEx/" {
             return Ok(String::new());
         }
@@ -93,7 +143,6 @@ pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
             None => common_prefix = Some(top_dir.to_string()),
             Some(existing) => {
                 if existing != top_dir {
-                    // Multiple different top-level dirs — no single wrapper
                     return Ok(String::new());
                 }
             }
@@ -109,6 +158,17 @@ pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
 pub fn extract_mod(archive_path: &Path, spt_root: &Path) -> Result<Vec<ExtractedFile>> {
     let prefix = detect_strip_prefix(archive_path)?;
 
+    match detect_format(archive_path)? {
+        ArchiveFormat::Zip => extract_mod_zip(archive_path, spt_root, &prefix),
+        ArchiveFormat::SevenZ => extract_mod_7z(archive_path, spt_root, &prefix),
+    }
+}
+
+fn extract_mod_zip(
+    archive_path: &Path,
+    spt_root: &Path,
+    prefix: &str,
+) -> Result<Vec<ExtractedFile>> {
     let file = fs::File::open(archive_path)
         .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)
@@ -123,36 +183,22 @@ pub fn extract_mod(archive_path: &Path, spt_root: &Path) -> Result<Vec<Extracted
 
         let raw_name = entry.name().to_string();
 
-        // Strip the wrapper prefix if present
-        let relative = if !prefix.is_empty() && raw_name.starts_with(&prefix) {
+        let relative = if !prefix.is_empty() && raw_name.starts_with(prefix) {
             &raw_name[prefix.len()..]
         } else {
             &raw_name
         };
 
-        // Skip empty paths (the prefix directory entry itself)
         if relative.is_empty() {
             continue;
         }
 
-        // Reject entries with path traversal components
         if relative.contains("..") {
-            anyhow::bail!("ZIP entry contains path traversal: {raw_name}");
+            anyhow::bail!("archive entry contains path traversal: {raw_name}");
         }
 
         let dest = spt_root.join(relative);
-
-        // Verify the resolved path is still under spt_root (defense in depth)
-        if let Ok(canonical_root) = spt_root.canonicalize() {
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).ok();
-                if let Ok(canonical_dest) = parent.canonicalize() {
-                    if !canonical_dest.starts_with(&canonical_root) {
-                        anyhow::bail!("ZIP entry escapes SPT root: {raw_name}");
-                    }
-                }
-            }
-        }
+        validate_dest_under_root(&dest, spt_root, &raw_name)?;
 
         if entry.is_dir() {
             fs::create_dir_all(&dest)
@@ -160,13 +206,11 @@ pub fn extract_mod(archive_path: &Path, spt_root: &Path) -> Result<Vec<Extracted
             continue;
         }
 
-        // Ensure parent directory exists
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory: {}", parent.display()))?;
         }
 
-        // Read content, hash it, write to disk
         let mut content = Vec::new();
         entry
             .read_to_end(&mut content)
@@ -186,6 +230,106 @@ pub fn extract_mod(archive_path: &Path, spt_root: &Path) -> Result<Vec<Extracted
     }
 
     Ok(extracted)
+}
+
+fn extract_mod_7z(
+    archive_path: &Path,
+    spt_root: &Path,
+    prefix: &str,
+) -> Result<Vec<ExtractedFile>> {
+    let mut reader = SevenZReader::open(archive_path, Password::empty())
+        .with_context(|| format!("failed to read 7z: {}", archive_path.display()))?;
+
+    let mut extracted = Vec::new();
+    let prefix = prefix.to_string();
+
+    reader
+        .for_each_entries(|entry, reader| {
+            let raw_name = entry.name().to_string();
+
+            let relative = if !prefix.is_empty() && raw_name.starts_with(&prefix) {
+                &raw_name[prefix.len()..]
+            } else {
+                &raw_name
+            };
+
+            if relative.is_empty() {
+                return Ok(true);
+            }
+
+            if relative.contains("..") {
+                return Err(sevenz_rust2::Error::other(format!(
+                    "archive entry contains path traversal: {raw_name}"
+                )));
+            }
+
+            let dest = spt_root.join(relative);
+            validate_dest_under_root(&dest, spt_root, &raw_name)
+                .map_err(|e| sevenz_rust2::Error::other(e.to_string()))?;
+
+            if entry.is_directory() {
+                fs::create_dir_all(&dest).map_err(|e| {
+                    sevenz_rust2::Error::io(std::io::Error::new(
+                        e.kind(),
+                        format!("failed to create directory: {}", dest.display()),
+                    ))
+                })?;
+                return Ok(true);
+            }
+
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    sevenz_rust2::Error::io(std::io::Error::new(
+                        e.kind(),
+                        format!("failed to create directory: {}", parent.display()),
+                    ))
+                })?;
+            }
+
+            let mut content = Vec::with_capacity(entry.size() as usize);
+            std::io::copy(reader, &mut content).map_err(|e| {
+                sevenz_rust2::Error::io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to read 7z entry: {relative}"),
+                ))
+            })?;
+
+            let hash = compute_hash(&content);
+            let size = content.len() as u64;
+
+            fs::write(&dest, &content).map_err(|e| {
+                sevenz_rust2::Error::io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to write file: {}", dest.display()),
+                ))
+            })?;
+
+            extracted.push(ExtractedFile {
+                path: relative.to_string(),
+                hash,
+                size,
+            });
+
+            Ok(true)
+        })
+        .with_context(|| format!("failed to extract 7z: {}", archive_path.display()))?;
+
+    Ok(extracted)
+}
+
+/// Verify the resolved destination path is under spt_root (defense in depth).
+fn validate_dest_under_root(dest: &Path, spt_root: &Path, raw_name: &str) -> Result<()> {
+    if let Ok(canonical_root) = spt_root.canonicalize() {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).ok();
+            if let Ok(canonical_dest) = parent.canonicalize() {
+                if !canonical_dest.starts_with(&canonical_root) {
+                    anyhow::bail!("archive entry escapes SPT root: {raw_name}");
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Compute the SHA256 hash of a file on disk, returned as a lowercase hex string.
@@ -508,6 +652,76 @@ mod tests {
             files.contains(&"SPT/user/mods/TestMod/package.json".to_string()),
             "should find server mod package.json: {files:?}"
         );
+    }
+
+    /// Create a test 7z archive with the given entries.
+    fn create_test_7z(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+        use sevenz_rust2::{SevenZArchiveEntry, SevenZWriter};
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = SevenZWriter::create(tmp.path()).unwrap();
+        for (name, content) in entries {
+            let entry = SevenZArchiveEntry::new_file(name);
+            writer
+                .push_archive_entry(entry, Some(std::io::Cursor::new(content)))
+                .unwrap();
+        }
+        writer.finish().unwrap();
+        tmp
+    }
+
+    #[test]
+    fn detect_server_mod_7z() {
+        let archive = create_test_7z(&[
+            ("SPT/user/mods/TestMod/package.json", b"{}"),
+            ("SPT/user/mods/TestMod/src/mod.ts", b"// code"),
+        ]);
+        let result = detect_mod_type(archive.path()).unwrap();
+        assert_eq!(result, ModType::Server);
+    }
+
+    #[test]
+    fn extract_server_mod_7z() {
+        let archive = create_test_7z(&[
+            ("SPT/user/mods/TestMod/package.json", b"{\"name\":\"test\"}"),
+            ("SPT/user/mods/TestMod/src/mod.ts", b"export class Mod {}"),
+        ]);
+
+        let tmp_dir = TempDir::new().unwrap();
+        let files = extract_mod(archive.path(), tmp_dir.path()).unwrap();
+
+        assert_eq!(files.len(), 2);
+
+        for f in &files {
+            let full_path = tmp_dir.path().join(&f.path);
+            assert!(full_path.exists(), "file should exist: {}", f.path);
+        }
+
+        for f in &files {
+            assert!(!f.hash.is_empty(), "hash should be populated");
+            assert!(
+                f.hash.chars().all(|c| c.is_ascii_hexdigit()),
+                "hash should be hex: {}",
+                f.hash
+            );
+            assert_eq!(f.hash.len(), 64, "SHA256 hex should be 64 chars");
+        }
+
+        let pkg = files
+            .iter()
+            .find(|f| f.path.contains("package.json"))
+            .unwrap();
+        assert_eq!(pkg.size, b"{\"name\":\"test\"}".len() as u64);
+    }
+
+    #[test]
+    fn strip_top_level_wrapper_dir_7z() {
+        let archive = create_test_7z(&[
+            ("SAIN/SPT/user/mods/SAIN/package.json", b"{}"),
+            ("SAIN/SPT/user/mods/SAIN/src/mod.ts", b"// code"),
+        ]);
+        let prefix = detect_strip_prefix(archive.path()).unwrap();
+        assert_eq!(prefix, "SAIN/");
     }
 
     #[test]

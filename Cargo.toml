@@ -39,6 +39,7 @@ rand = "0.9"
 
 # Archive handling
 zip = "2"
+sevenz-rust2 = "0.12"
 tempfile = "3"
 
 # Time
