@@ -133,6 +133,7 @@ pub async fn login_submit(
             .body(tmpl.render().map_err(WebError::from)?));
     }
 
+    session.renew();
     let session_user = SessionUser {
         user_id: user.id,
         username: user.username,

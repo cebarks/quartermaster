@@ -127,7 +127,11 @@ pub async fn mod_detail(
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-pub async fn check_updates_partial(state: Data<AppState>) -> actix_web::Result<Html> {
+pub async fn check_updates_partial(
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<Html> {
+    require_admin(&session)?;
     let db = state.db.clone();
     let installed = web::block(move || {
         let db = db.lock();
@@ -161,7 +165,9 @@ pub async fn check_updates_partial(state: Data<AppState>) -> actix_web::Result<H
 pub async fn dep_tree_partial(
     state: Data<AppState>,
     query: Query<DepTreeQuery>,
+    session: Session,
 ) -> actix_web::Result<Html> {
+    require_admin(&session)?;
     let deps = match (query.mod_id, &query.ver) {
         (Some(mod_id), Some(ver)) => state
             .forge

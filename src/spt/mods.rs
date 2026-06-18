@@ -319,16 +319,22 @@ fn extract_mod_7z(
 
 /// Verify the resolved destination path is under spt_root (defense in depth).
 fn validate_dest_under_root(dest: &Path, spt_root: &Path, raw_name: &str) -> Result<()> {
-    if let Ok(canonical_root) = spt_root.canonicalize() {
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).ok();
-            if let Ok(canonical_dest) = parent.canonicalize() {
-                if !canonical_dest.starts_with(&canonical_root) {
-                    anyhow::bail!("archive entry escapes SPT root: {raw_name}");
-                }
-            }
+    let canonical_root = spt_root
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize spt_root: {}", spt_root.display()))?;
+
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("archive entry has no parent directory: {raw_name}"))?;
+
+    fs::create_dir_all(parent).ok();
+
+    if let Ok(canonical_dest) = parent.canonicalize() {
+        if !canonical_dest.starts_with(&canonical_root) {
+            anyhow::bail!("archive entry escapes SPT root: {raw_name}");
         }
     }
+
     Ok(())
 }
 
