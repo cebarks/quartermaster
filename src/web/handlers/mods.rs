@@ -325,7 +325,7 @@ pub async fn install_mod(
             .finish());
     }
 
-    let task_id = state.tasks.start("Install", &mod_info.name, mod_id);
+    let task_id = state.tasks.start("Installing", &mod_info.name, mod_id);
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
@@ -461,7 +461,7 @@ pub async fn update_mod(
 
     let task_id = state
         .tasks
-        .start("Updat", &installed.name, installed.forge_mod_id);
+        .start("Updating", &installed.name, installed.forge_mod_id);
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
@@ -562,6 +562,7 @@ pub async fn remove_mod(
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
 
+    tracing::info!(mod_db_id, mod_name = %installed.name, "removing mod");
     web::block(move || {
         let db = db.lock();
         crate::ops::remove_mod_by_id(&db, &spt_dir, mod_db_id)
@@ -642,7 +643,7 @@ pub async fn update_all_mods(
             .finish());
     }
 
-    let task_id = state.tasks.start("Updat", "all mods", 0);
+    let task_id = state.tasks.start("Updating", "all mods", 0);
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
@@ -704,8 +705,13 @@ pub async fn update_all_mods(
 
         if success_count == total {
             tasks.complete(task_id, format!("All {total} mods updated successfully"));
+        } else if success_count > 0 {
+            tasks.complete(
+                task_id,
+                format!("{success_count}/{total} mods updated (some failed — check logs)"),
+            );
         } else {
-            tasks.fail(task_id, format!("{success_count}/{total} mods updated"));
+            tasks.fail(task_id, format!("All {total} updates failed"));
         }
     });
 

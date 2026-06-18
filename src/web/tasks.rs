@@ -84,7 +84,7 @@ impl TaskTracker {
 
         let info = TaskInfo {
             status: TaskStatus::Running {
-                message: format!("{}ing {}...", action, mod_name),
+                message: format!("{} {}...", action, mod_name),
             },
             mod_name: mod_name.to_string(),
             action: action.to_string(),
