@@ -30,6 +30,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub config: Option<PathBuf>,
 
+    /// Increase verbosity (-v for debug, -vv for trace)
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    pub verbose: u8,
+
+    /// Set log level explicitly (trace, debug, info, warn, error)
+    #[arg(long, global = true)]
+    pub log_level: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }

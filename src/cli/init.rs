@@ -122,6 +122,8 @@ mod tests {
             let cli = Cli {
                 spt_dir: None,
                 config: None,
+                verbose: 0,
+                log_level: None,
                 command: crate::cli::Command::Init { path: None },
             };
 
@@ -152,6 +154,8 @@ mod tests {
             let cli = Cli {
                 spt_dir: None,
                 config: None,
+                verbose: 0,
+                log_level: None,
                 command: crate::cli::Command::Init { path: None },
             };
 
@@ -168,6 +172,8 @@ mod tests {
             let cli = Cli {
                 spt_dir: None,
                 config: None,
+                verbose: 0,
+                log_level: None,
                 command: crate::cli::Command::Init { path: None },
             };
 
