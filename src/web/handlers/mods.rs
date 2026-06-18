@@ -196,8 +196,8 @@ pub async fn check_updates_partial(
     .map_err(WebError::from)?;
 
     let updates_available = if !installed.is_empty() {
-        if let Some(cached) = state.update_cache.get() {
-            cached.updates.len()
+        let updates_data = if let Some(cached) = state.update_cache.get() {
+            cached
         } else {
             let check_list: Vec<(i64, String)> = installed
                 .iter()
@@ -209,13 +209,44 @@ pub async fn check_updates_partial(
                 .await
             {
                 Ok(data) => {
-                    let count = data.updates.len();
-                    state.update_cache.set(data);
-                    count
+                    state.update_cache.set(data.clone());
+                    data
                 }
-                Err(_) => 0,
+                Err(_) => {
+                    let tmpl = UpdateBadgesTemplate {
+                        updates_available: 0,
+                    };
+                    return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+                }
+            }
+        };
+
+        let mut count = 0usize;
+        for m in &installed {
+            let candidate = updates_data
+                .updates
+                .iter()
+                .find(|u| u.current_version.mod_id == m.forge_mod_id)
+                .map(|u| u.recommended_version.version.clone())
+                .filter(|v| v != &m.version);
+
+            if candidate.is_some() {
+                if let Ok(versions) = state
+                    .forge
+                    .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
+                    .await
+                {
+                    if versions
+                        .first()
+                        .map(|v| &v.version)
+                        .is_some_and(|v| v != &m.version)
+                    {
+                        count += 1;
+                    }
+                }
             }
         }
+        count
     } else {
         0
     };
