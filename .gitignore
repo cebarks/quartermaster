@@ -8,3 +8,6 @@ quartermaster.toml
 # Override global gitignore to track plans/specs for this repo
 !docs/superpowers/
 !docs/superpowers/**
+
+# Track CLAUDE.md despite global gitignore
+!CLAUDE.md
