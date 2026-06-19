@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use actix_session::Session;
 use actix_web::web::{Data, Html, Query};
-use actix_web::HttpResponse;
+use actix_web::{HttpRequest, HttpResponse};
 use actix_web_lab::sse;
 use askama::Template;
 use serde::Deserialize;
@@ -25,10 +25,10 @@ pub struct LogQuery {
 
 pub async fn app_logs_json(
     state: Data<AppState>,
-    session: Session,
+    req: HttpRequest,
     query: Query<LogQuery>,
 ) -> actix_web::Result<HttpResponse> {
-    require_auth(&session)?;
+    require_auth(&req)?;
     let limit = query.limit.unwrap_or(100).min(10000);
     let entries = state.log_broadcast.recent(limit);
     Ok(HttpResponse::Ok().json(entries))
@@ -36,9 +36,9 @@ pub async fn app_logs_json(
 
 pub async fn app_logs_stream(
     state: Data<AppState>,
-    session: Session,
+    req: HttpRequest,
 ) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
-    require_auth(&session)?;
+    require_auth(&req)?;
     let mut rx = state.log_broadcast.subscribe();
 
     let stream = async_stream::stream! {
@@ -67,10 +67,10 @@ pub async fn app_logs_stream(
 
 pub async fn server_logs_json(
     state: Data<AppState>,
-    session: Session,
+    req: HttpRequest,
     query: Query<LogQuery>,
 ) -> actix_web::Result<HttpResponse> {
-    require_auth(&session)?;
+    require_auth(&req)?;
     let container = state
         .config
         .server_container
@@ -100,9 +100,9 @@ pub async fn server_logs_json(
 
 pub async fn server_logs_stream(
     state: Data<AppState>,
-    session: Session,
+    req: HttpRequest,
 ) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
-    require_auth(&session)?;
+    require_auth(&req)?;
     let container = state
         .config
         .server_container
@@ -191,8 +191,12 @@ struct LogsTemplate {
     csrf_token: String,
 }
 
-pub async fn logs_page(_state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = require_auth(&session)?;
+pub async fn logs_page(
+    _state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 

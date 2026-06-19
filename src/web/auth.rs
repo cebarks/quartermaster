@@ -36,6 +36,15 @@ pub struct SessionUser {
     pub role: Role,
 }
 
+impl SessionUser {
+    /// Template helper: returns true if the user has the admin role
+    pub fn is_admin(&self) -> bool {
+        matches!(self.role, Role::Admin)
+    }
+}
+
+/// Helper to extract SessionUser from session data (mainly for testing)
+#[allow(dead_code)]
 pub fn get_session_user(session: &Session) -> Option<SessionUser> {
     let user_id = session.get::<i64>("user_id").ok()??;
     let username = session.get::<String>("username").ok()??;
@@ -65,6 +74,8 @@ pub fn require_capability(
     Ok(())
 }
 
+/// Helper for tests - checks if user has admin capabilities
+#[allow(dead_code)]
 pub fn require_admin(user: &SessionUser) -> std::result::Result<(), WebError> {
     require_capability(user, Role::can_manage_users)
 }

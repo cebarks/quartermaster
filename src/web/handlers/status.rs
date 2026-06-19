@@ -1,5 +1,6 @@
 use actix_session::Session;
 use actix_web::web::{self, Data, Html};
+use actix_web::HttpRequest;
 use askama::Template;
 
 use crate::health::{self, IntegrityHealth, ModsHealth, ServerHealth};
@@ -34,8 +35,8 @@ struct StatusIntegrityTemplate {
     report: IntegrityHealth,
 }
 
-pub async fn status_page(session: Session) -> actix_web::Result<Html> {
-    let user = require_auth(&session)?;
+pub async fn status_page(req: HttpRequest, session: Session) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let tmpl = StatusPageTemplate {
@@ -46,7 +47,8 @@ pub async fn status_page(session: Session) -> actix_web::Result<Html> {
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-pub async fn server_partial(state: Data<AppState>) -> actix_web::Result<Html> {
+pub async fn server_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+    require_auth(&req)?;
     let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
     let spt_client = crate::spt::server::SptClient::new(&host, port).map_err(WebError::from)?;
     let address = spt_client.base_url().to_string();
@@ -55,8 +57,8 @@ pub async fn server_partial(state: Data<AppState>) -> actix_web::Result<Html> {
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-pub async fn mods_partial(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    require_auth(&session)?;
+pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+    require_auth(&req)?;
     let db = state.db.clone();
     let installed_mods = web::block(move || {
         let db = db.lock();
@@ -84,8 +86,8 @@ pub async fn mods_partial(state: Data<AppState>, session: Session) -> actix_web:
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-pub async fn integrity_partial(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    require_auth(&session)?;
+pub async fn integrity_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+    require_auth(&req)?;
     let db = state.db.clone();
     let tracked_files = web::block(move || {
         let db = db.lock();

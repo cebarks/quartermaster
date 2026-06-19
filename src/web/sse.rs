@@ -1,6 +1,5 @@
-use actix_session::Session;
 use actix_web::web::{self, Data};
-use actix_web::HttpResponse;
+use actix_web::{HttpRequest, HttpResponse};
 use futures_util::stream::unfold;
 use tokio::sync::broadcast;
 
@@ -15,9 +14,9 @@ pub enum ServerEvent {
 
 pub async fn events_stream(
     state: Data<AppState>,
-    session: Session,
+    req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
-    require_auth(&session)?;
+    require_auth(&req)?;
 
     let rx = state.events.subscribe();
 

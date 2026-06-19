@@ -1,11 +1,12 @@
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path, Query};
-use actix_web::HttpResponse;
+use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::db::mods::{InstalledFile, InstalledMod, ModDependency};
+use crate::db::users::Role;
 use crate::forge::models::DependencyNode;
-use crate::web::auth::{require_admin, require_auth, SessionUser};
+use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage};
 use crate::web::state::AppState;
@@ -105,8 +106,13 @@ pub struct DepTreeQuery {
 
 // -- Handlers --
 
-pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = require_admin(&session)?;
+pub async fn list_mods(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
@@ -144,10 +150,11 @@ pub async fn list_mods(state: Data<AppState>, session: Session) -> actix_web::Re
 
 pub async fn mod_detail(
     state: Data<AppState>,
+    req: HttpRequest,
     session: Session,
     path: Path<i64>,
 ) -> actix_web::Result<Html> {
-    let user = require_auth(&session)?;
+    let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let mod_id = path.into_inner();
@@ -187,9 +194,10 @@ pub async fn mod_detail(
 
 pub async fn check_updates_partial(
     state: Data<AppState>,
-    session: Session,
+    req: HttpRequest,
 ) -> actix_web::Result<Html> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     let db = state.db.clone();
     let installed = web::block(move || {
         let db = db.lock();
@@ -261,9 +269,11 @@ pub async fn check_updates_partial(
 
 pub async fn update_status_partial(
     state: Data<AppState>,
+    req: HttpRequest,
     session: Session,
 ) -> actix_web::Result<Html> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let db = state.db.clone();
@@ -352,9 +362,10 @@ pub async fn update_status_partial(
 pub async fn dep_tree_partial(
     state: Data<AppState>,
     query: Query<DepTreeQuery>,
-    session: Session,
+    req: HttpRequest,
 ) -> actix_web::Result<Html> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     let deps = match (query.mod_id, &query.ver) {
         (Some(mod_id), Some(ver)) => state
             .forge
@@ -371,9 +382,11 @@ pub async fn dep_tree_partial(
 pub async fn install_mod(
     form: Form<InstallForm>,
     state: Data<AppState>,
+    req: HttpRequest,
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -574,10 +587,12 @@ pub async fn install_mod(
 pub async fn update_mod(
     state: Data<AppState>,
     path: Path<i64>,
+    req: HttpRequest,
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -736,10 +751,12 @@ pub async fn update_mod(
 pub async fn remove_mod(
     state: Data<AppState>,
     path: Path<i64>,
+    req: HttpRequest,
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -800,10 +817,12 @@ pub async fn remove_mod(
 
 pub async fn update_all_mods(
     state: Data<AppState>,
+    req: HttpRequest,
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -984,8 +1003,13 @@ pub async fn update_all_mods(
         .finish())
 }
 
-pub async fn list_body_partial(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = require_admin(&session)?;
+pub async fn list_body_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
 

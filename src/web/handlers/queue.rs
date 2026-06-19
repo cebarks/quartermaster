@@ -1,10 +1,10 @@
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path};
-use actix_web::HttpResponse;
+use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
-use crate::db::users::PendingOperation;
-use crate::web::auth::{require_admin, require_auth, SessionUser};
+use crate::db::users::{PendingOperation, Role};
+use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage};
 use crate::web::state::AppState;
@@ -18,8 +18,12 @@ struct QueueTemplate {
     csrf_token: String,
 }
 
-pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = require_auth(&session)?;
+pub async fn queue_page(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
@@ -44,10 +48,12 @@ pub async fn queue_page(state: Data<AppState>, session: Session) -> actix_web::R
 pub async fn cancel_op(
     state: Data<AppState>,
     path: Path<i64>,
+    req: HttpRequest,
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_queue)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -70,10 +76,12 @@ pub async fn cancel_op(
 
 pub async fn apply_queue(
     state: Data<AppState>,
+    req: HttpRequest,
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_queue)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
