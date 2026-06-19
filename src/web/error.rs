@@ -18,6 +18,7 @@ pub enum WebError {
     NotFound,
     Forbidden,
     BadRequest(String),
+    UnprocessableEntity(String),
 }
 
 impl std::fmt::Display for WebError {
@@ -27,6 +28,7 @@ impl std::fmt::Display for WebError {
             WebError::NotFound => write!(f, "not found"),
             WebError::Forbidden => write!(f, "forbidden"),
             WebError::BadRequest(msg) => write!(f, "bad request: {msg}"),
+            WebError::UnprocessableEntity(msg) => write!(f, "unprocessable: {msg}"),
         }
     }
 }
@@ -38,6 +40,7 @@ impl ResponseError for WebError {
             WebError::NotFound => StatusCode::NOT_FOUND,
             WebError::Forbidden => StatusCode::FORBIDDEN,
             WebError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            WebError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
         }
     }
 
@@ -60,6 +63,7 @@ impl ResponseError for WebError {
                 "You don't have permission to access this page.".to_string(),
             ),
             WebError::BadRequest(msg) => ("Bad Request".to_string(), msg.clone()),
+            WebError::UnprocessableEntity(msg) => ("Unprocessable Entity".to_string(), msg.clone()),
         };
 
         let tmpl = ErrorTemplate {

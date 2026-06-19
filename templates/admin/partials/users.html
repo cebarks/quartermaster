@@ -47,7 +47,7 @@
                         {% if let Some(level) = stats.level %}
                         <span class="text-muted text-sm">Lv.{{ level }}</span>
                         {% endif %}
-                        {% if let Some(ref side) = stats.side %}
+                        {% if let Some(side) = stats.side %}
                         <span class="text-muted text-sm">{{ side }}</span>
                         {% endif %}
                         {% if let Some(raids) = stats.raid_count %}

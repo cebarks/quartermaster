@@ -1,5 +1,5 @@
 <tr{% if u.id == current_user_id %} class="current-user"{% endif %}>
-    {% if let Some(ref msg) = row_message %}
+    {% if let Some(msg) = row_message %}
     <td colspan="6"><div class="toast toast-success" style="margin:0">{{ msg }}</div></td>
 </tr>
 <tr>
@@ -39,7 +39,7 @@
                 {% if let Some(level) = stats.level %}
                 <span class="text-muted text-sm">Lv.{{ level }}</span>
                 {% endif %}
-                {% if let Some(ref side) = stats.side %}
+                {% if let Some(side) = stats.side %}
                 <span class="text-muted text-sm">{{ side }}</span>
                 {% endif %}
                 {% if let Some(raids) = stats.raid_count %}
@@ -85,7 +85,7 @@
                 </button>
             </form>
         </div>
-        {% if let Some(ref link) = reset_link %}
+        {% if let Some(link) = reset_link %}
         <div class="reset-link-display" style="margin-top:0.5rem">
             <input type="text" readonly value="{{ link }}" style="width:100%;font-family:monospace;font-size:0.85rem" onclick="this.select()">
             <button type="button" class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText('{{ link }}').then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy Link', 2000); })">Copy Link</button>

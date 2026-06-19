@@ -30,7 +30,7 @@
     </thead>
     <tbody>
         {% for iv in invites %}
-        <tr{% if let Some(ref h) = highlight_code %}{% if iv.code == *h %} class="highlight-flash"{% endif %}{% endif %}>
+        <tr{% if let Some(h) = highlight_code %}{% if iv.code == *h %} class="highlight-flash"{% endif %}{% endif %}>
             <td>
                 <code>{{ iv.code }}</code>
                 {% if iv.status == "available" %}
