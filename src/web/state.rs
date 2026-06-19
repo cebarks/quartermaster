@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -25,4 +26,7 @@ pub struct AppState {
     pub events: broadcast::Sender<ServerEvent>,
     pub log_broadcast: Arc<LogBroadcast>,
     pub container_mgr: Option<Arc<ContainerManager>>,
+    pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
+    pub converging: Arc<AtomicBool>,
+    pub fika_installed: bool,
 }

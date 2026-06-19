@@ -20,6 +20,7 @@ pub const SPT_SERVER_IMAGE: &str = "ghcr.io/zhliau/fika-spt-server-docker:latest
 pub const DEFAULT_CONTAINER_NAME: &str = "spt-server";
 pub const DEFAULT_SPT_PORT: u16 = 6969;
 
+#[derive(Clone)]
 pub struct ContainerManager {
     docker: Arc<Docker>,
 }

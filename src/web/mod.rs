@@ -51,14 +51,16 @@ pub async fn start_server(
     spt_dir: std::path::PathBuf,
     spt_info: SptInfo,
     log_broadcast: Arc<LogBroadcast>,
+    container_mgr: Option<Arc<crate::container::ContainerManager>>,
+    client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
+    converging: Arc<std::sync::atomic::AtomicBool>,
+    fika_installed: bool,
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
 
     let session_key = Key::derive_from(config.session_secret.as_bytes());
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
-
-    let container_mgr = crate::container::ContainerManager::new().map(Arc::new).ok();
 
     let db = Arc::new(parking_lot::Mutex::new(db));
     let app_state = web::Data::new(AppState {
@@ -72,6 +74,9 @@ pub async fn start_server(
         events: events_tx,
         log_broadcast,
         container_mgr,
+        client_states,
+        converging,
+        fika_installed,
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
