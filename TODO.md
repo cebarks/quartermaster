@@ -1,5 +1,5 @@
 # BUGS
-- fika is installed as 1.0.3, when the most recent version is actually 2.3.2
+
 
 # TODO
 - there should be intermediate states displayed for the status page when starting stopping or restarting the server
