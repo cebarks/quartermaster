@@ -352,4 +352,38 @@ mod tests {
         let stats = load_all_profile_stats(tmp.path());
         assert!(stats.is_empty());
     }
+
+    #[test]
+    fn load_profile_stats_zero_raids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profiles_dir = tmp.path().join("SPT/user/profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        let content = serde_json::json!({
+            "info": {"id": "new1", "username": "Newbie"},
+            "characters": {
+                "pmc": {
+                    "Info": {"Nickname": "Newbie", "Level": 1, "Side": "Bear"},
+                    "Stats": {
+                        "Eft": {
+                            "OverallCounters": {"Items": []},
+                            "Victims": []
+                        }
+                    }
+                }
+            }
+        });
+        std::fs::write(
+            profiles_dir.join("new1.json"),
+            serde_json::to_string(&content).unwrap(),
+        )
+        .unwrap();
+
+        let stats = load_all_profile_stats(tmp.path());
+        let s = &stats["new1"];
+        assert_eq!(s.nickname.as_deref(), Some("Newbie"));
+        assert_eq!(s.level, Some(1));
+        assert_eq!(s.raid_count, Some(0));
+        assert!(s.survival_rate.is_none());
+        assert_eq!(s.kill_count, Some(0));
+    }
 }
