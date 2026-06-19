@@ -73,6 +73,12 @@ parking_lot = "0.12"
 # JSONC comment stripping (for Fika config)
 json_comments = "0.2.2"
 
+# Regex for targeted text replacement
+regex = "1"
+
+# Scope guard for cleanup on panic/early return
+scopeguard = "1"
+
 # Structured logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry"] }
