@@ -3,6 +3,7 @@ use actix_web::web::{self, Data, Form, Query};
 use actix_web::HttpResponse;
 use askama::Template;
 
+use crate::db::users::Role;
 use crate::spt::profiles::{list_profiles, SptProfile};
 use crate::web::auth::{hash_password, set_session_user, verify_password, SessionUser};
 use crate::web::error::WebError;
@@ -151,11 +152,21 @@ pub async fn login_submit(
             .body(tmpl.render().map_err(WebError::from)?));
     }
 
+    if user.disabled {
+        let tmpl = LoginTemplate {
+            error: Some("Your account has been disabled".to_string()),
+            csrf_token,
+        };
+        return Ok(HttpResponse::Ok()
+            .content_type("text/html")
+            .body(tmpl.render().map_err(WebError::from)?));
+    }
+
     session.renew();
     let session_user = SessionUser {
         user_id: user.id,
         username: user.username,
-        role: user.role,
+        role: user.role.as_str().to_string(),
     };
     set_session_user(&session, &session_user).map_err(WebError::from)?;
 
@@ -336,7 +347,7 @@ pub async fn register_submit(
             return Ok(Err("Invite code is invalid or expired".to_string()));
         }
 
-        let user_id = db.insert_user(&username, &profile_id, Some(&password_hash), "player")?;
+        let user_id = db.insert_user(&username, &profile_id, Some(&password_hash), Role::Player)?;
 
         // Update the invite to point to the real user_id (no IS NULL guard needed)
         db.update_invite_user(&code, user_id)?;

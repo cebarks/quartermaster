@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
+use crate::db::users::Role;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::podman::PodmanClient;
@@ -499,7 +500,7 @@ fn create_admin_user(spt_dir: &Path, db: &Database, non_interactive: bool) -> Re
         &profile.username,
         &profile.aid,
         Some(&password_hash),
-        "admin",
+        Role::Admin,
     )
     .map_err(|e| anyhow::anyhow!("failed to create admin user: {e}"))?;
 
@@ -608,7 +609,7 @@ mod tests {
     fn create_admin_user_skips_when_admin_exists() {
         let tmp = tempfile::tempdir().unwrap();
         let db = Database::open_in_memory().unwrap();
-        db.insert_user("admin", "aid123", Some("hash"), "admin")
+        db.insert_user("admin", "aid123", Some("hash"), Role::Admin)
             .unwrap();
 
         // Should skip with message, not prompt
