@@ -298,6 +298,7 @@ impl Config {
     /// - `QUMA_LOG_LEVEL` -> `logging.level`
     /// - `QUMA_LOG_FILE_PATH` -> `logging.file.path`
     /// - `QUMA_LOG_FILE_ENABLED` -> `logging.file.enabled`
+    /// - `QUMA_AUTO_START_SERVER` -> `auto_start_server`
     pub fn apply_env_overrides(&mut self) {
         if let Ok(val) = std::env::var("QUMA_SPT_DIR") {
             tracing::debug!(var = "QUMA_SPT_DIR", value = %val, "env var override applied");
