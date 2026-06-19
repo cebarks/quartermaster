@@ -25,6 +25,10 @@ fn default_session_secret() -> String {
     String::new()
 }
 
+fn default_update_check_interval() -> u64 {
+    300
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum LogFormat {
@@ -195,6 +199,9 @@ pub struct Config {
     #[serde(default = "default_web_port")]
     pub web_port: u16,
 
+    #[serde(default = "default_update_check_interval")]
+    pub update_check_interval: u64,
+
     #[serde(default)]
     #[serde(skip_serializing_if = "LoggingConfig::is_default")]
     pub logging: LoggingConfig,
@@ -213,6 +220,7 @@ impl Default for Config {
             server_port: None,
             web_bind: "0.0.0.0".to_string(),
             web_port: 9190,
+            update_check_interval: 300,
             logging: LoggingConfig::default(),
         }
     }
@@ -319,6 +327,11 @@ impl Config {
                 self.server_port = Some(port);
             }
         }
+        if let Ok(val) = std::env::var("QUMA_UPDATE_CHECK_INTERVAL") {
+            if let Ok(secs) = val.parse::<u64>() {
+                self.update_check_interval = secs;
+            }
+        }
         if let Ok(val) = std::env::var("QUMA_LOG_LEVEL") {
             tracing::debug!(var = "QUMA_LOG_LEVEL", value = %val, "env var override applied");
             self.logging.level = val;
@@ -388,6 +401,7 @@ server_host = "192.168.1.100"
 server_port = 6969
 web_bind = "127.0.0.1"
 web_port = 8080
+update_check_interval = 600
 "#;
 
         let config: Config = toml::from_str(toml_str).expect("should parse full TOML");
@@ -402,6 +416,7 @@ web_port = 8080
         assert_eq!(config.server_port, Some(6969));
         assert_eq!(config.web_bind, "127.0.0.1");
         assert_eq!(config.web_port, 8080);
+        assert_eq!(config.update_check_interval, 600);
     }
 
     #[test]
@@ -418,6 +433,7 @@ web_port = 8080
         assert_eq!(config.server_port, None);
         assert_eq!(config.web_bind, "0.0.0.0");
         assert_eq!(config.web_port, 9190);
+        assert_eq!(config.update_check_interval, 300);
     }
 
     #[test]
@@ -449,6 +465,7 @@ web_port = 3000
         config.spt_dir = Some(PathBuf::from("/opt/game"));
         config.web_port = 7777;
         config.forge_token = Some("my-token".to_string());
+        config.update_check_interval = 120;
 
         config.save(&config_path).expect("should save");
         let reloaded = Config::load(&config_path).expect("should reload");
@@ -532,6 +549,27 @@ web_port = 3000
         temp_env::with_vars([("QUMA_CONFIG", Some("/env/path/config.toml"))], || {
             let result = Config::resolve_path(None, Some(Path::new("/opt/spt")));
             assert_eq!(result, PathBuf::from("/env/path/config.toml"));
+        });
+    }
+
+    #[test]
+    fn update_check_interval_default() {
+        let config: Config = toml::from_str("").expect("should parse empty TOML");
+        assert_eq!(config.update_check_interval, 300);
+    }
+
+    #[test]
+    fn update_check_interval_custom() {
+        let config: Config = toml::from_str("update_check_interval = 60").expect("should parse");
+        assert_eq!(config.update_check_interval, 60);
+    }
+
+    #[test]
+    fn update_check_interval_env_override() {
+        temp_env::with_vars([("QUMA_UPDATE_CHECK_INTERVAL", Some("120"))], || {
+            let mut config = Config::default();
+            config.apply_env_overrides();
+            assert_eq!(config.update_check_interval, 120);
         });
     }
 

@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+use tokio::sync::broadcast;
+
+use crate::web::sse::ServerEvent;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskStatus {
@@ -52,6 +55,7 @@ pub struct TaskView {
 struct TrackerInner {
     tasks: HashMap<u64, TaskInfo>,
     next_id: u64,
+    events_tx: broadcast::Sender<ServerEvent>,
 }
 
 #[derive(Clone)]
@@ -60,13 +64,18 @@ pub struct TaskTracker {
 }
 
 impl TaskTracker {
-    pub fn new() -> Self {
+    pub fn new(events_tx: broadcast::Sender<ServerEvent>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(TrackerInner {
                 tasks: HashMap::new(),
                 next_id: 1,
+                events_tx,
             })),
         }
+    }
+
+    fn send_event(inner: &TrackerInner, event: ServerEvent) {
+        let _ = inner.events_tx.send(event);
     }
 
     pub fn has_running_for_mod(&self, forge_mod_id: i64) -> bool {
@@ -91,6 +100,7 @@ impl TaskTracker {
             forge_mod_id,
         };
         inner.tasks.insert(id, info);
+        Self::send_event(&inner, ServerEvent::TaskChanged);
         id
     }
 
@@ -99,6 +109,8 @@ impl TaskTracker {
         if let Some(task) = inner.tasks.get_mut(&id) {
             task.status = TaskStatus::Completed { message };
         }
+        Self::send_event(&inner, ServerEvent::TaskChanged);
+        Self::send_event(&inner, ServerEvent::ModsChanged);
         Self::prune_old(&mut inner);
     }
 
@@ -107,6 +119,7 @@ impl TaskTracker {
         if let Some(task) = inner.tasks.get_mut(&id) {
             task.status = TaskStatus::Failed { message };
         }
+        Self::send_event(&inner, ServerEvent::TaskChanged);
         Self::prune_old(&mut inner);
     }
 
@@ -115,6 +128,7 @@ impl TaskTracker {
         if let Some(task) = inner.tasks.get_mut(&id) {
             if task.status.is_running() {
                 task.status = TaskStatus::Running { message };
+                Self::send_event(&inner, ServerEvent::TaskChanged);
             }
         }
     }

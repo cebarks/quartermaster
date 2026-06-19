@@ -19,6 +19,8 @@ struct DashboardTemplate {
     mods: Vec<InstalledMod>,
     pending_count: usize,
     unmanaged_dirs: Vec<(String, usize)>,
+    spt_version: String,
+    tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
 }
@@ -48,6 +50,8 @@ pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Re
         mods,
         pending_count,
         unmanaged_dirs,
+        spt_version: state.spt_info.spt_version.clone(),
+        tarkov_version: state.spt_info.tarkov_version.clone(),
         flash,
         csrf_token,
     };

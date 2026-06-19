@@ -18,6 +18,16 @@
     {% endif %}
 </div>
 
+<div class="card" style="padding: 0.75rem 1.25rem">
+    <div class="flex-between">
+        <span>
+            <strong>SPT {{ spt_version }}</strong>
+            <span class="text-muted text-sm" style="margin-left: 1rem">Tarkov {{ tarkov_version }}</span>
+        </span>
+        <a href="https://forge.sp-tarkov.com" class="btn btn-sm btn-outline" target="_blank" rel="noopener">SPT Forge ↗</a>
+    </div>
+</div>
+
 {% if mods.is_empty() %}
 <div class="card">
     <div class="empty-state">
@@ -33,23 +43,30 @@
                 <th>Name</th>
                 <th>Version</th>
                 <th>Files</th>
+                <th>Size</th>
                 <th>Installed</th>
                 {% if user.is_admin() %}<th>Actions</th>{% endif %}
             </tr>
         </thead>
-        <tbody>
+        <tbody id="mod-list-body"
+               hx-get="/api/mods/list"
+               hx-trigger="sse:modsChanged"
+               hx-swap="innerHTML">
             {% for m in &mods %}
             <tr>
                 <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}</a></td>
-                <td>{{ m.mod_info.version }}</td>
+                <td><span id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</span></td>
                 <td class="text-muted">{{ m.file_count }}</td>
+                <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
                 <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
                 {% if user.is_admin() %}
                 <td>
-                    <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
-                    </form>
+                    <span id="mod-update-{{ m.mod_info.id }}">
+                        <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
+                        </form>
+                    </span>
                     <form method="post" action="/mods/{{ m.mod_info.id }}/remove" style="display:inline"
                           data-name="{{ m.mod_info.name }}"
                           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
@@ -60,8 +77,14 @@
                 {% endif %}
             </tr>
             {% endfor %}
+            <tr class="tfoot-row">
+                <td colspan="{% if user.is_admin() %}6{% else %}5{% endif %}" class="text-muted text-sm">
+                    Total: {{ mods.len() }} mods — {{ grand_total_size|format_size_i64 }}
+                </td>
+            </tr>
         </tbody>
     </table>
+    <span hx-get="/api/mods/update-status" hx-trigger="load, sse:modsChanged" hx-swap="none"></span>
 </div>
 {% endif %}
 
