@@ -70,6 +70,7 @@ pub struct User {
     pub role: Role,
     pub disabled: bool,
     pub created_at: String,
+    pub password_changed_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,7 +132,7 @@ impl Database {
     pub fn get_user_by_username(&self, username: &str) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
                  FROM users WHERE username = ?1",
                 params![username],
                 row_to_user,
@@ -141,7 +142,7 @@ impl Database {
 
     pub fn list_users(&self) -> rusqlite::Result<Vec<User>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
+            "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
              FROM users ORDER BY username",
         )?;
         let rows = stmt.query_map([], row_to_user)?;
@@ -160,7 +161,7 @@ impl Database {
     pub fn get_user_by_id(&self, id: i64) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
                  FROM users WHERE id = ?1",
                 params![id],
                 row_to_user,
@@ -391,6 +392,7 @@ fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         role,
         disabled: row.get(5)?,
         created_at: row.get(6)?,
+        password_changed_at: row.get(7)?,
     })
 }
 
