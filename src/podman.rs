@@ -46,7 +46,7 @@ impl PodmanClient {
     }
 
     pub async fn create_spt_container(name: &str, spt_dir: &Path, port: u16) -> Result<()> {
-        let mount = format!("{}:/opt/server", spt_dir.display());
+        let mount = format!("{}:/opt/server:Z", spt_dir.display());
         let port_map = format!("{port}:6969");
 
         tracing::info!(name, spt_dir = %spt_dir.display(), port, "creating SPT server container");
