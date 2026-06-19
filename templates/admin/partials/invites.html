@@ -1,0 +1,60 @@
+<div class="card" style="margin-bottom:1rem">
+    <h3>Create Invite Code</h3>
+    <form hx-post="/api/admin/invites"
+          hx-target="#admin-content"
+          hx-swap="innerHTML"
+          style="display:flex;gap:0.5rem;align-items:center">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="expiry">Expires in:</label>
+        <select name="expiry" id="expiry">
+            <option value="1h">1 hour</option>
+            <option value="24h">24 hours</option>
+            <option value="7d" selected>7 days</option>
+            <option value="30d">30 days</option>
+            <option value="never">Never</option>
+        </select>
+        <button type="submit" class="btn" hx-disabled-elt="this">Create</button>
+    </form>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Code</th>
+            <th>Created By</th>
+            <th>Created</th>
+            <th>Expires</th>
+            <th>Status</th>
+            <th>Used By</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for iv in invites %}
+        <tr{% if let Some(ref h) = highlight_code %}{% if iv.code == *h %} class="highlight-flash"{% endif %}{% endif %}>
+            <td>
+                <code>{{ iv.code }}</code>
+                {% if iv.status == "available" %}
+                <button type="button" class="btn btn-sm btn-outline" style="margin-left:0.5rem"
+                        onclick="navigator.clipboard.writeText('{{ iv.code }}').then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000); })">Copy</button>
+                {% endif %}
+            </td>
+            <td>{{ iv.created_by_username.as_deref().unwrap_or("—") }}</td>
+            <td class="text-muted text-sm">{{ iv.created_at }}</td>
+            <td class="text-muted text-sm">{{ iv.expires_at.as_deref().unwrap_or("Never") }}</td>
+            <td>
+                {% if iv.status == "used" %}
+                <span class="badge badge-info">Used</span>
+                {% elif iv.status == "expired" %}
+                <span class="badge badge-danger">Expired</span>
+                {% else %}
+                <span class="badge badge-success">Available</span>
+                {% endif %}
+            </td>
+            <td>{{ iv.used_by_username.as_deref().unwrap_or("") }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if invites.is_empty() %}
+<div class="empty-state"><p>No invite codes created yet.</p></div>
+{% endif %}
