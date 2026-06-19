@@ -5,7 +5,7 @@ use crate::podman::PodmanClient;
 use crate::spt::server::SptClient;
 
 use super::common::CliContext;
-use super::{Cli, ServerAction};
+use super::ServerAction;
 
 pub async fn run(action: &ServerAction, ctx: &CliContext) -> Result<()> {
     match action {
