@@ -107,20 +107,36 @@ pub async fn auth_middleware(
         .expect("AppState not found")
         .clone();
 
-    let verified_user = web::block(move || {
+    let db_result = web::block(move || {
         let db = state.db.lock();
         db.get_user_by_id(user_id)
     })
     .await;
 
-    let verified_user = match verified_user {
+    let reject = |reason: &str| {
+        tracing::warn!(user_id, reason, "session invalidated");
+        session.purge();
+        HttpResponse::SeeOther()
+            .insert_header(("Location", "/login"))
+            .finish()
+    };
+
+    let verified_user = match db_result {
         Ok(Ok(Some(user))) if !user.disabled => user,
-        _ => {
-            session.purge();
-            let response = HttpResponse::SeeOther()
-                .insert_header(("Location", "/login"))
-                .finish();
-            return Ok(req.into_response(response).map_into_boxed_body());
+        Ok(Ok(Some(_))) => {
+            return Ok(req
+                .into_response(reject("disabled user"))
+                .map_into_boxed_body())
+        }
+        Ok(Ok(None)) => {
+            return Ok(req
+                .into_response(reject("nonexistent user"))
+                .map_into_boxed_body())
+        }
+        Ok(Err(_)) | Err(_) => {
+            return Ok(req
+                .into_response(reject("DB lookup failed"))
+                .map_into_boxed_body())
         }
     };
 
@@ -130,7 +146,9 @@ pub async fn auth_middleware(
         role: verified_user.role,
     };
 
-    let _ = set_session_user(&session, &session_user);
+    if let Err(e) = set_session_user(&session, &session_user) {
+        tracing::debug!(user_id, error = %e, "failed to update session cookie");
+    }
     req.extensions_mut().insert(session_user);
     next.call(req).await
 }
