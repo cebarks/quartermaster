@@ -24,6 +24,7 @@ struct DashboardTemplate {
     tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    fika_installed: bool,
 }
 
 pub async fn dashboard(
@@ -59,6 +60,7 @@ pub async fn dashboard(
         tarkov_version: state.spt_info.tarkov_version.clone(),
         flash,
         csrf_token,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

@@ -41,6 +41,7 @@ struct ModListTemplate {
     tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    fika_installed: bool,
 }
 
 #[derive(Template)]
@@ -53,6 +54,7 @@ struct ModDetailTemplate {
     dependencies: Vec<DepEntry>,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    fika_installed: bool,
 }
 
 #[derive(Template)]
@@ -144,6 +146,7 @@ pub async fn list_mods(
         tarkov_version: state.spt_info.tarkov_version.clone(),
         flash,
         csrf_token,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -188,6 +191,7 @@ pub async fn mod_detail(
         dependencies,
         flash,
         csrf_token,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

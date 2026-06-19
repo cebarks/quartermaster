@@ -1,5 +1,5 @@
 {% import "partials/icons.html" as icons %}
-{% macro nav(active, user, csrf_token) %}
+{% macro nav(active, user, csrf_token, fika_installed) %}
 <div class="links">
     <a href="/"{% if active == "dashboard" %} class="active"{% endif %}>{% call icons::home() %}{% endcall %} Dashboard</a>
     {% if user.role.can_manage_mods() %}
@@ -7,6 +7,9 @@
     {% endif %}
     <a href="/queue"{% if active == "queue" %} class="active"{% endif %}>{% call icons::list() %}{% endcall %} Queue</a>
     <a href="/status"{% if active == "status" %} class="active"{% endif %}>{% call icons::activity() %}{% endcall %} Status</a>
+    {% if fika_installed %}
+    <a href="/clients"{% if active == "clients" %} class="active"{% endif %}>{% call icons::users() %}{% endcall %} Clients</a>
+    {% endif %}
     <a href="/logs"{% if active == "logs" %} class="active"{% endif %}>{% call icons::terminal() %}{% endcall %} Logs</a>
 </div>
 <div class="user-info">

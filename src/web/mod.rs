@@ -157,6 +157,14 @@ pub async fn start_server(
                         web::get().to(handlers::dashboard::server_status_partial),
                     )
                     .route(
+                        "/dashboard/clients-status",
+                        web::get().to(handlers::clients::dashboard_clients_status_partial),
+                    )
+                    .route(
+                        "/clients/status",
+                        web::get().to(handlers::clients::client_status_partial),
+                    )
+                    .route(
                         "/tasks/status",
                         web::get().to(handlers::tasks::task_status_partial),
                     )
@@ -188,6 +196,11 @@ pub async fn start_server(
                     .route("/queue", web::get().to(handlers::queue::queue_page))
                     .route("/logs", web::get().to(handlers::logs::logs_page))
                     .route("/mods", web::get().to(handlers::mods::list_mods))
+                    .route("/clients", web::get().to(handlers::clients::client_list))
+                    .route(
+                        "/clients/{n}",
+                        web::get().to(handlers::clients::client_detail),
+                    )
                     .route("/mods/install", web::post().to(handlers::mods::install_mod))
                     .route(
                         "/mods/update-all",
@@ -217,7 +230,23 @@ pub async fn start_server(
                         "/queue/{id}/cancel",
                         web::post().to(handlers::queue::cancel_op),
                     )
-                    .route("/queue/apply", web::post().to(handlers::queue::apply_queue)),
+                    .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
+                    .route(
+                        "/clients/{n}/restart",
+                        web::post().to(handlers::clients::client_restart),
+                    )
+                    .route(
+                        "/clients/{n}/stop",
+                        web::post().to(handlers::clients::client_stop),
+                    )
+                    .route(
+                        "/clients/{n}/start",
+                        web::post().to(handlers::clients::client_start),
+                    )
+                    .route(
+                        "/clients/scale",
+                        web::post().to(handlers::clients::client_scale),
+                    ),
             )
     })
     .bind(&bind_addr)

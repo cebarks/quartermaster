@@ -16,6 +16,7 @@ struct QueueTemplate {
     ops: Vec<PendingOperation>,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    fika_installed: bool,
 }
 
 pub async fn queue_page(
@@ -41,6 +42,7 @@ pub async fn queue_page(
         ops,
         flash,
         csrf_token,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
