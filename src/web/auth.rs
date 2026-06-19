@@ -36,13 +36,6 @@ pub struct SessionUser {
     pub role: Role,
 }
 
-impl SessionUser {
-    /// Template helper: returns true if the user has the admin role
-    pub fn is_admin(&self) -> bool {
-        matches!(self.role, Role::Admin)
-    }
-}
-
 /// Helper to extract SessionUser from session data (mainly for testing)
 #[allow(dead_code)]
 pub fn get_session_user(session: &Session) -> Option<SessionUser> {

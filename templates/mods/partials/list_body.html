@@ -6,7 +6,7 @@
     <td class="text-muted">{{ m.file_count }}</td>
     <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
     <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
-    {% if user.is_admin() %}
+    {% if user.role.can_manage_mods() %}
     <td>
         <span id="mod-update-{{ m.mod_info.id }}">
             <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
@@ -25,7 +25,7 @@
 </tr>
 {% endfor %}
 <tr class="tfoot-row">
-    <td colspan="{% if user.is_admin() %}6{% else %}5{% endif %}" class="text-muted text-sm">
+    <td colspan="{% if user.role.can_manage_mods() %}6{% else %}5{% endif %}" class="text-muted text-sm">
         Total: {{ mods.len() }} mods — {{ grand_total_size|format_size_i64 }}
     </td>
 </tr>
