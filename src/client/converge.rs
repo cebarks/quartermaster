@@ -317,7 +317,7 @@ async fn scale_up(
     info!("Scaling up from {current_count} to {desired_count}");
 
     // 1. Edit fika.jsonc to set amount
-    let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/config/fika.jsonc");
+    let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
     edit_headless_amount(&fika_config_path, desired_count)?;
 
     // 2. Restart SPT server to pick up new headless count
@@ -367,7 +367,7 @@ async fn scale_down(
     }
 
     // 2. Edit fika.jsonc to set amount
-    let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/config/fika.jsonc");
+    let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
     edit_headless_amount(&fika_config_path, desired_count)?;
 
     // 3. Restart SPT server to deregister removed clients

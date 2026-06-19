@@ -436,7 +436,7 @@ pub async fn client_scale(
         .store(true, std::sync::atomic::Ordering::Relaxed);
 
     // Run convergence in a background task
-    let converge_flag = std::sync::Arc::new(tokio::sync::RwLock::new(true));
+    let converge_flag = std::sync::Arc::new(tokio::sync::RwLock::new(false));
     let mgr_clone = container_mgr.clone();
     let config_clone = state.config.clone();
     let spt_dir_clone = state.spt_dir.clone();

@@ -102,7 +102,7 @@ impl ClientSupervisor {
 
         // Update each client's state
         let mut states = Vec::new();
-        for i in 0..self.clients_config.count {
+        for i in 1..=self.clients_config.count {
             let state = self.check_client(i, server_up, headlesses.as_ref()).await?;
             states.push(state);
         }
