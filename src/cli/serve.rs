@@ -98,7 +98,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         Ok(client) => client,
                         Err(e) => {
                             tracing::error!(error = %e, "Failed to create SPT client — supervisor not started");
-                            return Err(e.into());
+                            return Err(e);
                         }
                     };
 
@@ -130,7 +130,6 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                             container_mgr_arc.as_ref().clone(),
                             spt_client,
                             clients_config.clone(),
-                            spt_dir.clone(),
                             Arc::clone(&converging),
                             cancel_token,
                         );

@@ -46,6 +46,7 @@ pub fn edit_headless_amount(path: &Path, amount: u32) -> Result<()> {
 /// Compares the current set of .json files in the profiles directory against a baseline
 /// set of profile IDs. Returns the profile IDs (filenames without .json extension) that
 /// are new.
+#[allow(dead_code)] // Used only in tests
 pub fn discover_new_profiles(profiles_dir: &Path, before: &HashSet<String>) -> Vec<String> {
     let mut new_profiles = Vec::new();
 
@@ -162,6 +163,7 @@ pub fn client_port(base: u16, index: u32) -> u16 {
 /// containers we want to create.
 ///
 /// Returns the names of conflicting containers.
+#[allow(dead_code)] // Used only in tests
 pub fn find_name_conflicts(
     managed: &[String],
     all_matching_name: &[String],
@@ -180,10 +182,11 @@ pub fn find_name_conflicts(
     // Also check if any of the desired names would conflict
     for i in 1..=desired_count {
         let name = client_container_name(i);
-        if all_matching_name.contains(&name) && !managed_set.contains(&name) {
-            if !conflicts.contains(&name) {
-                conflicts.push(name);
-            }
+        if all_matching_name.contains(&name)
+            && !managed_set.contains(&name)
+            && !conflicts.contains(&name)
+        {
+            conflicts.push(name);
         }
     }
 

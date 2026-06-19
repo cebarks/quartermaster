@@ -13,7 +13,6 @@
 
 # To Investigate
 - proxying the spt http server itself
-- rust-native podman/docker support (podman-api/bollard)
 
 # Future Features
 
@@ -22,7 +21,6 @@
 - **Operation history**: `operation_history` table, `quma log` command, and web UI changelog page tracking all mod operations with timestamps, who performed them, and whether `--force` was used
 - **Trust mode auth**: No-password auth mode where players just pick their SPT profile — matches SPT's own security model
 - **Windows support**: Native Windows process management (no Podman requirement), Windows-specific paths and process detection
-- **Fika Dedicated Client Management**: Full management of headless clients (health checks, automatic restarts, resource usage)
 - **ModSync integration**: 
     - Trigger ModSync push after mod changes
     - Manage ModSync `syncpaths` and `exclusions` config

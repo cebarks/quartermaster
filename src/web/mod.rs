@@ -44,6 +44,7 @@ async fn serve_asset(path: web::Path<String>) -> impl Responder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_server(
     config: Config,
     db: Database,

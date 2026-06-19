@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,7 +18,6 @@ pub struct ClientSupervisor {
     container_mgr: ContainerManager,
     spt_client: SptClient,
     clients_config: ClientsConfig,
-    spt_dir: PathBuf,
     converging: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     state: Arc<RwLock<Vec<ClientState>>>,
@@ -31,7 +29,6 @@ impl ClientSupervisor {
         container_mgr: ContainerManager,
         spt_client: SptClient,
         clients_config: ClientsConfig,
-        spt_dir: PathBuf,
         converging: Arc<AtomicBool>,
         cancel_token: CancellationToken,
     ) -> Self {
@@ -40,7 +37,6 @@ impl ClientSupervisor {
             container_mgr,
             spt_client,
             clients_config,
-            spt_dir,
             converging,
             cancel_token,
             state,

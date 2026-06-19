@@ -31,14 +31,12 @@ struct ClientDetailTemplate {
     csrf_token: String,
     fika_installed: bool,
     client: ClientState,
-    converging: bool,
 }
 
 #[derive(Template)]
 #[template(path = "clients/partials/status.html")]
 struct ClientsStatusPartialTemplate {
     clients: Vec<ClientState>,
-    converging: bool,
 }
 
 #[derive(Template)]
@@ -101,15 +99,12 @@ pub async fn client_detail(
         .find(|c| c.index == index)
         .ok_or(WebError::NotFound)?;
 
-    let converging = state.converging.load(std::sync::atomic::Ordering::Relaxed);
-
     let tmpl = ClientDetailTemplate {
         user,
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
         client,
-        converging,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -400,20 +395,78 @@ pub async fn client_scale(
         }
     }
 
-    // TODO(task-10): Implement scaling via convergence engine
-    // Current blocker: converging flag type mismatch (Arc<AtomicBool> vs Arc<RwLock<bool>>)
-    // and converge() function doesn't accept force parameter as specified in design doc.
-    // This needs coordination with Task 8's supervisor implementation.
-    let _ = (
-        target,
-        force,
-        state.client_states.as_ref(),
-        state.container_mgr.as_ref(),
-    );
+    // Get required dependencies
+    let container_mgr = match state.container_mgr.as_ref() {
+        Some(mgr) => mgr.as_ref(),
+        None => {
+            set_flash(
+                &session,
+                "Podman socket not available. Ensure podman.socket is enabled.",
+                "error",
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/clients"))
+                .finish());
+        }
+    };
+
+    let clients_config = state.config.clients.as_ref().unwrap(); // Already checked above
+    let mut updated_config = clients_config.clone();
+    updated_config.count = target;
+
+    // Create SPT client
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let spt_client = match crate::spt::server::SptClient::new(&host, port) {
+        Ok(client) => client,
+        Err(e) => {
+            set_flash(
+                &session,
+                &format!("Failed to create SPT client: {e}"),
+                "error",
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/clients"))
+                .finish());
+        }
+    };
+
+    // Set converging flag (web UI uses AtomicBool, converge() needs RwLock internally)
+    state
+        .converging
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+
+    // Run convergence in a background task
+    let converge_flag = std::sync::Arc::new(tokio::sync::RwLock::new(true));
+    let mgr_clone = container_mgr.clone();
+    let config_clone = state.config.clone();
+    let spt_dir_clone = state.spt_dir.clone();
+    let converging_clone = state.converging.clone();
+
+    tokio::spawn(async move {
+        let result = crate::client::converge::converge(
+            &mgr_clone,
+            &updated_config,
+            &config_clone,
+            &spt_dir_clone,
+            &spt_client,
+            converge_flag,
+        )
+        .await;
+
+        // Clear converging flag
+        converging_clone.store(false, std::sync::atomic::Ordering::Relaxed);
+
+        if let Err(e) = result {
+            tracing::error!(error = %e, "Client convergence failed during scale operation");
+        } else {
+            tracing::info!(target_count = target, "Client scaling completed");
+        }
+    });
+
     set_flash(
         &session,
-        "Scaling functionality requires Task 8/10 coordination (converging flag type fix)",
-        "error",
+        &format!("Scaling to {target} client(s)..."),
+        "success",
     );
 
     Ok(HttpResponse::SeeOther()
@@ -432,12 +485,7 @@ pub async fn client_status_partial(
         None => vec![],
     };
 
-    let converging = state.converging.load(std::sync::atomic::Ordering::Relaxed);
-
-    let tmpl = ClientsStatusPartialTemplate {
-        clients,
-        converging,
-    };
+    let tmpl = ClientsStatusPartialTemplate { clients };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
