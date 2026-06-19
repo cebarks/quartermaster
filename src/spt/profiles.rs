@@ -157,7 +157,10 @@ pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats
 
         let parsed: FullProfileJson = match serde_json::from_str(&contents) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "failed to parse SPT profile");
+                continue;
+            }
         };
 
         let aid = match parsed.info.and_then(|i| i.id) {

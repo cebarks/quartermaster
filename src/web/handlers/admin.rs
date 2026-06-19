@@ -350,7 +350,7 @@ pub async fn create_reset_token(
 
     // Verify user exists
     let db = state.db.clone();
-    web::block(move || {
+    let target_user = web::block(move || {
         let db = db.lock();
         db.get_user_by_id(target_id)
     })
@@ -358,6 +358,12 @@ pub async fn create_reset_token(
     .map_err(WebError::from)?
     .map_err(WebError::from)?
     .ok_or(WebError::NotFound)?;
+
+    if target_user.disabled {
+        return Err(
+            WebError::BadRequest("Cannot reset password for a disabled user".to_string()).into(),
+        );
+    }
 
     // Generate CSPRNG token via thread-local CSPRNG (ChaCha-based in rand 0.9)
     use rand::RngCore;
@@ -377,7 +383,9 @@ pub async fn create_reset_token(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let reset_link = format!("/reset-password?token={token}");
+    let host = req.connection_info().host().to_string();
+    let scheme = req.connection_info().scheme().to_string();
+    let reset_link = format!("{scheme}://{host}/reset-password?token={token}");
     render_user_row(
         &state,
         &session,

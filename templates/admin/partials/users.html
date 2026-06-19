@@ -21,7 +21,7 @@
                             hx-post="/api/admin/users/{{ u.id }}/role"
                             hx-target="closest tr"
                             hx-swap="outerHTML"
-                            hx-include="[name='csrf_token']"
+                            hx-include="closest form"
                             hx-disabled-elt="this">
                         <option value="admin"{% if u.role.as_str() == "admin" %} selected{% endif %}>Admin</option>
                         <option value="moderator"{% if u.role.as_str() == "moderator" %} selected{% endif %}>Moderator</option>

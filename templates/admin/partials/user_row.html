@@ -1,10 +1,9 @@
 <tr{% if u.id == current_user_id %} class="current-user"{% endif %}>
-    {% if let Some(msg) = row_message %}
-    <td colspan="6"><div class="toast toast-success" style="margin:0">{{ msg }}</div></td>
-</tr>
-<tr>
-    {% endif %}
-    <td><strong>{{ u.username }}</strong></td>
+    <td><strong>{{ u.username }}</strong>
+        {% if let Some(msg) = row_message %}
+        <div class="toast toast-success" style="margin-top:0.25rem;font-size:0.85rem">{{ msg }}</div>
+        {% endif %}
+    </td>
     <td>
         {% if u.id != current_user_id %}
         <form style="display:inline">
@@ -13,7 +12,7 @@
                     hx-post="/api/admin/users/{{ u.id }}/role"
                     hx-target="closest tr"
                     hx-swap="outerHTML"
-                    hx-include="[name='csrf_token']"
+                    hx-include="closest form"
                     hx-disabled-elt="this">
                 <option value="admin"{% if u.role.as_str() == "admin" %} selected{% endif %}>Admin</option>
                 <option value="moderator"{% if u.role.as_str() == "moderator" %} selected{% endif %}>Moderator</option>
