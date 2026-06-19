@@ -4,6 +4,7 @@ const MIGRATION_001: &str = include_str!("../../migrations/001_initial.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_cascade_depends_on.sql");
 const MIGRATION_003: &str = include_str!("../../migrations/003_file_mod_id_index.sql");
 const MIGRATION_004: &str = include_str!("../../migrations/004_file_source.sql");
+const MIGRATION_005: &str = include_str!("../../migrations/005_add_disabled_column.sql");
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     let current_version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -26,6 +27,11 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if current_version < 4 {
         conn.execute_batch(MIGRATION_004)?;
         conn.pragma_update(None, "user_version", 4)?;
+    }
+
+    if current_version < 5 {
+        conn.execute_batch(MIGRATION_005)?;
+        conn.pragma_update(None, "user_version", 5)?;
     }
 
     Ok(())
