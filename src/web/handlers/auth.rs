@@ -142,19 +142,9 @@ pub async fn login_submit(
         None => false,
     };
 
-    if !valid {
+    if !valid || user.disabled {
         let tmpl = LoginTemplate {
             error: Some("Invalid username or password".to_string()),
-            csrf_token,
-        };
-        return Ok(HttpResponse::Ok()
-            .content_type("text/html")
-            .body(tmpl.render().map_err(WebError::from)?));
-    }
-
-    if user.disabled {
-        let tmpl = LoginTemplate {
-            error: Some("Your account has been disabled".to_string()),
             csrf_token,
         };
         return Ok(HttpResponse::Ok()

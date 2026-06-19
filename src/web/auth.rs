@@ -93,7 +93,13 @@ pub async fn auth_middleware(
     next: Next<BoxBody>,
 ) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
     let session = req.get_session();
-    let user_id: Option<i64> = session.get("user_id").unwrap_or(None);
+    let user_id: Option<i64> = match session.get("user_id") {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "session deserialization failed");
+            None
+        }
+    };
 
     let Some(user_id) = user_id else {
         let response = HttpResponse::SeeOther()
@@ -102,10 +108,14 @@ pub async fn auth_middleware(
         return Ok(req.into_response(response).map_into_boxed_body());
     };
 
-    let state = req
+    let Some(state) = req
         .app_data::<web::Data<crate::web::state::AppState>>()
-        .expect("AppState not found")
-        .clone();
+        .cloned()
+    else {
+        tracing::error!("AppState not registered");
+        let response = HttpResponse::InternalServerError().finish();
+        return Ok(req.into_response(response).map_into_boxed_body());
+    };
 
     let db_result = web::block(move || {
         let db = state.db.lock();
@@ -113,9 +123,7 @@ pub async fn auth_middleware(
     })
     .await;
 
-    let reject = |reason: &str| {
-        tracing::warn!(user_id, reason, "session invalidated");
-        session.purge();
+    let redirect_login = || {
         HttpResponse::SeeOther()
             .insert_header(("Location", "/login"))
             .finish()
@@ -124,30 +132,38 @@ pub async fn auth_middleware(
     let verified_user = match db_result {
         Ok(Ok(Some(user))) if !user.disabled => user,
         Ok(Ok(Some(_))) => {
-            return Ok(req
-                .into_response(reject("disabled user"))
-                .map_into_boxed_body())
+            tracing::warn!(user_id, "disabled user session purged");
+            session.purge();
+            return Ok(req.into_response(redirect_login()).map_into_boxed_body());
         }
         Ok(Ok(None)) => {
-            return Ok(req
-                .into_response(reject("nonexistent user"))
-                .map_into_boxed_body())
+            tracing::warn!(user_id, "session references nonexistent user");
+            session.purge();
+            return Ok(req.into_response(redirect_login()).map_into_boxed_body());
         }
-        Ok(Err(_)) | Err(_) => {
-            return Ok(req
-                .into_response(reject("DB lookup failed"))
-                .map_into_boxed_body())
+        Ok(Err(e)) => {
+            tracing::warn!(user_id, error = %e, "auth DB query failed");
+            let response = HttpResponse::ServiceUnavailable().finish();
+            return Ok(req.into_response(response).map_into_boxed_body());
+        }
+        Err(e) => {
+            tracing::warn!(user_id, error = %e, "auth DB query failed");
+            let response = HttpResponse::ServiceUnavailable().finish();
+            return Ok(req.into_response(response).map_into_boxed_body());
         }
     };
 
     let session_user = SessionUser {
         user_id: verified_user.id,
-        username: verified_user.username.clone(),
+        username: verified_user.username,
         role: verified_user.role,
     };
 
-    if let Err(e) = set_session_user(&session, &session_user) {
-        tracing::debug!(user_id, error = %e, "failed to update session cookie");
+    let cached_role = session.get::<String>("role").unwrap_or(None);
+    if cached_role.as_deref() != Some(session_user.role.as_str()) {
+        if let Err(e) = set_session_user(&session, &session_user) {
+            tracing::debug!(user_id, error = %e, "failed to update session cookie");
+        }
     }
     req.extensions_mut().insert(session_user);
     next.call(req).await
