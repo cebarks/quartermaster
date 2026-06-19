@@ -6,6 +6,10 @@ use std::process::Stdio;
 
 use anyhow::{bail, Context, Result};
 
+pub const SPT_SERVER_IMAGE: &str = "ghcr.io/zhliau/fika-spt-server-docker:latest";
+pub const DEFAULT_CONTAINER_NAME: &str = "spt-server";
+pub const DEFAULT_SPT_PORT: u16 = 6969;
+
 pub struct PodmanClient {
     container: String,
 }
@@ -15,6 +19,78 @@ fn parse_status_output(output: &str) -> bool {
 }
 
 impl PodmanClient {
+    pub async fn pull_image(image: &str) -> Result<()> {
+        tracing::info!(image, "pulling container image");
+        let output = tokio::process::Command::new("podman")
+            .args(["pull", image])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to run podman pull")?;
+
+        tracing::trace!(
+            image,
+            stdout = %String::from_utf8_lossy(&output.stdout),
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            status = %output.status,
+            "podman pull output"
+        );
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(image, stderr = %stderr.trim(), "podman pull failed");
+            bail!("podman pull failed: {}", stderr.trim());
+        }
+        Ok(())
+    }
+
+    pub async fn create_spt_container(name: &str, spt_dir: &Path, port: u16) -> Result<()> {
+        let mount = format!("{}:/opt/server:Z", spt_dir.display());
+        let port_map = format!("{port}:6969");
+
+        tracing::info!(name, spt_dir = %spt_dir.display(), port, "creating SPT server container");
+        let output = tokio::process::Command::new("podman")
+            .args([
+                "create",
+                "--name",
+                name,
+                "-p",
+                &port_map,
+                "-v",
+                &mount,
+                "--user",
+                "root",
+                "-e",
+                "TAKE_OWNERSHIP=true",
+                "-e",
+                "CHANGE_PERMISSIONS=true",
+                "-e",
+                "LISTEN_ALL_NETWORKS=true",
+                SPT_SERVER_IMAGE,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to run podman create")?;
+
+        tracing::trace!(
+            name,
+            stdout = %String::from_utf8_lossy(&output.stdout),
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            status = %output.status,
+            "podman create output"
+        );
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(name, stderr = %stderr.trim(), "podman create failed");
+            bail!("podman create failed: {}", stderr.trim());
+        }
+        Ok(())
+    }
+
     pub fn new(container: &str) -> Self {
         Self {
             container: container.to_string(),
@@ -198,5 +274,20 @@ mod tests {
     #[test]
     fn parse_container_status_with_whitespace() {
         assert!(parse_status_output("  running\n"));
+    }
+
+    #[test]
+    fn pull_image_constructs_correct_command() {
+        // Verify the constant is correct
+        assert_eq!(
+            SPT_SERVER_IMAGE,
+            "ghcr.io/zhliau/fika-spt-server-docker:latest"
+        );
+    }
+
+    #[test]
+    fn default_container_constants() {
+        assert_eq!(DEFAULT_CONTAINER_NAME, "spt-server");
+        assert_eq!(DEFAULT_SPT_PORT, 6969);
     }
 }

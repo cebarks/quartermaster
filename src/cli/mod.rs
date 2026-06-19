@@ -187,6 +187,15 @@ pub enum ServerAction {
         #[arg(long)]
         json: bool,
     },
+    /// Create a new SPT server container
+    Create {
+        /// Container name
+        #[arg(long, default_value = "spt-server")]
+        name: String,
+        /// Host port to map to container port 6969
+        #[arg(long, default_value = "6969")]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand)]

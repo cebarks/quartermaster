@@ -122,6 +122,19 @@ async fn main() -> Result<()> {
                     cli::status::run(*json, &ctx).await
                 }
                 Command::Server { action } => {
+                    if let cli::ServerAction::Create { name, port } = action {
+                        let filter = logging::resolve_log_filter(
+                            &config::LoggingConfig::default(),
+                            cli.verbose,
+                            cli.log_level.as_deref(),
+                        );
+                        reload_handles.reconfigure(
+                            &config::LoggingConfig::default(),
+                            &filter,
+                            None,
+                        );
+                        return cli::server::create_container(name, *port, &cli).await;
+                    }
                     let ctx = cli::common::resolve_context(&cli)?;
                     reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
                     cli::server::run(action, &ctx).await
