@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -138,7 +137,7 @@ impl ClientSupervisor {
         server_up: bool,
         headlesses: Option<&GetHeadlessesResponse>,
     ) -> anyhow::Result<ClientState> {
-        let container_name = format!("fika-client-{}", index);
+        let container_name = crate::client::converge::client_container_name(index);
 
         // Get current state or create new one
         let existing = {
