@@ -632,3 +632,50 @@ fn password_reset_tokens_table_exists() {
     };
     assert!(tables.contains(&"password_reset_tokens".to_string()));
 }
+
+#[test]
+fn update_user_password_sets_changed_at() {
+    let db = test_db();
+    let id = db
+        .insert_user("alice", "p1", Some("old_hash"), Role::Player)
+        .unwrap();
+
+    // Before update, password_changed_at should be NULL
+    let before: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT password_changed_at FROM users WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(before.is_none());
+
+    db.update_user_password(id, "new_hash").unwrap();
+
+    let after: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT password_changed_at FROM users WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        after.is_some(),
+        "password_changed_at should be set after update"
+    );
+}
+
+#[test]
+fn count_admins_excludes_disabled() {
+    let db = test_db();
+    let admin1 = db
+        .insert_user("admin1", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    db.insert_user("admin2", "p2", Some("pw"), Role::Admin)
+        .unwrap();
+    assert_eq!(db.count_admins().unwrap(), 2);
+    db.set_user_disabled(admin1, true).unwrap();
+    assert_eq!(db.count_admins().unwrap(), 1);
+}
