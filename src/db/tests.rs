@@ -463,3 +463,172 @@ fn user_disabled_default() {
     let user = db.get_user_by_id(id).unwrap().expect("user should exist");
     assert!(!user.disabled);
 }
+
+#[test]
+fn update_user_role() {
+    let db = test_db();
+    let id = db
+        .insert_user("alice", "p1", Some("pw"), Role::Player)
+        .unwrap();
+    let affected = db.update_user_role(id, Role::Moderator).unwrap();
+    assert_eq!(affected, 1);
+    let user = db.get_user_by_id(id).unwrap().unwrap();
+    assert_eq!(user.role, Role::Moderator);
+}
+
+#[test]
+fn update_user_role_last_admin_guard() {
+    let db = test_db();
+    let admin_id = db
+        .insert_user("admin", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    // Only admin — guard should block demotion
+    let affected = db.update_user_role(admin_id, Role::Player).unwrap();
+    assert_eq!(affected, 0, "should not demote the last admin");
+    let user = db.get_user_by_id(admin_id).unwrap().unwrap();
+    assert_eq!(user.role, Role::Admin);
+}
+
+#[test]
+fn update_user_role_allows_demotion_with_other_admins() {
+    let db = test_db();
+    let admin1 = db
+        .insert_user("admin1", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    db.insert_user("admin2", "p2", Some("pw"), Role::Admin)
+        .unwrap();
+    let affected = db.update_user_role(admin1, Role::Player).unwrap();
+    assert_eq!(affected, 1);
+    let user = db.get_user_by_id(admin1).unwrap().unwrap();
+    assert_eq!(user.role, Role::Player);
+}
+
+#[test]
+fn set_user_disabled() {
+    let db = test_db();
+    let id = db
+        .insert_user("alice", "p1", Some("pw"), Role::Player)
+        .unwrap();
+    let affected = db.set_user_disabled(id, true).unwrap();
+    assert_eq!(affected, 1);
+    let user = db.get_user_by_id(id).unwrap().unwrap();
+    assert!(user.disabled);
+
+    let affected = db.set_user_disabled(id, false).unwrap();
+    assert_eq!(affected, 1);
+    let user = db.get_user_by_id(id).unwrap().unwrap();
+    assert!(!user.disabled);
+}
+
+#[test]
+fn set_user_disabled_last_admin_guard() {
+    let db = test_db();
+    let admin_id = db
+        .insert_user("admin", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    let affected = db.set_user_disabled(admin_id, true).unwrap();
+    assert_eq!(affected, 0, "should not disable the last admin");
+    let user = db.get_user_by_id(admin_id).unwrap().unwrap();
+    assert!(!user.disabled);
+}
+
+#[test]
+fn update_user_password() {
+    let db = test_db();
+    let id = db
+        .insert_user("alice", "p1", Some("old_hash"), Role::Player)
+        .unwrap();
+    let affected = db.update_user_password(id, "new_hash").unwrap();
+    assert_eq!(affected, 1);
+    let user = db.get_user_by_id(id).unwrap().unwrap();
+    assert_eq!(user.password_hash.as_deref(), Some("new_hash"));
+}
+
+#[test]
+fn count_admins() {
+    let db = test_db();
+    assert_eq!(db.count_admins().unwrap(), 0);
+    db.insert_user("admin1", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    assert_eq!(db.count_admins().unwrap(), 1);
+    db.insert_user("player1", "p2", Some("pw"), Role::Player)
+        .unwrap();
+    assert_eq!(db.count_admins().unwrap(), 1);
+    db.insert_user("admin2", "p3", Some("pw"), Role::Admin)
+        .unwrap();
+    assert_eq!(db.count_admins().unwrap(), 2);
+}
+
+#[test]
+fn list_invite_codes_with_usernames() {
+    let db = test_db();
+    let admin_id = db
+        .insert_user("admin", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    db.create_invite("CODE-1", Some(admin_id), None).unwrap();
+    db.create_invite("CODE-2", None, None).unwrap();
+
+    let codes = db.list_invite_codes().unwrap();
+    assert_eq!(codes.len(), 2);
+    // Most recent first
+    assert_eq!(codes[0].invite.code, "CODE-2");
+    assert!(codes[0].created_by_username.is_none());
+    assert_eq!(codes[1].invite.code, "CODE-1");
+    assert_eq!(codes[1].created_by_username.as_deref(), Some("admin"));
+}
+
+#[test]
+fn reset_token_crud() {
+    let db = test_db();
+    let user_id = db
+        .insert_user("alice", "p1", Some("pw"), Role::Player)
+        .unwrap();
+
+    let token_id = db
+        .create_reset_token(user_id, "token123", "2099-01-01T00:00:00Z")
+        .unwrap();
+    assert!(token_id > 0);
+
+    let token = db.get_reset_token("token123").unwrap().unwrap();
+    assert_eq!(token.user_id, user_id);
+    assert_eq!(token.token, "token123");
+
+    let missing = db.get_reset_token("nonexistent").unwrap();
+    assert!(missing.is_none());
+
+    let deleted = db.delete_reset_token("token123").unwrap();
+    assert_eq!(deleted, 1);
+    assert!(db.get_reset_token("token123").unwrap().is_none());
+}
+
+#[test]
+fn reset_token_replaces_existing() {
+    let db = test_db();
+    let user_id = db
+        .insert_user("alice", "p1", Some("pw"), Role::Player)
+        .unwrap();
+
+    db.create_reset_token(user_id, "token-old", "2099-01-01T00:00:00Z")
+        .unwrap();
+    db.create_reset_token(user_id, "token-new", "2099-01-01T00:00:00Z")
+        .unwrap();
+
+    assert!(db.get_reset_token("token-old").unwrap().is_none());
+    assert!(db.get_reset_token("token-new").unwrap().is_some());
+}
+
+#[test]
+fn password_reset_tokens_table_exists() {
+    let db = test_db();
+    let tables: Vec<String> = {
+        let mut stmt = db
+            .conn()
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='password_reset_tokens'")
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<String>, _>>()
+            .unwrap()
+    };
+    assert!(tables.contains(&"password_reset_tokens".to_string()));
+}

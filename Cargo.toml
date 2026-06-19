@@ -36,6 +36,7 @@ thiserror = "2"
 # Crypto & hashing
 sha2 = "0.10"
 rand = "0.9"
+subtle = "2"
 
 # Archive handling
 zip = "2"
