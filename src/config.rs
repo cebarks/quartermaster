@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rand::distr::Alphanumeric;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -82,6 +82,104 @@ fn default_max_files() -> usize {
 
 fn default_buffer_size() -> usize {
     1000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RestartPolicy {
+    Auto,
+    Manual,
+}
+
+fn default_restart_policy() -> RestartPolicy {
+    RestartPolicy::Auto
+}
+fn default_max_restart_attempts() -> u32 {
+    5
+}
+fn default_restart_backoff_cap() -> u64 {
+    300
+}
+fn default_base_udp_port() -> u16 {
+    25565
+}
+fn default_headless_image() -> String {
+    "ghcr.io/zhliau/fika-headless-docker:latest".to_string()
+}
+fn default_isolated_paths() -> Vec<String> {
+    vec!["BepInEx/config".to_string()]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClientsConfig {
+    #[serde(default)]
+    pub count: u32,
+    #[serde(default)]
+    pub install_dir: PathBuf,
+    #[serde(default = "default_restart_policy")]
+    pub restart_policy: RestartPolicy,
+    #[serde(default = "default_max_restart_attempts")]
+    pub max_restart_attempts: u32,
+    #[serde(default = "default_restart_backoff_cap")]
+    pub restart_backoff_cap: u64,
+    #[serde(default = "default_base_udp_port")]
+    pub base_udp_port: u16,
+    #[serde(default = "default_headless_image")]
+    pub image: String,
+    #[serde(default = "default_isolated_paths")]
+    pub isolated_paths: Vec<String>,
+}
+
+impl Default for ClientsConfig {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            install_dir: PathBuf::new(),
+            restart_policy: RestartPolicy::Auto,
+            max_restart_attempts: 5,
+            restart_backoff_cap: 300,
+            base_udp_port: 25565,
+            image: default_headless_image(),
+            isolated_paths: default_isolated_paths(),
+        }
+    }
+}
+
+impl ClientsConfig {
+    pub fn validate(&self, config: &Config, spt_dir: &Path) -> Result<()> {
+        if self.count == 0 {
+            return Ok(());
+        }
+        if !is_fika_installed(spt_dir) {
+            bail!(
+                "Fika server mod not found at {}. Dedicated client management requires Fika.",
+                spt_dir.join("SPT/user/mods/fika-server").display()
+            );
+        }
+        if self.install_dir.as_os_str().is_empty() || !self.install_dir.exists() {
+            bail!(
+                "clients.install_dir '{}' does not exist",
+                self.install_dir.display()
+            );
+        }
+        let max_port = self.base_udp_port as u32 + self.count - 1;
+        if max_port > 65535 {
+            bail!(
+                "clients.base_udp_port ({}) + count ({}) exceeds port range (max port would be {})",
+                self.base_udp_port,
+                self.count,
+                max_port
+            );
+        }
+        if config.server_container.is_none() {
+            bail!("server_container must be configured for dedicated client management — convergence needs to restart the server");
+        }
+        Ok(())
+    }
+}
+
+pub fn is_fika_installed(spt_dir: &Path) -> bool {
+    spt_dir.join("SPT/user/mods/fika-server").is_dir()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -210,6 +308,10 @@ pub struct Config {
     pub update_check_interval: u64,
 
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clients: Option<ClientsConfig>,
+
+    #[serde(default)]
     #[serde(skip_serializing_if = "LoggingConfig::is_default")]
     pub logging: LoggingConfig,
 }
@@ -229,6 +331,7 @@ impl Default for Config {
             web_bind: "0.0.0.0".to_string(),
             web_port: 9190,
             update_check_interval: 300,
+            clients: None,
             logging: LoggingConfig::default(),
         }
     }
@@ -299,6 +402,9 @@ impl Config {
     /// - `QUMA_LOG_FILE_PATH` -> `logging.file.path`
     /// - `QUMA_LOG_FILE_ENABLED` -> `logging.file.enabled`
     /// - `QUMA_AUTO_START_SERVER` -> `auto_start_server`
+    /// - `QUMA_CLIENTS_COUNT` -> `clients.count`
+    /// - `QUMA_CLIENTS_INSTALL_DIR` -> `clients.install_dir`
+    /// - `QUMA_CLIENTS_RESTART_POLICY` -> `clients.restart_policy`
     pub fn apply_env_overrides(&mut self) {
         if let Ok(val) = std::env::var("QUMA_SPT_DIR") {
             tracing::debug!(var = "QUMA_SPT_DIR", value = %val, "env var override applied");
@@ -365,6 +471,25 @@ impl Config {
             } else if val.eq_ignore_ascii_case("false") {
                 tracing::debug!(var = "QUMA_LOG_FILE_ENABLED", value = %val, "env var override applied");
                 self.logging.file.enabled = false;
+            }
+        }
+        if let Ok(val) = std::env::var("QUMA_CLIENTS_COUNT") {
+            if let Ok(count) = val.parse::<u32>() {
+                self.clients
+                    .get_or_insert_with(ClientsConfig::default)
+                    .count = count;
+            }
+        }
+        if let Ok(val) = std::env::var("QUMA_CLIENTS_INSTALL_DIR") {
+            self.clients
+                .get_or_insert_with(ClientsConfig::default)
+                .install_dir = PathBuf::from(val);
+        }
+        if let Ok(val) = std::env::var("QUMA_CLIENTS_RESTART_POLICY") {
+            if let Ok(policy) = serde_json::from_str::<RestartPolicy>(&format!("\"{val}\"")) {
+                self.clients
+                    .get_or_insert_with(ClientsConfig::default)
+                    .restart_policy = policy;
             }
         }
     }
@@ -702,5 +827,138 @@ buffer_size = 5000
             config.apply_env_overrides();
             assert!(!config.auto_start_server);
         });
+    }
+
+    #[test]
+    fn clients_config_defaults() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert!(config.clients.is_none());
+    }
+
+    #[test]
+    fn clients_config_full_deserialization() {
+        let toml_str = r#"
+[clients]
+count = 3
+install_dir = "/opt/fika-client"
+restart_policy = "auto"
+max_restart_attempts = 10
+restart_backoff_cap = 600
+base_udp_port = 25565
+image = "ghcr.io/zhliau/fika-headless-docker:v2.1.0"
+isolated_paths = ["BepInEx/config", "BepInEx/cache"]
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        let clients = config.clients.unwrap();
+        assert_eq!(clients.count, 3);
+        assert_eq!(clients.install_dir, PathBuf::from("/opt/fika-client"));
+        assert_eq!(clients.restart_policy, RestartPolicy::Auto);
+        assert_eq!(clients.max_restart_attempts, 10);
+        assert_eq!(clients.restart_backoff_cap, 600);
+        assert_eq!(clients.base_udp_port, 25565);
+        assert_eq!(clients.image, "ghcr.io/zhliau/fika-headless-docker:v2.1.0");
+        assert_eq!(
+            clients.isolated_paths,
+            vec!["BepInEx/config", "BepInEx/cache"]
+        );
+    }
+
+    #[test]
+    fn clients_config_minimal_with_defaults() {
+        let toml_str = r#"
+[clients]
+count = 2
+install_dir = "/opt/fika"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        let clients = config.clients.unwrap();
+        assert_eq!(clients.count, 2);
+        assert_eq!(clients.restart_policy, RestartPolicy::Auto);
+        assert_eq!(clients.max_restart_attempts, 5);
+        assert_eq!(clients.restart_backoff_cap, 300);
+        assert_eq!(clients.base_udp_port, 25565);
+        assert_eq!(clients.image, "ghcr.io/zhliau/fika-headless-docker:latest");
+        assert_eq!(clients.isolated_paths, vec!["BepInEx/config".to_string()]);
+    }
+
+    #[test]
+    fn clients_config_validation_port_overflow() {
+        let clients = ClientsConfig {
+            count: 3,
+            install_dir: PathBuf::from("/tmp/fake"),
+            restart_policy: RestartPolicy::Auto,
+            max_restart_attempts: 5,
+            restart_backoff_cap: 300,
+            base_udp_port: 65534,
+            image: "test".to_string(),
+            isolated_paths: vec![],
+        };
+        let config = Config {
+            server_container: Some("spt".to_string()),
+            ..Config::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        // Create fika-server dir so fika detection passes
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/fika-server")).unwrap();
+        // Create install_dir
+        std::fs::create_dir_all(&clients.install_dir).ok();
+
+        let result = clients.validate(&config, spt_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("port"));
+    }
+
+    #[test]
+    fn clients_config_validation_no_fika() {
+        let clients = ClientsConfig {
+            count: 1,
+            install_dir: PathBuf::from("/tmp"),
+            restart_policy: RestartPolicy::Auto,
+            max_restart_attempts: 5,
+            restart_backoff_cap: 300,
+            base_udp_port: 25565,
+            image: "test".to_string(),
+            isolated_paths: vec![],
+        };
+        let config = Config {
+            server_container: Some("spt".to_string()),
+            ..Config::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        // No fika-server dir
+        let result = clients.validate(&config, tmp.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Fika"));
+    }
+
+    #[test]
+    fn clients_config_env_override_count() {
+        temp_env::with_vars([("QUMA_CLIENTS_COUNT", Some("5"))], || {
+            let mut config = Config::default();
+            config.clients = Some(ClientsConfig::default());
+            config.apply_env_overrides();
+            assert_eq!(config.clients.unwrap().count, 5);
+        });
+    }
+
+    #[test]
+    fn fika_detection() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!is_fika_installed(tmp.path()));
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/fika-server")).unwrap();
+        assert!(is_fika_installed(tmp.path()));
+    }
+
+    #[test]
+    fn restart_policy_serde() {
+        assert_eq!(
+            serde_json::from_str::<RestartPolicy>(r#""auto""#).unwrap(),
+            RestartPolicy::Auto
+        );
+        assert_eq!(
+            serde_json::from_str::<RestartPolicy>(r#""manual""#).unwrap(),
+            RestartPolicy::Manual
+        );
     }
 }
