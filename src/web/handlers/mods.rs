@@ -241,7 +241,7 @@ pub async fn check_updates_partial(
                     .await
                 {
                     if versions
-                        .first()
+                        .last()
                         .map(|v| &v.version)
                         .is_some_and(|v| v != &m.version)
                     {
@@ -328,7 +328,7 @@ pub async fn update_status_partial(
                 .await
             {
                 Ok(versions) => versions
-                    .first()
+                    .last()
                     .map(|v| v.version.clone())
                     .filter(|v| v != &m.version),
                 Err(_) => None,
@@ -413,7 +413,7 @@ pub async fn install_mod(
         .await
         .map_err(WebError::from)?;
 
-    let version = versions.first().ok_or(WebError::BadRequest(
+    let version = versions.last().ok_or(WebError::BadRequest(
         "No compatible version found for current SPT version".to_string(),
     ))?;
 
@@ -599,7 +599,7 @@ pub async fn update_mod(
         .await
         .map_err(WebError::from)?;
 
-    let version = versions.first().ok_or(WebError::BadRequest(
+    let version = versions.last().ok_or(WebError::BadRequest(
         "No compatible update found".to_string(),
     ))?;
 
