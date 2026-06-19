@@ -29,6 +29,10 @@ futures-util = "0.3"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
+# Container management (Podman/Docker API)
+bollard = "0.20"
+tokio-util = "0.7"
+
 # Error handling
 anyhow = "1"
 thiserror = "2"
