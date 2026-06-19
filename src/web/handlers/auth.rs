@@ -166,7 +166,7 @@ pub async fn login_submit(
     let session_user = SessionUser {
         user_id: user.id,
         username: user.username,
-        role: user.role.as_str().to_string(),
+        role: user.role,
     };
     set_session_user(&session, &session_user).map_err(WebError::from)?;
 
