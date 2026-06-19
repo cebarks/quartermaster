@@ -7,6 +7,7 @@ use anyhow::Result;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use chrono;
 
 use crate::db::users::Role;
 use crate::web::error::WebError;
@@ -83,6 +84,9 @@ pub fn set_session_user(session: &Session, user: &SessionUser) -> Result<()> {
     session
         .insert("role", user.role.as_str())
         .map_err(|e| anyhow::anyhow!("session error: {e}"))?;
+    session
+        .insert("session_created_at", chrono::Utc::now().to_rfc3339())
+        .map_err(|e| anyhow::anyhow!("session error: {e}"))?;
     Ok(())
 }
 
@@ -158,6 +162,23 @@ pub async fn auth_middleware(
         username: verified_user.username,
         role: verified_user.role,
     };
+
+    // Check if password was changed after session was created
+    if let Some(ref changed_at) = verified_user.password_changed_at {
+        let session_created = session.get::<String>("session_created_at").unwrap_or(None);
+        let should_invalidate = match session_created {
+            None => true, // Old session without timestamp — force re-login
+            Some(ref created) => changed_at.as_str() > created.as_str(),
+        };
+        if should_invalidate {
+            tracing::info!(
+                user_id = verified_user.id,
+                "session invalidated due to password change"
+            );
+            session.purge();
+            return Ok(req.into_response(redirect_login()).map_into_boxed_body());
+        }
+    }
 
     let cached_role = session.get::<String>("role").unwrap_or(None);
     if cached_role.as_deref() != Some(session_user.role.as_str()) {

@@ -111,6 +111,13 @@ pub async fn start_server(
                     .route(web::get().to(handlers::auth::register_page))
                     .route(web::post().to(handlers::auth::register_submit)),
             )
+            // Password reset (public, rate-limited)
+            .service(
+                web::resource("/reset-password")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::auth::reset_password_page))
+                    .route(web::post().to(handlers::auth::reset_password_submit)),
+            )
             // HTMX API (authenticated, registered before catch-all scope)
             .service(
                 web::scope("/api")
@@ -168,6 +175,26 @@ pub async fn start_server(
                     .route(
                         "/logs/server/stream",
                         web::get().to(handlers::logs::server_logs_stream),
+                    )
+                    // Admin API (requires can_manage_users via scoped middleware)
+                    .service(
+                        web::scope("/admin")
+                            .wrap(from_fn(handlers::admin::admin_middleware))
+                            .route("/users", web::get().to(handlers::admin::admin_users))
+                            .route("/invites", web::get().to(handlers::admin::admin_invites))
+                            .route(
+                                "/users/{id}/role",
+                                web::post().to(handlers::admin::change_role),
+                            )
+                            .route(
+                                "/users/{id}/disable",
+                                web::post().to(handlers::admin::toggle_disable),
+                            )
+                            .route(
+                                "/users/{id}/reset-password",
+                                web::post().to(handlers::admin::create_reset_token),
+                            )
+                            .route("/invites", web::post().to(handlers::admin::create_invite)),
                     ),
             )
             // Authenticated routes — admin checks are per-handler via require_admin()
@@ -179,6 +206,7 @@ pub async fn start_server(
                     .route("/status", web::get().to(handlers::status::status_page))
                     .route("/queue", web::get().to(handlers::queue::queue_page))
                     .route("/logs", web::get().to(handlers::logs::logs_page))
+                    .route("/admin", web::get().to(handlers::admin::admin_page))
                     .route("/mods", web::get().to(handlers::mods::list_mods))
                     .route("/mods/install", web::post().to(handlers::mods::install_mod))
                     .route(

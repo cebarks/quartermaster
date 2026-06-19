@@ -10,6 +10,7 @@
 - spt files are still showing as untracked in the integrity check — `find_unmanaged_mod_dirs()` filters `BepInEx/plugins/spt` but `check_integrity_from()` in `health.rs` does not. Ideally create a default "SPT" mod entry that owns these files.
 
 - in-app notifications dropdown in the nav bar
+- stash value in admin user profile cards (requires inventory iteration + item price data)
 
 # To Investigate
 - proxying the spt http server itself

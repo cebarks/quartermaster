@@ -8,6 +8,9 @@
     <a href="/queue"{% if active == "queue" %} class="active"{% endif %}>{% call icons::list() %}{% endcall %} Queue</a>
     <a href="/status"{% if active == "status" %} class="active"{% endif %}>{% call icons::activity() %}{% endcall %} Status</a>
     <a href="/logs"{% if active == "logs" %} class="active"{% endif %}>{% call icons::terminal() %}{% endcall %} Logs</a>
+    {% if user.role.can_manage_users() %}
+    <a href="/admin"{% if active == "admin" %} class="active"{% endif %}>{% call icons::shield() %}{% endcall %} Admin</a>
+    {% endif %}
 </div>
 <div class="user-info">
     {{ user.username }} ({{ user.role }})

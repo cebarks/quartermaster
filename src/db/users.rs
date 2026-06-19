@@ -70,6 +70,7 @@ pub struct User {
     pub role: Role,
     pub disabled: bool,
     pub created_at: String,
+    pub password_changed_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +82,22 @@ pub struct InviteCode {
     pub created_at: String,
     pub used_at: Option<String>,
     pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InviteCodeWithUsers {
+    pub invite: InviteCode,
+    pub created_by_username: Option<String>,
+    pub used_by_username: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResetToken {
+    pub id: i64,
+    pub user_id: i64,
+    pub token: String,
+    pub expires_at: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone)]
@@ -115,7 +132,7 @@ impl Database {
     pub fn get_user_by_username(&self, username: &str) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
                  FROM users WHERE username = ?1",
                 params![username],
                 row_to_user,
@@ -125,7 +142,7 @@ impl Database {
 
     pub fn list_users(&self) -> rusqlite::Result<Vec<User>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
+            "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
              FROM users ORDER BY username",
         )?;
         let rows = stmt.query_map([], row_to_user)?;
@@ -144,12 +161,62 @@ impl Database {
     pub fn get_user_by_id(&self, id: i64) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
                  FROM users WHERE id = ?1",
                 params![id],
                 row_to_user,
             )
             .optional()
+    }
+
+    pub fn update_user_role(&self, user_id: i64, new_role: Role) -> rusqlite::Result<usize> {
+        let new_role_str = new_role.as_str();
+        self.conn.execute(
+            "UPDATE users SET role = ?1
+             WHERE id = ?2
+             AND (?1 = 'admin' OR ?1 != 'admin' AND (
+                 role != 'admin'
+                 OR (SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0 AND id != ?2) > 0
+             ))",
+            params![new_role_str, user_id],
+        )
+    }
+
+    pub fn set_user_disabled(&self, user_id: i64, disabled: bool) -> rusqlite::Result<usize> {
+        if disabled {
+            self.conn.execute(
+                "UPDATE users SET disabled = 1
+                 WHERE id = ?1
+                 AND (role != 'admin'
+                      OR (SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0 AND id != ?1) > 0)",
+                params![user_id],
+            )
+        } else {
+            self.conn.execute(
+                "UPDATE users SET disabled = 0 WHERE id = ?1",
+                params![user_id],
+            )
+        }
+    }
+
+    pub fn update_user_password(
+        &self,
+        user_id: i64,
+        password_hash: &str,
+    ) -> rusqlite::Result<usize> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "UPDATE users SET password_hash = ?1, password_changed_at = ?3 WHERE id = ?2",
+            params![password_hash, user_id, now],
+        )
+    }
+
+    pub fn count_admins(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0",
+            [],
+            |row| row.get(0),
+        )
     }
 
     // ── Invite CRUD ───────────────────────────────────────────────────
@@ -195,6 +262,79 @@ impl Database {
         self.conn.execute(
             "UPDATE invite_codes SET used_by = ?1 WHERE code = ?2",
             params![user_id, code],
+        )
+    }
+
+    pub fn list_invite_codes(&self) -> rusqlite::Result<Vec<InviteCodeWithUsers>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ic.id, ic.code, ic.created_by, ic.used_by, ic.created_at, ic.used_at, ic.expires_at,
+                    u1.username AS created_by_username,
+                    u2.username AS used_by_username
+             FROM invite_codes ic
+             LEFT JOIN users u1 ON ic.created_by = u1.id
+             LEFT JOIN users u2 ON ic.used_by = u2.id
+             ORDER BY ic.created_at DESC, ic.id DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(InviteCodeWithUsers {
+                invite: InviteCode {
+                    id: row.get(0)?,
+                    code: row.get(1)?,
+                    created_by: row.get(2)?,
+                    used_by: row.get(3)?,
+                    created_at: row.get(4)?,
+                    used_at: row.get(5)?,
+                    expires_at: row.get(6)?,
+                },
+                created_by_username: row.get(7)?,
+                used_by_username: row.get(8)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    // ── Password Reset Token CRUD ────────────────────────────────────
+
+    pub fn create_reset_token(
+        &self,
+        user_id: i64,
+        token: &str,
+        expires_at: &str,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "DELETE FROM password_reset_tokens WHERE user_id = ?1",
+            params![user_id],
+        )?;
+        self.conn.execute(
+            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?1, ?2, ?3)",
+            params![user_id, token, expires_at],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn get_reset_token(&self, token: &str) -> rusqlite::Result<Option<ResetToken>> {
+        self.conn
+            .query_row(
+                "SELECT id, user_id, token, expires_at, created_at
+                 FROM password_reset_tokens WHERE token = ?1",
+                params![token],
+                |row| {
+                    Ok(ResetToken {
+                        id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        token: row.get(2)?,
+                        expires_at: row.get(3)?,
+                        created_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn delete_reset_token(&self, token: &str) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "DELETE FROM password_reset_tokens WHERE token = ?1",
+            params![token],
         )
     }
 
@@ -253,6 +393,7 @@ fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         role,
         disabled: row.get(5)?,
         created_at: row.get(6)?,
+        password_changed_at: row.get(7)?,
     })
 }
 

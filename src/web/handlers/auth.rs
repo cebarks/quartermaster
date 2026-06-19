@@ -2,6 +2,7 @@ use actix_session::Session;
 use actix_web::web::{self, Data, Form, Query};
 use actix_web::HttpResponse;
 use askama::Template;
+use subtle::ConstantTimeEq;
 
 use crate::db::users::Role;
 use crate::spt::profiles::{list_profiles, SptProfile};
@@ -16,6 +17,7 @@ use crate::web::state::AppState;
 struct LoginTemplate {
     error: Option<String>,
     csrf_token: String,
+    flash: Option<crate::web::flash::FlashMessage>,
 }
 
 #[derive(Template)]
@@ -86,9 +88,11 @@ fn is_invite_expired(expires_at: Option<&str>) -> bool {
 
 pub async fn login_page(session: Session) -> actix_web::Result<HttpResponse> {
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let flash = crate::web::flash::take_flash(&session);
     let tmpl = LoginTemplate {
         error: None,
         csrf_token,
+        flash,
     };
     Ok(HttpResponse::Ok()
         .content_type("text/html")
@@ -124,6 +128,7 @@ pub async fn login_submit(
             let tmpl = LoginTemplate {
                 error: Some("Invalid username or password".to_string()),
                 csrf_token,
+                flash: None,
             };
             return Ok(HttpResponse::Ok()
                 .content_type("text/html")
@@ -146,6 +151,7 @@ pub async fn login_submit(
         let tmpl = LoginTemplate {
             error: Some("Invalid username or password".to_string()),
             csrf_token,
+            flash: None,
         };
         return Ok(HttpResponse::Ok()
             .content_type("text/html")
@@ -364,4 +370,239 @@ pub async fn logout(session: Session, form: Form<crate::web::csrf::CsrfForm>) ->
     HttpResponse::SeeOther()
         .insert_header(("Location", "/login"))
         .finish()
+}
+
+// -- Reset password --
+
+#[derive(serde::Deserialize)]
+pub struct ResetPasswordQuery {
+    token: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ResetPasswordForm {
+    token: String,
+    password: String,
+    password_confirm: String,
+    csrf_token: String,
+}
+
+#[derive(Template)]
+#[template(path = "reset_password.html")]
+struct ResetPasswordTemplate {
+    error: Option<String>,
+    token: String,
+    token_valid: bool,
+    csrf_token: String,
+    flash: Option<crate::web::flash::FlashMessage>,
+}
+
+fn is_token_expired(expires_at: &str) -> bool {
+    match chrono::DateTime::parse_from_rfc3339(expires_at) {
+        Ok(dt) => dt < chrono::Utc::now(),
+        Err(_) => expires_at < chrono::Utc::now().to_rfc3339().as_str(),
+    }
+}
+
+pub async fn reset_password_page(
+    query: Query<ResetPasswordQuery>,
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let token = query.token.clone().unwrap_or_default();
+
+    if token.is_empty() {
+        let tmpl = ResetPasswordTemplate {
+            error: Some("This password reset link is invalid or has already been used. Please contact an administrator for a new link.".to_string()),
+            token: String::new(),
+            token_valid: false,
+            csrf_token,
+            flash: None,
+        };
+        return Ok(HttpResponse::BadRequest()
+            .content_type("text/html")
+            .body(tmpl.render().map_err(WebError::from)?));
+    }
+
+    let db = state.db.clone();
+    let token_clone = token.clone();
+    let reset_token = web::block(move || {
+        let db = db.lock();
+        db.get_reset_token(&token_clone)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let valid = match reset_token {
+        Some(ref rt) => {
+            let ct_match = token.as_bytes().ct_eq(rt.token.as_bytes());
+            bool::from(ct_match) && !is_token_expired(&rt.expires_at)
+        }
+        None => false,
+    };
+
+    if !valid {
+        let tmpl = ResetPasswordTemplate {
+            error: Some("This password reset link is invalid or has already been used. Please contact an administrator for a new link.".to_string()),
+            token: String::new(),
+            token_valid: false,
+            csrf_token,
+            flash: None,
+        };
+        return Ok(HttpResponse::BadRequest()
+            .content_type("text/html")
+            .body(tmpl.render().map_err(WebError::from)?));
+    }
+
+    // Check user exists and is not disabled
+    let reset_token = reset_token.unwrap();
+    let db2 = state.db.clone();
+    let uid = reset_token.user_id;
+    let target_user = web::block(move || {
+        let db = db2.lock();
+        db.get_user_by_id(uid)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    match target_user {
+        Some(u) if !u.disabled => {} // OK
+        _ => {
+            let tmpl = ResetPasswordTemplate {
+                error: Some("This password reset link is invalid or has already been used. Please contact an administrator for a new link.".to_string()),
+                token: String::new(),
+                token_valid: false,
+                csrf_token,
+                flash: None,
+            };
+            return Ok(HttpResponse::BadRequest()
+                .content_type("text/html")
+                .body(tmpl.render().map_err(WebError::from)?));
+        }
+    }
+
+    let tmpl = ResetPasswordTemplate {
+        error: None,
+        token,
+        token_valid: true,
+        csrf_token,
+        flash: None,
+    };
+    Ok(HttpResponse::Ok()
+        .content_type("text/html")
+        .body(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn reset_password_submit(
+    form: Form<ResetPasswordForm>,
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let form = form.into_inner();
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let render_error = |msg: &str, token: String| -> actix_web::Result<HttpResponse> {
+        let tmpl = ResetPasswordTemplate {
+            error: Some(msg.to_string()),
+            token,
+            token_valid: true,
+            csrf_token: csrf_token.clone(),
+            flash: None,
+        };
+        Ok(HttpResponse::BadRequest()
+            .content_type("text/html")
+            .body(tmpl.render().map_err(WebError::from)?))
+    };
+
+    if form.password.len() < MIN_PASSWORD_LEN {
+        return render_error("Password must be 8-128 characters", form.token);
+    }
+    if form.password.len() > MAX_PASSWORD_LEN {
+        return render_error("Password must be 8-128 characters", form.token);
+    }
+    if form.password != form.password_confirm {
+        return render_error("Passwords do not match", form.token);
+    }
+
+    let db = state.db.clone();
+    let token_clone = form.token.clone();
+    let reset_token = web::block(move || {
+        let db = db.lock();
+        db.get_reset_token(&token_clone)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let rt = match reset_token {
+        Some(rt) => {
+            let ct_match = form.token.as_bytes().ct_eq(rt.token.as_bytes());
+            if !bool::from(ct_match) || is_token_expired(&rt.expires_at) {
+                return render_error(
+                    "This password reset link is invalid or has already been used. Please contact an administrator for a new link.",
+                    String::new(),
+                );
+            }
+            rt
+        }
+        None => {
+            return render_error(
+                "This password reset link is invalid or has already been used. Please contact an administrator for a new link.",
+                String::new(),
+            );
+        }
+    };
+
+    // Check user exists and is not disabled
+    let db2 = state.db.clone();
+    let uid = rt.user_id;
+    let target_user = web::block(move || {
+        let db = db2.lock();
+        db.get_user_by_id(uid)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    match target_user {
+        Some(u) if !u.disabled => {} // OK
+        _ => {
+            return render_error(
+                "This password reset link is invalid or has already been used. Please contact an administrator for a new link.",
+                String::new(),
+            );
+        }
+    }
+
+    let password = form.password.clone();
+    let password_hash = web::block(move || hash_password(&password))
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+    let db = state.db.clone();
+    let user_id = rt.user_id;
+    let token_to_delete = rt.token.clone();
+    web::block(move || {
+        let db = db.lock();
+        db.update_user_password(user_id, &password_hash)?;
+        db.delete_reset_token(&token_to_delete)?;
+        Ok::<_, rusqlite::Error>(())
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    crate::web::flash::set_flash(&session, "Password updated — please log in.", "success");
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/login"))
+        .finish())
 }

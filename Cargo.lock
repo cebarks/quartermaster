@@ -2387,6 +2387,7 @@ dependencies = [
  "serde_json",
  "sevenz-rust2",
  "sha2",
+ "subtle",
  "temp-env",
  "tempfile",
  "thiserror",

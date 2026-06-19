@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Admin — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("admin", user, csrf_token) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Admin Panel</h1>
+
+<div class="tab-bar">
+    <button class="tab active" id="tab-users"
+            hx-get="/api/admin/users"
+            hx-target="#admin-content"
+            hx-swap="innerHTML"
+            hx-push-url="#users"
+            onclick="setActiveTab(this)">Users</button>
+    <button class="tab" id="tab-invites"
+            hx-get="/api/admin/invites"
+            hx-target="#admin-content"
+            hx-swap="innerHTML"
+            hx-push-url="#invites"
+            onclick="setActiveTab(this)">Invites</button>
+</div>
+
+<div id="admin-content">
+    {% include "admin/partials/users.html" %}
+</div>
+
+<script>
+function setActiveTab(el) {
+    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+}
+document.addEventListener('DOMContentLoaded', function() {
+    if (location.hash === '#invites') {
+        var btn = document.getElementById('tab-invites');
+        if (btn) { btn.click(); }
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,104 @@
+<table>
+    <thead>
+        <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>SPT Profile</th>
+            <th>Registered</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for (u, profile) in users %}
+        <tr{% if u.id == current_user_id %} class="current-user"{% endif %}>
+            <td><strong>{{ u.username }}</strong></td>
+            <td>
+                {% if u.id != current_user_id %}
+                <form style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <select name="role"
+                            hx-post="/api/admin/users/{{ u.id }}/role"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML"
+                            hx-include="closest form"
+                            hx-disabled-elt="this">
+                        <option value="admin"{% if u.role.as_str() == "admin" %} selected{% endif %}>Admin</option>
+                        <option value="moderator"{% if u.role.as_str() == "moderator" %} selected{% endif %}>Moderator</option>
+                        <option value="player"{% if u.role.as_str() == "player" %} selected{% endif %}>Player</option>
+                    </select>
+                </form>
+                {% else %}
+                <span class="badge badge-muted">{{ u.role }}</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if u.disabled %}
+                <span class="badge badge-danger">Disabled</span>
+                {% else %}
+                <span class="badge badge-success">Active</span>
+                {% endif %}
+            </td>
+            <td>
+                {% match profile %}
+                {% when ProfileStatus::Found with (stats) %}
+                    <div class="profile-card">
+                        <strong>{{ stats.nickname.as_deref().unwrap_or("—") }}</strong>
+                        {% if let Some(level) = stats.level %}
+                        <span class="text-muted text-sm">Lv.{{ level }}</span>
+                        {% endif %}
+                        {% if let Some(side) = stats.side %}
+                        <span class="text-muted text-sm">{{ side }}</span>
+                        {% endif %}
+                        {% if let Some(raids) = stats.raid_count %}
+                        <br><span class="text-muted text-sm">{{ raids }} raids</span>
+                        {% endif %}
+                        {% if let Some(sr) = stats.survival_rate %}
+                        <span class="text-muted text-sm">{{ sr|fmt("{:.1}") }}% SR</span>
+                        {% endif %}
+                        {% if let Some(kills) = stats.kill_count %}
+                        <span class="text-muted text-sm">{{ kills }} kills</span>
+                        {% endif %}
+                    </div>
+                {% when ProfileStatus::NotFound %}
+                    <span class="text-muted">No profile linked</span>
+                {% when ProfileStatus::ParseError %}
+                    <span class="text-muted">Profile data unavailable</span>
+                {% endmatch %}
+            </td>
+            <td class="text-muted text-sm">{{ u.created_at }}</td>
+            <td>
+                {% if u.id != current_user_id %}
+                <div class="action-buttons">
+                    <form style="display:inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="button" class="btn btn-sm {% if u.disabled %}btn-success{% else %}btn-danger{% endif %}"
+                                hx-post="/api/admin/users/{{ u.id }}/disable"
+                                hx-target="closest tr"
+                                hx-swap="outerHTML"
+                                hx-include="closest form"
+                                hx-disabled-elt="this">
+                            {% if u.disabled %}Enable{% else %}Disable{% endif %}
+                        </button>
+                    </form>
+                    <form style="display:inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="button" class="btn btn-sm btn-outline"
+                                hx-post="/api/admin/users/{{ u.id }}/reset-password"
+                                hx-target="closest tr"
+                                hx-swap="outerHTML"
+                                hx-include="closest form"
+                                hx-disabled-elt="this">
+                            Reset Password
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if users.is_empty() %}
+<div class="empty-state"><p>No users registered.</p></div>
+{% endif %}
