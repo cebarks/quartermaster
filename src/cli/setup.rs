@@ -164,6 +164,53 @@ async fn configure_container(
         println!("No Podman containers detected.");
     }
 
+    // Offer to create a container
+    if non_interactive || confirm("Create an SPT server container?")? {
+        let name = if non_interactive {
+            crate::podman::DEFAULT_CONTAINER_NAME.to_string()
+        } else {
+            print!(
+                "Container name [{}]: ",
+                crate::podman::DEFAULT_CONTAINER_NAME
+            );
+            std::io::stdout().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+            if input.is_empty() {
+                crate::podman::DEFAULT_CONTAINER_NAME.to_string()
+            } else {
+                input.to_string()
+            }
+        };
+
+        let port = if non_interactive {
+            crate::podman::DEFAULT_SPT_PORT
+        } else {
+            print!("Host port [{}]: ", crate::podman::DEFAULT_SPT_PORT);
+            std::io::stdout().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+            if input.is_empty() {
+                crate::podman::DEFAULT_SPT_PORT
+            } else {
+                input.parse().context("invalid port number")?
+            }
+        };
+
+        println!("Pulling {}...", crate::podman::SPT_SERVER_IMAGE);
+        PodmanClient::pull_image(crate::podman::SPT_SERVER_IMAGE).await?;
+
+        println!("Creating container '{name}'...");
+        PodmanClient::create_spt_container(&name, spt_dir, port).await?;
+
+        println!("Container '{name}' created successfully.");
+        config.server_container = Some(name);
+        return Ok(());
+    }
+
+    // Manual entry fallback
     if !non_interactive {
         print!("Enter container name (or press Enter to skip): ");
         std::io::stdout().flush()?;
