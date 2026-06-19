@@ -5,7 +5,12 @@ use super::common::CliContext;
 /// Interactive apply — prompts for confirmation, then drains the queue.
 pub async fn run(force: bool, ctx: &CliContext) -> Result<()> {
     if !force {
-        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        let running = crate::server_detect::is_server_running(
+            &ctx.config,
+            &ctx.spt_dir,
+            ctx.container_mgr.as_ref(),
+        )
+        .await?;
         if running {
             bail!(
                 "SPT server is running — stop it first or use --force.\n\

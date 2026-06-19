@@ -7,7 +7,6 @@ mod forge;
 mod health;
 mod logging;
 mod ops;
-mod podman;
 mod queue;
 mod server_detect;
 mod spt;

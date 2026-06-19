@@ -58,6 +58,8 @@ pub async fn start_server(
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
+    let container_mgr = crate::container::ContainerManager::new().map(Arc::new).ok();
+
     let db = Arc::new(parking_lot::Mutex::new(db));
     let app_state = web::Data::new(AppState {
         db,
@@ -69,6 +71,7 @@ pub async fn start_server(
         update_cache: crate::web::update_cache::UpdateCache::new(config.update_check_interval),
         events: events_tx,
         log_broadcast,
+        container_mgr,
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");

@@ -85,9 +85,13 @@ pub async fn apply_queue(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let server_running = crate::server_detect::is_server_running(&state.config, &state.spt_dir)
-        .await
-        .unwrap_or(false);
+    let server_running = crate::server_detect::is_server_running(
+        &state.config,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
 
     if server_running {
         set_flash(

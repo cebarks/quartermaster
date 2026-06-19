@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
+use crate::container::ContainerManager;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::spt::detect::{detect_spt_dir, read_spt_version, SptInfo};
@@ -16,6 +17,7 @@ pub struct CliContext {
     pub config: Config,
     pub db: Database,
     pub forge: ForgeClient,
+    pub container_mgr: Option<ContainerManager>,
 }
 
 pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
@@ -34,12 +36,15 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
 
     let forge = ForgeClient::new(config.forge_token.clone())?;
 
+    let container_mgr = ContainerManager::new().ok();
+
     Ok(CliContext {
         spt_dir,
         spt_info,
         config,
         db,
         forge,
+        container_mgr,
     })
 }
 

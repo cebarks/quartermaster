@@ -16,6 +16,7 @@ use bollard::Docker;
 use futures_util::Stream;
 
 pub const SPT_SERVER_IMAGE: &str = "ghcr.io/zhliau/fika-spt-server-docker:latest";
+#[allow(dead_code)]
 pub const DEFAULT_CONTAINER_NAME: &str = "spt-server";
 pub const DEFAULT_SPT_PORT: u16 = 6969;
 
@@ -26,7 +27,9 @@ pub struct ContainerManager {
 #[derive(Debug, Clone)]
 pub enum SelinuxLabel {
     Private,
+    #[allow(dead_code)]
     Shared,
+    #[allow(dead_code)]
     None,
 }
 
@@ -43,6 +46,7 @@ impl SelinuxLabel {
 #[derive(Debug, Clone)]
 pub enum Protocol {
     Tcp,
+    #[allow(dead_code)]
     Udp,
 }
 
@@ -126,6 +130,7 @@ impl ContainerManager {
         })
     }
 
+    #[allow(dead_code)]
     pub fn docker(&self) -> &Arc<Docker> {
         &self.docker
     }
@@ -149,6 +154,7 @@ impl ContainerManager {
             .with_context(|| format!("failed to stop container '{container}'"))
     }
 
+    #[allow(dead_code)]
     pub async fn restart(&self, container: &str) -> Result<()> {
         self.stop(container).await?;
         self.start(container).await
@@ -170,6 +176,7 @@ impl ContainerManager {
             .is_some_and(|s| s.as_ref() == "running"))
     }
 
+    #[allow(dead_code)]
     pub async fn inspect(&self, container: &str) -> Result<ContainerInspectResponse> {
         self.docker
             .inspect_container(
@@ -180,6 +187,7 @@ impl ContainerManager {
             .with_context(|| format!("failed to inspect container '{container}'"))
     }
 
+    #[allow(dead_code)]
     pub fn stats_stream(
         &self,
         container: &str,
@@ -210,6 +218,7 @@ impl ContainerManager {
         )
     }
 
+    #[allow(dead_code)]
     pub fn container_events(
         &self,
     ) -> impl Stream<Item = Result<EventMessage, bollard::errors::Error>> {
@@ -280,6 +289,7 @@ impl ContainerManager {
         Ok(response.id)
     }
 
+    #[allow(dead_code)]
     pub async fn remove_container(&self, container: &str) -> Result<()> {
         tracing::debug!(container, "removing container");
         self.docker
@@ -291,6 +301,7 @@ impl ContainerManager {
             .with_context(|| format!("failed to remove container '{container}'"))
     }
 
+    #[allow(dead_code)]
     pub async fn detect_containers_by_label(&self, key: &str, value: &str) -> Result<Vec<String>> {
         let label_filter = format!("{key}={value}");
         let mut filters = HashMap::new();

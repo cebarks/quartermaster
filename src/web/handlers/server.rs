@@ -3,7 +3,6 @@ use actix_web::web::{self, Data, Form};
 use actix_web::{HttpRequest, HttpResponse};
 
 use crate::db::users::Role;
-use crate::podman::PodmanClient;
 use crate::web::auth::{require_auth, require_capability};
 use crate::web::error::WebError;
 use crate::web::flash::set_flash;
@@ -34,8 +33,21 @@ pub async fn start_server(
         }
     };
 
-    let podman = PodmanClient::new(container);
-    if let Err(e) = podman.start().await {
+    let mgr = match state.container_mgr.as_ref() {
+        Some(m) => m,
+        None => {
+            set_flash(
+                &session,
+                "Podman socket not available. Ensure podman.socket is enabled.",
+                "error",
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/status"))
+                .finish());
+        }
+    };
+
+    if let Err(e) = mgr.start(container).await {
         tracing::error!(container, error = %e, "failed to start server");
         set_flash(&session, &format!("Failed to start server: {e}"), "error");
     } else {
@@ -73,8 +85,21 @@ pub async fn stop_server(
         }
     };
 
-    let podman = PodmanClient::new(container);
-    if let Err(e) = podman.stop().await {
+    let mgr = match state.container_mgr.as_ref() {
+        Some(m) => m,
+        None => {
+            set_flash(
+                &session,
+                "Podman socket not available. Ensure podman.socket is enabled.",
+                "error",
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/status"))
+                .finish());
+        }
+    };
+
+    if let Err(e) = mgr.stop(container).await {
         tracing::error!(container, error = %e, "failed to stop server");
         set_flash(&session, &format!("Failed to stop server: {e}"), "error");
     } else {
@@ -112,10 +137,22 @@ pub async fn restart_server(
         }
     };
 
-    let podman = PodmanClient::new(container);
+    let mgr = match state.container_mgr.as_ref() {
+        Some(m) => m,
+        None => {
+            set_flash(
+                &session,
+                "Podman socket not available. Ensure podman.socket is enabled.",
+                "error",
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/status"))
+                .finish());
+        }
+    };
 
     // Stop first
-    if let Err(e) = podman.stop().await {
+    if let Err(e) = mgr.stop(container).await {
         tracing::error!(container, error = %e, "failed to stop server for restart");
         set_flash(&session, &format!("Failed to stop server: {e}"), "error");
         return Ok(HttpResponse::SeeOther()
@@ -154,7 +191,7 @@ pub async fn restart_server(
     }
 
     // Start
-    if let Err(e) = podman.start().await {
+    if let Err(e) = mgr.start(container).await {
         tracing::error!(container, error = %e, "failed to start server after restart");
         set_flash(
             &session,

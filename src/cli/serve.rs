@@ -7,7 +7,6 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging;
-use crate::podman::PodmanClient;
 use crate::spt::detect::{detect_spt_dir, read_spt_version};
 
 pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()> {
@@ -49,19 +48,23 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     if config.auto_start_server {
         if let Some(ref container) = config.server_container {
-            let podman = PodmanClient::new(container);
-            match podman.is_running().await {
-                Ok(true) => {
-                    tracing::info!(container, "server container already running");
-                }
-                Ok(false) => {
-                    tracing::info!(container, "auto-starting server container");
-                    if let Err(e) = podman.start().await {
-                        tracing::warn!(container, error = %e, "failed to auto-start server container — web UI will start anyway");
+            match crate::container::ContainerManager::new() {
+                Ok(mgr) => match mgr.is_running(container).await {
+                    Ok(true) => {
+                        tracing::info!(container, "server container already running");
                     }
-                }
+                    Ok(false) => {
+                        tracing::info!(container, "auto-starting server container");
+                        if let Err(e) = mgr.start(container).await {
+                            tracing::warn!(container, error = %e, "failed to auto-start server container — web UI will start anyway");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(container, error = %e, "failed to check container status — skipping auto-start");
+                    }
+                },
                 Err(e) => {
-                    tracing::warn!(container, error = %e, "failed to check container status — skipping auto-start");
+                    tracing::warn!(error = %e, "failed to connect to Podman — skipping auto-start");
                 }
             }
         }

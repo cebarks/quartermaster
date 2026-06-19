@@ -5,6 +5,7 @@ use parking_lot::Mutex;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
+use crate::container::ContainerManager;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging::LogBroadcast;
@@ -23,4 +24,5 @@ pub struct AppState {
     pub update_cache: UpdateCache,
     pub events: broadcast::Sender<ServerEvent>,
     pub log_broadcast: Arc<LogBroadcast>,
+    pub container_mgr: Option<Arc<ContainerManager>>,
 }
