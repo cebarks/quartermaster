@@ -73,6 +73,18 @@ The SPT server runs HTTPS on port 6969 (default) with a self-signed TLS certific
 
 Send `responsecompressed: 0` header to get raw JSON instead of zlib-compressed responses. TLS verification is disabled (self-signed cert).
 
+## Autonomy — Subagent-Driven Development
+
+When executing the `superpowers:subagent-driven-development` skill (or any SDD workflow), operate fully autonomously without asking for confirmation. This includes:
+- Creating and removing git worktrees
+- All git operations (add, commit, push, checkout, branch, merge, rebase, reset, stash, cherry-pick)
+- Running builds, tests, lints, and the binary
+- Deleting or overwriting files as needed during implementation
+- Force-pushing feature branches (never force-push main)
+- Cleaning up worktrees and temporary branches after completion
+
+Do not pause for confirmation on any of these during SDD execution. The review checkpoint built into the skill is sufficient oversight.
+
 ## Forge API Quirks
 
 - `fika_compatibility` is a **boolean** on mod objects, but a **string enum** (`"compatible"`, `"incompatible"`, `"unknown"`) on version objects.
