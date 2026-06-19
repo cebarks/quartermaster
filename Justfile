@@ -20,3 +20,6 @@ lint: fmt clippy
 
 run *ARGS:
     cargo run -- {{ARGS}}
+
+serve *ARGS:
+    cargo run -- serve {{ARGS}}
