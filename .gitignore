@@ -9,3 +9,5 @@ quartermaster.toml
 !docs/superpowers/
 !docs/superpowers/**
 !CLAUDE.md
+
+spt-server/

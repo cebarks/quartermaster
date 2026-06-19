@@ -3,12 +3,11 @@
 
 # TODO
 - there should be intermediate states displayed for the status page when starting stopping or restarting the server
-- server control isn't working
 - server uptime
 - container stats (cpu, ram, storage, networking)
 - integrity check frequency should be cached, refresh configurable with a button to check on-demand
 
-- spt files are still showing as untracked, they should default to being part of an spt mod entry
+- spt files are still showing as untracked in the integrity check — `find_unmanaged_mod_dirs()` filters `BepInEx/plugins/spt` but `check_integrity_from()` in `health.rs` does not. Ideally create a default "SPT" mod entry that owns these files.
 
 - in-app notifications dropdown in the nav bar
 
