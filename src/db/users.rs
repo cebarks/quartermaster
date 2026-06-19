@@ -1,6 +1,65 @@
 use rusqlite::{params, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use super::Database;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Admin,
+    Moderator,
+    Player,
+}
+
+impl Role {
+    pub fn can_manage_mods(&self) -> bool {
+        matches!(self, Role::Admin | Role::Moderator)
+    }
+
+    pub fn can_control_server(&self) -> bool {
+        matches!(self, Role::Admin | Role::Moderator)
+    }
+
+    pub fn can_manage_queue(&self) -> bool {
+        matches!(self, Role::Admin | Role::Moderator)
+    }
+
+    pub fn can_manage_users(&self) -> bool {
+        matches!(self, Role::Admin)
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::Moderator => "moderator",
+            Role::Player => "player",
+        }
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Role::Admin => write!(f, "Admin"),
+            Role::Moderator => write!(f, "Moderator"),
+            Role::Player => write!(f, "Player"),
+        }
+    }
+}
+
+impl TryFrom<String> for Role {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.as_str() {
+            "admin" => Ok(Role::Admin),
+            "moderator" => Ok(Role::Moderator),
+            "player" => Ok(Role::Player),
+            other => Err(format!("unknown role: {other}")),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct User {
@@ -8,7 +67,8 @@ pub struct User {
     pub username: String,
     pub spt_profile_id: String,
     pub password_hash: Option<String>,
-    pub role: String,
+    pub role: Role,
+    pub disabled: bool,
     pub created_at: String,
 }
 
@@ -43,11 +103,11 @@ impl Database {
         username: &str,
         spt_profile_id: &str,
         password_hash: Option<&str>,
-        role: &str,
+        role: Role,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
             "INSERT INTO users (username, spt_profile_id, password_hash, role) VALUES (?1, ?2, ?3, ?4)",
-            params![username, spt_profile_id, password_hash, role],
+            params![username, spt_profile_id, password_hash, role.as_str()],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -55,7 +115,7 @@ impl Database {
     pub fn get_user_by_username(&self, username: &str) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, created_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
                  FROM users WHERE username = ?1",
                 params![username],
                 row_to_user,
@@ -65,7 +125,7 @@ impl Database {
 
     pub fn list_users(&self) -> rusqlite::Result<Vec<User>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, username, spt_profile_id, password_hash, role, created_at
+            "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
              FROM users ORDER BY username",
         )?;
         let rows = stmt.query_map([], row_to_user)?;
@@ -74,11 +134,22 @@ impl Database {
 
     pub fn admin_exists(&self) -> rusqlite::Result<bool> {
         let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM users WHERE role = 'admin'",
-            [],
+            "SELECT COUNT(*) FROM users WHERE role = ?1",
+            params![Role::Admin.as_str()],
             |row| row.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    pub fn get_user_by_id(&self, id: i64) -> rusqlite::Result<Option<User>> {
+        self.conn
+            .query_row(
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at
+                 FROM users WHERE id = ?1",
+                params![id],
+                row_to_user,
+            )
+            .optional()
     }
 
     // ── Invite CRUD ───────────────────────────────────────────────────
@@ -166,13 +237,22 @@ impl Database {
 }
 
 fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
+    let role_str: String = row.get(4)?;
+    let role = Role::try_from(role_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        )
+    })?;
     Ok(User {
         id: row.get(0)?,
         username: row.get(1)?,
         spt_profile_id: row.get(2)?,
         password_hash: row.get(3)?,
-        role: row.get(4)?,
-        created_at: row.get(5)?,
+        role,
+        disabled: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 

@@ -23,6 +23,7 @@ use anyhow::{Context, Result};
 use rust_embed::RustEmbed;
 
 use actix_governor::{Governor, GovernorConfigBuilder};
+use actix_web::middleware::from_fn;
 
 use crate::config::Config;
 use crate::db::Database;
@@ -113,7 +114,7 @@ pub async fn start_server(
             // HTMX API (authenticated, registered before catch-all scope)
             .service(
                 web::scope("/api")
-                    .wrap(auth::RequireAuth)
+                    .wrap(from_fn(auth::auth_middleware))
                     .route("/events", web::get().to(crate::web::sse::events_stream))
                     .route(
                         "/mods/check-updates",
@@ -172,7 +173,7 @@ pub async fn start_server(
             // Authenticated routes — admin checks are per-handler via require_admin()
             .service(
                 web::scope("")
-                    .wrap(auth::RequireAuth)
+                    .wrap(from_fn(auth::auth_middleware))
                     .route("/", web::get().to(handlers::dashboard::dashboard))
                     .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
                     .route("/status", web::get().to(handlers::status::status_page))

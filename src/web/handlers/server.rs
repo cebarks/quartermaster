@@ -1,19 +1,22 @@
 use actix_session::Session;
 use actix_web::web::{self, Data, Form};
-use actix_web::HttpResponse;
+use actix_web::{HttpRequest, HttpResponse};
 
+use crate::db::users::Role;
 use crate::podman::PodmanClient;
-use crate::web::auth::require_admin;
+use crate::web::auth::{require_auth, require_capability};
 use crate::web::error::WebError;
 use crate::web::flash::set_flash;
 use crate::web::state::AppState;
 
 pub async fn start_server(
     state: Data<AppState>,
+    req: HttpRequest,
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -47,10 +50,12 @@ pub async fn start_server(
 
 pub async fn stop_server(
     state: Data<AppState>,
+    req: HttpRequest,
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -84,10 +89,12 @@ pub async fn stop_server(
 
 pub async fn restart_server(
     state: Data<AppState>,
+    req: HttpRequest,
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_admin(&session)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }

@@ -6,7 +6,7 @@
 {% block content %}
 <div class="flex-between">
     <h1>Pending Operations</h1>
-    {% if user.is_admin() && !ops.is_empty() %}
+    {% if user.role.can_manage_queue() && !ops.is_empty() %}
     <form method="post" action="/queue/apply"
           onsubmit="return confirm('Apply all pending operations?')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -31,7 +31,7 @@
                 <th>Mod</th>
                 <th>Queued</th>
                 <th>By</th>
-                {% if user.is_admin() %}<th>Actions</th>{% endif %}
+                {% if user.role.can_manage_queue() %}<th>Actions</th>{% endif %}
             </tr>
         </thead>
         <tbody>
@@ -47,7 +47,7 @@
                 <td>{{ op.mod_name }}</td>
                 <td class="text-muted text-sm">{{ op.queued_at }}</td>
                 <td class="text-muted text-sm">{{ op.queued_by.as_deref().unwrap_or("-") }}</td>
-                {% if user.is_admin() %}
+                {% if user.role.can_manage_queue() %}
                 <td>
                     <form method="post" action="/queue/{{ op.id }}/cancel" style="display:inline"
                           onsubmit="return confirm('Cancel this operation?')">

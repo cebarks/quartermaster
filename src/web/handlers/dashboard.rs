@@ -1,5 +1,6 @@
 use actix_session::Session;
 use actix_web::web::{self, Data, Html};
+use actix_web::HttpRequest;
 use askama::Template;
 
 use crate::cli::common::find_unmanaged_mod_dirs;
@@ -25,8 +26,12 @@ struct DashboardTemplate {
     csrf_token: String,
 }
 
-pub async fn dashboard(state: Data<AppState>, session: Session) -> actix_web::Result<Html> {
-    let user = require_auth(&session)?;
+pub async fn dashboard(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
@@ -65,7 +70,11 @@ struct DashboardServerStatusTemplate {
     latency_ms: Option<u64>,
 }
 
-pub async fn server_status_partial(state: Data<AppState>) -> actix_web::Result<Html> {
+pub async fn server_status_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<Html> {
+    require_auth(&req)?;
     let (host, port) = resolve_server_addr(&state.config, &state.spt_dir);
     let spt_client = SptClient::new(&host, port).map_err(WebError::from)?;
     let address = spt_client.base_url().to_string();

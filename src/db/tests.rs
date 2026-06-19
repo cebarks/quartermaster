@@ -1,4 +1,5 @@
 use super::Database;
+use crate::db::users::Role;
 
 fn test_db() -> Database {
     Database::open_in_memory().expect("failed to open in-memory database")
@@ -209,7 +210,7 @@ fn reverse_dependencies() {
 fn insert_and_get_user() {
     let db = test_db();
     let id = db
-        .insert_user("alice", "profile-abc", Some("hashed_pw"), "admin")
+        .insert_user("alice", "profile-abc", Some("hashed_pw"), Role::Admin)
         .unwrap();
     assert!(id > 0);
 
@@ -220,7 +221,7 @@ fn insert_and_get_user() {
     assert_eq!(user.username, "alice");
     assert_eq!(user.spt_profile_id, "profile-abc");
     assert_eq!(user.password_hash.as_deref(), Some("hashed_pw"));
-    assert_eq!(user.role, "admin");
+    assert_eq!(user.role, Role::Admin);
 
     let missing = db.get_user_by_username("bob").unwrap();
     assert!(missing.is_none());
@@ -233,7 +234,7 @@ fn insert_and_get_user() {
 fn insert_user_without_password() {
     let db = test_db();
     let id = db
-        .insert_user("trusty", "profile-xyz", None, "player")
+        .insert_user("trusty", "profile-xyz", None, Role::Player)
         .unwrap();
     let user = db
         .get_user_by_username("trusty")
@@ -248,11 +249,12 @@ fn admin_exists_check() {
     let db = test_db();
     assert!(!db.admin_exists().unwrap());
 
-    db.insert_user("player1", "p1", Some("pw"), "player")
+    db.insert_user("player1", "p1", Some("pw"), Role::Player)
         .unwrap();
     assert!(!db.admin_exists().unwrap());
 
-    db.insert_user("admin1", "a1", Some("pw"), "admin").unwrap();
+    db.insert_user("admin1", "a1", Some("pw"), Role::Admin)
+        .unwrap();
     assert!(db.admin_exists().unwrap());
 }
 
@@ -260,7 +262,7 @@ fn admin_exists_check() {
 fn create_and_use_invite() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", "adm-profile", Some("pw"), "admin")
+        .insert_user("admin", "adm-profile", Some("pw"), Role::Admin)
         .unwrap();
 
     let invite_id = db
@@ -276,7 +278,7 @@ fn create_and_use_invite() {
     assert!(invite.used_by.is_none());
 
     let new_user_id = db
-        .insert_user("newbie", "new-profile", Some("pw"), "player")
+        .insert_user("newbie", "new-profile", Some("pw"), Role::Player)
         .unwrap();
     let used = db.use_invite("INVITE-123", new_user_id).unwrap();
     assert_eq!(used, 1);
@@ -289,7 +291,7 @@ fn create_and_use_invite() {
     assert!(invite.used_at.is_some());
 
     let another_user_id = db
-        .insert_user("another", "anot-profile", Some("pw"), "player")
+        .insert_user("another", "anot-profile", Some("pw"), Role::Player)
         .unwrap();
     let reused = db.use_invite("INVITE-123", another_user_id).unwrap();
     assert_eq!(reused, 0, "already-used invite should not be reusable");
@@ -311,14 +313,14 @@ fn create_invite_without_creator() {
 fn expired_invite_rejected() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", "adm-profile", Some("pw"), "admin")
+        .insert_user("admin", "adm-profile", Some("pw"), Role::Admin)
         .unwrap();
 
     db.create_invite("EXPIRED-1", Some(admin_id), Some("2020-01-01 00:00:00"))
         .unwrap();
 
     let user_id = db
-        .insert_user("latecomer", "late-profile", Some("pw"), "player")
+        .insert_user("latecomer", "late-profile", Some("pw"), Role::Player)
         .unwrap();
     let used = db.use_invite("EXPIRED-1", user_id).unwrap();
     assert_eq!(used, 0, "expired invite should be rejected");
@@ -390,4 +392,74 @@ fn lookup_mod_by_name_or_slug() {
     // Not found
     let missing = db.get_mod_by_name_or_slug("nonexistent").unwrap();
     assert!(missing.is_none());
+}
+
+#[test]
+fn role_capabilities() {
+    assert!(Role::Admin.can_manage_mods());
+    assert!(Role::Admin.can_control_server());
+    assert!(Role::Admin.can_manage_queue());
+    assert!(Role::Admin.can_manage_users());
+
+    assert!(Role::Moderator.can_manage_mods());
+    assert!(Role::Moderator.can_control_server());
+    assert!(Role::Moderator.can_manage_queue());
+    assert!(!Role::Moderator.can_manage_users());
+
+    assert!(!Role::Player.can_manage_mods());
+    assert!(!Role::Player.can_control_server());
+    assert!(!Role::Player.can_manage_queue());
+    assert!(!Role::Player.can_manage_users());
+}
+
+#[test]
+fn role_serialization_roundtrip() {
+    assert_eq!(Role::Admin.as_str(), "admin");
+    assert_eq!(Role::Moderator.as_str(), "moderator");
+    assert_eq!(Role::Player.as_str(), "player");
+
+    assert_eq!(Role::try_from("admin".to_string()), Ok(Role::Admin));
+    assert_eq!(Role::try_from("moderator".to_string()), Ok(Role::Moderator));
+    assert_eq!(Role::try_from("player".to_string()), Ok(Role::Player));
+    assert!(Role::try_from("unknown".to_string()).is_err());
+}
+
+#[test]
+fn role_display() {
+    assert_eq!(format!("{}", Role::Admin), "Admin");
+    assert_eq!(format!("{}", Role::Moderator), "Moderator");
+    assert_eq!(format!("{}", Role::Player), "Player");
+}
+
+#[test]
+fn role_serde_lowercase() {
+    let json = serde_json::to_string(&Role::Admin).unwrap();
+    assert_eq!(json, "\"admin\"");
+    let parsed: Role = serde_json::from_str("\"moderator\"").unwrap();
+    assert_eq!(parsed, Role::Moderator);
+}
+
+#[test]
+fn get_user_by_id() {
+    let db = test_db();
+    let id = db
+        .insert_user("alice", "profile-abc", Some("hashed_pw"), Role::Admin)
+        .unwrap();
+    let user = db.get_user_by_id(id).unwrap().expect("user should exist");
+    assert_eq!(user.username, "alice");
+    assert_eq!(user.role, Role::Admin);
+    assert!(!user.disabled);
+
+    let missing = db.get_user_by_id(99999).unwrap();
+    assert!(missing.is_none());
+}
+
+#[test]
+fn user_disabled_default() {
+    let db = test_db();
+    let id = db
+        .insert_user("alice", "profile-abc", Some("hashed_pw"), Role::Player)
+        .unwrap();
+    let user = db.get_user_by_id(id).unwrap().expect("user should exist");
+    assert!(!user.disabled);
 }

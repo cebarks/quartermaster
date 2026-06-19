@@ -70,10 +70,12 @@ impl LogBroadcast {
         buf.iter().skip(skip).cloned().collect()
     }
 
+    #[allow(dead_code)]
     pub fn sender(&self) -> broadcast::Sender<LogEntry> {
         self.sender.clone()
     }
 
+    #[allow(dead_code)]
     pub fn buffer(&self) -> Arc<RwLock<VecDeque<LogEntry>>> {
         Arc::clone(&self.buffer)
     }
@@ -329,10 +331,9 @@ fn strip_crate_directive(filter: &str, crate_name: &str) -> String {
     filter
         .split(',')
         .filter(|part| {
-            !part
-                .split('=')
+            part.split('=')
                 .next()
-                .is_some_and(|key| key.trim() == crate_name)
+                .is_none_or(|key| key.trim() != crate_name)
         })
         .collect::<Vec<_>>()
         .join(",")

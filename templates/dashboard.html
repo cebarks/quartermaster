@@ -44,7 +44,7 @@
     {% if mods.is_empty() %}
     <div class="empty-state">
         <p>No mods installed.</p>
-        {% if user.is_admin() %}<p class="mt-1"><a href="/mods">Go to Mods</a> to install your first mod.</p>{% endif %}
+        {% if user.role.can_manage_mods() %}<p class="mt-1"><a href="/mods">Go to Mods</a> to install your first mod.</p>{% endif %}
     </div>
     {% else %}
     <table>

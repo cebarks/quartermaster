@@ -7,7 +7,7 @@
 <div hx-get="/api/tasks/status" hx-trigger="load" hx-swap="outerHTML" id="task-status"></div>
 <div class="flex-between">
     <h1>Installed Mods</h1>
-    {% if user.is_admin() %}
+    {% if user.role.can_manage_mods() %}
     <div class="flex gap-1">
         <form method="post" action="/mods/update-all" style="display:inline"
               onsubmit="return confirm('Update all mods?')">
@@ -32,7 +32,7 @@
 <div class="card">
     <div class="empty-state">
         <p>No mods installed.</p>
-        {% if user.is_admin() %}<p class="mt-1">Use the form below to install your first mod.</p>{% endif %}
+        {% if user.role.can_manage_mods() %}<p class="mt-1">Use the form below to install your first mod.</p>{% endif %}
     </div>
 </div>
 {% else %}
@@ -45,7 +45,7 @@
                 <th>Files</th>
                 <th>Size</th>
                 <th>Installed</th>
-                {% if user.is_admin() %}<th>Actions</th>{% endif %}
+                {% if user.role.can_manage_mods() %}<th>Actions</th>{% endif %}
             </tr>
         </thead>
         <tbody id="mod-list-body"
@@ -59,7 +59,7 @@
                 <td class="text-muted">{{ m.file_count }}</td>
                 <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
                 <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
-                {% if user.is_admin() %}
+                {% if user.role.can_manage_mods() %}
                 <td>
                     <span id="mod-update-{{ m.mod_info.id }}">
                         <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
@@ -78,7 +78,7 @@
             </tr>
             {% endfor %}
             <tr class="tfoot-row">
-                <td colspan="{% if user.is_admin() %}6{% else %}5{% endif %}" class="text-muted text-sm">
+                <td colspan="{% if user.role.can_manage_mods() %}6{% else %}5{% endif %}" class="text-muted text-sm">
                     Total: {{ mods.len() }} mods — {{ grand_total_size|format_size_i64 }}
                 </td>
             </tr>
@@ -88,7 +88,7 @@
 </div>
 {% endif %}
 
-{% if user.is_admin() %}
+{% if user.role.can_manage_mods() %}
 <div class="card">
     <h2>Install Mod</h2>
     <form method="post" action="/mods/install">

@@ -6,7 +6,7 @@
 {% block content %}
 <div class="flex-between">
     <h1>Server Status</h1>
-    {% if user.is_admin() %}
+    {% if user.role.can_control_server() %}
     <div class="flex gap-1">
         <form method="post" action="/server/start" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
