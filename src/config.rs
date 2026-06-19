@@ -29,6 +29,10 @@ fn default_update_check_interval() -> u64 {
     300
 }
 
+fn default_auto_start_server() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum LogFormat {
@@ -181,6 +185,9 @@ pub struct Config {
     #[serde(default)]
     pub auto_drain_on_lifecycle: bool,
 
+    #[serde(default = "default_auto_start_server")]
+    pub auto_start_server: bool,
+
     #[serde(default = "default_session_secret")]
     pub session_secret: String,
 
@@ -214,6 +221,7 @@ impl Default for Config {
             forge_token: None,
             queue_changes: true,
             auto_drain_on_lifecycle: false,
+            auto_start_server: true,
             session_secret: String::new(),
             server_container: None,
             server_host: None,
@@ -332,6 +340,15 @@ impl Config {
                 self.update_check_interval = secs;
             }
         }
+        if let Ok(val) = std::env::var("QUMA_AUTO_START_SERVER") {
+            if val.eq_ignore_ascii_case("true") {
+                tracing::debug!(var = "QUMA_AUTO_START_SERVER", value = %val, "env var override applied");
+                self.auto_start_server = true;
+            } else if val.eq_ignore_ascii_case("false") {
+                tracing::debug!(var = "QUMA_AUTO_START_SERVER", value = %val, "env var override applied");
+                self.auto_start_server = false;
+            }
+        }
         if let Ok(val) = std::env::var("QUMA_LOG_LEVEL") {
             tracing::debug!(var = "QUMA_LOG_LEVEL", value = %val, "env var override applied");
             self.logging.level = val;
@@ -395,6 +412,7 @@ spt_dir = "/opt/spt"
 forge_token = "tok_abc123"
 queue_changes = false
 auto_drain_on_lifecycle = true
+auto_start_server = false
 session_secret = "supersecret"
 server_container = "spt-server"
 server_host = "192.168.1.100"
@@ -410,6 +428,7 @@ update_check_interval = 600
         assert_eq!(config.forge_token, Some("tok_abc123".to_string()));
         assert!(!config.queue_changes);
         assert!(config.auto_drain_on_lifecycle);
+        assert!(!config.auto_start_server);
         assert_eq!(config.session_secret, "supersecret");
         assert_eq!(config.server_container, Some("spt-server".to_string()));
         assert_eq!(config.server_host, Some("192.168.1.100".to_string()));
@@ -427,6 +446,7 @@ update_check_interval = 600
         assert_eq!(config.forge_token, None);
         assert!(config.queue_changes); // default: true
         assert!(!config.auto_drain_on_lifecycle); // default: false
+        assert!(config.auto_start_server); // default: true
         assert_eq!(config.session_secret, "");
         assert_eq!(config.server_container, None);
         assert_eq!(config.server_host, None);
@@ -660,5 +680,26 @@ buffer_size = 5000
                 assert!(config.logging.file.enabled);
             },
         );
+    }
+
+    #[test]
+    fn auto_start_server_default_true() {
+        let config: Config = toml::from_str("").expect("should parse empty TOML");
+        assert!(config.auto_start_server);
+    }
+
+    #[test]
+    fn auto_start_server_explicit_false() {
+        let config: Config = toml::from_str("auto_start_server = false").expect("should parse");
+        assert!(!config.auto_start_server);
+    }
+
+    #[test]
+    fn auto_start_server_env_override() {
+        temp_env::with_vars([("QUMA_AUTO_START_SERVER", Some("false"))], || {
+            let mut config = Config::default();
+            config.apply_env_overrides();
+            assert!(!config.auto_start_server);
+        });
     }
 }
