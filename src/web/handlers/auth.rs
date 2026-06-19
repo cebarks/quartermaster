@@ -17,6 +17,7 @@ use crate::web::state::AppState;
 struct LoginTemplate {
     error: Option<String>,
     csrf_token: String,
+    flash: Option<crate::web::flash::FlashMessage>,
 }
 
 #[derive(Template)]
@@ -87,9 +88,11 @@ fn is_invite_expired(expires_at: Option<&str>) -> bool {
 
 pub async fn login_page(session: Session) -> actix_web::Result<HttpResponse> {
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let flash = crate::web::flash::take_flash(&session);
     let tmpl = LoginTemplate {
         error: None,
         csrf_token,
+        flash,
     };
     Ok(HttpResponse::Ok()
         .content_type("text/html")
@@ -125,6 +128,7 @@ pub async fn login_submit(
             let tmpl = LoginTemplate {
                 error: Some("Invalid username or password".to_string()),
                 csrf_token,
+                flash: None,
             };
             return Ok(HttpResponse::Ok()
                 .content_type("text/html")
@@ -147,6 +151,7 @@ pub async fn login_submit(
         let tmpl = LoginTemplate {
             error: Some("Invalid username or password".to_string()),
             csrf_token,
+            flash: None,
         };
         return Ok(HttpResponse::Ok()
             .content_type("text/html")
@@ -451,6 +456,34 @@ pub async fn reset_password_page(
             .body(tmpl.render().map_err(WebError::from)?));
     }
 
+    // Check user exists and is not disabled
+    let reset_token = reset_token.unwrap();
+    let db2 = state.db.clone();
+    let uid = reset_token.user_id;
+    let target_user = web::block(move || {
+        let db = db2.lock();
+        db.get_user_by_id(uid)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    match target_user {
+        Some(u) if !u.disabled => {} // OK
+        _ => {
+            let tmpl = ResetPasswordTemplate {
+                error: Some("This password reset link is invalid or has already been used. Please contact an administrator for a new link.".to_string()),
+                token: String::new(),
+                token_valid: false,
+                csrf_token,
+                flash: None,
+            };
+            return Ok(HttpResponse::BadRequest()
+                .content_type("text/html")
+                .body(tmpl.render().map_err(WebError::from)?));
+        }
+    }
+
     let tmpl = ResetPasswordTemplate {
         error: None,
         token,
@@ -526,6 +559,27 @@ pub async fn reset_password_submit(
             );
         }
     };
+
+    // Check user exists and is not disabled
+    let db2 = state.db.clone();
+    let uid = rt.user_id;
+    let target_user = web::block(move || {
+        let db = db2.lock();
+        db.get_user_by_id(uid)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    match target_user {
+        Some(u) if !u.disabled => {} // OK
+        _ => {
+            return render_error(
+                "This password reset link is invalid or has already been used. Please contact an administrator for a new link.",
+                String::new(),
+            );
+        }
+    }
 
     let password = form.password.clone();
     let password_hash = web::block(move || hash_password(&password))

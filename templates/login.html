@@ -4,6 +4,9 @@
 {% block content %}
 <div class="card auth-card auth-center">
     <h2>Login</h2>
+    {% if let Some(f) = flash %}
+    <div class="toast toast-{{ f.flash_type }}">{{ f.message }}</div>
+    {% endif %}
     {% if let Some(error) = error %}
     <div class="alert alert-error">{{ error }}</div>
     {% endif %}

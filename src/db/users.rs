@@ -204,9 +204,10 @@ impl Database {
         user_id: i64,
         password_hash: &str,
     ) -> rusqlite::Result<usize> {
+        let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
-            "UPDATE users SET password_hash = ?1, password_changed_at = datetime('now') WHERE id = ?2",
-            params![password_hash, user_id],
+            "UPDATE users SET password_hash = ?1, password_changed_at = ?3 WHERE id = ?2",
+            params![password_hash, user_id, now],
         )
     }
 
