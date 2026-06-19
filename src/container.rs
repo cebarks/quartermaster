@@ -1,0 +1,432 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use bollard::models::{
+    ContainerCreateBody, ContainerInspectResponse, ContainerStatsResponse, EventMessage,
+    HostConfig, PortBinding,
+};
+use bollard::query_parameters::{
+    CreateContainerOptionsBuilder, CreateImageOptionsBuilder, EventsOptionsBuilder,
+    ListContainersOptionsBuilder, LogsOptionsBuilder, RemoveContainerOptionsBuilder,
+    StartContainerOptions, StatsOptionsBuilder, StopContainerOptionsBuilder,
+};
+use bollard::Docker;
+use futures_util::Stream;
+
+pub const SPT_SERVER_IMAGE: &str = "ghcr.io/zhliau/fika-spt-server-docker:latest";
+#[allow(dead_code)]
+pub const DEFAULT_CONTAINER_NAME: &str = "spt-server";
+pub const DEFAULT_SPT_PORT: u16 = 6969;
+
+#[derive(Clone)]
+pub struct ContainerManager {
+    docker: Arc<Docker>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SelinuxLabel {
+    Private,
+    #[allow(dead_code)]
+    Shared,
+    #[allow(dead_code)]
+    None,
+}
+
+impl SelinuxLabel {
+    pub fn as_suffix(&self) -> &str {
+        match self {
+            SelinuxLabel::Private => ":Z",
+            SelinuxLabel::Shared => ":z",
+            SelinuxLabel::None => "",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Protocol {
+    Tcp,
+    #[allow(dead_code)]
+    Udp,
+}
+
+#[derive(Debug, Clone)]
+pub struct VolumeMount {
+    pub host_path: PathBuf,
+    pub container_path: String,
+    pub read_only: bool,
+    pub selinux: SelinuxLabel,
+}
+
+impl VolumeMount {
+    pub fn to_bind_string(&self) -> String {
+        let rw = if self.read_only { "ro" } else { "rw" };
+        let sel = self.selinux.as_suffix();
+        if sel.is_empty() {
+            format!(
+                "{}:{}:{}",
+                self.host_path.display(),
+                self.container_path,
+                rw
+            )
+        } else {
+            format!(
+                "{}:{}:{},{}",
+                self.host_path.display(),
+                self.container_path,
+                rw,
+                &sel[1..]
+            )
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PortMapping {
+    pub host_port: u16,
+    pub container_port: u16,
+    pub protocol: Protocol,
+}
+
+impl PortMapping {
+    pub fn container_key(&self) -> String {
+        let proto = match self.protocol {
+            Protocol::Tcp => "tcp",
+            Protocol::Udp => "udp",
+        };
+        format!("{}/{proto}", self.container_port)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateContainerOpts {
+    pub name: String,
+    pub image: String,
+    pub env: Vec<(String, String)>,
+    pub volumes: Vec<VolumeMount>,
+    pub ports: Vec<PortMapping>,
+    pub labels: Vec<(String, String)>,
+    pub user: Option<String>,
+}
+
+impl CreateContainerOpts {
+    pub fn all_labels(&self) -> Vec<(String, String)> {
+        let mut labels = self.labels.clone();
+        if !labels.iter().any(|(k, _)| k == "managed-by") {
+            labels.push(("managed-by".to_string(), "quma".to_string()));
+        }
+        labels
+    }
+}
+
+impl ContainerManager {
+    pub fn new() -> Result<Self> {
+        let docker = Docker::connect_with_unix_defaults().context(
+            "failed to connect to Podman socket. Ensure podman.socket is enabled:\n  \
+             systemctl --user enable --now podman.socket",
+        )?;
+        Ok(Self {
+            docker: Arc::new(docker),
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn docker(&self) -> &Arc<Docker> {
+        &self.docker
+    }
+
+    pub async fn start(&self, container: &str) -> Result<()> {
+        tracing::debug!(container, "starting container");
+        self.docker
+            .start_container(container, None::<StartContainerOptions>)
+            .await
+            .with_context(|| format!("failed to start container '{container}'"))
+    }
+
+    pub async fn stop(&self, container: &str) -> Result<()> {
+        tracing::debug!(container, "stopping container");
+        self.docker
+            .stop_container(
+                container,
+                Some(StopContainerOptionsBuilder::default().t(10).build()),
+            )
+            .await
+            .with_context(|| format!("failed to stop container '{container}'"))
+    }
+
+    #[allow(dead_code)]
+    pub async fn restart(&self, container: &str) -> Result<()> {
+        self.stop(container).await?;
+        self.start(container).await
+    }
+
+    pub async fn is_running(&self, container: &str) -> Result<bool> {
+        let info = self
+            .docker
+            .inspect_container(
+                container,
+                None::<bollard::query_parameters::InspectContainerOptions>,
+            )
+            .await
+            .with_context(|| format!("failed to inspect container '{container}'"))?;
+        Ok(info
+            .state
+            .as_ref()
+            .and_then(|s| s.status.as_ref())
+            .is_some_and(|s| s.as_ref() == "running"))
+    }
+
+    #[allow(dead_code)]
+    pub async fn inspect(&self, container: &str) -> Result<ContainerInspectResponse> {
+        self.docker
+            .inspect_container(
+                container,
+                None::<bollard::query_parameters::InspectContainerOptions>,
+            )
+            .await
+            .with_context(|| format!("failed to inspect container '{container}'"))
+    }
+
+    #[allow(dead_code)]
+    pub fn stats_stream(
+        &self,
+        container: &str,
+    ) -> impl Stream<Item = Result<ContainerStatsResponse, bollard::errors::Error>> {
+        self.docker.stats(
+            container,
+            Some(StatsOptionsBuilder::default().stream(true).build()),
+        )
+    }
+
+    pub fn log_stream(
+        &self,
+        container: &str,
+        tail: usize,
+        follow: bool,
+    ) -> impl Stream<Item = Result<bollard::container::LogOutput, bollard::errors::Error>> {
+        self.docker.logs(
+            container,
+            Some(
+                LogsOptionsBuilder::default()
+                    .stdout(true)
+                    .stderr(true)
+                    .follow(follow)
+                    .tail(&tail.to_string())
+                    .timestamps(true)
+                    .build(),
+            ),
+        )
+    }
+
+    #[allow(dead_code)]
+    pub fn container_events(
+        &self,
+    ) -> impl Stream<Item = Result<EventMessage, bollard::errors::Error>> {
+        let mut filters = HashMap::new();
+        filters.insert("type", vec!["container"]);
+        self.docker.events(Some(
+            EventsOptionsBuilder::default().filters(&filters).build(),
+        ))
+    }
+
+    pub async fn pull_image(&self, image: &str) -> Result<()> {
+        tracing::info!(image, "pulling container image");
+        use futures_util::TryStreamExt;
+        self.docker
+            .create_image(
+                Some(
+                    CreateImageOptionsBuilder::default()
+                        .from_image(image)
+                        .build(),
+                ),
+                None,
+                None,
+            )
+            .try_collect::<Vec<_>>()
+            .await
+            .with_context(|| format!("failed to pull image '{image}'"))?;
+        Ok(())
+    }
+
+    pub async fn create_container(&self, opts: CreateContainerOpts) -> Result<String> {
+        let env: Vec<String> = opts.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let binds: Vec<String> = opts.volumes.iter().map(|v| v.to_bind_string()).collect();
+        let labels: HashMap<String, String> = opts.all_labels().into_iter().collect();
+
+        let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+        for pm in &opts.ports {
+            port_bindings.insert(
+                pm.container_key(),
+                Some(vec![PortBinding {
+                    host_port: Some(pm.host_port.to_string()),
+                    ..Default::default()
+                }]),
+            );
+        }
+
+        let body = ContainerCreateBody {
+            image: Some(opts.image.clone()),
+            env: Some(env),
+            labels: Some(labels),
+            user: opts.user.clone(),
+            host_config: Some(HostConfig {
+                binds: Some(binds),
+                port_bindings: Some(port_bindings),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let create_opts = CreateContainerOptionsBuilder::default()
+            .name(&opts.name)
+            .build();
+        let response = self
+            .docker
+            .create_container(Some(create_opts), body)
+            .await
+            .with_context(|| format!("failed to create container '{}'", opts.name))?;
+        tracing::info!(container = %opts.name, id = %response.id, "container created");
+        Ok(response.id)
+    }
+
+    #[allow(dead_code)]
+    pub async fn remove_container(&self, container: &str) -> Result<()> {
+        tracing::debug!(container, "removing container");
+        self.docker
+            .remove_container(
+                container,
+                Some(RemoveContainerOptionsBuilder::default().force(true).build()),
+            )
+            .await
+            .with_context(|| format!("failed to remove container '{container}'"))
+    }
+
+    #[allow(dead_code)]
+    pub async fn detect_containers_by_label(&self, key: &str, value: &str) -> Result<Vec<String>> {
+        let label_filter = format!("{key}={value}");
+        let mut filters = HashMap::new();
+        filters.insert("label", vec![label_filter.as_str()]);
+        let containers = self
+            .docker
+            .list_containers(Some(
+                ListContainersOptionsBuilder::default()
+                    .all(true)
+                    .filters(&filters)
+                    .build(),
+            ))
+            .await
+            .context("failed to list containers")?;
+        Ok(containers
+            .into_iter()
+            .filter_map(|c| {
+                c.names?
+                    .into_iter()
+                    .next()
+                    .map(|n| n.trim_start_matches('/').to_string())
+            })
+            .collect())
+    }
+
+    /// Detect SPT containers by checking volume mounts (for setup wizard backward compat)
+    pub async fn detect_spt_containers(&self, spt_dir: &std::path::Path) -> Result<Vec<String>> {
+        let containers = self
+            .docker
+            .list_containers(Some(
+                ListContainersOptionsBuilder::default().all(true).build(),
+            ))
+            .await
+            .context("failed to list containers")?;
+
+        let spt_dir_str = spt_dir.to_string_lossy();
+        Ok(containers
+            .into_iter()
+            .filter_map(|c| {
+                let mounts = c.mounts.as_ref()?;
+                let has_spt_mount = mounts.iter().any(|m| {
+                    m.source
+                        .as_deref()
+                        .is_some_and(|s| s.contains(spt_dir_str.as_ref()))
+                });
+                if has_spt_mount {
+                    c.names?
+                        .into_iter()
+                        .next()
+                        .map(|n| n.trim_start_matches('/').to_string())
+                } else {
+                    None
+                }
+            })
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn selinux_label_display() {
+        assert_eq!(SelinuxLabel::Private.as_suffix(), ":Z");
+        assert_eq!(SelinuxLabel::Shared.as_suffix(), ":z");
+        assert_eq!(SelinuxLabel::None.as_suffix(), "");
+    }
+
+    #[test]
+    fn volume_mount_to_bind_string() {
+        let mount = VolumeMount {
+            host_path: PathBuf::from("/opt/fika-client"),
+            container_path: "/opt/tarkov".to_string(),
+            read_only: true,
+            selinux: SelinuxLabel::Shared,
+        };
+        assert_eq!(mount.to_bind_string(), "/opt/fika-client:/opt/tarkov:ro,z");
+    }
+
+    #[test]
+    fn volume_mount_rw_private() {
+        let mount = VolumeMount {
+            host_path: PathBuf::from("/data/clients/1/BepInEx/config"),
+            container_path: "/opt/tarkov/BepInEx/config".to_string(),
+            read_only: false,
+            selinux: SelinuxLabel::Private,
+        };
+        assert_eq!(
+            mount.to_bind_string(),
+            "/data/clients/1/BepInEx/config:/opt/tarkov/BepInEx/config:rw,Z"
+        );
+    }
+
+    #[test]
+    fn create_container_opts_always_includes_managed_label() {
+        let opts = CreateContainerOpts {
+            name: "test".to_string(),
+            image: "test:latest".to_string(),
+            env: vec![],
+            volumes: vec![],
+            ports: vec![],
+            labels: vec![("custom".to_string(), "value".to_string())],
+            user: None,
+        };
+        let labels = opts.all_labels();
+        assert!(labels.iter().any(|(k, v)| k == "managed-by" && v == "quma"));
+    }
+
+    #[test]
+    fn port_mapping_to_key() {
+        let pm = PortMapping {
+            host_port: 25565,
+            container_port: 25565,
+            protocol: Protocol::Udp,
+        };
+        assert_eq!(pm.container_key(), "25565/udp");
+
+        let pm_tcp = PortMapping {
+            host_port: 8080,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+        assert_eq!(pm_tcp.container_key(), "80/tcp");
+    }
+}

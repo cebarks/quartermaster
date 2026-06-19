@@ -10,7 +10,9 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
     let installed = resolve_installed_mod(mod_ref, ctx)?;
 
     // Check if we should queue instead of applying
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir).await? {
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
+        .await?
+    {
         ctx.db.insert_pending_op(
             "remove",
             installed.forge_mod_id,
@@ -27,7 +29,12 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
     }
 
     if force {
-        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        let running = crate::server_detect::is_server_running(
+            &ctx.config,
+            &ctx.spt_dir,
+            ctx.container_mgr.as_ref(),
+        )
+        .await?;
         if running {
             println!(
                 "Warning: applying changes while the server is running may cause instability."
@@ -129,6 +136,7 @@ mod tests {
             config: Config::default(),
             db: Database::open_in_memory().unwrap(),
             forge: ForgeClient::new(None).unwrap(),
+            container_mgr: None,
         }
     }
 

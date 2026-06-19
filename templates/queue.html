@@ -2,7 +2,7 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}Queue — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("queue", user, csrf_token) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("queue", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
     <h1>Pending Operations</h1>

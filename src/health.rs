@@ -567,6 +567,7 @@ mod tests {
             config: Config::default(),
             db,
             forge: ForgeClient::new(None).unwrap(),
+            container_mgr: None,
         };
 
         let result = {
@@ -619,6 +620,7 @@ mod tests {
             config: Config::default(),
             db,
             forge: ForgeClient::new(None).unwrap(),
+            container_mgr: None,
         };
 
         let result = {
@@ -658,6 +660,7 @@ mod tests {
             config: Config::default(),
             db,
             forge: ForgeClient::new(None).unwrap(),
+            container_mgr: None,
         };
 
         let result = {

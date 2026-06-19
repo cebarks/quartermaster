@@ -2,7 +2,7 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}{{ mod_info.name }} — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("mods", user, csrf_token) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>{{ mod_info.name }}</h1>
 

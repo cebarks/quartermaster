@@ -80,7 +80,9 @@ pub async fn run(
         return Ok(());
     }
 
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir).await? {
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
+        .await?
+    {
         ctx.db.insert_pending_op(
             "install",
             forge_mod.id,
@@ -96,7 +98,12 @@ pub async fn run(
     }
 
     if force {
-        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        let running = crate::server_detect::is_server_running(
+            &ctx.config,
+            &ctx.spt_dir,
+            ctx.container_mgr.as_ref(),
+        )
+        .await?;
         if running {
             println!(
                 "Warning: applying changes while the server is running may cause instability."

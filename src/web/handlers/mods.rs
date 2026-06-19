@@ -41,6 +41,7 @@ struct ModListTemplate {
     tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    fika_installed: bool,
 }
 
 #[derive(Template)]
@@ -53,6 +54,7 @@ struct ModDetailTemplate {
     dependencies: Vec<DepEntry>,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    fika_installed: bool,
 }
 
 #[derive(Template)]
@@ -144,6 +146,7 @@ pub async fn list_mods(
         tarkov_version: state.spt_info.tarkov_version.clone(),
         flash,
         csrf_token,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -188,6 +191,7 @@ pub async fn mod_detail(
         dependencies,
         flash,
         csrf_token,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -478,9 +482,14 @@ pub async fn install_mod(
     }
 
     // Check if the operation should be queued (server running + queue enabled)
-    let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
-        .await
-        .unwrap_or(false);
+    let should_queue = crate::queue::should_queue(
+        &state.config,
+        false,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
 
     if should_queue {
         let db = state.db.clone();
@@ -626,9 +635,14 @@ pub async fn update_mod(
     }
 
     // Check if the operation should be queued
-    let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
-        .await
-        .unwrap_or(false);
+    let should_queue = crate::queue::should_queue(
+        &state.config,
+        false,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
 
     if should_queue {
         let db = state.db.clone();
@@ -774,9 +788,14 @@ pub async fn remove_mod(
     .ok_or(WebError::NotFound)?;
 
     // Check if the operation should be queued
-    let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
-        .await
-        .unwrap_or(false);
+    let should_queue = crate::queue::should_queue(
+        &state.config,
+        false,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
 
     if should_queue {
         let db = state.db.clone();
@@ -853,9 +872,14 @@ pub async fn update_all_mods(
         .map_err(WebError::from)?;
 
     // Check if operations should be queued (server running + queue enabled)
-    let should_queue = crate::queue::should_queue(&state.config, false, &state.spt_dir)
-        .await
-        .unwrap_or(false);
+    let should_queue = crate::queue::should_queue(
+        &state.config,
+        false,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
 
     if should_queue {
         let db = state.db.clone();

@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 
 use crate::config::Config;
-use crate::podman::PodmanClient;
+use crate::container::ContainerManager;
 use crate::spt::server::SptClient;
 
 use super::common::CliContext;
@@ -19,23 +19,23 @@ pub async fn run(action: &ServerAction, ctx: &CliContext) -> Result<()> {
 }
 
 async fn start(ctx: &CliContext, timeout_secs: u64) -> Result<()> {
-    let podman = require_container(ctx)?;
+    let (mgr, container) = require_container(ctx)?;
 
     if ctx.config.auto_drain_on_lifecycle {
         drain_if_pending(ctx).await?;
     }
 
     println!("Starting SPT server container...");
-    podman.start().await?;
+    mgr.start(container).await?;
 
     wait_for_ping(ctx, timeout_secs).await
 }
 
 async fn stop(ctx: &CliContext) -> Result<()> {
-    let podman = require_container(ctx)?;
+    let (mgr, container) = require_container(ctx)?;
 
     println!("Stopping SPT server container...");
-    podman.stop().await?;
+    mgr.stop(container).await?;
     println!("Server stopped.");
 
     if ctx.config.auto_drain_on_lifecycle {
@@ -46,10 +46,10 @@ async fn stop(ctx: &CliContext) -> Result<()> {
 }
 
 async fn restart(ctx: &CliContext, force_drain: bool, skip_queue: bool) -> Result<()> {
-    let podman = require_container(ctx)?;
+    let (mgr, container) = require_container(ctx)?;
 
     println!("Stopping SPT server container...");
-    podman.stop().await?;
+    mgr.stop(container).await?;
     println!("Server stopped.");
 
     let should_drain = if skip_queue {
@@ -65,14 +65,27 @@ async fn restart(ctx: &CliContext, force_drain: bool, skip_queue: bool) -> Resul
     }
 
     println!("Starting SPT server container...");
-    podman.start().await?;
+    mgr.start(container).await?;
 
     wait_for_ping(ctx, 60).await
 }
 
 async fn logs(ctx: &CliContext, follow: bool) -> Result<()> {
-    let podman = require_container(ctx)?;
-    podman.logs(follow, 100).await
+    let (mgr, container) = require_container(ctx)?;
+    use futures_util::StreamExt;
+    let mut stream = mgr.log_stream(container, 100, follow);
+    while let Some(log) = stream.next().await {
+        match log? {
+            bollard::container::LogOutput::StdOut { message } => {
+                print!("{}", String::from_utf8_lossy(&message));
+            }
+            bollard::container::LogOutput::StdErr { message } => {
+                eprint!("{}", String::from_utf8_lossy(&message));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub async fn create_container(name: &str, port: u16, cli: &super::Cli) -> Result<()> {
@@ -82,11 +95,34 @@ pub async fn create_container(name: &str, port: u16, cli: &super::Cli) -> Result
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
-    println!("Pulling {}...", crate::podman::SPT_SERVER_IMAGE);
-    PodmanClient::pull_image(crate::podman::SPT_SERVER_IMAGE).await?;
+    println!("Pulling {}...", crate::container::SPT_SERVER_IMAGE);
+    let mgr = ContainerManager::new()?;
+    mgr.pull_image(crate::container::SPT_SERVER_IMAGE).await?;
 
     println!("Creating container '{name}'...");
-    PodmanClient::create_spt_container(name, &spt_dir, port).await?;
+    mgr.create_container(crate::container::CreateContainerOpts {
+        name: name.to_string(),
+        image: crate::container::SPT_SERVER_IMAGE.to_string(),
+        env: vec![
+            ("TAKE_OWNERSHIP".to_string(), "true".to_string()),
+            ("CHANGE_PERMISSIONS".to_string(), "true".to_string()),
+            ("LISTEN_ALL_NETWORKS".to_string(), "true".to_string()),
+        ],
+        volumes: vec![crate::container::VolumeMount {
+            host_path: spt_dir.clone(),
+            container_path: "/opt/tarkov".to_string(),
+            read_only: false,
+            selinux: crate::container::SelinuxLabel::Private,
+        }],
+        ports: vec![crate::container::PortMapping {
+            host_port: port,
+            container_port: crate::container::DEFAULT_SPT_PORT,
+            protocol: crate::container::Protocol::Tcp,
+        }],
+        labels: vec![("app".to_string(), "spt-server".to_string())],
+        user: Some("root".to_string()),
+    })
+    .await?;
     println!("Container '{name}' created successfully.");
 
     let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
@@ -130,14 +166,19 @@ async fn wait_for_ping(ctx: &CliContext, timeout_secs: u64) -> Result<()> {
     }
 }
 
-fn require_container(ctx: &CliContext) -> Result<PodmanClient> {
-    match &ctx.config.server_container {
-        Some(name) => Ok(PodmanClient::new(name)),
-        None => bail!(
+fn require_container(ctx: &CliContext) -> Result<(&ContainerManager, &str)> {
+    match (&ctx.config.server_container, &ctx.container_mgr) {
+        (None, _) => bail!(
             "no server_container configured.\n\
              Run `quma server create` to create one, or\n\
              set it with: quma config set server_container <name>"
         ),
+        (Some(_), None) => bail!(
+            "failed to connect to Podman socket.\n\
+             Ensure podman.socket is enabled:\n  \
+             systemctl --user enable --now podman.socket"
+        ),
+        (Some(name), Some(mgr)) => Ok((mgr, name.as_str())),
     }
 }
 

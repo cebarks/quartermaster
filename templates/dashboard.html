@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}Dashboard — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("dashboard", user, csrf_token) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("dashboard", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>Dashboard</h1>
 
@@ -32,6 +32,14 @@
             <span class="text-muted text-sm loading-pulse">Checking...</span>
         </div>
     </a>
+    {% if fika_installed %}
+    <a href="/clients" class="stat-card" style="border-left-color: var(--border)">
+        <div class="stat-label">Clients</div>
+        <div hx-get="/api/dashboard/clients-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+            <span class="text-muted text-sm loading-pulse">Checking...</span>
+        </div>
+    </a>
+    {% endif %}
 </div>
 
 <div class="card">

@@ -1,0 +1,364 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::Utc;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
+use tokio::time::interval;
+use tokio_util::sync::CancellationToken;
+
+use crate::client::{ClientHealth, ClientState, ContainerStatus};
+use crate::config::{ClientsConfig, RestartPolicy};
+use crate::container::ContainerManager;
+use crate::spt::headless::{EHeadlessStatus, GetHeadlessesResponse};
+use crate::spt::server::SptClient;
+
+pub struct ClientSupervisor {
+    container_mgr: ContainerManager,
+    spt_client: SptClient,
+    clients_config: ClientsConfig,
+    converging: Arc<AtomicBool>,
+    cancel_token: CancellationToken,
+    state: Arc<RwLock<Vec<ClientState>>>,
+    tick_interval: Duration,
+}
+
+impl ClientSupervisor {
+    pub fn new(
+        container_mgr: ContainerManager,
+        spt_client: SptClient,
+        clients_config: ClientsConfig,
+        converging: Arc<AtomicBool>,
+        cancel_token: CancellationToken,
+    ) -> Self {
+        let state = Arc::new(RwLock::new(Vec::new()));
+        Self {
+            container_mgr,
+            spt_client,
+            clients_config,
+            converging,
+            cancel_token,
+            state,
+            tick_interval: Duration::from_secs(15),
+        }
+    }
+
+    pub fn state(&self) -> Arc<RwLock<Vec<ClientState>>> {
+        Arc::clone(&self.state)
+    }
+
+    pub fn run(self) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            self.monitor_loop().await;
+        })
+    }
+
+    async fn monitor_loop(self) {
+        let mut ticker = interval(self.tick_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                _ = self.cancel_token.cancelled() => {
+                    tracing::info!("ClientSupervisor shutting down");
+                    break;
+                }
+                _ = ticker.tick() => {
+                    if self.converging.load(Ordering::Relaxed) {
+                        tracing::trace!("Skipping client monitor tick (convergence in progress)");
+                        continue;
+                    }
+                    if let Err(e) = self.tick().await {
+                        tracing::error!("Client monitor tick failed: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    async fn tick(&self) -> anyhow::Result<()> {
+        // Check server liveness first
+        let server_up = match self.spt_client.ping().await {
+            Ok(ping) => ping.ok,
+            Err(e) => {
+                tracing::warn!("Server ping failed: {}", e);
+                false
+            }
+        };
+
+        // Get Fika headless status if server is up
+        let headlesses = if server_up {
+            match self.spt_client.headless_clients().await {
+                Ok(response) => Some(response),
+                Err(e) => {
+                    tracing::warn!("Failed to fetch headless clients: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Update each client's state
+        let mut states = Vec::new();
+        for i in 1..=self.clients_config.count {
+            let state = self.check_client(i, server_up, headlesses.as_ref()).await?;
+            states.push(state);
+        }
+
+        // Write updated state
+        {
+            let mut state_lock = self.state.write().await;
+            *state_lock = states.clone();
+        }
+
+        // Handle auto-restart for clients that need it
+        if self.clients_config.restart_policy == RestartPolicy::Auto && server_up {
+            for state in states {
+                if self.should_restart(&state) {
+                    if let Err(e) = self.restart_client(&state).await {
+                        tracing::error!("Failed to restart client {}: {}", state.container_name, e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn check_client(
+        &self,
+        index: u32,
+        server_up: bool,
+        headlesses: Option<&GetHeadlessesResponse>,
+    ) -> anyhow::Result<ClientState> {
+        let container_name = crate::client::converge::client_container_name(index);
+
+        // Get current state or create new one
+        let existing = {
+            let state_lock = self.state.read().await;
+            state_lock.iter().find(|s| s.index == index).cloned()
+        };
+
+        let mut state = existing.unwrap_or_else(|| ClientState {
+            index,
+            container_name: container_name.clone(),
+            container_status: ContainerStatus::Unknown,
+            fika_status: None,
+            players: Vec::new(),
+            cpu_percent: None,
+            memory_mb: None,
+            restart_count: 0,
+            last_restart: None,
+            health: ClientHealth::Down,
+            restarting: false,
+            consecutive_failures: 0,
+        });
+
+        // Check container status
+        let container_running = match self.container_mgr.is_running(&container_name).await {
+            Ok(running) => {
+                state.container_status = if running {
+                    ContainerStatus::Running
+                } else {
+                    ContainerStatus::Stopped
+                };
+                running
+            }
+            Err(_) => {
+                state.container_status = ContainerStatus::Unknown;
+                false
+            }
+        };
+
+        // Get PROFILE_ID from container inspect if running
+        let profile_id = if container_running {
+            match self.container_mgr.inspect(&container_name).await {
+                Ok(inspect) => inspect.config.and_then(|c| c.env).and_then(|env| {
+                    env.iter()
+                        .find(|e| e.starts_with("PROFILE_ID="))
+                        .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                        .map(String::from)
+                }),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        // Match against Fika API
+        if let (Some(pid), Some(headless_data)) = (profile_id.as_ref(), headlesses) {
+            if let Some(client_info) = headless_data.headlesses.get(pid) {
+                state.fika_status = Some(client_info.state.clone());
+                state.players = client_info.players.clone();
+            } else {
+                state.fika_status = None;
+                state.players.clear();
+            }
+        } else {
+            state.fika_status = None;
+            state.players.clear();
+        }
+
+        // Compute health
+        state.health = compute_health(container_running, state.fika_status.clone(), server_up);
+
+        // Update failure count
+        if state.health == ClientHealth::Down || state.health == ClientHealth::Degraded {
+            state.consecutive_failures += 1;
+        } else {
+            state.consecutive_failures = 0;
+        }
+
+        // Check if given up
+        if state.consecutive_failures > self.clients_config.max_restart_attempts {
+            state.health = ClientHealth::GivenUp;
+        }
+
+        Ok(state)
+    }
+
+    fn should_restart(&self, state: &ClientState) -> bool {
+        // Don't restart if already restarting
+        if state.restarting {
+            return false;
+        }
+
+        // Don't restart if given up
+        if state.health == ClientHealth::GivenUp {
+            return false;
+        }
+
+        // Restart if down or degraded and under attempt limit
+        (state.health == ClientHealth::Down || state.health == ClientHealth::Degraded)
+            && state.consecutive_failures <= self.clients_config.max_restart_attempts
+    }
+
+    async fn restart_client(&self, state: &ClientState) -> anyhow::Result<()> {
+        tracing::info!("Restarting client {}", state.container_name);
+
+        // Update state to mark as restarting
+        {
+            let mut state_lock = self.state.write().await;
+            if let Some(s) = state_lock.iter_mut().find(|s| s.index == state.index) {
+                s.restarting = true;
+            }
+        }
+
+        // Calculate backoff delay
+        let delay = backoff_duration(
+            state.consecutive_failures,
+            self.clients_config.restart_backoff_cap,
+        );
+        tracing::debug!(
+            "Backing off {}s before restart (failures: {})",
+            delay.as_secs(),
+            state.consecutive_failures
+        );
+        tokio::time::sleep(delay).await;
+
+        // Perform restart
+        let result = self.container_mgr.restart(&state.container_name).await;
+
+        // Update state
+        {
+            let mut state_lock = self.state.write().await;
+            if let Some(s) = state_lock.iter_mut().find(|s| s.index == state.index) {
+                s.restarting = false;
+                if result.is_ok() {
+                    s.restart_count += 1;
+                    s.last_restart = Some(Utc::now());
+                }
+            }
+        }
+
+        result
+    }
+}
+
+pub fn compute_health(
+    container_running: bool,
+    fika_status: Option<EHeadlessStatus>,
+    server_up: bool,
+) -> ClientHealth {
+    if !container_running {
+        return ClientHealth::Down;
+    }
+
+    if !server_up {
+        return ClientHealth::Degraded;
+    }
+
+    match fika_status {
+        Some(EHeadlessStatus::Ready) | Some(EHeadlessStatus::InRaid) => ClientHealth::Healthy,
+        Some(EHeadlessStatus::Unknown(_)) => ClientHealth::Degraded,
+        None => ClientHealth::Degraded,
+    }
+}
+
+pub fn backoff_duration(failures: u32, cap: u64) -> Duration {
+    let base = 5u64;
+    let power = 2u64.saturating_pow(failures);
+    let exponential = base.saturating_mul(power);
+    let capped = exponential.min(cap);
+    Duration::from_secs(capped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_healthy_when_running_and_ready() {
+        assert_eq!(
+            compute_health(true, Some(EHeadlessStatus::Ready), true),
+            ClientHealth::Healthy
+        );
+    }
+
+    #[test]
+    fn health_healthy_when_running_and_in_raid() {
+        assert_eq!(
+            compute_health(true, Some(EHeadlessStatus::InRaid), true),
+            ClientHealth::Healthy
+        );
+    }
+
+    #[test]
+    fn health_degraded_when_running_but_not_connected() {
+        assert_eq!(compute_health(true, None, true), ClientHealth::Degraded);
+    }
+
+    #[test]
+    fn health_degraded_when_server_down() {
+        assert_eq!(
+            compute_health(true, Some(EHeadlessStatus::Ready), false),
+            ClientHealth::Degraded
+        );
+    }
+
+    #[test]
+    fn health_down_when_container_stopped() {
+        assert_eq!(compute_health(false, None, true), ClientHealth::Down);
+    }
+
+    #[test]
+    fn backoff_exponential() {
+        assert_eq!(backoff_duration(0, 300), Duration::from_secs(5));
+        assert_eq!(backoff_duration(1, 300), Duration::from_secs(10));
+        assert_eq!(backoff_duration(2, 300), Duration::from_secs(20));
+        assert_eq!(backoff_duration(3, 300), Duration::from_secs(40));
+    }
+
+    #[test]
+    fn backoff_capped() {
+        assert_eq!(backoff_duration(10, 300), Duration::from_secs(300));
+        assert_eq!(backoff_duration(100, 300), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn backoff_custom_cap() {
+        assert_eq!(backoff_duration(10, 60), Duration::from_secs(60));
+    }
+}

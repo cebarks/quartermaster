@@ -3,10 +3,10 @@
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::config::Config;
-use crate::podman::PodmanClient;
+use crate::container::ContainerManager;
 use crate::spt::detect::read_http_config;
 use crate::spt::server::SptClient;
 
@@ -16,10 +16,16 @@ use crate::spt::server::SptClient;
 /// 1. If `server_container` is configured, check Podman container state
 /// 2. Otherwise, attempt to ping the SPT server
 /// 3. If ping fails (connection refused, timeout), assume server is stopped
-pub async fn is_server_running(config: &Config, spt_dir: &Path) -> Result<bool> {
+pub async fn is_server_running(
+    config: &Config,
+    spt_dir: &Path,
+    container_mgr: Option<&ContainerManager>,
+) -> Result<bool> {
     if let Some(ref container) = config.server_container {
-        let podman = PodmanClient::new(container);
-        return podman.is_running().await;
+        if let Some(mgr) = container_mgr {
+            return mgr.is_running(container).await;
+        }
+        bail!("Podman socket not available — cannot check container status");
     }
 
     let (host, port) = resolve_server_addr(config, spt_dir);

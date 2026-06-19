@@ -1,5 +1,7 @@
 mod cli;
+mod client;
 mod config;
+mod container;
 mod db;
 mod error;
 mod forge;
@@ -7,7 +9,6 @@ mod health;
 mod invite;
 mod logging;
 mod ops;
-mod podman;
 mod queue;
 mod server_detect;
 mod spt;
@@ -139,6 +140,11 @@ async fn main() -> Result<()> {
                     let ctx = cli::common::resolve_context(&cli)?;
                     reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
                     cli::server::run(action, &ctx).await
+                }
+                Command::Client { action } => {
+                    let ctx = cli::common::resolve_context(&cli)?;
+                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
+                    cli::client::run(action, &ctx).await
                 }
                 Command::Generate { target } => {
                     // Apply CLI verbosity to default config for early commands

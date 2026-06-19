@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
+use crate::container::ContainerManager;
 use crate::db::users::Role;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
-use crate::podman::PodmanClient;
 use crate::spt::detect::{detect_spt_dir, read_spt_version, validate_spt_dir};
 use crate::spt::profiles::list_profiles;
 use crate::web::auth::hash_password;
@@ -59,12 +59,14 @@ pub async fn run(non_interactive: bool, skip_fika: bool, cli: &Cli) -> Result<()
     println!("Database initialized at {}", db_path.display());
 
     let forge = ForgeClient::new(config.forge_token.clone())?;
+    let container_mgr = ContainerManager::new().ok();
     let ctx = super::common::CliContext {
         spt_dir: spt_dir.clone(),
         spt_info: spt_info.clone(),
         config: config.clone(),
         db,
         forge,
+        container_mgr,
     };
 
     // Step 7: Install Fika (if not skipped)
@@ -132,7 +134,8 @@ async fn configure_container(
         return Ok(());
     }
 
-    let detected = PodmanClient::detect_spt_containers(spt_dir).await?;
+    let mgr = ContainerManager::new()?;
+    let detected = mgr.detect_spt_containers(spt_dir).await?;
 
     if detected.len() == 1 {
         let name = &detected[0];
@@ -275,9 +278,9 @@ async fn first_boot(config: &Config, spt_dir: &Path, non_interactive: bool) -> R
         Some(c) => c,
         None => bail!("no server container configured"),
     };
-    let podman = PodmanClient::new(container);
+    let mgr = ContainerManager::new()?;
 
-    let running = match podman.is_running().await {
+    let running = match mgr.is_running(container).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Warning: could not check if server is running: {e:#}");
@@ -295,7 +298,7 @@ async fn first_boot(config: &Config, spt_dir: &Path, non_interactive: bool) -> R
     }
 
     println!("Starting SPT server...");
-    podman.start().await?;
+    mgr.start(container).await?;
 
     let (host, port) = crate::server_detect::resolve_server_addr(config, spt_dir);
     let spt_client = crate::spt::server::SptClient::new(&host, port)?;
@@ -322,7 +325,7 @@ async fn first_boot(config: &Config, spt_dir: &Path, non_interactive: bool) -> R
 
     // Stop the server after first boot
     println!("Stopping server after first boot...");
-    podman.stop().await?;
+    mgr.stop(container).await?;
     println!("Server stopped.");
 
     Ok(())

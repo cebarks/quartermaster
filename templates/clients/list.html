@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
+{% block title %}Fika Clients — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("clients", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<div class="flex-between">
+    <h1>Fika Clients</h1>
+    {% if user.role.can_control_server() %}
+    <div class="flex gap-1">
+        <form method="post" action="/clients/scale" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="number" name="count" min="0" max="10" value="{{ target_count }}" style="width: 4rem; margin-right: 0.5rem">
+            <input type="hidden" name="force" value="false">
+            <button type="submit" class="btn btn-sm btn-primary">Scale</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+{% if converging %}
+<div class="card" style="background-color: var(--warning-bg); border-left: 4px solid var(--warning)">
+    <div class="flex gap-1" style="align-items: center">
+        <span class="loading-pulse" style="display: inline-block; width: 1rem; height: 1rem; border-radius: 50%; background: var(--warning)"></span>
+        <span><strong>Converging...</strong> Scaling clients to target count.</span>
+    </div>
+</div>
+{% endif %}
+
+<div hx-get="/api/clients/status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    {% if clients.is_empty() %}
+    <div class="empty-state">
+        <p>No Fika clients configured.</p>
+        <p class="mt-1 text-muted text-sm">Configure clients in <code>quartermaster.toml</code> under <code>[clients]</code>.</p>
+    </div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Client</th>
+                <th>Status</th>
+                <th>Health</th>
+                <th>Fika Status</th>
+                <th>Players</th>
+                <th>CPU</th>
+                <th>Memory</th>
+                <th>Restarts</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for client in clients %}
+            <tr>
+                <td><a href="/clients/{{ client.index }}">Client {{ client.index }}</a></td>
+                <td>
+                    {% match client.container_status %}
+                    {% when crate::client::ContainerStatus::Running %}
+                    <span class="badge badge-success">Running</span>
+                    {% when crate::client::ContainerStatus::Stopped %}
+                    <span class="badge badge-error">Stopped</span>
+                    {% when crate::client::ContainerStatus::Unknown %}
+                    <span class="badge">Unknown</span>
+                    {% endmatch %}
+                </td>
+                <td>
+                    {% match client.health %}
+                    {% when crate::client::ClientHealth::Healthy %}
+                    <span class="status-dot up glow"></span> Healthy
+                    {% when crate::client::ClientHealth::Degraded %}
+                    <span class="status-dot degraded"></span> Degraded
+                    {% when crate::client::ClientHealth::Down %}
+                    <span class="status-dot down"></span> Down
+                    {% when crate::client::ClientHealth::GivenUp %}
+                    <span class="status-dot down"></span> Given Up
+                    {% endmatch %}
+                </td>
+                <td>
+                    {% if let Some(status) = client.fika_status %}
+                    {% match status %}
+                    {% when crate::spt::headless::EHeadlessStatus::Ready %}
+                    <span class="badge badge-success">Ready</span>
+                    {% when crate::spt::headless::EHeadlessStatus::InRaid %}
+                    <span class="badge badge-warning">In Raid</span>
+                    {% when crate::spt::headless::EHeadlessStatus::Unknown(_) %}
+                    <span class="badge">Unknown</span>
+                    {% endmatch %}
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if client.players.is_empty() %}
+                    <span class="text-muted">—</span>
+                    {% else %}
+                    {{ client.players.join(", ") }}
+                    {% endif %}
+                </td>
+                <td>
+                    {% if let Some(cpu) = client.cpu_percent %}
+                    {{ cpu }}%
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if let Some(mem) = client.memory_mb %}
+                    {{ mem as i64 }} MB
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if client.restart_count > 0 %}
+                    {{ client.restart_count }}
+                    {% else %}
+                    <span class="text-muted">0</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% endblock %}

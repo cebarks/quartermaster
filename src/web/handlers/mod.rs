@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod clients;
 pub mod dashboard;
 pub mod logs;
 pub mod mods;

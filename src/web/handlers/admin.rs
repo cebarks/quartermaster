@@ -57,6 +57,7 @@ struct AdminPageTemplate {
     users: Vec<(User, ProfileStatus)>,
     current_user_id: i64,
     flash: Option<crate::web::flash::FlashMessage>,
+    fika_installed: bool,
 }
 
 #[derive(Template)]
@@ -191,6 +192,7 @@ pub async fn admin_page(
         users,
         current_user_id,
         flash,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

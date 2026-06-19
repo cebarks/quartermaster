@@ -15,6 +15,7 @@ struct StatusPageTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    fika_installed: bool,
 }
 
 #[derive(Template)]
@@ -35,7 +36,11 @@ struct StatusIntegrityTemplate {
     report: IntegrityHealth,
 }
 
-pub async fn status_page(req: HttpRequest, session: Session) -> actix_web::Result<Html> {
+pub async fn status_page(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
@@ -43,6 +48,7 @@ pub async fn status_page(req: HttpRequest, session: Session) -> actix_web::Resul
         user,
         flash,
         csrf_token,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

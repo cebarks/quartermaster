@@ -189,10 +189,11 @@ struct LogsTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    fika_installed: bool,
 }
 
 pub async fn logs_page(
-    _state: Data<AppState>,
+    state: Data<AppState>,
     req: HttpRequest,
     session: Session,
 ) -> actix_web::Result<Html> {
@@ -204,6 +205,7 @@ pub async fn logs_page(
         user,
         flash,
         csrf_token,
+        fika_installed: state.fika_installed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

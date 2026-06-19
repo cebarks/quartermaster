@@ -1,0 +1,16 @@
+{% if total_count == 0 %}
+<div class="stat-value" style="font-size: 1rem;">
+    <span class="text-muted">No clients</span>
+</div>
+{% else %}
+<div class="stat-value" style="font-size: 1rem;">{{ total_count }}</div>
+<div class="stat-detail">
+    {% if healthy_count == total_count %}
+    <span style="color: var(--success)">All healthy</span>
+    {% else %}
+    <span style="color: var(--success)">{{ healthy_count }}</span> /
+    {% if degraded_count > 0 %}<span style="color: var(--warning)">{{ degraded_count }}</span> /{% endif %}
+    {% if down_count > 0 %}<span style="color: var(--error)">{{ down_count }}</span>{% endif %}
+    {% endif %}
+</div>
+{% endif %}

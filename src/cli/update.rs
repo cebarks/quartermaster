@@ -8,7 +8,12 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
     // Spec: `quma update` drains pending operations before checking for updates
     let pending = ctx.db.list_pending_ops()?;
     if !pending.is_empty() {
-        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        let running = crate::server_detect::is_server_running(
+            &ctx.config,
+            &ctx.spt_dir,
+            ctx.container_mgr.as_ref(),
+        )
+        .await?;
         if running && !force {
             anyhow::bail!(
                 "{} pending operation(s) queued — stop the server first or use --force.\n\
@@ -56,7 +61,9 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
         return Ok(());
     }
 
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir).await? {
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
+        .await?
+    {
         for update in &results.updates {
             let installed = mods_to_check
                 .iter()
@@ -80,7 +87,12 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
     }
 
     if force {
-        let running = crate::server_detect::is_server_running(&ctx.config, &ctx.spt_dir).await?;
+        let running = crate::server_detect::is_server_running(
+            &ctx.config,
+            &ctx.spt_dir,
+            ctx.container_mgr.as_ref(),
+        )
+        .await?;
         if running {
             println!(
                 "Warning: applying changes while the server is running may cause instability."

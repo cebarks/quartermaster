@@ -94,6 +94,58 @@ impl SptClient {
         Ok(mods)
     }
 
+    pub async fn headless_clients(&self) -> Result<crate::spt::headless::GetHeadlessesResponse> {
+        let resp = self
+            .client
+            .get(format!("{}/fika/headless/get", self.base_url))
+            .header("responsecompressed", "0")
+            .send()
+            .await
+            .context("failed to reach Fika headless endpoint")?
+            .error_for_status()
+            .context("Fika headless endpoint returned error")?;
+        resp.json()
+            .await
+            .context("failed to parse headless clients response")
+    }
+
+    pub async fn available_headless_clients(
+        &self,
+    ) -> Result<Vec<crate::spt::headless::HeadlessAvailableClient>> {
+        let resp = self
+            .client
+            .get(format!("{}/fika/headless/available", self.base_url))
+            .header("responsecompressed", "0")
+            .send()
+            .await
+            .context("failed to reach Fika headless available endpoint")?
+            .error_for_status()
+            .context("Fika headless available endpoint returned error")?;
+        resp.json()
+            .await
+            .context("failed to parse available headless clients response")
+    }
+
+    pub async fn headless_restart_config(
+        &self,
+    ) -> Result<crate::spt::headless::HeadlessRestartConfig> {
+        let resp = self
+            .client
+            .get(format!(
+                "{}/fika/headless/restartafterraidamount",
+                self.base_url
+            ))
+            .header("responsecompressed", "0")
+            .send()
+            .await
+            .context("failed to reach Fika headless restart config endpoint")?
+            .error_for_status()
+            .context("Fika headless restart config endpoint returned error")?;
+        resp.json()
+            .await
+            .context("failed to parse headless restart config response")
+    }
+
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
