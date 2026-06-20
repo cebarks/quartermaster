@@ -34,12 +34,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    #[allow(dead_code)]
     pub fn get_server_transition(&self) -> Option<String> {
         self.server_transition.lock().clone()
     }
 
-    #[allow(dead_code)]
     pub fn set_server_transition(&self, transition: Option<&str>) {
         *self.server_transition.lock() = transition.map(|s| s.to_string());
     }

@@ -181,7 +181,6 @@ impl ContainerManager {
             .is_some_and(|s| s.as_ref() == "running"))
     }
 
-    #[allow(dead_code)]
     pub async fn container_started_at(&self, container: &str) -> Result<Option<String>> {
         let info = self
             .docker
