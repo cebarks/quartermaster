@@ -1,4 +1,3 @@
-#[allow(dead_code)] // Called by Askama filter functions via generated code
 fn format_bytes(n: i64) -> String {
     const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
     if n == 0 {
@@ -28,7 +27,6 @@ pub fn format_size_i64(bytes: &i64, _env: &dyn askama::Values) -> askama::Result
     Ok(format_bytes(*bytes))
 }
 
-#[allow(dead_code)]
 fn compute_uptime(started_at: &str) -> Result<String, askama::Error> {
     use chrono::{DateTime, Utc};
     let started: DateTime<Utc> = started_at
@@ -52,7 +50,6 @@ fn compute_uptime(started_at: &str) -> Result<String, askama::Error> {
     }
 }
 
-#[allow(dead_code)]
 #[askama::filter_fn]
 pub fn format_uptime(started_at: &str, _env: &dyn askama::Values) -> askama::Result<String> {
     compute_uptime(started_at)

@@ -1,6 +1,3 @@
-// Server detection is used by health checks and lifecycle commands (tasks 15-16).
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use anyhow::{bail, Result};

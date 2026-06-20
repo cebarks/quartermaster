@@ -22,7 +22,7 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
             None,
         )?;
         println!(
-            "Server is running — removal of {} queued. Run `quma apply` when the server is stopped.",
+            "Server is running — removal of {} queued. It will be applied on next server restart.",
             installed.name
         );
         return Ok(());

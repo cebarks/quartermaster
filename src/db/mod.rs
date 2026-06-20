@@ -1,7 +1,3 @@
-// DB layer is incrementally used by CLI commands (tasks 7-12).
-// Some methods are not yet used but will be in subsequent tasks.
-#![allow(dead_code)]
-
 pub mod mods;
 pub mod requests;
 pub mod schema;
@@ -22,13 +18,13 @@ impl Database {
         Self::configure_and_migrate(conn)
     }
 
-    /// Open an in-memory database for testing.
+    #[cfg(test)]
     pub fn open_in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         Self::configure_and_migrate(conn)
     }
 
-    /// Access the underlying connection.
+    #[cfg(test)]
     pub fn conn(&self) -> &Connection {
         &self.conn
     }

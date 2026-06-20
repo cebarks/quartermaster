@@ -17,7 +17,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
         if running && !force {
             anyhow::bail!(
                 "{} pending operation(s) queued — stop the server first or use --force.\n\
-                 Run `quma apply` to apply pending operations.",
+                 Stop the server and retry, or use --force.",
                 pending.len()
             );
         }
@@ -80,7 +80,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
             }
         }
         println!(
-            "Server is running — {} update(s) queued. Run `quma apply` when the server is stopped.",
+            "Server is running — {} update(s) queued. They will be applied on next server restart.",
             results.updates.len()
         );
         return Ok(());

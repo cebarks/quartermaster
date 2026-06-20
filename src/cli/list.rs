@@ -97,7 +97,7 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
         for entry in &unmanaged_entries {
             println!("  {} ({} files)", entry.directory, entry.file_count);
         }
-        println!("\nUse `quma track <path> <forge_mod_id>` to manage them.");
+        println!("\nManage them through the web UI or reinstall via Forge.");
     }
 
     Ok(())

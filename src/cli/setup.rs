@@ -357,7 +357,7 @@ async fn wrap_existing(
         for dir in unmanaged_dirs.keys() {
             println!("  {}", dir);
         }
-        println!("Use `quma track <path> <forge_mod_id>` to associate them.");
+        println!("\nManage them through the web UI or reinstall via Forge.");
     }
 
     // 5. Summary

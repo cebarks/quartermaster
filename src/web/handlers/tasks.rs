@@ -12,8 +12,6 @@ use crate::web::tasks::TaskView;
 #[template(path = "partials/task_status.html")]
 struct TaskStatusTemplate {
     tasks: Vec<TaskView>,
-    #[allow(dead_code)]
-    has_active: bool,
     csrf_token: String,
 }
 
@@ -25,12 +23,7 @@ pub async fn task_status_partial(
     require_auth(&req)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let tasks = state.tasks.task_views();
-    let has_active = state.tasks.has_active();
-    let tmpl = TaskStatusTemplate {
-        tasks,
-        has_active,
-        csrf_token,
-    };
+    let tmpl = TaskStatusTemplate { tasks, csrf_token };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
@@ -49,11 +42,6 @@ pub async fn dismiss_task(
 
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let tasks = state.tasks.task_views();
-    let has_active = state.tasks.has_active();
-    let tmpl = TaskStatusTemplate {
-        tasks,
-        has_active,
-        csrf_token,
-    };
+    let tmpl = TaskStatusTemplate { tasks, csrf_token };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

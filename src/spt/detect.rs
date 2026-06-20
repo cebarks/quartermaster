@@ -8,6 +8,7 @@ use crate::error::QumaError;
 /// Metadata extracted from a validated SPT installation.
 #[derive(Debug, Clone)]
 pub struct SptInfo {
+    #[allow(dead_code)] // populated during detection, used in tests
     pub root: PathBuf,
     pub spt_version: String,
     pub tarkov_version: String,

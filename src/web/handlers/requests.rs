@@ -53,7 +53,6 @@ pub struct ResolveForm {
 
 #[derive(Template)]
 #[template(path = "mods/partials/requests.html")]
-#[allow(dead_code)]
 struct RequestsTabTemplate {
     user: SessionUser,
     requests: Vec<ModRequestView>,
@@ -63,24 +62,20 @@ struct RequestsTabTemplate {
 
 #[derive(Template)]
 #[template(path = "mods/partials/search_results.html")]
-#[allow(dead_code)]
 struct SearchResultsTemplate {
     results: Vec<SearchResult>,
     error: Option<String>,
 }
 
-#[allow(dead_code)]
 pub struct SearchResult {
     pub id: i64,
     pub name: String,
-    pub slug: Option<String>,
     pub description: Option<String>,
     pub fika_compatible: String,
 }
 
 #[derive(Template)]
 #[template(path = "mods/partials/request_card.html")]
-#[allow(dead_code)]
 struct RequestCardTemplate {
     user: SessionUser,
     r: ModRequestView,
@@ -90,7 +85,6 @@ struct RequestCardTemplate {
 
 #[derive(Template)]
 #[template(path = "mods/partials/vote_comments.html")]
-#[allow(dead_code)]
 struct VoteCommentsTemplate {
     comments: Vec<VoteComment>,
 }
@@ -249,7 +243,6 @@ pub async fn search_mods(
                     results: vec![SearchResult {
                         id: m.id,
                         name: m.name,
-                        slug: m.slug,
                         description: m.description,
                         fika_compatible: fika_compat_to_string(&m.fika_compatibility),
                     }],
@@ -283,7 +276,6 @@ pub async fn search_mods(
                 .map(|m| SearchResult {
                     id: m.id,
                     name: m.name,
-                    slug: m.slug,
                     description: m.description,
                     fika_compatible: fika_compat_to_string(&m.fika_compatibility),
                 })

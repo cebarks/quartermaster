@@ -3,6 +3,7 @@ use rusqlite::{params, OptionalExtension};
 use super::Database;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model
 pub struct ModRequest {
     pub id: i64,
     pub user_id: i64,
@@ -21,6 +22,7 @@ pub struct ModRequest {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model
 pub struct ModRequestVote {
     pub id: i64,
     pub request_id: i64,

@@ -85,11 +85,6 @@ async fn main() -> Result<()> {
                     reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
                     cli::list::run(*json, &ctx)
                 }
-                Command::Track { path, forge_mod_id } => {
-                    let ctx = cli::common::resolve_context(&cli)?;
-                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-                    cli::track::run(path, forge_mod_id, &ctx).await
-                }
                 Command::Check => {
                     let ctx = cli::common::resolve_context(&cli)?;
                     reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
@@ -100,30 +95,12 @@ async fn main() -> Result<()> {
                     }
                     Ok(())
                 }
-                Command::Apply { force } => {
-                    let ctx = cli::common::resolve_context(&cli)?;
-                    reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
-                    cli::apply::run(*force, &ctx).await
-                }
                 Command::Status { json } => {
                     let ctx = cli::common::resolve_context(&cli)?;
                     reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
                     cli::status::run(*json, &ctx).await
                 }
                 Command::Server { action } => {
-                    if let cli::ServerAction::Create { name, port } = action {
-                        let filter = logging::resolve_log_filter(
-                            &config::LoggingConfig::default(),
-                            cli.verbose,
-                            cli.log_level.as_deref(),
-                        );
-                        reload_handles.reconfigure(
-                            &config::LoggingConfig::default(),
-                            &filter,
-                            None,
-                        );
-                        return cli::server::create_container(name, *port, &cli).await;
-                    }
                     let ctx = cli::common::resolve_context(&cli)?;
                     reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
                     cli::server::run(action, &ctx).await
@@ -147,16 +124,6 @@ async fn main() -> Result<()> {
                     let ctx = cli::common::resolve_context(&cli)?;
                     reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
                     cli::invite::run(expires.as_deref(), &ctx)
-                }
-                Command::Config { action } => {
-                    // Apply CLI verbosity to default config for early commands
-                    let filter = logging::resolve_log_filter(
-                        &config::LoggingConfig::default(),
-                        cli.verbose,
-                        cli.log_level.as_deref(),
-                    );
-                    reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
-                    cli::config_cmd::run(action, &cli)
                 }
                 Command::Serve { .. } => unreachable!(),
             }

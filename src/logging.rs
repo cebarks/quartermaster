@@ -69,16 +69,6 @@ impl LogBroadcast {
         let skip = buf.len().saturating_sub(limit);
         buf.iter().skip(skip).cloned().collect()
     }
-
-    #[allow(dead_code)]
-    pub fn sender(&self) -> broadcast::Sender<LogEntry> {
-        self.sender.clone()
-    }
-
-    #[allow(dead_code)]
-    pub fn buffer(&self) -> Arc<RwLock<VecDeque<LogEntry>>> {
-        Arc::clone(&self.buffer)
-    }
 }
 
 // ---------------------------------------------------------------------------

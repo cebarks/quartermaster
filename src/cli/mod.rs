@@ -6,7 +6,6 @@ pub mod apply;
 pub mod check;
 pub mod client;
 pub mod common;
-pub mod config_cmd;
 pub mod generate;
 pub mod install;
 pub mod invite;
@@ -16,7 +15,6 @@ pub mod serve;
 pub mod server;
 pub mod setup;
 pub mod status;
-pub mod track;
 pub mod update;
 
 #[derive(Parser)]
@@ -89,23 +87,8 @@ pub enum Command {
         json: bool,
     },
 
-    /// Associate an unmanaged mod with a Forge entry
-    Track {
-        /// Relative path from SPT root (e.g. user/mods/SAIN)
-        path: String,
-        /// Forge mod ID or slug
-        forge_mod_id: String,
-    },
-
     /// Check all installed mods for updates
     Check,
-
-    /// Apply pending queued operations
-    Apply {
-        /// Apply even if SPT server is running
-        #[arg(long)]
-        force: bool,
-    },
 
     /// Run health checks against SPT server and mod integrity
     Status {
@@ -148,12 +131,6 @@ pub enum Command {
         #[arg(long)]
         expires: Option<String>,
     },
-
-    /// View and modify configuration
-    Config {
-        #[command(subcommand)]
-        action: Option<ConfigAction>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -181,20 +158,6 @@ pub enum ServerAction {
         #[arg(long, short)]
         follow: bool,
     },
-    /// Alias for `quma status`
-    Status {
-        #[arg(long)]
-        json: bool,
-    },
-    /// Create a new SPT server container
-    Create {
-        /// Container name
-        #[arg(long, default_value = "spt-server")]
-        name: String,
-        /// Host port to map to container port 6969
-        #[arg(long, default_value = "6969")]
-        port: u16,
-    },
 }
 
 #[derive(Subcommand)]
@@ -205,12 +168,4 @@ pub enum GenerateTarget {
         #[arg(long)]
         install: bool,
     },
-}
-
-#[derive(Subcommand)]
-pub enum ConfigAction {
-    /// Set a config value
-    Set { key: String, value: String },
-    /// Get a config value
-    Get { key: String },
 }
