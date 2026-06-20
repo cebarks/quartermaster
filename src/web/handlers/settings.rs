@@ -3,7 +3,10 @@ use actix_web::web::{Data, Form, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
-use crate::config::{Config, LogFormat, RestartPolicy, RotationPolicy};
+use crate::config::{
+    Config, ConsoleLogConfig, FileLogConfig, LogFormat, LoggingConfig, RestartPolicy,
+    RotationPolicy, WebLogConfig,
+};
 use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
@@ -146,8 +149,17 @@ pub struct ForgeSettingsForm {
 
 #[derive(serde::Deserialize)]
 pub struct LoggingSettingsForm {
-    #[allow(dead_code)]
     csrf_token: String,
+    log_level: String,
+    console_enabled: Option<String>,
+    console_format: String,
+    file_enabled: Option<String>,
+    file_path: String,
+    file_format: String,
+    file_rotation: String,
+    file_max_size_mb: u64,
+    file_max_files: usize,
+    web_buffer_size: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -315,11 +327,63 @@ pub async fn save_forge_settings(
 }
 
 pub async fn save_logging_settings(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
-    _form: Form<LoggingSettingsForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<LoggingSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_users)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let valid_levels = ["trace", "debug", "info", "warn", "error"];
+    if !valid_levels.contains(&form.log_level.as_str()) {
+        set_flash(&session, "Invalid log level", "error");
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/settings?tab=logging"))
+            .finish());
+    }
+
+    let parse_format = |s: &str| -> LogFormat {
+        match s {
+            "json" => LogFormat::Json,
+            _ => LogFormat::Text,
+        }
+    };
+
+    let parse_rotation = |s: &str| -> RotationPolicy {
+        match s {
+            "size" => RotationPolicy::Size,
+            "daily" => RotationPolicy::Daily,
+            _ => RotationPolicy::None,
+        }
+    };
+
+    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    config.logging = LoggingConfig {
+        level: form.log_level.trim().to_string(),
+        console: ConsoleLogConfig {
+            enabled: form.console_enabled.is_some(),
+            format: parse_format(&form.console_format),
+        },
+        file: FileLogConfig {
+            enabled: form.file_enabled.is_some(),
+            path: form.file_path.trim().to_string(),
+            format: parse_format(&form.file_format),
+            rotation: parse_rotation(&form.file_rotation),
+            max_size_mb: form.file_max_size_mb,
+            max_files: form.file_max_files,
+        },
+        web: WebLogConfig {
+            buffer_size: form.web_buffer_size,
+        },
+    };
+
+    config.save(&state.config_path).map_err(WebError::from)?;
+
+    set_flash(&session, "Logging settings saved", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=logging"))
         .finish())
