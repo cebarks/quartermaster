@@ -386,6 +386,14 @@ pub async fn start_server(
                             ),
                     ),
             )
+            .route(
+                "/",
+                web::get().to(|| async {
+                    HttpResponse::Found()
+                        .insert_header(("Location", "/quma/"))
+                        .finish()
+                }),
+            )
             .default_service(web::to(proxy::proxy_handler))
     });
 
