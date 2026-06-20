@@ -89,7 +89,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "regis
 tracing-actix-web = "0.7"
 tracing-appender = "0.2"
 rolling-file = "0.2"
-actix-web-lab = "0.24"
+actix-web-lab = "0.26"
 async-stream = "0.3"
 tokio-stream = "0.1"
 bytestring = "1"
