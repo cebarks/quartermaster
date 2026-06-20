@@ -9,6 +9,7 @@ use crate::forge::models::DependencyNode;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage};
+use crate::web::handlers::requests::{fika_compat_to_string, parse_forge_url};
 use crate::web::state::AppState;
 
 #[allow(unused_imports)] // Used by Askama template macro expansion
@@ -123,6 +124,31 @@ struct ListBodyTemplate {
 pub struct InstallForm {
     mod_ref: String,
     csrf_token: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ModSearchQuery {
+    pub q: Option<String>,
+}
+
+pub struct InstallSearchResult {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub fika_compatible: String,
+}
+
+#[derive(Template)]
+#[template(path = "mods/partials/install_search_results.html")]
+struct InstallSearchResultsTemplate {
+    results: Vec<InstallSearchResult>,
+    error: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "mods/partials/compat_badge.html")]
+struct CompatBadgeTemplate {
+    status: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -430,6 +456,97 @@ pub async fn dep_tree_partial(
     };
 
     let tmpl = DependencyTreeTemplate { deps };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn search_mods(
+    state: Data<AppState>,
+    req: HttpRequest,
+    query: Query<ModSearchQuery>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
+    let q = query.q.as_deref().unwrap_or("").trim().to_string();
+
+    if let Some(mod_id) = parse_forge_url(&q) {
+        match state.forge.get_mod(mod_id, false).await {
+            Ok(m) => {
+                let tmpl = InstallSearchResultsTemplate {
+                    results: vec![InstallSearchResult {
+                        id: m.id,
+                        name: m.name,
+                        description: m.description,
+                        fika_compatible: fika_compat_to_string(&m.fika_compatibility),
+                    }],
+                    error: None,
+                };
+                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+            }
+            Err(_) => {
+                let tmpl = InstallSearchResultsTemplate {
+                    results: vec![],
+                    error: Some(format!("Mod with ID {mod_id} not found on Forge.")),
+                };
+                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+            }
+        }
+    }
+
+    if q.len() < 2 {
+        let tmpl = InstallSearchResultsTemplate {
+            results: vec![],
+            error: None,
+        };
+        return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+    }
+
+    match state.forge.search_mods(&q).await {
+        Ok(mods) => {
+            let results = mods
+                .into_iter()
+                .map(|m| InstallSearchResult {
+                    id: m.id,
+                    name: m.name,
+                    description: m.description,
+                    fika_compatible: fika_compat_to_string(&m.fika_compatibility),
+                })
+                .collect();
+            let tmpl = InstallSearchResultsTemplate {
+                results,
+                error: None,
+            };
+            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+        }
+        Err(_) => {
+            let tmpl = InstallSearchResultsTemplate {
+                results: vec![],
+                error: Some("Could not reach SPT Forge. Try again later.".to_string()),
+            };
+            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+        }
+    }
+}
+
+pub async fn compat_check(
+    state: Data<AppState>,
+    req: HttpRequest,
+    path: Path<i64>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
+    let mod_id = path.into_inner();
+
+    let status = match state
+        .forge
+        .get_versions(mod_id, Some(&state.spt_info.spt_version))
+        .await
+    {
+        Ok(versions) if !versions.is_empty() => "compatible".to_string(),
+        Ok(_) => "incompatible".to_string(),
+        Err(_) => "unknown".to_string(),
+    };
+
+    let tmpl = CompatBadgeTemplate { status };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
