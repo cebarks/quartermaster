@@ -439,6 +439,7 @@ pub async fn client_scale(
     let converge_flag = std::sync::Arc::new(tokio::sync::RwLock::new(false));
     let mgr_clone = container_mgr.clone();
     let config_clone = state.config.clone();
+    let config_path = state.config_path.clone();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
 
@@ -460,6 +461,21 @@ pub async fn client_scale(
             tracing::error!(error = %e, "Client convergence failed during scale operation");
         } else {
             tracing::info!(target_count = target, "Client scaling completed");
+
+            // Persist the new client count to config file
+            match crate::config::Config::load(&config_path) {
+                Ok(mut saved_config) => {
+                    if let Some(ref mut clients) = saved_config.clients {
+                        clients.count = target;
+                    }
+                    if let Err(e) = saved_config.save(&config_path) {
+                        tracing::error!(error = %e, "Failed to save updated client count to config");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to load config for persisting client count");
+                }
+            }
         }
     });
 

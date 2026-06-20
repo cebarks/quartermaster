@@ -19,6 +19,7 @@ pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     pub forge: ForgeClient,
     pub config: Config,
+    pub config_path: PathBuf,
     pub spt_dir: PathBuf,
     pub spt_info: SptInfo,
     pub tasks: TaskTracker,
