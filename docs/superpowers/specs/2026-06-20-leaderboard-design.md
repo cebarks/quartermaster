@@ -29,15 +29,14 @@ Add raid event interception to `src/web/proxy.rs`, following the existing `/laun
 
 **Endpoints:**
 - `POST /client/match/local/start` — clone request body, spawn `handle_raid_start()` on success
-- `POST /client/match/local/end` — buffer response body, spawn `handle_raid_end()` on success
+- `POST /client/match/local/end` — clone request body, spawn `handle_raid_end()` on success
 
 **Key details:**
+- Both handlers parse the **request body** (the SPT client's POST payload), not the response body. `handle_raid_end()` receives `RaidEndRequest` which contains the updated profile in `results.profile`.
 - PHPSESSID cookie contains SPT profile ID, extracted via existing `extract_session_id()`
-- Request body is already fully buffered before forwarding
-- For raid end: response body must be fully buffered (collect stream to bytes) to pass to `handle_raid_end()`, then re-served to the client
+- Request body is already fully buffered before forwarding (proxy.rs lines 41-48), so both hooks just clone it — no response body buffering needed
 - Both handlers run in `tokio::task::spawn_blocking` since they touch the DB (behind `parking_lot::Mutex`)
-- Non-blocking: raid tracking is fire-and-forget (spawned task)
-- For raid end only: response switches from streaming to fully-buffered so we can clone the body for tracking. Acceptable tradeoff — raid end responses are small JSON payloads, not large streams
+- Non-blocking: raid tracking is fire-and-forget (spawned task). Response streaming is unaffected.
 
 ### 2. Leaderboard Data Model
 
@@ -66,14 +65,19 @@ No schema changes — all derived from existing `raids` + `raid_kills` tables.
 
 Single CTE-based query in `db.get_leaderboard(min_raids)`:
 
+Only count completed raids (`ended_at IS NOT NULL`) — in-progress raids have no exit_status and would inflate raid counts without contributing to survival rate.
+
 1. Base CTE: join `raids` → `users`, group by user, compute:
-   - `total_raids`, `survival_rate` (survived/total), `total_deaths` (exit_status = 'Killed')
-   - `favorite_map` (most common map via window function or subquery)
-   - `favorite_extract` (most common exit_name where exit_status = 'Survived')
+   - `total_raids` (completed only), `survival_rate` (survived/total), `total_deaths` (exit_status = 'Killed' — MIA/Runner are not deaths for K/D purposes)
+   - `favorite_map` (most common map, tie-break alphabetically for determinism)
+   - `favorite_extract` (most common exit_name where exit_status = 'Survived' AND exit_name IS NOT NULL)
 2. Kills CTE: join `raid_kills` → `raids`, group by user, compute:
    - `total_kills`, `headshot_count` (body_part = 'Head'), `longest_kill` (MAX distance)
-   - `favorite_weapon` (most common weapon)
-3. Final SELECT: join CTEs, compute `kd_ratio` and `headshot_ratio`, filter by `min_raids` threshold
+   - `favorite_weapon` (most common weapon WHERE weapon IS NOT NULL, tie-break alphabetically)
+3. Final SELECT: join CTEs, compute derived ratios with zero-division guards:
+   - `kd_ratio`: `CASE WHEN total_deaths = 0 THEN CAST(total_kills AS REAL) ELSE CAST(total_kills AS REAL) / total_deaths END`
+   - `headshot_ratio`: `CASE WHEN total_kills = 0 THEN 0.0 ELSE CAST(headshot_count AS REAL) / total_kills END`
+   - Filter by `total_raids >= min_raids` threshold
 4. Order by total_kills DESC (default)
 
 ### 4. Config
@@ -86,7 +90,7 @@ pub leaderboard_min_raids: u32,  // default: 5
 ```
 
 - Default function: `fn default_leaderboard_min_raids() -> u32 { 5 }`
-- Env override: `QUMA_LEADERBOARD_MIN_RAIDS`
+- Env override: `QUMA_LEADERBOARD_MIN_RAIDS` — add parse block to `apply_env_overrides()` (parse as `u32`)
 - TOML key: `leaderboard_min_raids`
 
 ### 5. Web Handler
@@ -106,7 +110,7 @@ New file `src/web/handlers/leaderboard.rs`:
 - Nav active state: `"leaderboard"`
 - Header showing threshold ("Players with N+ raids")
 - Ranked table with columns: Rank (#), Player, Raids, Kills, Deaths, K/D, Survival %, Headshots, HS%, Longest Kill (m), Fav Weapon, Fav Map, Fav Extract
-- Player names link to `/profiles/{username}/raids`
+- Player names link to `/quma/profiles/{username}/raids` (full path, matching existing template convention)
 - Pre-sorted by total kills descending
 - Uses existing table CSS from style.css
 
