@@ -1,4 +1,5 @@
 pub mod mods;
+pub mod raids;
 pub mod requests;
 pub mod schema;
 pub mod users;

@@ -1,0 +1,19 @@
+{% if active_raids.is_empty() %}
+<p class="text-muted text-sm">No active raids.</p>
+{% else %}
+<table>
+    <thead>
+        <tr><th>Player</th><th>Map</th><th>Side</th><th>Time In Raid</th></tr>
+    </thead>
+    <tbody>
+        {% for (raid, username) in active_raids %}
+        <tr>
+            <td><a href="/quma/profiles/{{ username }}">{{ username }}</a></td>
+            <td>{{ raid.map }}</td>
+            <td>{{ raid.player_side }}</td>
+            <td class="text-sm">{{ raid.started_at|format_uptime }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}

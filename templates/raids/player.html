@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}{{ profile_username }} Raids — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("profile", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>{{ profile_username }} — Raids</h1>
+
+<div class="stat-card-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Raids</div>
+        <div class="stat-value">{{ stats.total_raids }}</div>
+        <div class="stat-detail">PMC: {{ stats.pmc_raids }} | Scav: {{ stats.scav_raids }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Survival Rate</div>
+        <div class="stat-value">{{ stats.pmc_survival_rate|fmt_pct }}</div>
+        <div class="stat-detail">Scav: {{ stats.scav_survival_rate|fmt_pct }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Total Kills</div>
+        <div class="stat-value">{{ stats.total_kills }}</div>
+        <div class="stat-detail">PMC: {{ stats.pmc_kills }} | Scav: {{ stats.scav_kills }}</div>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;margin-bottom:1.5rem">
+    <div class="stat-card">
+        <div class="stat-label">Deaths</div>
+        <div class="stat-value">{{ stats.total_deaths }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Duration</div>
+        <div class="stat-value">{% if stats.avg_raid_duration > 0.0 %}{{ (stats.avg_raid_duration / 60.0)|fmt("{:.1}") }}m{% else %}—{% endif %}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Favorite Map</div>
+        <div class="stat-value" style="font-size:1rem">{% if let Some(map) = stats.favorite_map %}{{ map }}{% else %}—{% endif %}</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="flex-between" style="margin-bottom:1rem">
+        <h2 style="margin:0">Raid History</h2>
+        <span class="text-muted text-sm">{{ raids.len() }} shown</span>
+    </div>
+    {% if raids.is_empty() %}
+    <p class="text-muted text-sm">No raids recorded yet.</p>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Map</th>
+                <th>Side</th>
+                <th>Started</th>
+                <th>Duration</th>
+                <th>Outcome</th>
+                <th>XP</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for raid in raids %}
+            <tr onclick="window.location='/quma/raids/{{ raid.id }}'" style="cursor:pointer">
+                <td>{{ raid.map }}</td>
+                <td>{{ raid.player_side }}</td>
+                <td class="text-sm text-muted">{{ raid.started_at|fmt("{:.16}") }}</td>
+                <td>{% if let Some(duration) = raid.play_time_seconds %}{{ (duration / 60)|fmt("{}") }}m{% else %}—{% endif %}</td>
+                <td>
+                    {% if let Some(status) = raid.exit_status %}
+                        {% if status == "Survived" %}
+                            <span class="badge badge-success">{{ status }}</span>
+                        {% else if status == "Killed" %}
+                            <span class="badge badge-danger">{{ status }}</span>
+                        {% else if status == "Runner" || status == "MissingInAction" %}
+                            <span class="badge badge-warning">{{ status }}</span>
+                        {% else %}
+                            <span class="badge badge-muted">{{ status }}</span>
+                        {% endif %}
+                    {% else %}
+                        <span class="badge badge-muted">In Progress</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if let Some(xp_before) = raid.xp_before %}
+                        {% if let Some(xp_after) = raid.xp_after %}
+                            +{{ xp_after - xp_before }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if has_more %}
+    <div style="margin-top:1rem;text-align:center">
+        <button class="btn btn-outline"
+                hx-get="/quma/profiles/{{ profile_username }}/raids?offset={{ offset + 25 }}"
+                hx-target="body"
+                hx-swap="innerHTML"
+                hx-push-url="true">Load More</button>
+    </div>
+    {% endif %}
+    {% endif %}
+</div>
+{% endblock %}
