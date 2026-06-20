@@ -172,6 +172,18 @@ impl Database {
             .optional()
     }
 
+    #[allow(dead_code)] // Used by Task 5-7 (proxy handlers)
+    pub fn get_user_by_spt_profile_id(&self, profile_id: &str) -> rusqlite::Result<Option<User>> {
+        self.conn
+            .query_row(
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+                 FROM users WHERE spt_profile_id = ?1",
+                params![profile_id],
+                row_to_user,
+            )
+            .optional()
+    }
+
     pub fn update_user_role(&self, user_id: i64, new_role: Role) -> rusqlite::Result<usize> {
         let new_role_str = new_role.as_str();
         self.conn.execute(

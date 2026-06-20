@@ -3,6 +3,7 @@ pub mod csrf;
 pub mod error;
 pub mod flash;
 pub mod handlers;
+pub mod proxy_metrics;
 pub mod sse;
 pub mod state;
 pub mod tasks;
@@ -81,6 +82,7 @@ pub async fn start_server(
         converging,
         fika_installed,
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
+        proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");

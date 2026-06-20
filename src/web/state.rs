@@ -11,6 +11,7 @@ use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging::LogBroadcast;
 use crate::spt::detect::SptInfo;
+use crate::web::proxy_metrics::ProxyMetrics;
 use crate::web::sse::ServerEvent;
 use crate::web::tasks::TaskTracker;
 use crate::web::update_cache::UpdateCache;
@@ -31,6 +32,8 @@ pub struct AppState {
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
     pub server_transition: Arc<Mutex<Option<String>>>,
+    #[allow(dead_code)] // Used by Tasks 5-7 (proxy handlers, status page)
+    pub proxy_metrics: ProxyMetrics,
 }
 
 impl AppState {

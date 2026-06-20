@@ -1003,3 +1003,31 @@ fn list_requests_current_user_no_vote() {
     assert_eq!(views.len(), 1);
     assert_eq!(views[0].current_user_vote, None);
 }
+
+#[test]
+fn get_user_by_spt_profile_id_found() {
+    let db = test_db();
+    db.insert_user("alice", Some("profile-123"), Some("hash"), Role::Player)
+        .unwrap();
+    let user = db.get_user_by_spt_profile_id("profile-123").unwrap();
+    assert!(user.is_some());
+    assert_eq!(user.unwrap().username, "alice");
+}
+
+#[test]
+fn get_user_by_spt_profile_id_not_found() {
+    let db = test_db();
+    db.insert_user("alice", Some("profile-123"), Some("hash"), Role::Player)
+        .unwrap();
+    let user = db.get_user_by_spt_profile_id("profile-999").unwrap();
+    assert!(user.is_none());
+}
+
+#[test]
+fn get_user_by_spt_profile_id_null_profile() {
+    let db = test_db();
+    db.insert_user("bob", None, Some("hash"), Role::Player)
+        .unwrap();
+    let user = db.get_user_by_spt_profile_id("anything").unwrap();
+    assert!(user.is_none());
+}
