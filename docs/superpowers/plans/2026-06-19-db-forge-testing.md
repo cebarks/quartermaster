@@ -1,216 +1,189 @@
-use std::path::Path;
+# DB Unit Tests & Forge Client Mock Tests Implementation Plan
 
-use anyhow::{Context, Result};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
-use tokio::io::AsyncWriteExt;
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-use super::models::*;
+**Goal:** Add comprehensive test coverage for the DB user/request layers (#19) and the Forge HTTP client (#20) using wiremock.
 
-const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
+**Architecture:** Extend existing `src/db/tests.rs` with net-new DB tests (most already exist — only gaps need filling). Add `wiremock` as a dev-dependency and create a `#[cfg(test)] mod tests` block in `src/forge/client.rs` with `#[tokio::test]` async tests that run against a local mock HTTP server.
 
-#[derive(Clone)]
-pub struct ForgeClient {
-    client: reqwest::Client,
-    base_url: String,
-    #[allow(dead_code)]
-    token: Option<String>,
+**Tech Stack:** Rust standard test framework, wiremock 0.6, tokio (already a dependency), tempfile (already a dependency)
+
+## Global Constraints
+
+- All tests run with `cargo test` — no special configuration
+- DB tests are synchronous, using in-memory SQLite via `test_db()`
+- Forge tests are async using `#[tokio::test]`
+- Follow existing test patterns (`.unwrap()` on errors, `assert_eq!`/`assert!` assertions, check timestamps with `.is_some()` not exact values)
+- Run `cargo test` and `cargo clippy -- -D warnings` before each commit
+
+---
+
+### Task 1: Add wiremock dependency and net-new DB tests
+
+**Files:**
+- Modify: `Cargo.toml` (line 99-102, dev-dependencies section)
+- Modify: `src/db/tests.rs` (append after line 885)
+
+**Interfaces:**
+- Consumes: `Database::open_in_memory()`, `test_db()`, `setup_user()`, `setup_admin()` helpers, all `Database` methods from `users.rs` and `requests.rs`
+- Produces: New test functions; wiremock available as dev-dependency for Task 2
+
+**Context — what's already covered:**
+
+The existing `db/tests.rs` (885 lines, 47 tests) already covers most of the spec. After careful audit, only these gaps remain:
+
+1. **`list_users_alphabetical`** — existing test (`insert_and_get_user`, line 212) only inserts 1 user, never verifies sort order
+2. **`disable_user_with_multiple_admins`** — `set_user_disabled_last_admin_guard` (line 526) tests the guard, but no test confirms disable succeeds when a backup admin exists
+3. **`list_requests_downvote_score`** — existing `list_mod_requests_with_votes` (line 798) only tests upvotes; vote_score is always positive. Need a test with mixed up/downvotes to verify `vote_score = upvotes - downvotes`
+4. **`update_invite_user`** — the unconditional `update_invite_user()` method (users.rs:261) has zero test coverage
+5. **`list_requests_current_user_no_vote`** — existing tests always have the querying user vote; the `LEFT JOIN` + nullable `current_user_vote` path for a non-voting user is untested
+
+- [ ] **Step 1: Add wiremock to dev-dependencies**
+
+In `Cargo.toml`, add `wiremock` to the `[dev-dependencies]` section:
+
+```toml
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+temp-env = "0.3"
+wiremock = "0.6"
+```
+
+- [ ] **Step 2: Write net-new DB tests**
+
+Append the following tests to the end of `src/db/tests.rs`:
+
+```rust
+#[test]
+fn list_users_alphabetical_order() {
+    let db = test_db();
+    db.insert_user("charlie", "p3", Some("pw"), Role::Player).unwrap();
+    db.insert_user("alice", "p1", Some("pw"), Role::Admin).unwrap();
+    db.insert_user("bob", "p2", Some("pw"), Role::Moderator).unwrap();
+
+    let users = db.list_users().unwrap();
+    assert_eq!(users.len(), 3);
+    assert_eq!(users[0].username, "alice");
+    assert_eq!(users[1].username, "bob");
+    assert_eq!(users[2].username, "charlie");
 }
 
-impl ForgeClient {
-    /// Create a new client pointing at the production Forge API.
-    /// If `token` is provided it is sent as a Bearer token on every request.
-    pub fn new(token: Option<String>) -> Result<Self> {
-        Self::build(DEFAULT_BASE_URL.to_string(), token)
-    }
+#[test]
+fn disable_admin_allowed_with_backup_admin() {
+    let db = test_db();
+    let admin1 = db.insert_user("admin1", "p1", Some("pw"), Role::Admin).unwrap();
+    db.insert_user("admin2", "p2", Some("pw"), Role::Admin).unwrap();
 
-    /// Create a client with a custom base URL (for tests against a mock server).
-    #[cfg(test)]
-    pub fn with_base_url(base_url: String, token: Option<String>) -> Result<Self> {
-        Self::build(base_url, token)
-    }
-
-    fn build(base_url: String, token: Option<String>) -> Result<Self> {
-        let mut headers = HeaderMap::new();
-
-        let ua = format!("quartermaster/{}", env!("CARGO_PKG_VERSION"));
-        headers.insert(USER_AGENT, HeaderValue::from_str(&ua)?);
-
-        if let Some(ref t) = token {
-            let val =
-                HeaderValue::from_str(&format!("Bearer {t}")).context("invalid auth token")?;
-            headers.insert(AUTHORIZATION, val);
-        }
-
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .context("failed to build HTTP client")?;
-
-        Ok(Self {
-            client,
-            base_url,
-            token,
-        })
-    }
-
-    /// Search mods by query string.
-    pub async fn search_mods(&self, query: &str) -> Result<Vec<ForgeMod>> {
-        let url = format!("{}/mods", self.base_url);
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[("query", query)])
-            .send()
-            .await
-            .context("search_mods request failed")?
-            .error_for_status()
-            .context("search_mods returned error status")?;
-
-        let body: ForgeSearchResponse = resp
-            .json()
-            .await
-            .context("search_mods: failed to parse response")?;
-        Ok(body.data)
-    }
-
-    /// Fetch a single mod by ID, optionally including its versions.
-    pub async fn get_mod(&self, id: i64, include_versions: bool) -> Result<ForgeMod> {
-        let url = format!("{}/mod/{}", self.base_url, id);
-        let mut req = self.client.get(&url);
-        if include_versions {
-            req = req.query(&[("include", "versions")]);
-        }
-
-        let resp = req
-            .send()
-            .await
-            .context("get_mod request failed")?
-            .error_for_status()
-            .context("get_mod returned error status")?;
-
-        let body: ForgeModResponse = resp
-            .json()
-            .await
-            .context("get_mod: failed to parse response")?;
-        Ok(body.data)
-    }
-
-    /// List versions for a mod, optionally filtered to a specific SPT version.
-    pub async fn get_versions(
-        &self,
-        mod_id: i64,
-        spt_version: Option<&str>,
-    ) -> Result<Vec<ForgeVersion>> {
-        let url = format!("{}/mod/{}/versions", self.base_url, mod_id);
-        let mut req = self.client.get(&url);
-        if let Some(v) = spt_version {
-            req = req.query(&[("filter[spt_version]", v)]);
-        }
-
-        let resp = req
-            .send()
-            .await
-            .context("get_versions request failed")?
-            .error_for_status()
-            .context("get_versions returned error status")?;
-
-        let body: ForgeVersionsResponse = resp
-            .json()
-            .await
-            .context("get_versions: failed to parse response")?;
-        Ok(body.data)
-    }
-
-    /// Resolve the dependency tree for a set of (mod_id, version_string) pairs.
-    pub async fn get_dependencies(&self, mods: &[(i64, &str)]) -> Result<Vec<DependencyNode>> {
-        let url = format!("{}/mods/dependencies", self.base_url);
-        let mods_param: String = mods
-            .iter()
-            .map(|(id, ver)| format!("{id}:{ver}"))
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[("mods", &mods_param)])
-            .send()
-            .await
-            .context("get_dependencies request failed")?
-            .error_for_status()
-            .context("get_dependencies returned error status")?;
-
-        let body: DependencyResponse = resp
-            .json()
-            .await
-            .context("get_dependencies: failed to parse response")?;
-        Ok(body.data)
-    }
-
-    /// Check for available updates for the given mods.
-    /// Each entry in `mods` is (mod_id, current_version_string).
-    pub async fn check_updates(
-        &self,
-        mods: &[(i64, String)],
-        spt_version: &str,
-    ) -> Result<UpdatesResponseData> {
-        let url = format!("{}/mods/updates", self.base_url);
-        let mods_param: String = mods
-            .iter()
-            .map(|(id, ver)| format!("{id}:{ver}"))
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[
-                ("mods", &mods_param),
-                ("spt_version", &spt_version.to_string()),
-            ])
-            .send()
-            .await
-            .context("check_updates request failed")?
-            .error_for_status()
-            .context("check_updates returned error status")?;
-
-        let body: UpdatesResponse = resp
-            .json()
-            .await
-            .context("check_updates: failed to parse response")?;
-        Ok(body.data)
-    }
-
-    /// Download a file from `url` and write it to `dest`.
-    pub async fn download_file(&self, url: &str, dest: &Path) -> Result<()> {
-        use futures_util::StreamExt;
-
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .context("download_file request failed")?
-            .error_for_status()
-            .context("download_file returned error status")?;
-
-        let mut stream = resp.bytes_stream();
-        let mut file = tokio::fs::File::create(dest)
-            .await
-            .with_context(|| format!("failed to create file: {}", dest.display()))?;
-
-        while let Some(chunk) = stream.next().await {
-            let bytes = chunk.context("error reading download stream")?;
-            file.write_all(&bytes)
-                .await
-                .context("error writing to file")?;
-        }
-
-        file.flush().await.context("error flushing file")?;
-        Ok(())
-    }
+    let affected = db.set_user_disabled(admin1, true).unwrap();
+    assert_eq!(affected, 1);
+    let user = db.get_user_by_id(admin1).unwrap().unwrap();
+    assert!(user.disabled);
 }
 
+#[test]
+fn update_invite_user_unconditional() {
+    let db = test_db();
+    let admin_id = db.insert_user("admin", "p1", Some("pw"), Role::Admin).unwrap();
+    db.create_invite("CODE-1", Some(admin_id), None).unwrap();
+
+    // Use the invite (sets used_by to admin_id)
+    let used = db.use_invite("CODE-1", admin_id).unwrap();
+    assert_eq!(used, 1);
+
+    // Now unconditionally update to a different user
+    let new_user = db.insert_user("newbie", "p2", Some("pw"), Role::Player).unwrap();
+    let updated = db.update_invite_user("CODE-1", new_user).unwrap();
+    assert_eq!(updated, 1);
+
+    let invite = db.get_invite("CODE-1").unwrap().unwrap();
+    assert_eq!(invite.used_by, Some(new_user));
+}
+
+#[test]
+fn list_requests_mixed_votes_score() {
+    let db = test_db();
+    let user1 = setup_user(&db);
+    let user2 = setup_admin(&db);
+    let user3 = db.insert_user("voter3", "aid3", Some("hash"), Role::Player).unwrap();
+
+    let req_id = db
+        .create_mod_request(user1, 100, "Mod A", None, None, "unknown", None)
+        .unwrap();
+
+    // 2 upvotes, 1 downvote → score = 1
+    db.upsert_vote(req_id, user1, true, None).unwrap();
+    db.upsert_vote(req_id, user2, true, Some("good mod")).unwrap();
+    db.upsert_vote(req_id, user3, false, Some("not needed")).unwrap();
+
+    let views = db.list_mod_requests(Some("pending"), user1).unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].upvote_count, 2);
+    assert_eq!(views[0].downvote_count, 1);
+    assert_eq!(views[0].vote_score, 1);
+    assert_eq!(views[0].comment_count, 2);
+}
+
+#[test]
+fn list_requests_current_user_no_vote() {
+    let db = test_db();
+    let requester = setup_user(&db);
+    let viewer = db.insert_user("viewer", "aid-v", Some("hash"), Role::Player).unwrap();
+
+    db.create_mod_request(requester, 100, "Mod", None, None, "unknown", None)
+        .unwrap();
+
+    let views = db.list_mod_requests(Some("pending"), viewer).unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].current_user_vote, None);
+}
+```
+
+- [ ] **Step 3: Run tests to verify they pass**
+
+Run: `cargo test -p spt-quartermaster -- list_users_alphabetical_order disable_admin_allowed_with_backup_admin update_invite_user_unconditional list_requests_mixed_votes_score list_requests_current_user_no_vote`
+
+Expected: All 5 tests pass.
+
+- [ ] **Step 4: Run full test suite and clippy**
+
+Run: `cargo test && cargo clippy -- -D warnings`
+
+Expected: All 248+ tests pass, no clippy warnings.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add Cargo.toml src/db/tests.rs
+git commit -m "test: add wiremock dep and net-new DB unit tests (#19)
+
+Add wiremock to dev-dependencies for upcoming Forge client tests.
+Add 5 net-new DB tests covering gaps in existing coverage:
+- list_users alphabetical ordering
+- admin disable with backup admin
+- unconditional invite user update
+- mixed upvote/downvote score calculation
+- current_user_vote is None when querying user has not voted"
+```
+
+---
+
+### Task 2: Forge client happy path tests
+
+**Files:**
+- Modify: `src/forge/client.rs` (append `#[cfg(test)] mod tests` block after line 212)
+
+**Interfaces:**
+- Consumes: `ForgeClient::with_base_url()`, all public `ForgeClient` methods, all types from `forge::models`
+- Produces: Test infrastructure (`test_client` helper) and 8 happy-path + request-validation tests
+
+**Important:** These are the first `#[tokio::test]` tests in the project. The `tokio` crate is already a full dependency so `#[tokio::test]` works without any configuration change.
+
+- [ ] **Step 1: Write test module scaffold and `search_mods` test**
+
+Add the following at the end of `src/forge/client.rs`:
+
+```rust
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,10 +305,7 @@ mod tests {
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0].id, 100);
         assert_eq!(versions[0].version, "1.2.0");
-        assert_eq!(
-            versions[0].link.as_deref(),
-            Some("https://example.com/download")
-        );
+        assert_eq!(versions[0].link.as_deref(), Some("https://example.com/download"));
         assert_eq!(versions[1].id, 101);
         assert!(versions[1].link.is_none());
     }
@@ -528,14 +498,60 @@ mod tests {
 
         let client = test_client(&server).await;
         let result = client
-            .check_updates(&[(42, "1.0.0".into()), (99, "2.0.0".into())], "3.10.0")
+            .check_updates(
+                &[(42, "1.0.0".into()), (99, "2.0.0".into())],
+                "3.10.0",
+            )
             .await
             .unwrap();
 
         assert_eq!(result.spt_version, "3.10.0");
         assert!(result.updates.is_empty());
     }
+}
+```
 
+- [ ] **Step 2: Run tests to verify they pass**
+
+Run: `cargo test -p spt-quartermaster forge::client::tests`
+
+Expected: All 9 tests pass (7 happy path + 2 request validation).
+
+- [ ] **Step 3: Run clippy**
+
+Run: `cargo clippy -- -D warnings`
+
+Expected: No warnings.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/forge/client.rs
+git commit -m "test: add Forge client happy path tests with wiremock (#20)
+
+Add wiremock-backed tests for all ForgeClient public methods:
+search_mods, get_mod (with/without versions), get_versions
+(with/without SPT filter), check_updates, and get_dependencies.
+Each test spins up a local mock HTTP server, verifies the correct
+endpoint is called, and asserts the response is parsed correctly."
+```
+
+---
+
+### Task 3: Forge client error handling and download tests
+
+**Files:**
+- Modify: `src/forge/client.rs` (append to `mod tests` block)
+
+**Interfaces:**
+- Consumes: `test_client()` helper from Task 2, `ForgeClient::search_mods()`, `ForgeClient::get_mod()`, `ForgeClient::download_file()`
+- Produces: 6 error-handling tests
+
+- [ ] **Step 1: Write error handling and download tests**
+
+Append the following tests inside the existing `mod tests` block in `src/forge/client.rs`:
+
+```rust
     #[tokio::test]
     async fn search_mods_404_returns_error() {
         let server = MockServer::start().await;
@@ -590,7 +606,10 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/mods"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("this is not json"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("this is not json"),
+            )
             .expect(1)
             .mount(&server)
             .await;
@@ -607,7 +626,10 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/files/test.zip"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(file_content.to_vec()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(file_content.to_vec()),
+            )
             .expect(1)
             .mount(&server)
             .await;
@@ -642,7 +664,46 @@ mod tests {
         let result = client.download_file(&url, &dest).await;
         assert!(result.is_err());
     }
+```
 
+- [ ] **Step 2: Run tests to verify they pass**
+
+Run: `cargo test -p spt-quartermaster forge::client::tests`
+
+Expected: All 15 tests pass (9 from Task 2 + 6 new).
+
+- [ ] **Step 3: Run clippy**
+
+Run: `cargo clippy -- -D warnings`
+
+Expected: No warnings.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/forge/client.rs
+git commit -m "test: add Forge client error handling and download tests (#20)
+
+Test HTTP error propagation (404, 500), malformed JSON handling,
+and file download to disk. All use wiremock mock server."
+```
+
+---
+
+### Task 4: Forge client API quirk and auth tests
+
+**Files:**
+- Modify: `src/forge/client.rs` (append to `mod tests` block)
+
+**Interfaces:**
+- Consumes: `ForgeClient::with_base_url()` (with token), `test_client()`, `ForgeClient::search_mods()`, `ForgeClient::get_mod()`, `ForgeClient::check_updates()`
+- Produces: 4 quirk/validation tests
+
+- [ ] **Step 1: Write API quirk and auth tests**
+
+Append the following tests inside the existing `mod tests` block in `src/forge/client.rs`:
+
+```rust
     #[tokio::test]
     async fn fika_compat_bool_on_mod_object() {
         let server = MockServer::start().await;
@@ -740,19 +801,42 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/mods"))
-            .and(wiremock::matchers::header(
-                "Authorization",
-                "Bearer test-token-123",
-            ))
+            .and(wiremock::matchers::header("Authorization", "Bearer test-token-123"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .expect(1)
             .mount(&server)
             .await;
 
-        let client =
-            ForgeClient::with_base_url(server.uri(), Some("test-token-123".to_string())).unwrap();
+        let client = ForgeClient::with_base_url(
+            server.uri(),
+            Some("test-token-123".to_string()),
+        )
+        .unwrap();
 
         let mods = client.search_mods("test").await.unwrap();
         assert!(mods.is_empty());
     }
-}
+```
+
+- [ ] **Step 2: Run all Forge tests**
+
+Run: `cargo test -p spt-quartermaster forge::client::tests`
+
+Expected: All 19 tests pass (15 from previous tasks + 4 new).
+
+- [ ] **Step 3: Run full test suite and clippy**
+
+Run: `cargo test && cargo clippy -- -D warnings`
+
+Expected: All tests pass (257+ total), no clippy warnings.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/forge/client.rs
+git commit -m "test: add Forge API quirk and auth token tests (#20)
+
+Test the fika_compatibility dual representation (bool on mod objects,
+string enum on version objects), abbreviated versions with missing
+optional fields, and Bearer token header injection."
+```

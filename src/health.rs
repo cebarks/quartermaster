@@ -308,6 +308,38 @@ mod tests {
     }
 
     #[test]
+    fn server_health_with_transition() {
+        let health = ServerHealth {
+            reachable: false,
+            latency_ms: None,
+            version: None,
+            version_matches: None,
+            address: "https://127.0.0.1:6969".to_string(),
+            error: Some("connection refused".to_string()),
+            transition: Some("restarting".to_string()),
+            started_at: None,
+        };
+        assert_eq!(health.transition.as_deref(), Some("restarting"));
+        assert!(!health.reachable);
+    }
+
+    #[test]
+    fn server_health_without_transition() {
+        let health = ServerHealth {
+            reachable: true,
+            latency_ms: Some(10),
+            version: Some("4.0.13".to_string()),
+            version_matches: Some(true),
+            address: "https://127.0.0.1:6969".to_string(),
+            error: None,
+            transition: None,
+            started_at: Some("2026-06-19T10:00:00Z".to_string()),
+        };
+        assert!(health.transition.is_none());
+        assert!(health.started_at.is_some());
+    }
+
+    #[test]
     fn check_mod_loads_all_matching() {
         let installed = vec![
             InstalledMod {

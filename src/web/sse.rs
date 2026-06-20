@@ -10,7 +10,6 @@ use crate::web::state::AppState;
 pub enum ServerEvent {
     TaskChanged,
     ModsChanged,
-    #[allow(dead_code)]
     ServerTransition,
 }
 
