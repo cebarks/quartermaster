@@ -501,7 +501,7 @@ fn create_admin_user(spt_dir: &Path, db: &Database, non_interactive: bool) -> Re
 
     db.insert_user(
         &profile.username,
-        &profile.aid,
+        Some(&profile.aid),
         Some(&password_hash),
         Role::Admin,
     )
@@ -612,7 +612,7 @@ mod tests {
     fn create_admin_user_skips_when_admin_exists() {
         let tmp = tempfile::tempdir().unwrap();
         let db = Database::open_in_memory().unwrap();
-        db.insert_user("admin", "aid123", Some("hash"), Role::Admin)
+        db.insert_user("admin", Some("aid123"), Some("hash"), Role::Admin)
             .unwrap();
 
         // Should skip with message, not prompt
