@@ -113,6 +113,9 @@ pub async fn start_server(
         App::new()
             .app_data(app_state.clone())
             .app_data(web::PayloadConfig::new(64 * 1024 * 1024)) // 64 MiB for proxied game traffic
+            .wrap(middleware::NormalizePath::new(
+                middleware::TrailingSlash::MergeOnly,
+            ))
             .wrap(tracing_actix_web::TracingLogger::default())
             .service(
                 web::scope("/quma")
@@ -129,7 +132,6 @@ pub async fn start_server(
                         .cookie_secure(tls_enabled)
                         .build(),
                     )
-                    .wrap(middleware::NormalizePath::trim())
                     // Static assets (public, before auth scope to avoid shadowing)
                     .route("/assets/{path:.*}", web::get().to(serve_asset))
                     // Auth routes (public)
