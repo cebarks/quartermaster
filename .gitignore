@@ -6,8 +6,6 @@ quartermaster.toml
 .superpowers/
 
 # Override global gitignore
-!docs/superpowers/
-!docs/superpowers/**
 !CLAUDE.md
 
 spt-server/
