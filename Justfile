@@ -29,3 +29,11 @@ audit:
 
 release-dry-run:
     dist build
+
+# Generate CHANGELOG.md from commit history
+changelog:
+    git-cliff --output CHANGELOG.md
+
+# Preview changelog for next release (unreleased changes only)
+changelog-preview:
+    git-cliff --unreleased
