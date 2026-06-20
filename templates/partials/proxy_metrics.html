@@ -1,0 +1,20 @@
+<div class="card">
+    <h2>Proxy</h2>
+    {% if proxy.total_requests == 0 %}
+    <p class="text-muted">No traffic proxied yet.</p>
+    {% else %}
+    <table>
+        <tr><th style="width:140px">Total Requests</th><td><strong>{{ proxy.total_requests }}</strong></td></tr>
+        <tr><th>Errors</th><td>{{ proxy.error_count }}</td></tr>
+        <tr><th>Launcher ({{ "/launcher/*" }})</th><td>{{ proxy.launcher_requests }}</td></tr>
+        <tr><th>Client ({{ "/client/*" }})</th><td>{{ proxy.client_requests }}</td></tr>
+        <tr><th>Fika ({{ "/fika/*" }})</th><td>{{ proxy.fika_requests }}</td></tr>
+        <tr><th>Other</th><td>{{ proxy.other_requests }}</td></tr>
+        <tr><th>Active WebSockets</th><td>{{ proxy.active_ws_connections }}</td></tr>
+        <tr>
+            <th>Avg Latency</th>
+            <td>{% match proxy.avg_latency_ms %}{% when Some with (ms) %}{{ ms }}ms{% when None %}—{% endmatch %}</td>
+        </tr>
+    </table>
+    {% endif %}
+</div>

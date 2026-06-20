@@ -180,6 +180,10 @@ pub async fn start_server(
                                 web::get().to(handlers::status::integrity_partial),
                             )
                             .route(
+                                "/status/proxy",
+                                web::get().to(handlers::status::proxy_metrics_partial),
+                            )
+                            .route(
                                 "/dashboard/server-status",
                                 web::get().to(handlers::dashboard::server_status_partial),
                             )

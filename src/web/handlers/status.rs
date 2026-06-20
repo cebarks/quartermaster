@@ -42,6 +42,12 @@ struct StatusIntegrityTemplate {
     report: IntegrityHealth,
 }
 
+#[derive(Template)]
+#[template(path = "partials/proxy_metrics.html")]
+struct ProxyMetricsTemplate {
+    proxy: crate::web::proxy_metrics::MetricsSnapshot,
+}
+
 pub async fn status_page(
     state: Data<AppState>,
     req: HttpRequest,
@@ -126,6 +132,17 @@ pub async fn integrity_partial(state: Data<AppState>, req: HttpRequest) -> actix
         .map_err(WebError::from)?;
     let tmpl = StatusIntegrityTemplate { report };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn proxy_metrics_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<Html> {
+    require_auth(&req)?;
+    let template = ProxyMetricsTemplate {
+        proxy: state.proxy_metrics.snapshot(),
+    };
+    Ok(Html::new(template.render().map_err(WebError::from)?))
 }
 
 pub(crate) async fn fetch_server_context(state: &AppState) -> (Option<String>, Option<String>) {
