@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}{{ profile_username }} — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("profile", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>{{ profile_username }}</h1>
+
+{% if let Some(detail) = detail %}
+<div class="card" style="margin-bottom:1.5rem">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+        <div>
+            <strong style="font-size:1.25rem">{{ detail.stats.nickname.as_deref().unwrap_or("—") }}</strong>
+            {% if let Some(side) = detail.stats.side %}
+            <span class="badge {% if side == "Usec" %}badge-info{% else %}badge-warning{% endif %}" style="margin-left:0.5rem">{{ side }}</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="text-muted" style="margin-bottom:1rem">
+        {% if let Some(level) = detail.stats.level %}Level {{ level }}{% endif %}
+        {% if let Some(xp) = detail.stats.experience %} · {{ xp|fmt("{} XP") }}{% endif %}
+    </div>
+    <div class="stat-card-grid">
+        <div class="stat-card">
+            <div class="stat-label">Raids</div>
+            <div class="stat-value">{{ detail.stats.raid_count.unwrap_or(0) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Survival Rate</div>
+            <div class="stat-value">{% if let Some(sr) = detail.stats.survival_rate %}{{ sr|fmt("{:.1}%") }}{% else %}—{% endif %}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">PMC Kills</div>
+            <div class="stat-value">{{ detail.stats.kill_count.unwrap_or(0) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Scav Kills</div>
+            <div class="stat-value">{{ detail.stats.scav_kills.unwrap_or(0) }}</div>
+        </div>
+    </div>
+    {% if let Some(reg) = registration_date %}
+    <div class="text-muted text-sm" style="margin-top:0.75rem">Registered: {{ reg }}</div>
+    {% endif %}
+</div>
+
+<div class="tab-bar">
+    <button class="tab active" data-tab="quests"
+            hx-get="/api/profiles/{{ profile_username }}/quests"
+            hx-target="#tab-content"
+            hx-swap="innerHTML"
+            hx-trigger="click"
+            hx-push-url="false">Quests</button>
+    <button class="tab" data-tab="traders"
+            hx-get="/api/profiles/{{ profile_username }}/traders"
+            hx-target="#tab-content"
+            hx-swap="innerHTML"
+            hx-trigger="click"
+            hx-push-url="false">Traders</button>
+    <button class="tab" data-tab="hideout"
+            hx-get="/api/profiles/{{ profile_username }}/hideout"
+            hx-target="#tab-content"
+            hx-swap="innerHTML"
+            hx-trigger="click"
+            hx-push-url="false">Hideout</button>
+</div>
+
+<div id="tab-content">
+{{ quests_html|safe }}
+</div>
+
+<script>
+document.querySelectorAll('.tab-bar .tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-bar .tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    });
+});
+</script>
+
+{% else if let Some(reason) = empty_reason %}
+<div class="card">
+    <div class="empty-state">
+        <p>{{ reason }}</p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

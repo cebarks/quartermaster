@@ -11,6 +11,7 @@ use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging::LogBroadcast;
 use crate::spt::detect::SptInfo;
+use crate::spt::game_data::GameData;
 use crate::web::sse::ServerEvent;
 use crate::web::tasks::TaskTracker;
 use crate::web::update_cache::UpdateCache;
@@ -32,6 +33,7 @@ pub struct AppState {
     pub fika_installed: bool,
     pub modsync_installed: AtomicBool,
     pub server_transition: Arc<Mutex<Option<String>>>,
+    pub game_data: Arc<GameData>,
 }
 
 impl AppState {

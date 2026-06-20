@@ -85,7 +85,7 @@
                     {% if client.players.is_empty() %}
                     <span class="text-muted">None</span>
                     {% else %}
-                    {{ client.players.join(", ") }}
+                    {% for player in client.players %}{% if !loop.first %}, {% endif %}<a href="/profiles/{{ player }}">{{ player }}</a>{% endfor %}
                     {% endif %}
                 </td>
             </tr>

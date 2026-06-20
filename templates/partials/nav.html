@@ -13,6 +13,7 @@
     {% if fika_installed %}
     <a href="/clients"{% if active == "clients" %} class="active"{% endif %}>{% call icons::users() %}{% endcall %} Clients</a>
     {% endif %}
+    <a href="/profiles/{{ user.username }}"{% if active == "profile" %} class="active"{% endif %}>{% call icons::user() %}{% endcall %} Profile</a>
     <a href="/logs"{% if active == "logs" %} class="active"{% endif %}>{% call icons::terminal() %}{% endcall %} Logs</a>
     {% if user.role.can_manage_users() %}
     <a href="/admin"{% if active == "admin" %} class="active"{% endif %}>{% call icons::shield() %}{% endcall %} Admin</a>

@@ -1,0 +1,30 @@
+{% if areas.is_empty() %}
+<div class="empty-state"><p>No hideout data available.</p></div>
+{% else %}
+<table>
+    <thead>
+        <tr><th>Area</th><th>Level</th><th>Progress</th></tr>
+    </thead>
+    <tbody>
+        {% for a in areas %}
+        <tr>
+            <td>{{ a.name }}</td>
+            <td>{{ a.level }}{% if a.max_level > 0 %} / {{ a.max_level }}{% endif %}</td>
+            <td>
+                {% if a.max_level > 0 %}
+                <div class="progress-bar">
+                    <div class="progress-fill {% if a.level >= a.max_level %}progress-fill-success{% elif a.level == 0 %}progress-fill-muted{% endif %}"
+                         style="width:{{ a.level * 100 / a.max_level }}%"></div>
+                </div>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="text-muted text-sm" style="margin-top:0.75rem">
+    Overall: {{ total_current }} / {{ total_max }} upgrades
+    {% if total_max > 0 %} — {{ total_current * 100 / total_max }}%{% endif %}
+</div>
+{% endif %}

@@ -1,0 +1,19 @@
+{% if traders.is_empty() %}
+<div class="empty-state"><p>No trader data available.</p></div>
+{% else %}
+<table>
+    <thead>
+        <tr><th>Trader</th><th>Level</th><th>Standing</th><th>Sales</th></tr>
+    </thead>
+    <tbody>
+        {% for t in traders %}
+        <tr>
+            <td>{{ t.name }}</td>
+            <td>LL{{ t.loyalty_level }}</td>
+            <td{% if t.standing < 0.0 %} class="text-danger"{% endif %}>{{ t.standing|fmt("{:.2}") }}</td>
+            <td>{% if t.currency == "USD" %}${% else %}₽{% endif %} {{ t.sales_sum|fmt("{:.0}") }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
