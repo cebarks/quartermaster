@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 pub fn load_or_generate_tls_config(
@@ -42,16 +43,15 @@ fn load_pem_files(
     let key_data = std::fs::read(key_path)
         .with_context(|| format!("failed to read TLS key: {}", key_path.display()))?;
 
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut &cert_data[..])
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&cert_data)
         .collect::<Result<Vec<_>, _>>()
         .context("failed to parse TLS certificate PEM")?;
     if certs.is_empty() {
         bail!("no certificates found in {}", cert_path.display());
     }
 
-    let key = rustls_pemfile::private_key(&mut &key_data[..])
-        .context("failed to parse TLS private key PEM")?
-        .context("no private key found in PEM file")?;
+    let key =
+        PrivateKeyDer::from_pem_slice(&key_data).context("failed to parse TLS private key PEM")?;
 
     Ok((certs, key))
 }
