@@ -14,6 +14,12 @@
             <p class="text-muted text-sm">If enabled, queued operations automatically apply when the server starts or stops.</p>
         </div>
 
+        <div class="form-group">
+            <label for="update_check_interval">Update Check Interval (seconds)</label>
+            <input type="number" id="update_check_interval" name="update_check_interval" value="{{ config.update_check_interval }}" min="0">
+            <p class="text-muted text-sm">How often to check for mod updates on Forge. Set to 0 to disable.</p>
+        </div>
+
         <button type="submit" class="btn">Save Queue Settings</button>
     </div>
 </form>

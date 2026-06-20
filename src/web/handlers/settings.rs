@@ -35,16 +35,11 @@ struct SettingsTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
-    #[allow(dead_code)] // Used in later tasks
     config: Config,
     active_tab: String,
-    #[allow(dead_code)] // Used in later tasks
     console_format: String,
-    #[allow(dead_code)] // Used in later tasks
     file_format: String,
-    #[allow(dead_code)] // Used in later tasks
     file_rotation: String,
-    #[allow(dead_code)] // Used in later tasks
     restart_policy: String,
 }
 
@@ -112,7 +107,6 @@ pub async fn settings_page(
         .body(tmpl.render().map_err(WebError::from)?))
 }
 
-// Stub form structs (will be filled in by later tasks)
 #[derive(serde::Deserialize)]
 pub struct WebSettingsForm {
     csrf_token: String,
@@ -138,6 +132,7 @@ pub struct QueueSettingsForm {
     csrf_token: String,
     queue_changes: Option<String>,
     auto_drain_on_lifecycle: Option<String>,
+    update_check_interval: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -175,7 +170,6 @@ pub struct ClientsSettingsForm {
     isolated_paths: String,
 }
 
-// Stub save handlers (will be implemented by later tasks)
 pub async fn save_web_settings(
     state: Data<AppState>,
     req: HttpRequest,
@@ -286,6 +280,7 @@ pub async fn save_queue_settings(
     let mut config = Config::load(&state.config_path).unwrap_or_default();
     config.queue_changes = form.queue_changes.is_some();
     config.auto_drain_on_lifecycle = form.auto_drain_on_lifecycle.is_some();
+    config.update_check_interval = form.update_check_interval;
 
     config.save(&state.config_path).map_err(WebError::from)?;
 
