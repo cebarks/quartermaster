@@ -9,6 +9,11 @@ use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::state::AppState;
 
+#[allow(unused_imports)]
+mod filters {
+    pub use crate::web::template_filters::*;
+}
+
 #[derive(Template)]
 #[template(path = "status.html")]
 struct StatusPageTemplate {
@@ -16,6 +21,7 @@ struct StatusPageTemplate {
     flash: Option<FlashMessage>,
     csrf_token: String,
     fika_installed: bool,
+    transitioning: bool,
 }
 
 #[derive(Template)]
@@ -44,11 +50,15 @@ pub async fn status_page(
     let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let transitioning = state.get_server_transition().is_some();
+
     let tmpl = StatusPageTemplate {
         user,
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        transitioning,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -58,7 +68,13 @@ pub async fn server_partial(state: Data<AppState>, req: HttpRequest) -> actix_we
     let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
     let spt_client = crate::spt::server::SptClient::new(&host, port).map_err(WebError::from)?;
     let address = spt_client.base_url().to_string();
-    let report = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
+
+    let mut report = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
+
+    let (started_at, transition) = fetch_server_context(&state).await;
+    report.started_at = started_at;
+    report.transition = transition;
+
     let tmpl = StatusServerTemplate { report };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -110,4 +126,17 @@ pub async fn integrity_partial(state: Data<AppState>, req: HttpRequest) -> actix
         .map_err(WebError::from)?;
     let tmpl = StatusIntegrityTemplate { report };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub(crate) async fn fetch_server_context(state: &AppState) -> (Option<String>, Option<String>) {
+    let started_at = if let (Some(container), Some(mgr)) = (
+        state.config.server_container.as_deref(),
+        state.container_mgr.as_ref(),
+    ) {
+        mgr.container_started_at(container).await.ok().flatten()
+    } else {
+        None
+    };
+    let transition = state.get_server_transition();
+    (started_at, transition)
 }

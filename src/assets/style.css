@@ -139,6 +139,9 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .status-dot.up { background: var(--success); }
 .status-dot.down { background: var(--danger); }
 .status-dot.glow { box-shadow: 0 0 6px rgba(78,204,163,0.5); }
+.status-dot.transitioning { background: var(--warning); }
+.status-dot.transitioning.glow { box-shadow: 0 0 6px rgba(240,192,64,0.5); }
+.hero-card.transitioning { background: rgba(240,192,64,0.06); border-color: rgba(240,192,64,0.3); }
 
 /* Utility */
 .text-muted { color: var(--text-muted); }

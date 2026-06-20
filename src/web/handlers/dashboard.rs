@@ -13,6 +13,11 @@ use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::state::AppState;
 
+#[allow(unused_imports)]
+mod filters {
+    pub use crate::web::template_filters::*;
+}
+
 #[derive(Template)]
 #[template(path = "dashboard.html")]
 struct DashboardTemplate {
@@ -70,6 +75,8 @@ pub async fn dashboard(
 struct DashboardServerStatusTemplate {
     reachable: bool,
     latency_ms: Option<u64>,
+    transition: Option<String>,
+    started_at: Option<String>,
 }
 
 pub async fn server_status_partial(
@@ -82,10 +89,13 @@ pub async fn server_status_partial(
     let address = spt_client.base_url().to_string();
 
     let server = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
+    let (started_at, transition) = crate::web::handlers::status::fetch_server_context(&state).await;
 
     let tmpl = DashboardServerStatusTemplate {
         reachable: server.reachable,
         latency_ms: server.latency_ms,
+        transition,
+        started_at,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
