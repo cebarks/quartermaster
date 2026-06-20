@@ -8,7 +8,6 @@ pub mod client;
 pub mod common;
 pub mod config_cmd;
 pub mod generate;
-pub mod init;
 pub mod install;
 pub mod invite;
 pub mod list;
@@ -45,20 +44,13 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Interactive guided setup for Fika multiplayer
+    /// Bootstrap or initialize Quartermaster for an SPT server
     Setup {
-        /// Accept all defaults, skip prompts
-        #[arg(long)]
-        non_interactive: bool,
-        /// Skip Fika installation (server management only)
-        #[arg(long)]
-        skip_fika: bool,
-    },
-
-    /// Initialize Quartermaster for an SPT server
-    Init {
-        /// SPT directory path (auto-detects if omitted)
+        /// Data directory path (default: ~/spt-server)
         path: Option<PathBuf>,
+        /// Skip Fika installation
+        #[arg(long)]
+        no_fika: bool,
     },
 
     /// Install a mod and its dependencies

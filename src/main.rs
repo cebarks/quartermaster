@@ -51,10 +51,7 @@ async fn main() -> Result<()> {
             let reload_handles = logging::init_subscriber(&log_broadcast);
 
             match &cli.command {
-                Command::Setup {
-                    non_interactive,
-                    skip_fika,
-                } => {
+                Command::Setup { path, no_fika } => {
                     // Apply CLI verbosity to default config for early commands
                     let filter = logging::resolve_log_filter(
                         &config::LoggingConfig::default(),
@@ -62,17 +59,7 @@ async fn main() -> Result<()> {
                         cli.log_level.as_deref(),
                     );
                     reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
-                    cli::setup::run(*non_interactive, *skip_fika, &cli).await
-                }
-                Command::Init { path } => {
-                    // Apply CLI verbosity to default config for early commands
-                    let filter = logging::resolve_log_filter(
-                        &config::LoggingConfig::default(),
-                        cli.verbose,
-                        cli.log_level.as_deref(),
-                    );
-                    reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
-                    cli::init::run(path.clone(), &cli)
+                    cli::setup::run(path.clone(), *no_fika, &cli).await
                 }
                 Command::Install {
                     mod_ref,

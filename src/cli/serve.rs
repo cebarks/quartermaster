@@ -44,7 +44,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
 
     if !db.admin_exists()? {
-        anyhow::bail!("No admin user exists. Run `quma init` first to create an admin account.");
+        anyhow::bail!("No admin user exists. Run `quma setup` first to create an admin account.");
     }
 
     // Create ContainerManager if available

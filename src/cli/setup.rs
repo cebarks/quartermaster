@@ -17,85 +17,8 @@ use super::Cli;
 
 const FIKA_FORGE_MOD_ID: i64 = 2326;
 
-pub async fn run(non_interactive: bool, skip_fika: bool, cli: &Cli) -> Result<()> {
-    println!("=== Quartermaster Setup ===\n");
-
-    // Step 1: Detect/confirm SPT directory
-    let spt_dir = detect_spt_directory(cli, non_interactive)?;
-
-    // Step 2: Validate SPT install
-    let spt_info = read_spt_version(&spt_dir)?;
-    println!(
-        "SPT {} (EFT {}) detected at {}",
-        spt_info.spt_version,
-        spt_info.tarkov_version,
-        spt_dir.display()
-    );
-
-    // Step 3: Create config
-    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
-    let mut config = if config_path.exists() {
-        Config::load(&config_path)?
-    } else {
-        Config::default()
-    };
-    config.spt_dir = Some(spt_dir.clone());
-    config.ensure_session_secret();
-
-    // Step 4: Configure Podman container
-    configure_container(&spt_dir, &mut config, non_interactive).await?;
-
-    // Step 5: Configure networking
-    configure_networking(&spt_dir, &mut config, non_interactive)?;
-
-    // Save config so far (container + networking)
-    config.save(&config_path)?;
-    println!("\nConfig saved to {}", config_path.display());
-
-    // Step 6: Create database and build CliContext for reuse
-    let db_path = spt_dir.join("quartermaster.db");
-    let db = Database::open(&db_path)
-        .with_context(|| format!("failed to create database at {}", db_path.display()))?;
-    println!("Database initialized at {}", db_path.display());
-
-    let forge = ForgeClient::new(config.forge_token.clone())?;
-    let container_mgr = ContainerManager::new().ok();
-    let ctx = super::common::CliContext {
-        spt_dir: spt_dir.clone(),
-        spt_info: spt_info.clone(),
-        config: config.clone(),
-        db,
-        forge,
-        container_mgr,
-    };
-
-    // Step 7: Install Fika (if not skipped)
-    if !skip_fika {
-        install_fika(&ctx).await?;
-    } else {
-        println!("\nSkipping Fika installation (--skip-fika).");
-    }
-
-    // Step 8: First boot (if container configured)
-    if config.server_container.is_some() && !skip_fika {
-        first_boot(&config, &spt_dir, non_interactive).await?;
-    }
-
-    // Step 9: Configure fika.jsonc (if Fika installed and first boot ran)
-    if config.server_container.is_some() && !skip_fika {
-        configure_fika(&spt_dir, non_interactive)?;
-    }
-
-    // Step 10: Scan for unmanaged mods (same as quma init)
-    scan_unmanaged(&spt_dir, &ctx.db)?;
-
-    // Step 11: Create admin user
-    create_admin_user(&spt_dir, &ctx.db, non_interactive)?;
-
-    // Step 12: Print summary
-    print_summary(&config, &spt_dir, skip_fika);
-
-    Ok(())
+pub async fn run(path: Option<PathBuf>, no_fika: bool, cli: &Cli) -> Result<()> {
+    todo!("rewritten in Task 4")
 }
 
 fn detect_spt_directory(cli: &Cli, non_interactive: bool) -> Result<PathBuf> {
