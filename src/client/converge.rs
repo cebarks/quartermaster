@@ -403,7 +403,7 @@ async fn create_client_container(
             host_path: clients_config.install_dir.clone(),
             container_path: "/opt/tarkov".to_string(),
             read_only: true,
-            selinux: SelinuxLabel::Private,
+            selinux: SelinuxLabel::Shared,
         },
     ];
 
