@@ -107,10 +107,26 @@ impl ClientSupervisor {
             states.push(state);
         }
 
-        // Write updated state
+        // Merge updated state, preserving restart-owned fields
         {
             let mut state_lock = self.state.write().await;
-            *state_lock = states.clone();
+            for new_state in &states {
+                if let Some(existing) = state_lock.iter_mut().find(|s| s.index == new_state.index) {
+                    // Update fields owned by check_client
+                    existing.container_status = new_state.container_status.clone();
+                    existing.fika_status = new_state.fika_status.clone();
+                    existing.players = new_state.players.clone();
+                    existing.cpu_percent = new_state.cpu_percent;
+                    existing.memory_mb = new_state.memory_mb;
+                    existing.health = new_state.health.clone();
+                    existing.consecutive_failures = new_state.consecutive_failures;
+                } else {
+                    // New client, add it
+                    state_lock.push(new_state.clone());
+                }
+            }
+            // Remove clients that no longer exist
+            state_lock.retain(|s| states.iter().any(|ns| ns.index == s.index));
         }
 
         // Handle auto-restart for clients that need it
@@ -267,6 +283,16 @@ async fn restart_client_task(
     consecutive_failures: u32,
     backoff_cap: u64,
 ) {
+    // Ensure restarting flag is cleared even on panic
+    let _guard = scopeguard::guard((state.clone(), index), |(state, index)| {
+        tokio::spawn(async move {
+            let mut state_lock = state.write().await;
+            if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
+                s.restarting = false;
+            }
+        });
+    });
+
     let delay = backoff_duration(consecutive_failures, backoff_cap);
     tracing::info!(
         container = %container_name,
@@ -281,7 +307,6 @@ async fn restart_client_task(
     {
         let mut state_lock = state.write().await;
         if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
-            s.restarting = false;
             if result.is_ok() {
                 s.restart_count += 1;
                 s.last_restart = Some(Utc::now());
