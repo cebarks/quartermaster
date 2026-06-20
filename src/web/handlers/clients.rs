@@ -454,17 +454,17 @@ pub async fn client_scale(
             tracing::info!(target_count = target, "Client scaling completed");
 
             // Persist the new client count to config file
-            match crate::config::Config::load(&config_path) {
-                Ok(mut saved_config) => {
-                    if let Some(ref mut clients) = saved_config.clients {
+            match crate::config::Config::load_with_env(&config_path) {
+                Ok(mut fresh_config) => {
+                    if let Some(ref mut clients) = fresh_config.clients {
                         clients.count = target;
                     }
-                    if let Err(e) = saved_config.save(&config_path) {
+                    if let Err(e) = fresh_config.save(&config_path) {
                         tracing::error!(error = %e, "Failed to save updated client count to config");
                     }
                 }
                 Err(e) => {
-                    tracing::error!(error = %e, "Failed to load config for persisting client count");
+                    tracing::error!(error = %e, "Failed to reload config for persisting client count");
                 }
             }
         }
