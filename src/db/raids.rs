@@ -296,7 +296,7 @@ impl Database {
         };
 
         let scav_survived: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM raids WHERE user_id = ?1 AND player_side = 'Scav' AND exit_status = 'Survived'",
+            "SELECT COUNT(*) FROM raids WHERE user_id = ?1 AND player_side = 'Savage' AND exit_status = 'Survived'",
             params![user_id],
             |row| row.get(0),
         )?;
@@ -318,7 +318,7 @@ impl Database {
         let pmc_kills: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM raid_kills rk
              JOIN raids r ON rk.raid_id = r.id
-             WHERE r.user_id = ?1 AND rk.victim_side = 'Pmc'",
+             WHERE r.user_id = ?1 AND rk.victim_side IN ('Usec', 'Bear')",
             params![user_id],
             |row| row.get(0),
         )?;
@@ -326,7 +326,7 @@ impl Database {
         let scav_kills: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM raid_kills rk
              JOIN raids r ON rk.raid_id = r.id
-             WHERE r.user_id = ?1 AND rk.victim_side = 'Scav'",
+             WHERE r.user_id = ?1 AND rk.victim_side = 'Savage'",
             params![user_id],
             |row| row.get(0),
         )?;
@@ -364,7 +364,7 @@ impl Database {
 
         let scav_xp_gained: i64 = self.conn.query_row(
             "SELECT COALESCE(SUM(COALESCE(xp_after, 0) - COALESCE(xp_before, 0)), 0)
-             FROM raids WHERE user_id = ?1 AND player_side = 'Scav' AND xp_after IS NOT NULL AND xp_before IS NOT NULL",
+             FROM raids WHERE user_id = ?1 AND player_side = 'Savage' AND xp_after IS NOT NULL AND xp_before IS NOT NULL",
             params![user_id],
             |row| row.get(0),
         )?;
@@ -589,7 +589,7 @@ mod tests {
             user_id,
             "profile-456",
             None,
-            "Scav",
+            "Savage",
             None,
             "Woods",
             None,
@@ -684,7 +684,7 @@ mod tests {
         let kills = vec![
             NewRaidKill {
                 victim_name: Some("Scav".to_string()),
-                victim_side: Some("Scav".to_string()),
+                victim_side: Some("Savage".to_string()),
                 victim_role: Some("assault".to_string()),
                 weapon: Some("AK-74".to_string()),
                 distance: Some(50.5),
@@ -693,8 +693,8 @@ mod tests {
             },
             NewRaidKill {
                 victim_name: Some("PMC_Bob".to_string()),
-                victim_side: Some("Pmc".to_string()),
-                victim_role: Some("playerScav".to_string()),
+                victim_side: Some("Usec".to_string()),
+                victim_role: Some("exUsec".to_string()),
                 weapon: Some("M4A1".to_string()),
                 distance: Some(100.0),
                 body_part: Some("Thorax".to_string()),
@@ -710,7 +710,7 @@ mod tests {
         assert_eq!(raid.id, raid_id);
         assert_eq!(raid_kills.len(), 2);
         assert_eq!(raid_kills[0].victim_name.as_deref(), Some("Scav"));
-        assert_eq!(raid_kills[0].victim_side.as_deref(), Some("Scav"));
+        assert_eq!(raid_kills[0].victim_side.as_deref(), Some("Savage"));
         assert_eq!(raid_kills[0].distance, Some(50.5));
         assert_eq!(raid_kills[1].victim_name.as_deref(), Some("PMC_Bob"));
         assert_eq!(raid_kills[1].weapon.as_deref(), Some("M4A1"));
@@ -790,7 +790,7 @@ mod tests {
                 user_id,
                 "profile-eve",
                 None,
-                "Scav",
+                "Savage",
                 None,
                 "Labs",
                 None,
@@ -847,7 +847,7 @@ mod tests {
                 user_id,
                 "profile-frank",
                 None,
-                "Scav",
+                "Savage",
                 None,
                 "Woods",
                 None,
@@ -927,7 +927,7 @@ mod tests {
             pmc1,
             &[NewRaidKill {
                 victim_name: Some("Scav1".to_string()),
-                victim_side: Some("Scav".to_string()),
+                victim_side: Some("Savage".to_string()),
                 victim_role: None,
                 weapon: None,
                 distance: None,
@@ -968,7 +968,7 @@ mod tests {
             pmc2,
             &[NewRaidKill {
                 victim_name: Some("PMC1".to_string()),
-                victim_side: Some("Pmc".to_string()),
+                victim_side: Some("Usec".to_string()),
                 victim_role: None,
                 weapon: None,
                 distance: None,
@@ -1012,7 +1012,7 @@ mod tests {
                 user_id,
                 "profile-hannah",
                 None,
-                "Scav",
+                "Savage",
                 None,
                 "Interchange",
                 None,
@@ -1078,7 +1078,7 @@ mod tests {
             raid_id,
             &[NewRaidKill {
                 victim_name: Some("Scav".to_string()),
-                victim_side: Some("Scav".to_string()),
+                victim_side: Some("Savage".to_string()),
                 victim_role: None,
                 weapon: None,
                 distance: None,

@@ -261,44 +261,15 @@ pub fn handle_raid_end(
     // Extract stats from the updated profile in the request body
     let profile = &end_req.results.profile;
 
-    // Try both PMC and Scav character paths, as we don't know which one was used
-    let (xp_after, level_after) = {
-        let mut xp = None;
-        let mut level = None;
+    // results.profile IS the character data directly (IPmcData), not wrapped in characters.pmc
+    let xp_after = profile.pointer("/Info/Experience").and_then(|v| v.as_i64());
+    let level_after = profile.pointer("/Info/Level").and_then(|v| v.as_i64());
 
-        for character_key in &["pmc", "savage", "Savage"] {
-            if let Some(character) = profile.pointer(&format!("/characters/{character_key}")) {
-                xp = character
-                    .pointer("/Info/Experience")
-                    .and_then(|v| v.as_i64());
-                level = character.pointer("/Info/Level").and_then(|v| v.as_i64());
-
-                if xp.is_some() && level.is_some() {
-                    break;
-                }
-            }
-        }
-
-        (xp, level)
-    };
-
-    // Extract victims array (try both character paths)
-    let victims: Vec<VictimEntry> = {
-        let mut victim_entries = Vec::new();
-
-        for character_key in &["pmc", "savage", "Savage"] {
-            if let Some(victims_val) =
-                profile.pointer(&format!("/characters/{character_key}/Stats/Eft/Victims"))
-            {
-                if let Ok(v) = serde_json::from_value::<Vec<VictimEntry>>(victims_val.clone()) {
-                    victim_entries = v;
-                    break;
-                }
-            }
-        }
-
-        victim_entries
-    };
+    // Extract victims array directly from the profile
+    let victims: Vec<VictimEntry> = profile
+        .pointer("/Stats/Eft/Victims")
+        .and_then(|v| serde_json::from_value::<Vec<VictimEntry>>(v.clone()).ok())
+        .unwrap_or_default();
 
     // Diff kills: take victims[victim_count_before..] where victim_count_before comes from the open raid row
     let victim_count_before = open_raid.victim_count_before.unwrap_or(0) as usize;
