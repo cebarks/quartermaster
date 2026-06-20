@@ -6,6 +6,7 @@ use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability};
 use crate::web::error::WebError;
 use crate::web::flash::set_flash;
+use crate::web::sse::ServerEvent;
 use crate::web::state::AppState;
 
 pub async fn start_server(
@@ -47,6 +48,9 @@ pub async fn start_server(
         }
     };
 
+    state.set_server_transition(Some("starting"));
+    let _ = state.events.send(ServerEvent::ServerTransition);
+
     if let Err(e) = mgr.start(container).await {
         tracing::error!(container, error = %e, "failed to start server");
         set_flash(&session, &format!("Failed to start server: {e}"), "error");
@@ -54,6 +58,9 @@ pub async fn start_server(
         tracing::info!(container, "server started");
         set_flash(&session, "Server starting", "success");
     }
+
+    state.set_server_transition(None);
+    let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
@@ -99,6 +106,9 @@ pub async fn stop_server(
         }
     };
 
+    state.set_server_transition(Some("stopping"));
+    let _ = state.events.send(ServerEvent::ServerTransition);
+
     if let Err(e) = mgr.stop(container).await {
         tracing::error!(container, error = %e, "failed to stop server");
         set_flash(&session, &format!("Failed to stop server: {e}"), "error");
@@ -106,6 +116,9 @@ pub async fn stop_server(
         tracing::info!(container, "server stopped");
         set_flash(&session, "Server stopped", "success");
     }
+
+    state.set_server_transition(None);
+    let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
@@ -151,16 +164,21 @@ pub async fn restart_server(
         }
     };
 
+    state.set_server_transition(Some("restarting"));
+    let _ = state.events.send(ServerEvent::ServerTransition);
+
     // Stop first
     if let Err(e) = mgr.stop(container).await {
         tracing::error!(container, error = %e, "failed to stop server for restart");
         set_flash(&session, &format!("Failed to stop server: {e}"), "error");
+        state.set_server_transition(None);
+        let _ = state.events.send(ServerEvent::ServerTransition);
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/status"))
             .finish());
     }
 
-    // Drain queue if configured (existing logic preserved)
+    // Drain queue if configured
     if state.config.auto_drain_on_lifecycle {
         let db = state.db.clone();
         let ops = web::block(move || {
@@ -200,8 +218,11 @@ pub async fn restart_server(
         );
     } else {
         tracing::info!(container, "server restarted");
-        set_flash(&session, "Server restarting", "success");
+        set_flash(&session, "Server restarted", "success");
     }
+
+    state.set_server_transition(None);
+    let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/status"))
