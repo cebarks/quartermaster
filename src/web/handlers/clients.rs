@@ -430,13 +430,7 @@ pub async fn client_scale(
         }
     };
 
-    // Set converging flag (web UI uses AtomicBool, converge() needs RwLock internally)
-    state
-        .converging
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-
     // Run convergence in a background task
-    let converge_flag = std::sync::Arc::new(tokio::sync::RwLock::new(false));
     let mgr_clone = container_mgr.clone();
     let config_clone = state.config.clone();
     let config_path = state.config_path.clone();
@@ -450,12 +444,9 @@ pub async fn client_scale(
             &config_clone,
             &spt_dir_clone,
             &spt_client,
-            converge_flag,
+            converging_clone,
         )
         .await;
-
-        // Clear converging flag
-        converging_clone.store(false, std::sync::atomic::Ordering::Relaxed);
 
         if let Err(e) = result {
             tracing::error!(error = %e, "Client convergence failed during scale operation");

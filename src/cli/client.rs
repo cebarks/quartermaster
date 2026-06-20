@@ -1,8 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use futures_util::StreamExt;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::client::converge::client_container_name;
 use crate::config::{is_fika_installed, ClientsConfig, Config};
@@ -270,7 +270,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     // Run convergence
     let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
     let spt_client = SptClient::new(&server_host, server_port)?;
-    let converging = Arc::new(RwLock::new(false));
+    let converging = Arc::new(AtomicBool::new(false));
 
     println!("Converging to {} client(s)...", count);
     crate::client::converge::converge(

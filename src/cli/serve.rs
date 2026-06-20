@@ -103,20 +103,17 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                     };
 
                     // Run initial convergence
-                    // Note: converge() uses Arc<RwLock<bool>> for its internal flag management,
-                    // separate from the supervisor's Arc<AtomicBool> used for monitoring
                     tracing::info!(
                         "Running initial convergence for {} client(s)",
                         clients_config.count
                     );
-                    let converge_flag = Arc::new(tokio::sync::RwLock::new(false));
                     let converge_result = crate::client::converge::converge(
                         container_mgr_arc,
                         clients_config,
                         &config,
                         &spt_dir,
                         &spt_client,
-                        converge_flag,
+                        Arc::clone(&converging),
                     )
                     .await;
 

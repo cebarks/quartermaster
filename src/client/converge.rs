@@ -4,8 +4,8 @@ use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 /// Label key for marking containers as managed by quartermaster
@@ -205,7 +205,7 @@ pub fn find_name_conflicts(
 /// 5. Updates isolated_paths overlays for existing clients
 /// 6. Clears the converging flag
 ///
-/// The `converging` flag is an Arc<RwLock<bool>> that prevents concurrent convergence
+/// The `converging` flag is an Arc<AtomicBool> that prevents concurrent convergence
 /// operations and signals to the supervisor that state is in flux.
 pub async fn converge(
     container_mgr: &ContainerManager,
@@ -213,22 +213,19 @@ pub async fn converge(
     config: &Config,
     spt_dir: &Path,
     spt_client: &SptClient,
-    converging: Arc<RwLock<bool>>,
+    converging: Arc<AtomicBool>,
 ) -> Result<()> {
-    // Set converging flag
+    // Set converging flag (atomic compare-exchange for race-free check-and-set)
+    if converging
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
     {
-        let mut flag = converging.write().await;
-        if *flag {
-            bail!("Convergence already in progress");
-        }
-        *flag = true;
+        bail!("Convergence already in progress");
     }
 
     // Ensure converging flag is cleared on exit
     let _guard = scopeguard::guard(converging.clone(), |c| {
-        tokio::spawn(async move {
-            *c.write().await = false;
-        });
+        c.store(false, Ordering::Release);
     });
 
     let desired_count = clients_config.count;
