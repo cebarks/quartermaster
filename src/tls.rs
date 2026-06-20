@@ -72,8 +72,20 @@ fn generate_self_signed(
 
     std::fs::write(cert_path, &cert_pem)
         .with_context(|| format!("failed to write cert to {}", cert_path.display()))?;
-    std::fs::write(key_path, &key_pem)
-        .with_context(|| format!("failed to write key to {}", key_path.display()))?;
+    {
+        use std::io::Write;
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+
+        opts.open(key_path)
+            .and_then(|mut f| f.write_all(key_pem.as_bytes()))
+            .with_context(|| format!("failed to write key to {}", key_path.display()))?;
+    }
 
     // Re-parse from PEM so the returned types match load_pem_files
     load_pem_files(cert_path, key_path)
