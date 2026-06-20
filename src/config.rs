@@ -182,6 +182,11 @@ pub fn is_fika_installed(spt_dir: &Path) -> bool {
     spt_dir.join("SPT/user/mods/fika-server").is_dir()
 }
 
+#[allow(dead_code)] // used once infrastructure card display is added
+pub fn is_modsync_installed(spt_dir: &Path) -> bool {
+    spt_dir.join("SPT/user/mods/Corter-ModSync").is_dir()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConsoleLogConfig {
     #[serde(default = "default_console_enabled")]
@@ -958,6 +963,14 @@ install_dir = "/opt/fika"
         assert!(!is_fika_installed(tmp.path()));
         std::fs::create_dir_all(tmp.path().join("SPT/user/mods/fika-server")).unwrap();
         assert!(is_fika_installed(tmp.path()));
+    }
+
+    #[test]
+    fn modsync_detection() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!is_modsync_installed(tmp.path()));
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/Corter-ModSync")).unwrap();
+        assert!(is_modsync_installed(tmp.path()));
     }
 
     #[test]

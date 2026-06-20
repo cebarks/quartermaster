@@ -16,12 +16,13 @@ use crate::web::auth::hash_password;
 use super::common::find_unmanaged_mod_dirs;
 use super::Cli;
 
-pub async fn run(path: Option<PathBuf>, no_fika: bool, cli: &Cli) -> Result<()> {
+pub async fn run(path: Option<PathBuf>, no_fika: bool, no_modsync: bool, cli: &Cli) -> Result<()> {
     println!("=== Quartermaster Setup ===\n");
 
     // --- Collect input ---
     let data_dir = resolve_data_dir(path)?;
     let install_fika = if no_fika { false } else { prompt_fika()? };
+    let install_modsync = if no_modsync { false } else { prompt_modsync()? };
     let admin_password = prompt_admin_password()?;
 
     // --- Detect path ---
@@ -32,9 +33,27 @@ pub async fn run(path: Option<PathBuf>, no_fika: bool, cli: &Cli) -> Result<()> 
     let dir_state = classify_directory(&data_dir)?;
 
     match dir_state {
-        DirState::Empty => bootstrap(&mgr, &data_dir, install_fika, &admin_password, cli).await,
+        DirState::Empty => {
+            bootstrap(
+                &mgr,
+                &data_dir,
+                install_fika,
+                install_modsync,
+                &admin_password,
+                cli,
+            )
+            .await
+        }
         DirState::ExistingSpt => {
-            wrap_existing(&mgr, &data_dir, install_fika, &admin_password, cli).await
+            wrap_existing(
+                &mgr,
+                &data_dir,
+                install_fika,
+                install_modsync,
+                &admin_password,
+                cli,
+            )
+            .await
         }
     }
 }
@@ -106,6 +125,139 @@ fn prompt_fika() -> Result<bool> {
     Ok(trimmed.is_empty()
         || trimmed.eq_ignore_ascii_case("y")
         || trimmed.eq_ignore_ascii_case("yes"))
+}
+
+fn prompt_modsync() -> Result<bool> {
+    print!("Install ModSync for client mod syncing? [Y/n]: ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let trimmed = input.trim();
+
+    Ok(trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("y")
+        || trimmed.eq_ignore_ascii_case("yes"))
+}
+
+const MODSYNC_GITHUB_REPO: &str = "c-orter/ModSync";
+
+async fn install_modsync_from_github(spt_dir: &Path) -> Result<()> {
+    use futures_util::StreamExt;
+
+    println!("\nInstalling ModSync...");
+
+    let client = reqwest::Client::builder()
+        .user_agent(format!("quartermaster/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("failed to build HTTP client")?;
+
+    // Fetch latest release metadata
+    let release_url = format!("https://api.github.com/repos/{MODSYNC_GITHUB_REPO}/releases/latest");
+    let release: serde_json::Value = client
+        .get(&release_url)
+        .send()
+        .await
+        .context("failed to fetch ModSync release info")?
+        .error_for_status()
+        .context("GitHub API returned error")?
+        .json()
+        .await
+        .context("failed to parse release JSON")?;
+
+    let asset = release["assets"]
+        .as_array()
+        .and_then(|assets| {
+            assets
+                .iter()
+                .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(".zip")))
+        })
+        .ok_or_else(|| anyhow::anyhow!("no .zip asset found in latest ModSync release"))?;
+
+    let download_url = asset["browser_download_url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing download URL for ModSync asset"))?
+        .to_string();
+
+    let version = release["tag_name"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+
+    println!("Downloading ModSync {version}...");
+
+    // Download to a temp file
+    let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
+    let zip_path = tmp_dir.path().join("modsync.zip");
+
+    let resp = client
+        .get(download_url)
+        .send()
+        .await
+        .context("failed to download ModSync")?
+        .error_for_status()
+        .context("ModSync download returned error")?;
+
+    let mut stream = resp.bytes_stream();
+    let mut file = tokio::fs::File::create(&zip_path)
+        .await
+        .context("failed to create temp file")?;
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.context("error reading download stream")?;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &bytes)
+            .await
+            .context("error writing to temp file")?;
+    }
+    tokio::io::AsyncWriteExt::flush(&mut file)
+        .await
+        .context("error flushing temp file")?;
+    drop(file);
+
+    // Extract relevant files into the SPT directory
+    // ModSync zip has: BepInEx/plugins/*, user/mods/Corter-ModSync/*
+    // The `user/mods/` prefix maps to `SPT/user/mods/` in our directory layout
+    let spt_dir = spt_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&zip_path).context("failed to open downloaded zip")?;
+        let mut archive =
+            zip::ZipArchive::new(file).context("failed to read ModSync zip archive")?;
+
+        let mut extracted = 0usize;
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).context("failed to read zip entry")?;
+
+            let name = entry.name().to_string();
+
+            // Map paths into the SPT directory
+            let dest = if let Some(rest) = name.strip_prefix("user/mods/") {
+                // user/mods/Corter-ModSync/* → SPT/user/mods/Corter-ModSync/*
+                spt_dir.join("SPT/user/mods").join(rest)
+            } else if name.starts_with("BepInEx/") {
+                spt_dir.join(&name)
+            } else {
+                // Skip other files (e.g. ModSync.Updater.exe — Windows only)
+                continue;
+            };
+
+            if entry.is_dir() {
+                std::fs::create_dir_all(&dest)?;
+            } else {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let mut out = std::fs::File::create(&dest)?;
+                std::io::copy(&mut entry, &mut out)?;
+                extracted += 1;
+            }
+        }
+
+        println!("ModSync {version} installed ({extracted} files extracted).");
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("ModSync extraction task failed")??;
+
+    Ok(())
 }
 
 fn prompt_admin_password() -> Result<String> {
@@ -234,7 +386,7 @@ fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database
     Ok(db)
 }
 
-fn print_summary(config: &Config, data_dir: &Path, install_fika: bool) {
+fn print_summary(config: &Config, data_dir: &Path, install_fika: bool, install_modsync: bool) {
     println!("\n=== Setup Complete ===\n");
     println!("SPT directory: {}", data_dir.display());
     if let Some(ref container) = config.server_container {
@@ -246,6 +398,14 @@ fn print_summary(config: &Config, data_dir: &Path, install_fika: bool) {
             "installed"
         } else {
             "disabled"
+        }
+    );
+    println!(
+        "ModSync: {}",
+        if install_modsync {
+            "installed"
+        } else {
+            "skipped"
         }
     );
     println!("Web UI: http://{}:{}", config.web_bind, config.web_port);
@@ -266,6 +426,7 @@ async fn bootstrap(
     mgr: &ContainerManager,
     data_dir: &Path,
     install_fika: bool,
+    install_modsync: bool,
     admin_password: &str,
     cli: &Cli,
 ) -> Result<()> {
@@ -307,8 +468,13 @@ async fn bootstrap(
     // 9. Create DB and admin
     create_db_and_admin(data_dir, admin_password)?;
 
-    // 10. Summary
-    print_summary(&config, data_dir, install_fika);
+    // 10. Install ModSync
+    if install_modsync {
+        install_modsync_from_github(data_dir).await?;
+    }
+
+    // 11. Summary
+    print_summary(&config, data_dir, install_fika, install_modsync);
 
     Ok(())
 }
@@ -319,6 +485,7 @@ async fn wrap_existing(
     mgr: &ContainerManager,
     data_dir: &Path,
     install_fika: bool,
+    install_modsync: bool,
     admin_password: &str,
     cli: &Cli,
 ) -> Result<()> {
@@ -360,8 +527,13 @@ async fn wrap_existing(
         println!("\nManage them through the web UI or reinstall via Forge.");
     }
 
-    // 5. Summary
-    print_summary(&config, data_dir, install_fika);
+    // 5. Install ModSync
+    if install_modsync {
+        install_modsync_from_github(data_dir).await?;
+    }
+
+    // 6. Summary
+    print_summary(&config, data_dir, install_fika, install_modsync);
 
     Ok(())
 }
