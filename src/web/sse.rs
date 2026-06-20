@@ -7,9 +7,11 @@ use crate::web::auth::require_auth;
 use crate::web::state::AppState;
 
 #[derive(Clone, Debug)]
+#[allow(clippy::enum_variant_names, dead_code)]
 pub enum ServerEvent {
     TaskChanged,
     ModsChanged,
+    ServerStateChanged,
 }
 
 pub async fn events_stream(
@@ -27,6 +29,7 @@ pub async fn events_stream(
                     let msg = match event {
                         ServerEvent::TaskChanged => "event: taskChanged\ndata: \n\n",
                         ServerEvent::ModsChanged => "event: modsChanged\ndata: \n\n",
+                        ServerEvent::ServerStateChanged => "event: serverStateChanged\ndata: \n\n",
                     };
                     return Some((Ok::<_, actix_web::Error>(web::Bytes::from(msg)), rx));
                 }
