@@ -118,7 +118,7 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
                             },
                             None => "no data".into(),
                         },
-                        None => "no profile".into(),
+                        None => "awaiting profile".into(),
                     }
                 } else {
                     "server offline".into()
@@ -191,7 +191,16 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
                         println!("\nFika Status: no data for this client");
                     }
                 } else {
-                    println!("\nFika Status: no PROFILE_ID (container not running?)");
+                    // PROFILE_ID is set on the container env during convergence.
+                    // It will be None if no headless profile was available at creation
+                    // time (the SPT server needs to run with Fika to generate them)
+                    // or if the container is stopped.
+                    println!(
+                        "\nFika Status: awaiting profile assignment. \
+                         Restart the SPT server to generate headless profiles, \
+                         then run `quma client scale {}` to re-provision.",
+                        clients_config.count
+                    );
                 }
             }
         }
