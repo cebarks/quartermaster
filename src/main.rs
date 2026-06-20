@@ -12,6 +12,7 @@ mod ops;
 mod queue;
 mod server_detect;
 mod spt;
+mod tls;
 mod web;
 
 use std::sync::Arc;
