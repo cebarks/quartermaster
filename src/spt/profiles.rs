@@ -20,12 +20,99 @@ pub struct SptProfileStats {
     pub raid_count: Option<i64>,
     pub survival_rate: Option<f64>,
     pub kill_count: Option<usize>,
+    pub scav_kills: Option<i64>,
 }
 
 pub enum ProfileStatus {
     Found(SptProfileStats),
     NotFound,
     ParseError,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+pub enum QuestState {
+    Locked,
+    AvailableForStart,
+    Started,
+    AvailableForFinish,
+    Success,
+    Fail,
+    Expired,
+    Unknown(i32),
+}
+
+impl QuestState {
+    #[allow(dead_code)]
+    fn from_i32(v: i32) -> Self {
+        match v {
+            1 => Self::Locked,
+            2 => Self::AvailableForStart,
+            3 => Self::Started,
+            4 => Self::AvailableForFinish,
+            5 => Self::Success,
+            6 => Self::Fail,
+            7 => Self::Expired,
+            other => Self::Unknown(other),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Locked => "Locked",
+            Self::AvailableForStart => "Available",
+            Self::Started => "Started",
+            Self::AvailableForFinish => "Ready",
+            Self::Success => "Completed",
+            Self::Fail => "Failed",
+            Self::Expired => "Expired",
+            Self::Unknown(_) => "Unknown",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn css_class(&self) -> &str {
+        match self {
+            Self::Success => "badge-success",
+            Self::Started | Self::AvailableForFinish => "badge-info",
+            Self::AvailableForStart => "badge-warning",
+            Self::Fail => "badge-danger",
+            Self::Locked | Self::Expired | Self::Unknown(_) => "badge-muted",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct QuestEntry {
+    pub qid: String,
+    pub status: QuestState,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TraderEntry {
+    pub trader_id: String,
+    pub loyalty_level: i32,
+    pub standing: f64,
+    pub sales_sum: f64,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct HideoutAreaEntry {
+    pub area_type: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ProfileDetail {
+    pub stats: SptProfileStats,
+    pub quests: Vec<QuestEntry>,
+    pub traders: Vec<TraderEntry>,
+    pub hideout: Vec<HideoutAreaEntry>,
 }
 
 #[derive(Deserialize)]
@@ -57,9 +144,13 @@ struct Characters {
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 struct PmcData {
     info: Option<PmcInfo>,
     stats: Option<PmcStats>,
+    quests: Option<Vec<ProfileQuestEntry>>,
+    traders_info: Option<HashMap<String, ProfileTraderInfo>>,
+    hideout: Option<HideoutData>,
 }
 
 #[derive(Deserialize, Default)]
@@ -96,6 +187,37 @@ struct OverallCounters {
 struct CounterItem {
     key: Vec<String>,
     value: i64,
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct ProfileQuestEntry {
+    qid: String,
+    status: i32,
+}
+
+#[derive(Deserialize)]
+#[allow(non_snake_case)]
+#[allow(dead_code)]
+struct ProfileTraderInfo {
+    loyaltyLevel: Option<i32>,
+    standing: Option<f64>,
+    salesSum: Option<f64>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
+struct HideoutData {
+    areas: Option<Vec<HideoutAreaJson>>,
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct HideoutAreaJson {
+    #[serde(rename = "type")]
+    area_type: i32,
+    level: i32,
 }
 
 pub fn list_profiles(spt_dir: &Path) -> Result<Vec<SptProfile>> {
@@ -184,6 +306,7 @@ pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats
                     if let Some(counters) = eft.overall_counters.and_then(|c| c.items) {
                         let mut total_raids: i64 = 0;
                         let mut survived: i64 = 0;
+                        let mut scav_kills: Option<i64> = None;
                         for item in &counters {
                             if item.key.len() >= 2
                                 && item.key[0] == "Sessions"
@@ -194,7 +317,11 @@ pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats
                                     survived = item.value;
                                 }
                             }
+                            if item.key.len() == 1 && item.key[0] == "KilledSavages" {
+                                scav_kills = Some(item.value);
+                            }
                         }
+                        stats.scav_kills = scav_kills;
                         if total_raids > 0 {
                             stats.raid_count = Some(total_raids);
                             stats.survival_rate = Some(
@@ -215,6 +342,108 @@ pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats
     }
 
     map
+}
+
+#[allow(dead_code)]
+pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<ProfileDetail>> {
+    let path = spt_dir
+        .join("SPT/user/profiles")
+        .join(format!("{profile_id}.json"));
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read profile {}", path.display()))?;
+    let parsed: FullProfileJson = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse profile {}", path.display()))?;
+
+    let pmc = match parsed.characters.and_then(|c| c.pmc) {
+        Some(pmc) => pmc,
+        None => return Ok(None),
+    };
+
+    // Fresh/wiped profile: Info is None means no character data yet
+    if pmc.info.is_none() {
+        return Ok(None);
+    }
+
+    let mut stats = SptProfileStats::default();
+
+    if let Some(info) = pmc.info {
+        stats.nickname = info.nickname;
+        stats.level = info.level;
+        stats.side = info.side;
+        stats.experience = info.experience;
+        stats.registration_date = info.registration_date;
+    }
+
+    if let Some(pmc_stats) = pmc.stats {
+        if let Some(eft) = pmc_stats.eft {
+            if let Some(counters) = eft.overall_counters.and_then(|c| c.items) {
+                let mut total_raids: i64 = 0;
+                let mut survived: i64 = 0;
+                let mut scav_kills: Option<i64> = None;
+                for item in &counters {
+                    if item.key.len() >= 2 && item.key[0] == "Sessions" && item.key[1] == "Pmc" {
+                        total_raids += item.value;
+                        if item.key.len() == 3 && item.key[2] == "Survived" {
+                            survived = item.value;
+                        }
+                    }
+                    if item.key.len() == 1 && item.key[0] == "KilledSavages" {
+                        scav_kills = Some(item.value);
+                    }
+                }
+                stats.scav_kills = scav_kills;
+                if total_raids > 0 {
+                    stats.raid_count = Some(total_raids);
+                    stats.survival_rate = Some(
+                        (survived as f64 / total_raids as f64 * 100.0 * 100.0).round() / 100.0,
+                    );
+                } else {
+                    stats.raid_count = Some(0);
+                }
+            }
+            stats.kill_count = eft.victims.map(|v| v.len());
+        }
+    }
+
+    let quests = pmc
+        .quests
+        .unwrap_or_default()
+        .into_iter()
+        .map(|q| QuestEntry {
+            qid: q.qid,
+            status: QuestState::from_i32(q.status),
+        })
+        .collect();
+
+    let traders = pmc
+        .traders_info
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, t)| TraderEntry {
+            trader_id: id,
+            loyalty_level: t.loyaltyLevel.unwrap_or(0),
+            standing: t.standing.unwrap_or(0.0),
+            sales_sum: t.salesSum.unwrap_or(0.0),
+        })
+        .collect();
+
+    let hideout = pmc
+        .hideout
+        .and_then(|h| h.areas)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| HideoutAreaEntry {
+            area_type: a.area_type,
+            level: a.level,
+        })
+        .collect();
+
+    Ok(Some(ProfileDetail {
+        stats,
+        quests,
+        traders,
+        hideout,
+    }))
 }
 
 #[cfg(test)]
@@ -388,5 +617,166 @@ mod tests {
         assert_eq!(s.raid_count, Some(0));
         assert!(s.survival_rate.is_none());
         assert_eq!(s.kill_count, Some(0));
+    }
+
+    fn create_detailed_profile(dir: &Path, aid: &str) {
+        let profiles_dir = dir.join("SPT/user/profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        let content = serde_json::json!({
+            "info": {"id": aid, "username": "TestPlayer"},
+            "characters": {
+                "pmc": {
+                    "Info": {
+                        "Nickname": "TestPlayer",
+                        "Level": 42,
+                        "Side": "Usec",
+                        "Experience": 1234567,
+                        "RegistrationDate": 1700000000
+                    },
+                    "Stats": {
+                        "Eft": {
+                            "OverallCounters": {
+                                "Items": [
+                                    {"Key": ["Sessions", "Pmc", "Survived"], "Value": 30},
+                                    {"Key": ["Sessions", "Pmc", "Died"], "Value": 10},
+                                    {"Key": ["KilledSavages"], "Value": 247}
+                                ]
+                            },
+                            "Victims": [
+                                {"Name": "Player1"},
+                                {"Name": "Player2"}
+                            ]
+                        }
+                    },
+                    "Quests": [
+                        {"qid": "quest_abc", "status": 5},
+                        {"qid": "quest_def", "status": 3},
+                        {"qid": "quest_ghi", "status": 1}
+                    ],
+                    "TradersInfo": {
+                        "trader_001": {
+                            "loyaltyLevel": 3,
+                            "standing": 0.42,
+                            "salesSum": 2450000.0
+                        },
+                        "trader_002": {
+                            "loyaltyLevel": 1,
+                            "standing": -0.05,
+                            "salesSum": 50000.0
+                        }
+                    },
+                    "Hideout": {
+                        "Areas": [
+                            {"type": 0, "level": 3},
+                            {"type": 1, "level": 2},
+                            {"type": 4, "level": 0}
+                        ]
+                    }
+                }
+            }
+        });
+        std::fs::write(
+            profiles_dir.join(format!("{aid}.json")),
+            serde_json::to_string(&content).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn load_profile_detail_full() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_detailed_profile(tmp.path(), "detail1");
+
+        let detail = load_profile_detail(tmp.path(), "detail1").unwrap().unwrap();
+        assert_eq!(detail.stats.nickname.as_deref(), Some("TestPlayer"));
+        assert_eq!(detail.stats.level, Some(42));
+        assert_eq!(detail.stats.scav_kills, Some(247));
+        assert_eq!(detail.stats.kill_count, Some(2));
+
+        assert_eq!(detail.quests.len(), 3);
+        assert!(matches!(
+            detail
+                .quests
+                .iter()
+                .find(|q| q.qid == "quest_abc")
+                .unwrap()
+                .status,
+            QuestState::Success
+        ));
+        assert!(matches!(
+            detail
+                .quests
+                .iter()
+                .find(|q| q.qid == "quest_def")
+                .unwrap()
+                .status,
+            QuestState::Started
+        ));
+        assert!(matches!(
+            detail
+                .quests
+                .iter()
+                .find(|q| q.qid == "quest_ghi")
+                .unwrap()
+                .status,
+            QuestState::Locked
+        ));
+
+        assert_eq!(detail.traders.len(), 2);
+        let t1 = detail
+            .traders
+            .iter()
+            .find(|t| t.trader_id == "trader_001")
+            .unwrap();
+        assert_eq!(t1.loyalty_level, 3);
+        assert!((t1.standing - 0.42).abs() < 0.001);
+
+        assert_eq!(detail.hideout.len(), 3);
+        let h0 = detail.hideout.iter().find(|h| h.area_type == 0).unwrap();
+        assert_eq!(h0.level, 3);
+    }
+
+    #[test]
+    fn load_profile_detail_fresh_wipe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profiles_dir = tmp.path().join("SPT/user/profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        let content = serde_json::json!({
+            "info": {"id": "fresh1", "username": "NewPlayer"},
+            "characters": {
+                "pmc": {
+                    "savage": null,
+                    "Encyclopedia": null,
+                    "Hideout": null,
+                    "WishList": []
+                }
+            }
+        });
+        std::fs::write(
+            profiles_dir.join("fresh1.json"),
+            serde_json::to_string(&content).unwrap(),
+        )
+        .unwrap();
+
+        let result = load_profile_detail(tmp.path(), "fresh1").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_profile_detail_missing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/profiles")).unwrap();
+
+        let result = load_profile_detail(tmp.path(), "nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn scav_kills_extracted_in_all_stats() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_detailed_profile(tmp.path(), "scav_test");
+        let stats = load_all_profile_stats(tmp.path());
+        let s = &stats["scav_test"];
+        assert_eq!(s.scav_kills, Some(247));
     }
 }
