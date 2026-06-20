@@ -54,6 +54,9 @@
 <div class="card mt-2">
     <h2>Per-Mod Sync Status</h2>
     <p class="text-muted text-sm mb-1">Mods with client-side files that will be synced to players.</p>
+    {% if !has_client_mods %}
+    <p class="text-muted">No client-side mods installed.</p>
+    {% else %}
     <table>
         <thead>
             <tr>
@@ -78,6 +81,7 @@
             {% endfor %}
         </tbody>
     </table>
+    {% endif %}
 </div>
 {% endif %}
 

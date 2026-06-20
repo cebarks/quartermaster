@@ -39,6 +39,7 @@ struct ModSyncTemplate {
     extra_sync_paths: String,
     exclusions: String,
     mods: Vec<ModSyncModEntry>,
+    has_client_mods: bool,
 }
 
 pub async fn modsync_page(
@@ -105,6 +106,7 @@ pub async fn modsync_page(
         restart_required,
         extra_sync_paths,
         exclusions,
+        has_client_mods: mods.iter().any(|m| m.has_client_files),
         mods,
     };
     Ok(HttpResponse::Ok()
