@@ -6,7 +6,7 @@ Replace `quma setup` (12-step interactive wizard) and `quma init` with a single 
 
 ## Motivation
 
-The current setup assumes an SPT server already exists. A server host has to manually set up SPT, Fika, and Podman containers before quma can manage anything. The new flow makes quma the single entry point — install quma, run `quma setup`, get a fully working server.
+The current setup assumes an SPT server already exists. A server host has to manually set up SPT, Fika, and containers before quma can manage anything. The new flow makes quma the single entry point — install quma, run `quma setup`, get a fully working server.
 
 ## User Interaction
 
@@ -18,15 +18,33 @@ $ quma setup
 Where should server data live? [~/spt-server]: 
 Install Fika for multiplayer? [Y/n]: 
 Admin password (min 8 chars): ********
+Confirm password: ********
 ```
 
 - **Data directory**: Where SPT server files live. Default `~/spt-server`. Used as the container volume mount.
 - **Fika prompt**: Skippable with `--no-fika` flag (skips the prompt entirely). Default yes.
-- **Admin password**: Min 8 characters, entered via `rpassword` (no echo). Admin username defaults to `admin`.
+- **Admin password**: Min 8 characters, entered via `rpassword` (no echo). Prompted twice for confirmation. Admin username defaults to `admin`.
+
+The admin user is a web-only account for server management — no SPT profile link required. A profile can optionally be linked later.
+
+## CLI Signature
+
+```
+quma setup [PATH] [--no-fika]
+```
+
+- `PATH` (optional positional): Data directory path. If provided, the data dir prompt is skipped. If omitted, the user is prompted with `~/spt-server` as the default.
+- `--no-fika`: Skip Fika installation entirely (no prompt shown).
 
 ## Detection & Branching
 
-After collecting input, quma checks whether the data directory contains a valid SPT installation (using existing `spt::detect::validate_spt_dir`).
+After collecting input, quma checks the target directory state:
+
+1. **Directory doesn't exist or is empty** → Path A (bootstrap from scratch).
+2. **Directory exists and passes `validate_spt_dir`** → Path B (wrap existing).
+3. **Directory exists, non-empty, but not a valid SPT install** → Fail with error: "Directory exists and contains files but is not a valid SPT installation. Use an empty directory for a fresh setup, or point at an existing SPT install."
+
+A container runtime (Podman or Docker) is required for both paths. If `ContainerManager::new()` fails, setup fails with an actionable error: "No container runtime found. Install Podman or Docker and ensure the socket is enabled."
 
 ### Path A — Bootstrap (empty or nonexistent directory)
 
@@ -35,20 +53,20 @@ The directory is empty or doesn't exist. Quma stands up everything from scratch.
 **Steps:**
 
 1. Create the data directory (if it doesn't exist).
-2. Connect to Podman, verify socket is available.
-3. Pull `ghcr.io/zhliau/fika-spt-server-docker:latest`.
-4. Create container `spt-server` with:
+2. Connect to container runtime, verify socket is available.
+3. Check if a container named `spt-server` already exists. If it does, fail with error: "Container 'spt-server' already exists. Remove it with `podman rm spt-server` or `docker rm spt-server` and re-run setup."
+4. Pull `ghcr.io/zhliau/fika-spt-server-docker:latest`.
+5. Create container `spt-server` with:
    - Image: `ghcr.io/zhliau/fika-spt-server-docker:latest`
    - Volume: `<data_dir>:/opt/server:rw,Z` (SELinux private label)
    - Port: `6969:6969/tcp`
-   - Env: `LISTEN_ALL_NETWORKS=true`, `FIKA_MODE=disabled`
+   - Env: `LISTEN_ALL_NETWORKS=true`, `FIKA_MODE=install` (or `disabled` if `--no-fika`)
    - Label: `managed-by=quma`
-5. Start container for first boot.
-6. Wait for SPT server to become ready — poll `SptClient::ping()` every 3s, 180s timeout. Show progress.
-7. Stop container after first boot completes.
-8. Create `quartermaster.toml` config with `spt_dir`, `server_container`, `session_secret`, `server_host=0.0.0.0`, `server_port=6969`.
-9. Create `quartermaster.db`, run migrations.
-10. If Fika requested: install Fika via Forge (uses `ForgeClient` to find latest compatible version, installs with dependencies, tracked in DB).
+6. Start container for first boot. SPT initializes and Fika installs (if enabled) inside the container.
+7. Wait for SPT server to become ready — poll `SptClient::ping()` every 3s, 180s timeout. Connection errors during polling are swallowed as "not ready yet"; only the timeout is fatal. Show progress.
+8. Stop container after first boot completes.
+9. Create `quartermaster.toml` config with `spt_dir`, `server_container=spt-server`, `session_secret`, `server_host=0.0.0.0`, `server_port=6969`.
+10. Create `quartermaster.db`, run migrations.
 11. Create admin user with username `admin`, the collected password, and `spt_profile_id = NULL`.
 12. Print summary.
 
@@ -61,17 +79,13 @@ The directory contains a valid SPT installation. Quma wraps around it.
 1. Read SPT version info via `read_spt_version`.
 2. Detect existing container via `detect_spt_containers` (by volume mount):
    - Exactly one found → use it.
-   - None found → create one (same defaults as Path A, pointing at existing data dir).
+   - None found → check for `spt-server` name collision (fail if taken), then create one (same defaults as Path A, pointing at existing data dir).
    - Multiple found → prefer the one with `managed-by=quma` label, fall back to first.
 3. Create `quartermaster.toml` config (same fields as Path A, using detected/created container name and network info from `http.json` if present).
 4. Create `quartermaster.db`, run migrations.
 5. Scan for unmanaged mods (existing `find_unmanaged_mod_dirs`).
-6. If Fika requested and not already installed: install via Forge.
-7. Create admin user:
-   - No profiles exist → username `admin`, `spt_profile_id = NULL`.
-   - One profile → auto-select it, use profile username.
-   - Multiple profiles → prompt host to pick from numbered list.
-8. Print summary.
+6. Create admin user with username `admin`, `spt_profile_id = NULL`.
+7. Print summary.
 
 ## Container Details
 
@@ -81,20 +95,22 @@ The directory contains a valid SPT installation. Quma wraps around it.
 | Image | `ghcr.io/zhliau/fika-spt-server-docker:latest` |
 | Volume | `<data_dir>:/opt/server:rw,Z` |
 | Port | `6969:6969/tcp` |
-| Env | `LISTEN_ALL_NETWORKS=true`, `FIKA_MODE=disabled` |
+| Env | `LISTEN_ALL_NETWORKS=true`, `FIKA_MODE=install` or `disabled` |
 | Label | `managed-by=quma` |
 
 The `latest` tag is used for now. Pinning to a specific SPT version tag is a future enhancement.
 
-Fika installation is handled by quma (not the container) so it's tracked in the database like any other mod. The container runs with `FIKA_MODE=disabled`.
+Fika installation is handled by the container via `FIKA_MODE=install`. Fika integration in quma's web UI (tracking, version management) is deferred to future work.
 
 ## Schema Changes
 
 ### Migration 008: Make `spt_profile_id` nullable
 
-SQLite doesn't support `ALTER COLUMN`, so this requires table recreation:
+SQLite doesn't support `ALTER COLUMN`, so this requires table recreation wrapped in a transaction:
 
 ```sql
+BEGIN;
+
 CREATE TABLE users_new (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     username        TEXT NOT NULL UNIQUE,
@@ -106,39 +122,39 @@ CREATE TABLE users_new (
     password_changed_at TEXT
 );
 
-INSERT INTO users_new SELECT * FROM users;
+INSERT INTO users_new (id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at)
+    SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+    FROM users;
+
 DROP TABLE users;
 ALTER TABLE users_new RENAME TO users;
+
+COMMIT;
 ```
 
-### Code changes in `db/users.rs`
+### Code changes
 
-- `insert_user` signature: `spt_profile_id: Option<&str>` instead of `&str`.
-- All callers updated (setup, registration handler).
+- **`src/db/users.rs`**: `User` struct changes `spt_profile_id: String` to `spt_profile_id: Option<String>`. `insert_user` signature changes to accept `Option<&str>`. `row_to_user` updated to handle nullable column.
+- **`src/web/handlers/admin.rs`**: Update all `spt_profile_id` accesses (e.g., `.is_empty()` → `.is_none()`).
+- **`src/web/handlers/auth.rs`**: Registration handler passes `Some(&profile_id)` instead of `&profile_id`.
+- **Templates**: Any template displaying `spt_profile_id` handles the `None` case.
 
-## CLI Changes
+## What Gets Removed
 
-### `quma setup` new signature
+### Commands removed
+- `quma init` — fully replaced by `quma setup`.
 
-```
-quma setup [PATH] [--no-fika]
-```
-
-- `PATH` (optional positional): Data directory path. If provided, the data dir prompt is skipped. If omitted, the user is prompted with `~/spt-server` as the default.
-- `--no-fika`: Skip Fika installation entirely (no prompt shown).
+### Current `quma setup` code removed
+- `configure_container()` — no interactive container selection; quma creates or auto-detects.
+- `configure_networking()` — container handles this via `LISTEN_ALL_NETWORKS=true`.
+- `configure_fika()` — host edits `fika.jsonc` post-setup if needed.
+- `first_boot()` confirmation prompt — first boot is automatic.
+- `detect_spt_directory()` interactive prompt — replaced by the data dir question upfront.
+- `install_fika()` — container handles Fika installation via `FIKA_MODE`.
 
 ### Removed flags
-
 - `--non-interactive`: No longer needed; the flow is inherently minimal.
 - `--skip-fika`: Replaced by `--no-fika`.
-
-### `quma init` removed
-
-The `Init` command variant is deleted from `src/cli/mod.rs`. `quma init` no longer exists.
-
-### `quma serve` error message update
-
-Line in `src/cli/serve.rs` that says `Run 'quma init' first` updated to say `Run 'quma setup' first`.
 
 ## Files Changed
 
@@ -147,16 +163,19 @@ Line in `src/cli/serve.rs` that says `Run 'quma init' first` updated to say `Run
 | `src/cli/setup.rs` | Rewritten with new flow |
 | `src/cli/init.rs` | Deleted |
 | `src/cli/mod.rs` | Remove `Init` command, update `Setup` flags |
-| `src/db/users.rs` | `insert_user` accepts `Option<&str>` for `spt_profile_id` |
+| `src/db/users.rs` | `User.spt_profile_id` → `Option<String>`, `insert_user` accepts `Option<&str>`, `row_to_user` updated |
+| `src/web/handlers/admin.rs` | Update `spt_profile_id` accesses for `Option` |
+| `src/web/handlers/auth.rs` | Registration passes `Some(&profile_id)` |
 | `src/cli/serve.rs` | Error message: `quma setup` instead of `quma init` |
 | `migrations/008_nullable_profile_id.sql` | Make `spt_profile_id` nullable |
+| Templates referencing `spt_profile_id` | Handle `None` case |
 
 ## Files Unchanged
 
 - `src/container.rs` — `ContainerManager` used as-is (has `pull_image`, `create_container`, etc.)
 - `src/spt/detect.rs` — `validate_spt_dir`, `read_spt_version`, `detect_spt_dir` used as-is
-- `src/forge/` — Forge client and mod install machinery used as-is
-- `src/spt/profiles.rs` — `list_profiles` used as-is for existing-server path
+- `src/forge/` — Not used during setup (Fika handled by container)
+- `src/spt/profiles.rs` — Not used during setup (admin is profile-less)
 
 ## Summary Output
 
@@ -186,6 +205,7 @@ Network requirements (for multiplayer):
 
 - Web-based setup wizard (future work).
 - Pinning container image to specific SPT version tag.
-- "Link profile" mechanism for admin users created without a profile (follow-up feature).
+- Fika tracking in quma's database / web UI integration (future work).
 - Fika config editing during setup (`fika.jsonc` settings).
+- "Link profile" mechanism for admin users (future web UI feature).
 - Player onboarding / invite flow improvements.
