@@ -2,6 +2,7 @@
 name = "quartermaster"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/cebarks/quartermaster"
 
 [[bin]]
 name = "quma"
@@ -95,3 +96,24 @@ bytestring = "1"
 assert_cmd = "2"
 predicates = "3"
 temp-env = "0.3"
+
+[profile.release]
+strip = true
+codegen-units = 1
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+# Config for 'dist'
+[workspace.metadata.dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.31.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = []
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["x86_64-unknown-linux-gnu"]
+# Whether CI should trigger releases with dispatches instead of tag pushes
+dispatch-releases = true
