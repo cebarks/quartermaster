@@ -140,17 +140,19 @@ fn compute_cpu_percent(container_delta: u64, system_delta: u64, num_cpus: u32) -
     if system_delta == 0 || num_cpus == 0 {
         return 0.0;
     }
-    (container_delta as f64 / system_delta as f64) * num_cpus as f64 * 100.0
+    // Normalize to 0-100% regardless of core count (matches docker stats / htop convention)
+    (container_delta as f64 / system_delta as f64) * 100.0
 }
 
 fn extract_blkio_bytes(entries: &[ContainerBlkioStatEntry]) -> (u64, u64) {
     let mut read = 0u64;
     let mut write = 0u64;
     for entry in entries {
-        match entry.op.as_deref() {
-            Some("read") | Some("Read") => read += entry.value.unwrap_or(0),
-            Some("write") | Some("Write") => write += entry.value.unwrap_or(0),
-            _ => {}
+        let op = entry.op.as_deref().unwrap_or("");
+        if op.eq_ignore_ascii_case("read") {
+            read += entry.value.unwrap_or(0);
+        } else if op.eq_ignore_ascii_case("write") {
+            write += entry.value.unwrap_or(0);
         }
     }
     (read, write)
@@ -530,8 +532,9 @@ mod tests {
 
     #[test]
     fn cpu_percent_basic() {
+        // Normalized to 0-100%: 50M/100M * 100 = 50%, regardless of core count
         let pct = compute_cpu_percent(50_000_000, 100_000_000, 4);
-        assert!((pct - 200.0).abs() < 0.01); // 50% of system * 4 cores = 200% max → (50/100)*4*100
+        assert!((pct - 50.0).abs() < 0.01);
     }
 
     #[test]

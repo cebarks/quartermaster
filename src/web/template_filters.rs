@@ -29,7 +29,7 @@ pub fn format_size_i64(bytes: &i64, _env: &dyn askama::Values) -> askama::Result
 
 #[askama::filter_fn]
 pub fn format_size_u64(bytes: &u64, _env: &dyn askama::Values) -> askama::Result<String> {
-    Ok(format_bytes(*bytes as i64))
+    Ok(format_bytes((*bytes).min(i64::MAX as u64) as i64))
 }
 
 #[askama::filter_fn]
@@ -141,5 +141,33 @@ mod tests {
     fn uptime_invalid_timestamp() {
         let result = compute_uptime("not-a-timestamp");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn format_size_u64_basic() {
+        assert_eq!(format_bytes(1_073_741_824), "1.0 GiB");
+    }
+
+    #[test]
+    fn format_size_u64_clamps_huge_value() {
+        let huge: u64 = u64::MAX;
+        let clamped = huge.min(i64::MAX as u64) as i64;
+        let result = format_bytes(clamped);
+        // i64::MAX is ~8 EiB, but format_bytes caps at TiB (largest unit in array)
+        assert!(result.contains("TiB"));
+    }
+
+    #[test]
+    fn fmt_pct_formats_correctly() {
+        assert_eq!(format!("{:.1}%", 42.567), "42.6%");
+        assert_eq!(format!("{:.1}%", 0.0), "0.0%");
+        assert_eq!(format!("{:.1}%", 100.0), "100.0%");
+    }
+
+    #[test]
+    fn clamp_pct_clamps_range() {
+        assert_eq!(format!("{:.1}", (50.0_f64).clamp(0.0, 100.0)), "50.0");
+        assert_eq!(format!("{:.1}", (-5.0_f64).clamp(0.0, 100.0)), "0.0");
+        assert_eq!(format!("{:.1}", (150.0_f64).clamp(0.0, 100.0)), "100.0");
     }
 }

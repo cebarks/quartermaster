@@ -206,7 +206,10 @@ pub async fn container_stats_partial(
     ) {
         (Some(container), Some(mgr)) => match mgr.stats(container).await {
             Ok(stats) => ContainerStatsTemplate::from_stats(stats),
-            Err(_) => ContainerStatsTemplate::unavailable(),
+            Err(e) => {
+                tracing::trace!(error = %e, "container stats unavailable");
+                ContainerStatsTemplate::unavailable()
+            }
         },
         _ => ContainerStatsTemplate::unavailable(),
     };
