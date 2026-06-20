@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Settings — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("settings", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+<div class="tab-bar">
+    <button class="tab{% if active_tab == "web" %} active{% endif %}" onclick="switchTab('web', this)">Web</button>
+    <button class="tab{% if active_tab == "server" %} active{% endif %}" onclick="switchTab('server', this)">Server</button>
+    <button class="tab{% if active_tab == "queue" %} active{% endif %}" onclick="switchTab('queue', this)">Queue</button>
+    <button class="tab{% if active_tab == "forge" %} active{% endif %}" onclick="switchTab('forge', this)">Forge</button>
+    <button class="tab{% if active_tab == "logging" %} active{% endif %}" onclick="switchTab('logging', this)">Logging</button>
+    {% if fika_installed %}
+    <button class="tab{% if active_tab == "clients" %} active{% endif %}" onclick="switchTab('clients', this)">Clients</button>
+    {% endif %}
+</div>
+
+<div id="settings-content">
+    <div class="settings-tab" id="tab-web"{% if active_tab != "web" %} style="display:none"{% endif %}>
+        {% include "settings/web.html" %}
+    </div>
+    <div class="settings-tab" id="tab-server"{% if active_tab != "server" %} style="display:none"{% endif %}>
+        {% include "settings/server.html" %}
+    </div>
+    <div class="settings-tab" id="tab-queue"{% if active_tab != "queue" %} style="display:none"{% endif %}>
+        {% include "settings/queue.html" %}
+    </div>
+    <div class="settings-tab" id="tab-forge"{% if active_tab != "forge" %} style="display:none"{% endif %}>
+        {% include "settings/forge.html" %}
+    </div>
+    <div class="settings-tab" id="tab-logging"{% if active_tab != "logging" %} style="display:none"{% endif %}>
+        {% include "settings/logging.html" %}
+    </div>
+    {% if fika_installed %}
+    <div class="settings-tab" id="tab-clients"{% if active_tab != "clients" %} style="display:none"{% endif %}>
+        {% include "settings/clients.html" %}
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function switchTab(name, el) {
+    document.querySelectorAll('.settings-tab').forEach(t => t.style.display = 'none');
+    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+    var tab = document.getElementById('tab-' + name);
+    if (tab) tab.style.display = '';
+    el.classList.add('active');
+    history.replaceState(null, '', '/quma/settings?tab=' + name);
+}
+</script>
+{% endblock %}
