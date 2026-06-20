@@ -642,4 +642,117 @@ mod tests {
         let result = client.download_file(&url, &dest).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn fika_compat_bool_on_mod_object() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": {
+                "id": 42,
+                "name": "Test Mod",
+                "fika_compatibility": true
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/mod/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let m = client.get_mod(42, false).await.unwrap();
+        assert_eq!(m.fika_compatibility, Some(FikaCompat::Compatible));
+    }
+
+    #[tokio::test]
+    async fn fika_compat_string_on_version_object() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": {
+                "id": 42,
+                "name": "Test Mod",
+                "fika_compatibility": true,
+                "versions": [
+                    {
+                        "id": 100,
+                        "version": "1.0.0",
+                        "fika_compatibility": "incompatible"
+                    }
+                ]
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/mod/42"))
+            .and(query_param("include", "versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let m = client.get_mod(42, true).await.unwrap();
+
+        assert_eq!(m.fika_compatibility, Some(FikaCompat::Compatible));
+        let v = &m.versions.unwrap()[0];
+        assert_eq!(v.fika_compatibility, Some(FikaCompat::Incompatible));
+    }
+
+    #[tokio::test]
+    async fn abbreviated_versions_missing_optional_fields() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": {
+                "id": 42,
+                "name": "Test Mod",
+                "fika_compatibility": true,
+                "versions": [
+                    {
+                        "id": 100,
+                        "version": "1.0.0"
+                    }
+                ]
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/mod/42"))
+            .and(query_param("include", "versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let m = client.get_mod(42, true).await.unwrap();
+        let v = &m.versions.unwrap()[0];
+
+        assert!(v.link.is_none());
+        assert!(v.content_length.is_none());
+        assert!(v.fika_compatibility.is_none());
+        assert!(v.spt_version.is_none());
+        assert!(v.dependencies.is_none());
+    }
+
+    #[tokio::test]
+    async fn auth_token_sent_in_header() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({"data": []});
+
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .and(wiremock::matchers::header(
+                "Authorization",
+                "Bearer test-token-123",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            ForgeClient::with_base_url(server.uri(), Some("test-token-123".to_string())).unwrap();
+
+        let mods = client.search_mods("test").await.unwrap();
+        assert!(mods.is_empty());
+    }
 }
