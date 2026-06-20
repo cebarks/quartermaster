@@ -2,6 +2,7 @@ pub mod admin;
 pub mod auth;
 pub mod clients;
 pub mod dashboard;
+pub mod leaderboard;
 pub mod logs;
 pub mod mods;
 pub mod modsync;

@@ -355,6 +355,10 @@ pub async fn start_server(
                             )
                             .route("/raids", web::get().to(handlers::raids::server_raids_page))
                             .route(
+                                "/leaderboard",
+                                web::get().to(handlers::leaderboard::leaderboard_page),
+                            )
+                            .route(
                                 "/raids/{raid_id}",
                                 web::get().to(handlers::raids::raid_detail_page),
                             )
