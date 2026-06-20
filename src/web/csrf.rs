@@ -1,5 +1,5 @@
 use actix_session::Session;
-use rand::Rng;
+use rand::RngExt;
 
 const CSRF_SESSION_KEY: &str = "csrf_token";
 const TOKEN_LEN: usize = 32;

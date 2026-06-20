@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use rand::distr::Alphanumeric;
-use rand::Rng;
+use rand::RngExt;
 
 pub fn generate_invite_code() -> String {
     let suffix: String = rand::rng()

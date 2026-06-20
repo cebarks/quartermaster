@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use rand::distr::Alphanumeric;
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 fn default_queue_changes() -> bool {

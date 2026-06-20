@@ -490,7 +490,7 @@ fn create_admin_user(spt_dir: &Path, db: &Database, non_interactive: bool) -> Re
     let profile = &profiles[choice - 1];
 
     // Prompt for password without echoing to terminal
-    let password = rpassword::prompt_password_stdout("Password (min 8 chars): ")
+    let password = rpassword::prompt_password("Password (min 8 chars): ")
         .context("failed to read password")?;
 
     if password.len() < 8 {
