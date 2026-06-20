@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Raid Detail — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("raids", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<div class="flex-between">
+    <h1>{{ raid.map }} Raid</h1>
+    {% if let Some(status) = raid.exit_status %}
+        {% if status == "Survived" %}
+            <span class="badge badge-success" style="font-size:0.9rem;padding:0.3rem 0.75rem">{{ status }}</span>
+        {% else if status == "Killed" %}
+            <span class="badge badge-danger" style="font-size:0.9rem;padding:0.3rem 0.75rem">{{ status }}</span>
+        {% else if status == "Runner" || status == "MissingInAction" %}
+            <span class="badge badge-warning" style="font-size:0.9rem;padding:0.3rem 0.75rem">{{ status }}</span>
+        {% else %}
+            <span class="badge badge-muted" style="font-size:0.9rem;padding:0.3rem 0.75rem">{{ status }}</span>
+        {% endif %}
+    {% else %}
+        <span class="badge badge-muted" style="font-size:0.9rem;padding:0.3rem 0.75rem">In Progress</span>
+    {% endif %}
+</div>
+
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:1.5rem">
+    <div>
+        <div class="card">
+            <h2>Raid Info</h2>
+            <table>
+                <tbody>
+                    <tr><td><strong>Player</strong></td><td><a href="/quma/profiles/{{ raid_username }}">{{ raid_username }}</a></td></tr>
+                    <tr><td><strong>Side</strong></td><td>{{ raid.player_side }}</td></tr>
+                    {% if let Some(faction) = raid.faction %}
+                    <tr><td><strong>Faction</strong></td><td>{{ faction }}</td></tr>
+                    {% endif %}
+                    <tr><td><strong>Started</strong></td><td>{{ raid.started_at }}</td></tr>
+                    {% if let Some(ended) = raid.ended_at %}
+                    <tr><td><strong>Ended</strong></td><td>{{ ended }}</td></tr>
+                    {% endif %}
+                    {% if let Some(duration) = raid.play_time_seconds %}
+                    <tr><td><strong>Duration</strong></td><td>{{ (duration / 60)|fmt("{}") }}m {{ (duration % 60)|fmt("{}") }}s</td></tr>
+                    {% endif %}
+                    {% if let Some(exit_name) = raid.exit_name %}
+                    <tr><td><strong>Exit</strong></td><td>{{ exit_name }}</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if !squad.is_empty() && squad.len() > 1 %}
+        <div class="card">
+            <h2>Squad</h2>
+            <table>
+                <thead>
+                    <tr><th>Player</th><th>Side</th><th>Outcome</th></tr>
+                </thead>
+                <tbody>
+                    {% for (member_raid, member_username) in squad %}
+                    <tr>
+                        <td><a href="/quma/profiles/{{ member_username }}">{{ member_username }}</a></td>
+                        <td>{{ member_raid.player_side }}</td>
+                        <td>
+                            {% if let Some(status) = member_raid.exit_status %}
+                                {% if status == "Survived" %}
+                                    <span class="badge badge-success">{{ status }}</span>
+                                {% else if status == "Killed" %}
+                                    <span class="badge badge-danger">{{ status }}</span>
+                                {% else %}
+                                    <span class="badge badge-muted">{{ status }}</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="badge badge-muted">In Progress</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <h2>Kills ({{ kills.len() }})</h2>
+            {% if kills.is_empty() %}
+            <p class="text-muted text-sm">No kills recorded.</p>
+            {% else %}
+            <table>
+                <thead>
+                    <tr><th>Victim</th><th>Side</th><th>Role</th><th>Weapon</th><th>Distance</th></tr>
+                </thead>
+                <tbody>
+                    {% for kill in kills %}
+                    <tr>
+                        <td>{% if let Some(name) = kill.victim_name %}{{ name }}{% else %}—{% endif %}</td>
+                        <td>
+                            {% if let Some(side) = kill.victim_side %}
+                                {% if side == "Pmc" %}
+                                    <span class="badge badge-danger">{{ side }}</span>
+                                {% else %}
+                                    <span class="badge badge-muted">{{ side }}</span>
+                                {% endif %}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="text-sm text-muted">{% if let Some(role) = kill.victim_role %}{{ role }}{% else %}—{% endif %}</td>
+                        <td class="text-sm">{% if let Some(weapon) = kill.weapon %}{{ weapon }}{% else %}—{% endif %}</td>
+                        <td class="text-sm">{% if let Some(distance) = kill.distance %}{{ distance|fmt("{:.0}") }}m{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </div>
+    </div>
+
+    <div>
+        <div class="card">
+            <h2>Stats</h2>
+            <div style="display:flex;flex-direction:column;gap:0.75rem">
+                {% if let Some(xp_before) = raid.xp_before %}
+                    {% if let Some(xp_after) = raid.xp_after %}
+                        <div>
+                            <div class="text-muted text-sm">Experience</div>
+                            <div style="font-size:1.1rem">{{ xp_before }} → {{ xp_after }}</div>
+                            <div class="text-sm" style="color:var(--success)">+{{ xp_after - xp_before }} XP</div>
+                        </div>
+                    {% endif %}
+                {% endif %}
+                {% if let Some(level_before) = raid.level_before %}
+                    {% if let Some(level_after) = raid.level_after %}
+                        <div>
+                            <div class="text-muted text-sm">Level</div>
+                            <div style="font-size:1.1rem">
+                                {{ level_before }}{% if level_after > level_before %} → {{ level_after }} <span style="color:var(--success)">▲</span>{% endif %}
+                            </div>
+                        </div>
+                    {% endif %}
+                {% endif %}
+                <div>
+                    <div class="text-muted text-sm">Kills This Raid</div>
+                    <div style="font-size:1.1rem">{{ kills.len() }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
