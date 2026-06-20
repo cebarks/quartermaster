@@ -1,7 +1,7 @@
 {% import "partials/icons.html" as icons %}
 {% for m in &mods %}
 <tr>
-    <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a></td>
+    <td><a href="/quma/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a></td>
     <td><span id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</span></td>
     <td class="text-muted">{{ m.file_count }}</td>
     <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
@@ -9,12 +9,12 @@
     {% if user.role.can_manage_mods() %}
     <td>
         <span id="mod-update-{{ m.mod_info.id }}">
-            <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
+            <form method="post" action="/quma/mods/{{ m.mod_info.id }}/update" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
             </form>
         </span>
-        <form method="post" action="/mods/{{ m.mod_info.id }}/remove" style="display:inline"
+        <form method="post" action="/quma/mods/{{ m.mod_info.id }}/remove" style="display:inline"
               data-name="{{ m.mod_info.name }}"
               onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

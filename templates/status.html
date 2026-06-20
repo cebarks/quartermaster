@@ -8,16 +8,16 @@
     <h1>Server Status</h1>
     {% if user.role.can_control_server() %}
     <div class="flex gap-1">
-        <form method="post" action="/server/start" style="display:inline">
+        <form method="post" action="/quma/server/start" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-success" {% if transitioning %}disabled{% endif %}>{% call icons::play() %}{% endcall %} Start</button>
         </form>
-        <form method="post" action="/server/restart" style="display:inline"
+        <form method="post" action="/quma/server/restart" style="display:inline"
               onsubmit="return confirm('Restart the server?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-warning" {% if transitioning %}disabled{% endif %}>{% call icons::refresh() %}{% endcall %} Restart</button>
         </form>
-        <form method="post" action="/server/stop" style="display:inline"
+        <form method="post" action="/quma/server/stop" style="display:inline"
               onsubmit="return confirm('Stop the server?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-danger" {% if transitioning %}disabled{% endif %}>{% call icons::stop() %}{% endcall %} Stop</button>
@@ -26,16 +26,20 @@
     {% endif %}
 </div>
 
-<div hx-get="/api/status/server" hx-trigger="load, every 30s, sse:serverStateChanged" hx-swap="innerHTML">
+<div hx-get="/quma/api/status/server" hx-trigger="load, every 30s, sse:serverStateChanged" hx-swap="innerHTML">
     <div class="hero-card"><div class="hero-status"><span class="text-muted loading-pulse">Loading server status...</span></div></div>
 </div>
 
 <div class="status-grid">
-    <div hx-get="/api/status/mods" hx-trigger="load, every 60s" hx-swap="innerHTML">
+    <div hx-get="/quma/api/status/mods" hx-trigger="load, every 60s" hx-swap="innerHTML">
         <div class="card"><h2>Mods</h2><p class="text-muted loading-pulse">Loading...</p></div>
     </div>
-    <div hx-get="/api/status/integrity" hx-trigger="load, every 120s" hx-swap="innerHTML">
+    <div hx-get="/quma/api/status/integrity" hx-trigger="load, every 120s" hx-swap="innerHTML">
         <div class="card"><h2>Integrity</h2><p class="text-muted loading-pulse">Checking...</p></div>
     </div>
+</div>
+
+<div hx-get="/quma/api/status/proxy" hx-trigger="load, every 3s" hx-swap="innerHTML">
+    <div class="card"><h2>Proxy</h2><p class="text-muted loading-pulse">Loading...</p></div>
 </div>
 {% endblock %}

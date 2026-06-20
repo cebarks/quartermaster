@@ -29,7 +29,7 @@ pub async fn start_server(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/status"))
+                .insert_header(("Location", "/quma/status"))
                 .finish());
         }
     };
@@ -43,7 +43,7 @@ pub async fn start_server(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/status"))
+                .insert_header(("Location", "/quma/status"))
                 .finish());
         }
     };
@@ -63,7 +63,7 @@ pub async fn start_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/status"))
+        .insert_header(("Location", "/quma/status"))
         .finish())
 }
 
@@ -87,7 +87,7 @@ pub async fn stop_server(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/status"))
+                .insert_header(("Location", "/quma/status"))
                 .finish());
         }
     };
@@ -101,7 +101,7 @@ pub async fn stop_server(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/status"))
+                .insert_header(("Location", "/quma/status"))
                 .finish());
         }
     };
@@ -121,7 +121,7 @@ pub async fn stop_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/status"))
+        .insert_header(("Location", "/quma/status"))
         .finish())
 }
 
@@ -145,7 +145,7 @@ pub async fn restart_server(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/status"))
+                .insert_header(("Location", "/quma/status"))
                 .finish());
         }
     };
@@ -159,7 +159,7 @@ pub async fn restart_server(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/status"))
+                .insert_header(("Location", "/quma/status"))
                 .finish());
         }
     };
@@ -174,7 +174,7 @@ pub async fn restart_server(
         state.set_server_transition(None);
         let _ = state.events.send(ServerEvent::ServerTransition);
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/status"))
+            .insert_header(("Location", "/quma/status"))
             .finish());
     }
 
@@ -225,6 +225,6 @@ pub async fn restart_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/status"))
+        .insert_header(("Location", "/quma/status"))
         .finish())
 }

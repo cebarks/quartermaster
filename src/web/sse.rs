@@ -11,6 +11,8 @@ pub enum ServerEvent {
     TaskChanged,
     ModsChanged,
     ServerTransition,
+    #[allow(dead_code)] // Used by Tasks 5-6 (proxy handlers)
+    PlayerRegistered,
 }
 
 pub async fn events_stream(
@@ -29,6 +31,7 @@ pub async fn events_stream(
                         ServerEvent::TaskChanged => "event: taskChanged\ndata: \n\n",
                         ServerEvent::ModsChanged => "event: modsChanged\ndata: \n\n",
                         ServerEvent::ServerTransition => "event: serverStateChanged\ndata: \n\n",
+                        ServerEvent::PlayerRegistered => "event: playerRegistered\ndata: \n\n",
                     };
                     return Some((Ok::<_, actix_web::Error>(web::Bytes::from(msg)), rx));
                 }

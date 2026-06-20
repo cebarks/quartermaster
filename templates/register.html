@@ -7,7 +7,7 @@
     {% if let Some(error) = error %}
     <div class="alert alert-error">{{ error }}</div>
     {% endif %}
-    <form method="post" action="/register">
+    <form method="post" action="/quma/register">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="code" value="{{ code }}">
         <label for="profile">SPT Profile</label>

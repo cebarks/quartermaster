@@ -18,7 +18,7 @@
 </div>
 {% endif %}
 
-<form method="post" action="/modsync/settings">
+<form method="post" action="/quma/modsync/settings">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
     <div class="card">
@@ -71,7 +71,7 @@
             {% for entry in mods %}
             {% if entry.has_client_files %}
             <tr>
-                <td><a href="/mods/{{ entry.mod_info.id }}">{{ entry.mod_info.name }}</a></td>
+                <td><a href="/quma/mods/{{ entry.mod_info.id }}">{{ entry.mod_info.name }}</a></td>
                 <td>{% match entry.override_enforced %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>
                 <td>{% match entry.override_silent %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>
                 <td>{% match entry.override_restart_required %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>

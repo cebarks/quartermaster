@@ -4,7 +4,7 @@
 {% block title %}Mods — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("mods", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
 {% block content %}
-<div hx-get="/api/tasks/status" hx-trigger="load" hx-swap="outerHTML" id="task-status"></div>
+<div hx-get="/quma/api/tasks/status" hx-trigger="load" hx-swap="outerHTML" id="task-status"></div>
 
 {% if let Some(flash) = flash %}
 <div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
@@ -14,7 +14,7 @@
     <button class="tab active" id="tab-installed"
             onclick="window.location.href='/mods'; return false;">Installed</button>
     <button class="tab" id="tab-requests"
-            hx-get="/api/mods/requests"
+            hx-get="/quma/api/mods/requests"
             hx-target="#mods-tab-content"
             hx-swap="innerHTML"
             onclick="setModTab(this, 'requests')">Requests</button>
@@ -25,7 +25,7 @@
         <h2>Installed Mods</h2>
         {% if user.role.can_manage_mods() %}
         <div class="flex gap-1">
-            <form method="post" action="/mods/update-all" style="display:inline"
+            <form method="post" action="/quma/mods/update-all" style="display:inline"
                   onsubmit="return confirm('Update all mods?')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update All</button>
@@ -50,7 +50,7 @@
             <strong>{{ m.mod_info.name }}</strong>
             <span class="text-muted text-sm">{{ m.mod_info.version }}</span>
             {% if user.role.can_manage_mods() %}
-            <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
+            <form method="post" action="/quma/mods/{{ m.mod_info.id }}/update" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-sm btn-outline" style="padding: 0.1rem 0.4rem; font-size: 0.75rem">{% call icons::refresh() %}{% endcall %}</button>
             </form>
@@ -88,12 +88,12 @@
             </tr>
         </thead>
         <tbody id="mod-list-body"
-               hx-get="/api/mods/list"
+               hx-get="/quma/api/mods/list"
                hx-trigger="sse:modsChanged"
                hx-swap="innerHTML">
             {% for m in &mods %}
             <tr>
-                <td><a href="/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a></td>
+                <td><a href="/quma/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a></td>
                 <td><span id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</span></td>
                 <td class="text-muted">{{ m.file_count }}</td>
                 <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
@@ -101,12 +101,12 @@
                 {% if user.role.can_manage_mods() %}
                 <td>
                     <span id="mod-update-{{ m.mod_info.id }}">
-                        <form method="post" action="/mods/{{ m.mod_info.id }}/update" style="display:inline">
+                        <form method="post" action="/quma/mods/{{ m.mod_info.id }}/update" style="display:inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
                         </form>
                     </span>
-                    <form method="post" action="/mods/{{ m.mod_info.id }}/remove" style="display:inline"
+                    <form method="post" action="/quma/mods/{{ m.mod_info.id }}/remove" style="display:inline"
                           data-name="{{ m.mod_info.name }}"
                           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -123,14 +123,14 @@
             </tr>
         </tbody>
     </table>
-    <span hx-get="/api/mods/update-status" hx-trigger="load, sse:modsChanged" hx-swap="none"></span>
+    <span hx-get="/quma/api/mods/update-status" hx-trigger="load, sse:modsChanged" hx-swap="none"></span>
 </div>
 {% endif %}
 
 {% if user.role.can_manage_mods() %}
 <div class="card">
     <h2>Install Mod</h2>
-    <form method="post" action="/mods/install">
+    <form method="post" action="/quma/mods/install">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="mod_ref">Forge Mod ID or Name</label>
         <input type="text" id="mod_ref" name="mod_ref" placeholder="e.g. 2326 or SAIN" required>

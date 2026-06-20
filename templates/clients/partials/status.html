@@ -20,7 +20,7 @@
     <tbody>
         {% for client in clients %}
         <tr>
-            <td><a href="/clients/{{ client.index }}">Client {{ client.index }}</a></td>
+            <td><a href="/quma/clients/{{ client.index }}">Client {{ client.index }}</a></td>
             <td>
                 {% match client.container_status %}
                 {% when crate::client::ContainerStatus::Running %}
@@ -61,7 +61,7 @@
                 {% if client.players.is_empty() %}
                 <span class="text-muted">—</span>
                 {% else %}
-                {% for player in client.players %}{% if !loop.first %}, {% endif %}<a href="/profiles/{{ player }}">{{ player }}</a>{% endfor %}
+                {% for player in client.players %}{% if !loop.first %}, {% endif %}<a href="/quma/profiles/{{ player }}">{{ player }}</a>{% endfor %}
                 {% endif %}
             </td>
             <td>
