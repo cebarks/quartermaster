@@ -23,6 +23,7 @@ pub struct RaidStartRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RaidEndRequest {
+    #[allow(dead_code)] // Deserialized from JSON but not read directly
     pub server_id: Option<String>,
     pub results: RaidEndResults,
 }
