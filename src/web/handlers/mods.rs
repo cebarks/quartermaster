@@ -919,6 +919,61 @@ pub async fn remove_mod(
         .finish())
 }
 
+pub async fn toggle_disable(
+    state: Data<AppState>,
+    path: Path<i64>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+    let mod_db_id = path.into_inner();
+
+    let db = state.db.clone();
+    let installed = web::block(move || {
+        let db = db.lock();
+        db.get_mod(mod_db_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?
+    .ok_or(WebError::NotFound)?;
+
+    let spt_dir = state.spt_dir.clone();
+    let db = state.db.clone();
+    let was_disabled = installed.disabled;
+    let mod_name = installed.name.clone();
+
+    web::block(move || {
+        let db = db.lock();
+        if was_disabled {
+            crate::ops::enable_mod(&db, &spt_dir, mod_db_id)
+        } else {
+            crate::ops::disable_mod(&db, &spt_dir, mod_db_id)
+        }
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    if was_disabled {
+        set_flash(&session, &format!("{mod_name} has been enabled"), "success");
+    } else {
+        set_flash(
+            &session,
+            &format!("{mod_name} has been disabled"),
+            "success",
+        );
+    }
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/mods/{mod_db_id}")))
+        .finish())
+}
+
 pub async fn update_all_mods(
     state: Data<AppState>,
     req: HttpRequest,

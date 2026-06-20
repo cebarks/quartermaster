@@ -6,6 +6,10 @@
 {% block content %}
 <h1>{{ mod_info.name }}</h1>
 
+{% if mod_info.disabled %}
+<div class="alert alert-warning">This mod is currently disabled. Its files have been renamed on disk and SPT will not load it.</div>
+{% endif %}
+
 <div class="card">
     <table>
         <tr><th style="width:140px">Forge ID</th><td>{{ mod_info.forge_mod_id }}</td></tr>
@@ -34,6 +38,14 @@
           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
+    </form>
+    <form method="post" action="/quma/mods/{{ mod_info.id }}/toggle-disable">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if mod_info.disabled %}
+        <button type="submit" class="btn btn-outline">Enable</button>
+        {% else %}
+        <button type="submit" class="btn btn-outline">Disable</button>
+        {% endif %}
     </form>
 </div>
 {% endif %}
