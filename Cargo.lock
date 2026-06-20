@@ -3360,6 +3360,7 @@ dependencies = [
  "bytestring",
  "chrono",
  "clap",
+ "dirs",
  "futures-util",
  "indicatif",
  "json_comments",

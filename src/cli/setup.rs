@@ -151,7 +151,7 @@ fn create_container_opts(data_dir: &Path, install_fika: bool) -> CreateContainer
             container_port: DEFAULT_SPT_PORT,
             protocol: Protocol::Tcp,
         }],
-        labels: vec![],
+        labels: vec![("managed-by".to_string(), "quma".to_string())],
         user: None,
     }
 }
@@ -379,8 +379,7 @@ async fn detect_or_create_container(
     }
 
     if detected.len() > 1 {
-        // Prefer quma-managed container
-        // detect_containers_by_label isn't async-friendly here, so just pick first
+        // TODO(debt): use managed-by=quma label to prefer quma-managed containers
         println!("Multiple containers detected, using first: {}", detected[0]);
         return Ok(detected[0].clone());
     }
