@@ -21,19 +21,16 @@ struct SyncPathEntry {
 /// The full ModSync config.jsonc structure.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct ModSyncOutputConfig {
     sync_paths: Vec<SyncPathEntry>,
     exclusions: Vec<String>,
 }
 
-#[allow(dead_code)]
 pub fn modsync_config_path(spt_dir: &Path) -> PathBuf {
     spt_dir.join("user/mods/Corter-ModSync/config.jsonc")
 }
 
 /// Generate ModSync config from DB state + quartermaster config.
-#[allow(dead_code)]
 fn generate_config(ms_config: &ModSyncConfig, db: &Database) -> Result<ModSyncOutputConfig> {
     let mods = db.list_mods()?;
     let mut sync_paths: Vec<SyncPathEntry> = Vec::new();
@@ -92,7 +89,6 @@ fn generate_config(ms_config: &ModSyncConfig, db: &Database) -> Result<ModSyncOu
 /// set of directories. If multiple files share a common parent like
 /// `BepInEx/plugins/SAIN/`, use the directory. If a file is alone at a
 /// level (e.g., `BepInEx/patchers/Mod.dll`), use the file path directly.
-#[allow(dead_code)]
 fn deduplicate_to_directories(paths: &[&str]) -> Vec<String> {
     use std::collections::BTreeSet;
     let mut dirs: BTreeSet<String> = BTreeSet::new();
@@ -118,7 +114,6 @@ fn deduplicate_to_directories(paths: &[&str]) -> Vec<String> {
 }
 
 /// Write a ModSyncOutputConfig to config.jsonc atomically.
-#[allow(dead_code)]
 fn write_config(config_path: &Path, output: &ModSyncOutputConfig) -> Result<()> {
     let json = serde_json::to_string_pretty(output)?;
     let content =
@@ -134,7 +129,6 @@ fn write_config(config_path: &Path, output: &ModSyncOutputConfig) -> Result<()> 
 
 /// Regenerate config.jsonc if ModSync is installed and [modsync] config is present.
 /// Returns true if the config was written, false if skipped.
-#[allow(dead_code)]
 pub fn regenerate_if_enabled(spt_dir: &Path, config: &Config, db: &Database) -> Result<bool> {
     let ms_config = match &config.modsync {
         Some(c) => c,

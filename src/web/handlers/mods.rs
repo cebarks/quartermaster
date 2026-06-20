@@ -522,6 +522,7 @@ pub async fn install_mod(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config.clone();
     let version = version.clone();
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
@@ -548,7 +549,10 @@ pub async fn install_mod(
             let version_id = version.id;
             let version_str = version.version.clone();
             let spt_dir2 = spt_dir.clone();
+            let spt_dir3 = spt_dir.clone();
             let db2 = db.clone();
+            let db3 = db.clone();
+            let config2 = config.clone();
             let db_id = actix_web::web::block(move || {
                 let db = db.lock();
                 let db_id = db.insert_mod(
@@ -568,6 +572,13 @@ pub async fn install_mod(
             // Scan for runtime-generated files and track them separately
             let _ = actix_web::web::block(move || {
                 crate::ops::scan_and_record_runtime_files(&db2, db_id, &spt_dir2)
+            })
+            .await;
+
+            // Regenerate ModSync config if enabled
+            let _ = actix_web::web::block(move || {
+                let db = db3.lock();
+                crate::modsync::regenerate_if_enabled(&spt_dir3, &config2, &db)
             })
             .await;
 
@@ -685,6 +696,7 @@ pub async fn update_mod(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config.clone();
     let version = version.clone();
     let update_cache = state.update_cache.clone();
 
@@ -711,6 +723,9 @@ pub async fn update_mod(
             let version_id = version.id;
             let version_str = version.version.clone();
             let staging_path = staging_dir.path().to_path_buf();
+            let spt_dir2 = spt_dir.clone();
+            let db2 = db.clone();
+            let config2 = config.clone();
             actix_web::web::block(move || {
                 let db = db.lock();
                 let old_files = db.get_files_for_mod(mod_db_id)?;
@@ -740,6 +755,14 @@ pub async fn update_mod(
                 Ok::<_, anyhow::Error>(())
             })
             .await??;
+
+            // Regenerate ModSync config if enabled
+            let _ = actix_web::web::block(move || {
+                let db = db2.lock();
+                crate::modsync::regenerate_if_enabled(&spt_dir2, &config2, &db)
+            })
+            .await;
+
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -817,11 +840,12 @@ pub async fn remove_mod(
 
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config.clone();
 
     tracing::info!(mod_db_id, mod_name = %installed.name, "removing mod");
     web::block(move || {
         let db = db.lock();
-        crate::ops::remove_mod_by_id(&db, &spt_dir, mod_db_id)
+        crate::ops::remove_mod_by_id(&db, &spt_dir, &config, mod_db_id)
     })
     .await
     .map_err(WebError::from)?
@@ -923,6 +947,7 @@ pub async fn update_all_mods(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config.clone();
     let installed = installed.clone();
     let update_cache = state.update_cache.clone();
 
@@ -1007,6 +1032,16 @@ pub async fn update_all_mods(
                 Err(e) => tracing::error!(mod_db_id, error = %e, "update failed during update-all"),
             }
         }
+
+        // Regenerate ModSync config after all updates
+        let spt_dir2 = spt_dir.clone();
+        let db2 = db.clone();
+        let config2 = config.clone();
+        let _ = actix_web::web::block(move || {
+            let db = db2.lock();
+            crate::modsync::regenerate_if_enabled(&spt_dir2, &config2, &db)
+        })
+        .await;
 
         update_cache.invalidate();
 
