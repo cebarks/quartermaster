@@ -61,7 +61,7 @@
                 {% if client.players.is_empty() %}
                 <span class="text-muted">—</span>
                 {% else %}
-                {{ client.players.join(", ") }}
+                {% for player in client.players %}{% if !loop.first %}, {% endif %}<a href="/quma/profiles/{{ player }}">{{ player }}</a>{% endfor %}
                 {% endif %}
             </td>
             <td>

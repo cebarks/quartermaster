@@ -28,6 +28,16 @@ pub enum ClientAction {
         #[arg(long, short)]
         follow: bool,
     },
+    /// Stop a dedicated client
+    Stop {
+        /// Client number
+        client: u32,
+    },
+    /// Start a dedicated client
+    Start {
+        /// Client number
+        client: u32,
+    },
     /// Restart a dedicated client
     Restart {
         /// Client number
@@ -53,6 +63,8 @@ pub async fn run(action: &ClientAction, ctx: &CliContext) -> Result<()> {
     match action {
         ClientAction::Status { client } => status(ctx, *client).await,
         ClientAction::Logs { client, follow } => logs(ctx, *client, *follow).await,
+        ClientAction::Stop { client } => stop(ctx, *client).await,
+        ClientAction::Start { client } => start(ctx, *client).await,
         ClientAction::Restart { client } => restart(ctx, *client).await,
         ClientAction::Scale { count } => scale(ctx, *count).await,
     }
@@ -233,6 +245,40 @@ async fn logs(ctx: &CliContext, client: u32, follow: bool) -> Result<()> {
             _ => {}
         }
     }
+
+    Ok(())
+}
+
+async fn stop(ctx: &CliContext, client: u32) -> Result<()> {
+    let container_mgr = require_container_manager(ctx)?;
+    let name = client_container_name(client);
+
+    // Verify container exists
+    container_mgr
+        .inspect(&name)
+        .await
+        .with_context(|| format!("container '{}' not found", name))?;
+
+    println!("Stopping {}...", name);
+    container_mgr.stop(&name).await?;
+    println!("Client {} stopped successfully.", client);
+
+    Ok(())
+}
+
+async fn start(ctx: &CliContext, client: u32) -> Result<()> {
+    let container_mgr = require_container_manager(ctx)?;
+    let name = client_container_name(client);
+
+    // Verify container exists
+    container_mgr
+        .inspect(&name)
+        .await
+        .with_context(|| format!("container '{}' not found", name))?;
+
+    println!("Starting {}...", name);
+    container_mgr.start(&name).await?;
+    println!("Client {} started successfully.", client);
 
     Ok(())
 }

@@ -11,6 +11,7 @@ use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging::LogBroadcast;
 use crate::spt::detect::SptInfo;
+use crate::spt::game_data::GameData;
 use crate::web::proxy_metrics::ProxyMetrics;
 use crate::web::sse::ServerEvent;
 use crate::web::tasks::TaskTracker;
@@ -31,8 +32,9 @@ pub struct AppState {
     pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
+    pub modsync_installed: AtomicBool,
     pub server_transition: Arc<Mutex<Option<String>>>,
-    #[allow(dead_code)] // Used by Tasks 5-7 (proxy handlers, status page)
+    pub game_data: Arc<GameData>,
     pub proxy_metrics: ProxyMetrics,
     pub proxy_client: reqwest::Client,
 }
@@ -44,5 +46,10 @@ impl AppState {
 
     pub fn set_server_transition(&self, transition: Option<&str>) {
         *self.server_transition.lock() = transition.map(|s| s.to_string());
+    }
+
+    pub fn is_modsync_installed(&self) -> bool {
+        self.modsync_installed
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }

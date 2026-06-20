@@ -102,7 +102,7 @@ pub fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<
 pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
     let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
 
-    crate::ops::remove_mod_by_id(&ctx.db, &ctx.spt_dir, installed.id)?;
+    crate::ops::remove_mod_by_id(&ctx.db, &ctx.spt_dir, &ctx.config, installed.id)?;
 
     if file_count > 0 {
         println!("  Deleted {} files for {}", file_count, installed.name);

@@ -1,0 +1,47 @@
+{% if quests.is_empty() %}
+<div class="empty-state"><p>No quest data available.</p></div>
+{% else %}
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+    <span><strong>{{ completed_quests }}</strong> / {{ total_quests }} completed</span>
+    <div class="progress-bar" style="flex:1">
+        <div class="progress-fill progress-fill-success" style="width:{% if total_quests > 0 %}{{ completed_quests * 100 / total_quests }}{% else %}0{% endif %}%"></div>
+    </div>
+    <span class="text-muted text-sm">{% if total_quests > 0 %}{{ completed_quests * 100 / total_quests }}%{% else %}0%{% endif %}</span>
+</div>
+
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+    <select hx-get="/quma/api/profiles/{{ profile_username }}/quests"
+            hx-target="#tab-content"
+            hx-swap="innerHTML"
+            hx-include="[name='search']"
+            hx-trigger="change"
+            name="status">
+        <option value=""{% if status_filter.is_empty() %} selected{% endif %}>All</option>
+        <option value="completed"{% if status_filter == "completed" %} selected{% endif %}>Completed</option>
+        <option value="started"{% if status_filter == "started" %} selected{% endif %}>Started</option>
+        <option value="available"{% if status_filter == "available" %} selected{% endif %}>Available</option>
+        <option value="failed"{% if status_filter == "failed" %} selected{% endif %}>Failed</option>
+        <option value="locked"{% if status_filter == "locked" %} selected{% endif %}>Locked</option>
+    </select>
+    <input type="text" name="search" value="{{ search_filter }}" placeholder="Search quests..."
+           hx-get="/quma/api/profiles/{{ profile_username }}/quests"
+           hx-target="#tab-content"
+           hx-swap="innerHTML"
+           hx-include="[name='status']"
+           hx-trigger="input changed delay:300ms">
+</div>
+
+<table>
+    <thead>
+        <tr><th>Quest</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+        {% for q in quests %}
+        <tr>
+            <td>{{ q.name }}</td>
+            <td><span class="badge {{ q.status_css }}">{{ q.status_label }}</span></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}

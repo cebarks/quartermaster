@@ -8,6 +8,7 @@ mod forge;
 mod health;
 mod invite;
 mod logging;
+mod modsync;
 mod ops;
 mod queue;
 mod server_detect;
@@ -52,7 +53,11 @@ async fn main() -> Result<()> {
             let reload_handles = logging::init_subscriber(&log_broadcast);
 
             match &cli.command {
-                Command::Setup { path, no_fika } => {
+                Command::Setup {
+                    path,
+                    no_fika,
+                    no_modsync,
+                } => {
                     // Apply CLI verbosity to default config for early commands
                     let filter = logging::resolve_log_filter(
                         &config::LoggingConfig::default(),
@@ -60,7 +65,7 @@ async fn main() -> Result<()> {
                         cli.log_level.as_deref(),
                     );
                     reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
-                    cli::setup::run(path.clone(), *no_fika, &cli).await
+                    cli::setup::run(path.clone(), *no_fika, *no_modsync, &cli).await
                 }
                 Command::Install {
                     mod_ref,

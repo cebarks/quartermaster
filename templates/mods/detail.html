@@ -2,7 +2,7 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}{{ mod_info.name }} — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("mods", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>{{ mod_info.name }}</h1>
 
@@ -58,6 +58,32 @@
             {% endfor %}
         </tbody>
     </table>
+</div>
+{% endif %}
+
+{% if modsync_managed && has_client_files %}
+<div class="card" style="border-left: 3px solid var(--success)">
+    <h2>ModSync</h2>
+    <p class="text-muted text-sm mb-1">This mod has client-side files that will be synced to players.</p>
+    <table>
+        <tr>
+            <th style="width:140px">Enforced</th>
+            <td>{% match sync_enforced %}{% when Some with (v) %}{{ v }} (override){% when None %}default{% endmatch %}</td>
+        </tr>
+        <tr>
+            <th>Silent</th>
+            <td>{% match sync_silent %}{% when Some with (v) %}{{ v }} (override){% when None %}default{% endmatch %}</td>
+        </tr>
+        <tr>
+            <th>Restart Required</th>
+            <td>{% match sync_restart_required %}{% when Some with (v) %}{{ v }} (override){% when None %}default{% endmatch %}</td>
+        </tr>
+        <tr>
+            <th>Enabled</th>
+            <td>{% match sync_enabled %}{% when Some with (false) %}<span style="color: var(--danger)">disabled</span>{% when _ %}yes{% endmatch %}</td>
+        </tr>
+    </table>
+    <p class="text-muted text-sm mt-1"><a href="/quma/modsync">Edit sync settings</a></p>
 </div>
 {% endif %}
 

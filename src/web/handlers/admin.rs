@@ -60,7 +60,10 @@ struct AdminPageTemplate {
     users: Vec<(User, ProfileStatus)>,
     current_user_id: i64,
     flash: Option<crate::web::flash::FlashMessage>,
+    #[allow(dead_code)]
     fika_installed: bool,
+    #[allow(dead_code)]
+    modsync_installed: bool,
 }
 
 #[derive(Template)]
@@ -196,6 +199,7 @@ pub async fn admin_page(
         current_user_id,
         flash,
         fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

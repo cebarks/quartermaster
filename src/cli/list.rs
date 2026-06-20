@@ -2,6 +2,12 @@ use anyhow::Result;
 use serde::Serialize;
 
 use super::common::{find_unmanaged_mod_dirs, truncate_str, CliContext};
+use crate::config::is_modsync_installed;
+
+const INFRASTRUCTURE_FORGE_IDS: &[i64] = &[
+    2326, // Project Fika (client)
+    2357, // Project Fika - Server
+];
 
 #[derive(Serialize)]
 struct ModEntry {
@@ -22,6 +28,8 @@ struct UnmanagedEntry {
 
 #[derive(Serialize)]
 struct ListOutput {
+    infrastructure: Vec<ModEntry>,
+    modsync_installed: bool,
     mods: Vec<ModEntry>,
     unmanaged: Vec<UnmanagedEntry>,
 }
@@ -29,16 +37,16 @@ struct ListOutput {
 pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
     let installed_mods = ctx.db.list_mods()?;
 
-    // Count files per mod from the tracked files list (avoids N+1 DB queries)
     let all_tracked_files = ctx.db.get_all_tracked_files()?;
     let mut file_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     for f in &all_tracked_files {
         *file_counts.entry(f.mod_id).or_default() += 1;
     }
 
+    let mut infra_entries = Vec::new();
     let mut mod_entries = Vec::new();
     for m in &installed_mods {
-        mod_entries.push(ModEntry {
+        let entry = ModEntry {
             name: m.name.clone(),
             version: m.version.clone(),
             forge_mod_id: m.forge_mod_id,
@@ -46,8 +54,15 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
             file_count: file_counts.get(&m.id).copied().unwrap_or(0),
             installed_at: m.installed_at.clone(),
             updated_at: m.updated_at.clone(),
-        });
+        };
+        if INFRASTRUCTURE_FORGE_IDS.contains(&m.forge_mod_id) {
+            infra_entries.push(entry);
+        } else {
+            mod_entries.push(entry);
+        }
     }
+
+    let modsync_installed = is_modsync_installed(&ctx.spt_dir);
 
     let (unmanaged_dirs, _) = find_unmanaged_mod_dirs(&ctx.spt_dir, &ctx.db)?;
     let unmanaged_entries: Vec<UnmanagedEntry> = unmanaged_dirs
@@ -60,6 +75,8 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
 
     if json {
         let output = ListOutput {
+            infrastructure: infra_entries,
+            modsync_installed,
             mods: mod_entries,
             unmanaged: unmanaged_entries,
         };
@@ -67,8 +84,24 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
         return Ok(());
     }
 
+    // Infrastructure section
+    if !infra_entries.is_empty() || modsync_installed {
+        println!("Infrastructure:");
+        for entry in &infra_entries {
+            println!("  {} {}", entry.name, entry.version);
+        }
+        if modsync_installed {
+            println!("  ModSync");
+        }
+        println!();
+    }
+
     // Table output
-    if mod_entries.is_empty() && unmanaged_entries.is_empty() {
+    if mod_entries.is_empty()
+        && unmanaged_entries.is_empty()
+        && infra_entries.is_empty()
+        && !modsync_installed
+    {
         println!("No mods installed and no unmanaged mods found.");
         return Ok(());
     }

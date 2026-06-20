@@ -317,6 +317,7 @@ pub async fn install_single_mod(
     let db_id = crate::ops::install_mod_from_archive(
         &ctx.db,
         &ctx.spt_dir,
+        &ctx.config,
         forge_mod_id,
         forge_version_id,
         name,

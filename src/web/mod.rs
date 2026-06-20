@@ -33,6 +33,7 @@ use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging::LogBroadcast;
 use crate::spt::detect::SptInfo;
+use crate::spt::game_data::GameData;
 
 use state::AppState;
 
@@ -60,6 +61,7 @@ pub async fn start_server(
     client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     converging: Arc<std::sync::atomic::AtomicBool>,
     fika_installed: bool,
+    modsync_installed: bool,
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
 
@@ -67,18 +69,32 @@ pub async fn start_server(
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
+    let game_data = Arc::new(GameData::load(&spt_dir).unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "failed to load SPT game data, lookups will return raw IDs");
+        GameData::load_empty()
+    }));
+
+    let db_arc = Arc::new(parking_lot::Mutex::new(db));
+
+    // Regenerate ModSync config on startup to ensure consistency
+    if modsync_installed && config.modsync.is_some() {
+        if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
+            tracing::warn!(error = %e, "failed to regenerate ModSync config on startup");
+        }
+    }
+
     let tls_enabled = config.tls_enabled;
     let spt_dir_for_tls = spt_dir.clone();
 
-    let db = Arc::new(parking_lot::Mutex::new(db));
     let proxy_client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("failed to build proxy HTTP client");
+
     let app_state = web::Data::new(AppState {
-        db,
+        db: db_arc,
         forge,
         config: config.clone(),
         config_path,
@@ -92,7 +108,9 @@ pub async fn start_server(
         client_states,
         converging,
         fika_installed,
+        modsync_installed: std::sync::atomic::AtomicBool::new(modsync_installed),
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
+        game_data,
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
         proxy_client,
     });
@@ -109,10 +127,10 @@ pub async fn start_server(
         .finish()
         .expect("invalid search governor config");
 
-    let server = HttpServer::new(move || {
+    let server_builder = HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
-            .app_data(web::PayloadConfig::new(64 * 1024 * 1024)) // 64 MiB for proxied game traffic
+            .app_data(web::PayloadConfig::new(64 * 1024 * 1024))
             .wrap(middleware::NormalizePath::new(
                 middleware::TrailingSlash::MergeOnly,
             ))
@@ -206,6 +224,18 @@ pub async fn start_server(
                                 web::get().to(handlers::clients::client_status_partial),
                             )
                             .route(
+                                "/profiles/{username}/quests",
+                                web::get().to(handlers::profiles::quests_partial),
+                            )
+                            .route(
+                                "/profiles/{username}/traders",
+                                web::get().to(handlers::profiles::traders_partial),
+                            )
+                            .route(
+                                "/profiles/{username}/hideout",
+                                web::get().to(handlers::profiles::hideout_partial),
+                            )
+                            .route(
                                 "/tasks/status",
                                 web::get().to(handlers::tasks::task_status_partial),
                             )
@@ -279,7 +309,7 @@ pub async fn start_server(
                                     ),
                             ),
                     )
-                    // Authenticated routes — admin checks are per-handler via require_admin()
+                    // Authenticated routes -- admin checks are per-handler via require_admin()
                     .service(
                         web::scope("")
                             .wrap(from_fn(auth::auth_middleware))
@@ -290,10 +320,19 @@ pub async fn start_server(
                             .route("/logs", web::get().to(handlers::logs::logs_page))
                             .route("/admin", web::get().to(handlers::admin::admin_page))
                             .route("/mods", web::get().to(handlers::mods::list_mods))
+                            .route("/modsync", web::get().to(handlers::modsync::modsync_page))
+                            .route(
+                                "/modsync/settings",
+                                web::post().to(handlers::modsync::save_settings),
+                            )
                             .route("/clients", web::get().to(handlers::clients::client_list))
                             .route(
                                 "/clients/{n}",
                                 web::get().to(handlers::clients::client_detail),
+                            )
+                            .route(
+                                "/profiles/{username}",
+                                web::get().to(handlers::profiles::profile_page),
                             )
                             .route("/mods/install", web::post().to(handlers::mods::install_mod))
                             .route(
@@ -343,20 +382,19 @@ pub async fn start_server(
                             ),
                     ),
             )
-            // Proxy catch-all — everything not under /quma/ goes to SPT
             .default_service(web::to(proxy::proxy_handler))
     });
 
-    let server = if tls_enabled {
+    let server = if config.tls_enabled {
         let tls_config = crate::tls::load_or_generate_tls_config(&config, &spt_dir_for_tls)
             .context("failed to configure TLS")?;
         tracing::info!("Quartermaster starting on https://{bind_addr}");
-        server
+        server_builder
             .bind_rustls_0_23(&bind_addr, tls_config)
             .with_context(|| format!("failed to bind TLS to {bind_addr}"))?
     } else {
         tracing::info!("Quartermaster starting on http://{bind_addr} (TLS disabled)");
-        server
+        server_builder
             .bind(&bind_addr)
             .with_context(|| format!("failed to bind to {bind_addr}"))?
     };

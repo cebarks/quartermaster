@@ -20,7 +20,10 @@ struct StatusPageTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    #[allow(dead_code)]
     fika_installed: bool,
+    #[allow(dead_code)]
+    modsync_installed: bool,
     transitioning: bool,
 }
 
@@ -64,6 +67,7 @@ pub async fn status_page(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
         transitioning,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
