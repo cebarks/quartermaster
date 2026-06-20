@@ -16,7 +16,10 @@ struct QueueTemplate {
     ops: Vec<PendingOperation>,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    #[allow(dead_code)]
     fika_installed: bool,
+    #[allow(dead_code)]
+    modsync_installed: bool,
 }
 
 pub async fn queue_page(
@@ -43,6 +46,7 @@ pub async fn queue_page(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -144,6 +148,18 @@ pub async fn apply_queue(
         }
     }
 
+    // Regenerate ModSync config after all queue operations
+    {
+        let db = state.db.clone();
+        let spt_dir = state.spt_dir.clone();
+        let config = state.config.clone();
+        let _ = web::block(move || {
+            let db = db.lock();
+            crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
+        })
+        .await;
+    }
+
     if !failures.is_empty() {
         let names = failures.join(", ");
         let msg = format!("{} operation(s) failed: {names}", failures.len());
@@ -194,6 +210,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
+    let config = state.config.clone();
     let mod_name = op.mod_name.clone();
     let forge_mod_id = op.forge_mod_id;
 
@@ -205,6 +222,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
         crate::ops::install_mod_from_archive(
             &db,
             &spt_dir,
+            &config,
             forge_mod_id,
             version_id,
             &mod_name,
@@ -229,6 +247,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
+    let config = state.config.clone();
     let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
@@ -239,6 +258,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
         crate::ops::update_mod_from_archive(
             &db,
             &spt_dir,
+            &config,
             installed.id,
             version_id,
             &version_str,
@@ -253,6 +273,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
 pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
+    let config = state.config.clone();
     let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
@@ -264,10 +285,10 @@ pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> any
         // Collect and remove reverse dependencies (same as CLI drain_all)
         let reverse_deps = crate::ops::collect_all_reverse_deps(&db, installed.id)?;
         for dep in reverse_deps.iter().rev() {
-            crate::ops::remove_mod_by_id(&db, &spt_dir, dep.id)?;
+            crate::ops::remove_mod_by_id(&db, &spt_dir, &config, dep.id)?;
         }
 
-        crate::ops::remove_mod_by_id(&db, &spt_dir, installed.id)
+        crate::ops::remove_mod_by_id(&db, &spt_dir, &config, installed.id)
     })
     .await??;
 

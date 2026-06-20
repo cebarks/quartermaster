@@ -24,6 +24,7 @@ pub async fn run(path: Option<PathBuf>, no_fika: bool, no_modsync: bool, cli: &C
     let install_fika = if no_fika { false } else { prompt_fika()? };
     let install_modsync = if no_modsync { false } else { prompt_modsync()? };
     let admin_password = prompt_admin_password()?;
+    let forge_token = prompt_forge_token()?;
 
     // --- Detect path ---
     let mgr = ContainerManager::new().context(
@@ -40,6 +41,7 @@ pub async fn run(path: Option<PathBuf>, no_fika: bool, no_modsync: bool, cli: &C
                 install_fika,
                 install_modsync,
                 &admin_password,
+                forge_token,
                 cli,
             )
             .await
@@ -51,6 +53,7 @@ pub async fn run(path: Option<PathBuf>, no_fika: bool, no_modsync: bool, cli: &C
                 install_fika,
                 install_modsync,
                 &admin_password,
+                forge_token,
                 cli,
             )
             .await
@@ -282,6 +285,22 @@ fn prompt_admin_password() -> Result<String> {
     }
 }
 
+fn prompt_forge_token() -> Result<Option<String>> {
+    println!("\nA Forge API token increases rate limits for mod downloads.");
+    println!("Get one at: https://forge.sp-tarkov.com/account/settings");
+    print!("Forge API token (leave blank to skip): ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let trimmed = input.trim();
+
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_string()))
+    }
+}
+
 fn create_container_opts(data_dir: &Path, install_fika: bool) -> CreateContainerOpts {
     let fika_mode = if install_fika { "install" } else { "disabled" };
 
@@ -351,7 +370,11 @@ async fn wait_for_server(config: &Config, spt_dir: &Path) -> Result<()> {
     }
 }
 
-fn create_config(data_dir: &Path, cli: &Cli) -> Result<(Config, PathBuf)> {
+fn create_config(
+    data_dir: &Path,
+    forge_token: Option<String>,
+    cli: &Cli,
+) -> Result<(Config, PathBuf)> {
     let config_path = Config::resolve_path(cli.config.as_deref(), Some(data_dir));
     let mut config = if config_path.exists() {
         Config::load(&config_path)?
@@ -362,6 +385,7 @@ fn create_config(data_dir: &Path, cli: &Cli) -> Result<(Config, PathBuf)> {
     config.server_container = Some(DEFAULT_CONTAINER_NAME.to_string());
     config.server_host = Some("0.0.0.0".to_string());
     config.server_port = Some(DEFAULT_SPT_PORT);
+    config.forge_token = forge_token;
     config.ensure_session_secret();
     config.save(&config_path)?;
     println!("Config saved to {}", config_path.display());
@@ -386,7 +410,13 @@ fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database
     Ok(db)
 }
 
-fn print_summary(config: &Config, data_dir: &Path, install_fika: bool, install_modsync: bool) {
+fn print_summary(
+    config: &Config,
+    data_dir: &Path,
+    install_fika: bool,
+    install_modsync: bool,
+    forge_token_set: bool,
+) {
     println!("\n=== Setup Complete ===\n");
     println!("SPT directory: {}", data_dir.display());
     if let Some(ref container) = config.server_container {
@@ -406,6 +436,14 @@ fn print_summary(config: &Config, data_dir: &Path, install_fika: bool, install_m
             "installed"
         } else {
             "skipped"
+        }
+    );
+    println!(
+        "Forge API token: {}",
+        if forge_token_set {
+            "configured"
+        } else {
+            "not set (use QUMA_FORGE_TOKEN or edit config)"
         }
     );
     println!("Web UI: http://{}:{}", config.web_bind, config.web_port);
@@ -428,6 +466,7 @@ async fn bootstrap(
     install_fika: bool,
     install_modsync: bool,
     admin_password: &str,
+    forge_token: Option<String>,
     cli: &Cli,
 ) -> Result<()> {
     println!("\nNo existing SPT installation found. Bootstrapping from scratch...\n");
@@ -455,7 +494,8 @@ async fn bootstrap(
     mgr.start(DEFAULT_CONTAINER_NAME).await?;
 
     // 6. Create config (needed for wait_for_server to resolve address)
-    let (config, _config_path) = create_config(data_dir, cli)?;
+    let forge_token_set = forge_token.is_some();
+    let (config, _config_path) = create_config(data_dir, forge_token, cli)?;
 
     // 7. Wait for server
     wait_for_server(&config, data_dir).await?;
@@ -474,7 +514,13 @@ async fn bootstrap(
     }
 
     // 11. Summary
-    print_summary(&config, data_dir, install_fika, install_modsync);
+    print_summary(
+        &config,
+        data_dir,
+        install_fika,
+        install_modsync,
+        forge_token_set,
+    );
 
     Ok(())
 }
@@ -487,6 +533,7 @@ async fn wrap_existing(
     install_fika: bool,
     install_modsync: bool,
     admin_password: &str,
+    forge_token: Option<String>,
     cli: &Cli,
 ) -> Result<()> {
     let spt_info = read_spt_version(data_dir)?;
@@ -499,7 +546,8 @@ async fn wrap_existing(
     let container_name = detect_or_create_container(mgr, data_dir, install_fika).await?;
 
     // 2. Create config
-    let (mut config, config_path) = create_config(data_dir, cli)?;
+    let forge_token_set = forge_token.is_some();
+    let (mut config, config_path) = create_config(data_dir, forge_token, cli)?;
     config.server_container = Some(container_name);
     config.save(&config_path)?;
 
@@ -533,7 +581,13 @@ async fn wrap_existing(
     }
 
     // 6. Summary
-    print_summary(&config, data_dir, install_fika, install_modsync);
+    print_summary(
+        &config,
+        data_dir,
+        install_fika,
+        install_modsync,
+        forge_token_set,
+    );
 
     Ok(())
 }

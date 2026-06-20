@@ -266,6 +266,13 @@ jobs:
         run: |
           # Remove the granular manifests
           rm -f artifacts/*-dist-manifest.json
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          # Install git-cliff
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/orhun/git-cliff/releases/latest/download/git-cliff-installer.sh | sh
+          # Generate notes for this tag only
+          git-cliff --current --strip header > $RUNNER_TEMP/release-notes.txt
       - name: Create GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
@@ -273,8 +280,14 @@ jobs:
           ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
           RELEASE_COMMIT: "${{ github.sha }}"
         run: |
-          # Write and read notes from a file to avoid quoting breaking things
-          echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
+          # Use dist announcement body if available, otherwise use git-cliff notes
+          if [ -n "$ANNOUNCEMENT_BODY" ]; then
+            echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
+          elif [ -f "$RUNNER_TEMP/release-notes.txt" ]; then
+            cp $RUNNER_TEMP/release-notes.txt $RUNNER_TEMP/notes.txt
+          else
+            echo "Release ${{ needs.plan.outputs.tag }}" > $RUNNER_TEMP/notes.txt
+          fi
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
