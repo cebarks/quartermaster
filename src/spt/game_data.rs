@@ -21,6 +21,7 @@ pub struct GameData {
     quest_names: HashMap<String, String>,
     trader_info: HashMap<String, TraderMeta>,
     hideout_areas: HashMap<i32, HideoutMeta>,
+    prices: HashMap<String, i64>,
 }
 
 #[derive(Deserialize)]
@@ -97,11 +98,13 @@ impl GameData {
         let quest_names = Self::load_quest_names(spt_dir)?;
         let trader_info = Self::load_trader_info(spt_dir)?;
         let hideout_areas = build_hideout_areas();
+        let prices = Self::load_prices(spt_dir)?;
 
         tracing::info!(
             quests = quest_names.len(),
             traders = trader_info.len(),
             hideout_areas = hideout_areas.len(),
+            prices = prices.len(),
             "loaded SPT game data"
         );
 
@@ -109,6 +112,7 @@ impl GameData {
             quest_names,
             trader_info,
             hideout_areas,
+            prices,
         })
     }
 
@@ -117,6 +121,7 @@ impl GameData {
             quest_names: HashMap::new(),
             trader_info: HashMap::new(),
             hideout_areas: build_hideout_areas(),
+            prices: HashMap::new(),
         }
     }
 
@@ -178,6 +183,22 @@ impl GameData {
         Ok(info)
     }
 
+    fn load_prices(spt_dir: &Path) -> Result<HashMap<String, i64>> {
+        let path = spt_dir.join("SPT/SPT_Data/database/templates/prices.json");
+        if !path.exists() {
+            tracing::warn!(
+                "prices.json not found at {}, stash values will be unavailable",
+                path.display()
+            );
+            return Ok(HashMap::new());
+        }
+        let contents = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let prices: HashMap<String, i64> = serde_json::from_str(&contents)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+        Ok(prices)
+    }
+
     pub fn quest_name<'a>(&'a self, qid: &'a str) -> &'a str {
         self.quest_names.get(qid).map(|s| s.as_str()).unwrap_or(qid)
     }
@@ -188,6 +209,14 @@ impl GameData {
 
     pub fn hideout_area(&self, area_type: i32) -> Option<&HideoutMeta> {
         self.hideout_areas.get(&area_type)
+    }
+
+    pub fn item_price(&self, tpl: &str) -> Option<i64> {
+        self.prices.get(tpl).copied()
+    }
+
+    pub fn prices(&self) -> &HashMap<String, i64> {
+        &self.prices
     }
 }
 
@@ -296,5 +325,35 @@ mod tests {
         create_test_spt_dir(tmp.path());
         let gd = GameData::load(tmp.path()).unwrap();
         assert!(gd.hideout_area(999).is_none());
+    }
+
+    #[test]
+    fn loads_prices() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        // create_test_spt_dir doesn't create prices.json yet, so add it
+        let prices_path = tmp
+            .path()
+            .join("SPT/SPT_Data/database/templates/prices.json");
+        let prices = serde_json::json!({
+            "5447a9cd4bdc2dbd208b4567": 132725,
+            "5449016a4bdc2d6f028b456f": 1
+        });
+        std::fs::write(&prices_path, serde_json::to_string(&prices).unwrap()).unwrap();
+
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert_eq!(gd.item_price("5447a9cd4bdc2dbd208b4567"), Some(132725));
+        assert_eq!(gd.item_price("5449016a4bdc2d6f028b456f"), Some(1));
+        assert_eq!(gd.item_price("nonexistent"), None);
+        assert_eq!(gd.prices().len(), 2);
+    }
+
+    #[test]
+    fn prices_missing_file_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        // No prices.json created — should still load fine with empty prices
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert!(gd.prices().is_empty());
     }
 }
