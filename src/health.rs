@@ -21,6 +21,8 @@ pub struct ServerHealth {
     pub version_matches: Option<bool>,
     pub address: String,
     pub error: Option<String>,
+    pub transition: Option<String>,
+    pub started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -120,6 +122,8 @@ pub async fn check_server(
             version_matches: None,
             address: address.to_string(),
             error,
+            transition: None,
+            started_at: None,
         };
     }
 
@@ -133,6 +137,8 @@ pub async fn check_server(
         version_matches,
         address: address.to_string(),
         error: None,
+        transition: None,
+        started_at: None,
     }
 }
 
@@ -276,6 +282,8 @@ mod tests {
             version_matches: Some(true),
             address: "https://127.0.0.1:6969".to_string(),
             error: None,
+            transition: None,
+            started_at: None,
         }
     }
 
@@ -431,6 +439,8 @@ mod tests {
                 version_matches: None,
                 address: "https://127.0.0.1:6969".to_string(),
                 error: Some("connection refused".to_string()),
+                transition: None,
+                started_at: None,
             },
             mods: good_mods(),
             integrity: good_integrity(),
@@ -512,6 +522,8 @@ mod tests {
                 version_matches: None,
                 address: "https://127.0.0.1:6969".to_string(),
                 error: Some("timeout".to_string()),
+                transition: None,
+                started_at: None,
             },
             mods: ModsHealth {
                 installed_count: 5,
