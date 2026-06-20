@@ -535,4 +535,111 @@ mod tests {
         assert_eq!(result.spt_version, "3.10.0");
         assert!(result.updates.is_empty());
     }
+
+    #[tokio::test]
+    async fn search_mods_404_returns_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let result = client.search_mods("anything").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn search_mods_500_returns_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let result = client.search_mods("anything").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_mod_not_found_returns_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/mod/99999"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let result = client.get_mod(99999, false).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn malformed_json_returns_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("this is not json"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let result = client.search_mods("test").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn download_file_writes_to_disk() {
+        let server = MockServer::start().await;
+        let file_content = b"fake archive content for testing";
+
+        Mock::given(method("GET"))
+            .and(path("/files/test.zip"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(file_content.to_vec()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("downloaded.zip");
+
+        let url = format!("{}/files/test.zip", server.uri());
+        client.download_file(&url, &dest).await.unwrap();
+
+        let written = std::fs::read(&dest).unwrap();
+        assert_eq!(written, file_content);
+    }
+
+    #[tokio::test]
+    async fn download_file_404_returns_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/files/missing.zip"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("missing.zip");
+
+        let url = format!("{}/files/missing.zip", server.uri());
+        let result = client.download_file(&url, &dest).await;
+        assert!(result.is_err());
+    }
 }
