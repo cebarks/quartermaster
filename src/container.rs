@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use bollard::models::{ContainerCreateBody, ContainerInspectResponse, HostConfig, PortBinding};
+use bollard::models::{
+    ContainerCreateBody, ContainerInspectResponse, HealthConfig, HostConfig, PortBinding,
+};
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
     LogsOptionsBuilder, RemoveContainerOptionsBuilder, StartContainerOptions,
@@ -103,6 +105,7 @@ pub struct CreateContainerOpts {
     pub ports: Vec<PortMapping>,
     pub labels: Vec<(String, String)>,
     pub user: Option<String>,
+    pub healthcheck: Option<HealthConfig>,
 }
 
 impl CreateContainerOpts {
@@ -255,6 +258,7 @@ impl ContainerManager {
             env: Some(env),
             labels: Some(labels),
             user: opts.user.clone(),
+            healthcheck: opts.healthcheck.clone(),
             host_config: Some(HostConfig {
                 binds: Some(binds),
                 port_bindings: if port_bindings.is_empty() {
@@ -395,6 +399,7 @@ mod tests {
             ports: vec![],
             labels: vec![("custom".to_string(), "value".to_string())],
             user: None,
+            healthcheck: None,
         };
         let labels = opts.all_labels();
         assert!(labels.iter().any(|(k, v)| k == "managed-by" && v == "quma"));
