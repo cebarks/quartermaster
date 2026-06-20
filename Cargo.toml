@@ -48,6 +48,14 @@ sha2 = "0.10"
 rand = "0.10"
 subtle = "2"
 
+# TLS
+rcgen = "0.13"
+rustls = "0.23"
+rustls-pemfile = "2"
+
+# WebSocket proxy
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+
 # Archive handling
 zip = "8"
 sevenz-rust2 = "0.21"
@@ -57,7 +65,7 @@ tempfile = "3"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Web server
-actix-web = "4"
+actix-web = { version = "4", features = ["rustls-0_23"] }
 actix-session = { version = "0.11", features = ["cookie-session"] }
 actix-governor = "0.10"
 

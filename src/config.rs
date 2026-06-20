@@ -33,6 +33,14 @@ fn default_auto_start_server() -> bool {
     true
 }
 
+fn default_tls_enabled() -> bool {
+    true
+}
+
+fn default_proxy_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum LogFormat {
@@ -317,6 +325,18 @@ pub struct Config {
     #[serde(default)]
     #[serde(skip_serializing_if = "LoggingConfig::is_default")]
     pub logging: LoggingConfig,
+
+    #[serde(default = "default_tls_enabled")]
+    pub tls_enabled: bool,
+
+    #[serde(default)]
+    pub tls_cert: Option<PathBuf>,
+
+    #[serde(default)]
+    pub tls_key: Option<PathBuf>,
+
+    #[serde(default = "default_proxy_enabled")]
+    pub proxy_enabled: bool,
 }
 
 impl Default for Config {
@@ -337,6 +357,10 @@ impl Default for Config {
             forge_cache_ttl: Some(86400),
             clients: None,
             logging: LoggingConfig::default(),
+            tls_enabled: true,
+            tls_cert: None,
+            tls_key: None,
+            proxy_enabled: true,
         }
     }
 }
@@ -500,6 +524,26 @@ impl Config {
                 self.clients
                     .get_or_insert_with(ClientsConfig::default)
                     .restart_policy = policy;
+            }
+        }
+        if let Ok(val) = std::env::var("QUMA_TLS_ENABLED") {
+            if val.eq_ignore_ascii_case("true") {
+                self.tls_enabled = true;
+            } else if val.eq_ignore_ascii_case("false") {
+                self.tls_enabled = false;
+            }
+        }
+        if let Ok(val) = std::env::var("QUMA_TLS_CERT") {
+            self.tls_cert = Some(PathBuf::from(val));
+        }
+        if let Ok(val) = std::env::var("QUMA_TLS_KEY") {
+            self.tls_key = Some(PathBuf::from(val));
+        }
+        if let Ok(val) = std::env::var("QUMA_PROXY_ENABLED") {
+            if val.eq_ignore_ascii_case("true") {
+                self.proxy_enabled = true;
+            } else if val.eq_ignore_ascii_case("false") {
+                self.proxy_enabled = false;
             }
         }
     }
@@ -969,6 +1013,50 @@ install_dir = "/opt/fika"
         assert_eq!(
             serde_json::from_str::<RestartPolicy>(r#""manual""#).unwrap(),
             RestartPolicy::Manual
+        );
+    }
+
+    #[test]
+    fn tls_config_defaults() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert!(config.tls_enabled);
+        assert!(config.proxy_enabled);
+        assert_eq!(config.tls_cert, None);
+        assert_eq!(config.tls_key, None);
+    }
+
+    #[test]
+    fn tls_config_deserialization() {
+        let toml_str = r#"
+tls_enabled = false
+tls_cert = "/etc/ssl/cert.pem"
+tls_key = "/etc/ssl/key.pem"
+proxy_enabled = false
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        assert!(!config.tls_enabled);
+        assert_eq!(config.tls_cert, Some(PathBuf::from("/etc/ssl/cert.pem")));
+        assert_eq!(config.tls_key, Some(PathBuf::from("/etc/ssl/key.pem")));
+        assert!(!config.proxy_enabled);
+    }
+
+    #[test]
+    fn tls_env_var_overrides() {
+        temp_env::with_vars(
+            [
+                ("QUMA_TLS_ENABLED", Some("false")),
+                ("QUMA_TLS_CERT", Some("/env/cert.pem")),
+                ("QUMA_TLS_KEY", Some("/env/key.pem")),
+                ("QUMA_PROXY_ENABLED", Some("false")),
+            ],
+            || {
+                let mut config = Config::default();
+                config.apply_env_overrides();
+                assert!(!config.tls_enabled);
+                assert_eq!(config.tls_cert, Some(PathBuf::from("/env/cert.pem")));
+                assert_eq!(config.tls_key, Some(PathBuf::from("/env/key.pem")));
+                assert!(!config.proxy_enabled);
+            },
         );
     }
 }
