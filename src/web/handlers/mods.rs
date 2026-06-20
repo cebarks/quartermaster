@@ -114,7 +114,6 @@ pub async fn list_mods(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
