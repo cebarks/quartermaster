@@ -120,6 +120,10 @@ impl CreateContainerOpts {
     }
 }
 
+fn filter_started_at(started_at: Option<String>) -> Option<String> {
+    started_at.filter(|s| !s.is_empty() && s != "0001-01-01T00:00:00Z")
+}
+
 impl ContainerManager {
     pub fn new() -> Result<Self> {
         let docker = Docker::connect_with_unix_defaults().context(
@@ -175,6 +179,22 @@ impl ContainerManager {
             .as_ref()
             .and_then(|s| s.status.as_ref())
             .is_some_and(|s| s.as_ref() == "running"))
+    }
+
+    #[allow(dead_code)]
+    pub async fn container_started_at(&self, container: &str) -> Result<Option<String>> {
+        let info = self
+            .docker
+            .inspect_container(
+                container,
+                None::<bollard::query_parameters::InspectContainerOptions>,
+            )
+            .await
+            .with_context(|| format!("failed to inspect container '{container}'"))?;
+
+        Ok(filter_started_at(
+            info.state.as_ref().and_then(|s| s.started_at.clone()),
+        ))
     }
 
     #[allow(dead_code)]
@@ -428,5 +448,18 @@ mod tests {
             protocol: Protocol::Tcp,
         };
         assert_eq!(pm_tcp.container_key(), "80/tcp");
+    }
+
+    #[test]
+    fn started_at_filters_zero_value() {
+        let zero = "0001-01-01T00:00:00Z";
+        let valid = "2026-06-19T10:00:00Z";
+        assert_eq!(filter_started_at(Some(zero.to_string())), None);
+        assert_eq!(
+            filter_started_at(Some(valid.to_string())),
+            Some(valid.to_string())
+        );
+        assert_eq!(filter_started_at(Some(String::new())), None);
+        assert_eq!(filter_started_at(None), None);
     }
 }
