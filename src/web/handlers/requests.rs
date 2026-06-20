@@ -746,3 +746,83 @@ pub async fn resolve_request(
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_forge_url_numeric_id() {
+        assert_eq!(parse_forge_url("2326"), Some(2326));
+    }
+
+    #[test]
+    fn parse_forge_url_full_url() {
+        assert_eq!(
+            parse_forge_url("https://forge.sp-tarkov.com/mods/2326-some-mod"),
+            Some(2326)
+        );
+    }
+
+    #[test]
+    fn parse_forge_url_url_with_trailing_slash() {
+        assert_eq!(
+            parse_forge_url("https://forge.sp-tarkov.com/mods/123-test/"),
+            Some(123)
+        );
+    }
+
+    #[test]
+    fn parse_forge_url_plain_text() {
+        assert_eq!(parse_forge_url("SAIN"), None);
+    }
+
+    #[test]
+    fn parse_forge_url_empty() {
+        assert_eq!(parse_forge_url(""), None);
+    }
+
+    #[test]
+    fn parse_forge_url_whitespace() {
+        assert_eq!(parse_forge_url("  2326  "), Some(2326));
+    }
+
+    #[test]
+    fn parse_forge_url_with_query_params() {
+        assert_eq!(
+            parse_forge_url("https://forge.sp-tarkov.com/mods/2326-some-mod?details=true"),
+            Some(2326)
+        );
+    }
+
+    #[test]
+    fn fika_compat_string_values() {
+        use crate::forge::models::FikaCompat;
+        assert_eq!(
+            fika_compat_to_string(&Some(FikaCompat::Compatible)),
+            "compatible"
+        );
+        assert_eq!(
+            fika_compat_to_string(&Some(FikaCompat::Incompatible)),
+            "incompatible"
+        );
+        assert_eq!(fika_compat_to_string(&Some(FikaCompat::Unknown)), "unknown");
+        assert_eq!(fika_compat_to_string(&None), "unknown");
+    }
+
+    #[test]
+    fn cache_stale_old_datetime() {
+        assert!(is_cache_stale("2020-01-01 00:00:00", 86400));
+    }
+
+    #[test]
+    fn cache_stale_recent_datetime() {
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        assert!(!is_cache_stale(&now, 86400));
+    }
+
+    #[test]
+    fn cache_stale_rfc3339_format() {
+        assert!(is_cache_stale("2020-01-01T00:00:00+00:00", 86400));
+    }
+}
