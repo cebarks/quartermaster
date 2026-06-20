@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
+use bollard::models::HealthConfig;
+
 use crate::container::{
     ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
     DEFAULT_CONTAINER_NAME, DEFAULT_SPT_PORT, SPT_SERVER_IMAGE,
@@ -153,6 +155,17 @@ fn create_container_opts(data_dir: &Path, install_fika: bool) -> CreateContainer
         }],
         labels: vec![("managed-by".to_string(), "quma".to_string())],
         user: None,
+        healthcheck: Some(HealthConfig {
+            test: Some(vec![
+                "CMD-SHELL".to_string(),
+                "wget -q --spider http://localhost:6969/launcher/ping || exit 1".to_string(),
+            ]),
+            interval: Some(30_000_000_000), // 30s in nanoseconds
+            timeout: Some(10_000_000_000),  // 10s
+            retries: Some(3),
+            start_period: Some(120_000_000_000), // 120s - SPT server takes a while to boot
+            start_interval: None,
+        }),
     }
 }
 
