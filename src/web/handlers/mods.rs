@@ -173,8 +173,6 @@ struct ListBodyTemplate {
     mods: Vec<ModListEntry>,
     grand_total_size: i64,
     csrf_token: String,
-    filter_q: String,
-    filter_status: String,
     sort_column: String,
     sort_dir: String,
 }
@@ -1404,8 +1402,6 @@ pub async fn list_body_partial(
     let user = require_auth(&req)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let filter = parse_mod_list_query(&query);
-    let filter_q = query.q.clone().unwrap_or_default();
-    let filter_status = query.status.clone().unwrap_or_else(|| "all".to_string());
     let sc = sort_column_str(filter.sort_column).to_string();
     let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
@@ -1436,8 +1432,6 @@ pub async fn list_body_partial(
         mods,
         grand_total_size,
         csrf_token,
-        filter_q,
-        filter_status,
         sort_column: sc,
         sort_dir: sd,
     };
