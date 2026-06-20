@@ -1,1 +1,41 @@
-search placeholder
+{% if let Some(err) = error.as_deref() %}
+<div class="alert alert-warning text-sm">{{ err }}</div>
+{% endif %}
+{% if results.is_empty() && error.is_none() %}
+{% else %}
+{% for m in &results %}
+<div class="search-card card" style="padding:0.75rem;margin-bottom:0.5rem;cursor:pointer"
+     data-mod-id="{{ m.id }}" data-mod-name="{{ m.name }}" data-fika="{{ m.fika_compatible }}">
+    <div class="flex-between">
+        <strong>{{ m.name }}</strong>
+        <span class="text-muted text-sm">ID: {{ m.id }}</span>
+    </div>
+    {% if let Some(desc) = m.description.as_deref() %}
+    <p class="text-muted text-sm" style="max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ desc }}</p>
+    {% endif %}
+    {% if m.fika_compatible == "compatible" %}
+    <span class="badge badge-success">Fika ✓</span>
+    {% elif m.fika_compatible == "incompatible" %}
+    <span class="badge badge-danger">Fika ✗</span>
+    {% endif %}
+</div>
+{% endfor %}
+<script>
+document.querySelectorAll('.search-card').forEach(function(card) {
+    card.addEventListener('click', function() {
+        var id = this.dataset.modId;
+        var name = this.dataset.modName;
+        var fika = this.dataset.fika;
+        document.querySelectorAll('.search-card').forEach(function(c) { c.style.borderColor = ''; });
+        this.style.borderColor = 'var(--accent)';
+        document.getElementById('selected-mod-id').value = id;
+        var preview = document.getElementById('selected-mod-preview');
+        var badge = '';
+        if (fika === 'compatible') badge = ' <span class="badge badge-success">Fika ✓</span>';
+        else if (fika === 'incompatible') badge = ' <span class="badge badge-danger">Fika ✗</span>';
+        preview.innerHTML = '<strong>' + name.replace(/</g, '&lt;') + '</strong> (ID: ' + id + ')' + badge;
+        document.getElementById('request-create-form').style.display = 'block';
+    });
+});
+</script>
+{% endif %}

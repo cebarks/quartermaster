@@ -1,1 +1,18 @@
-comments placeholder
+{% if comments.is_empty() %}
+<p class="text-muted text-sm mt-1">No comments.</p>
+{% else %}
+<div style="margin-top:0.5rem;padding-left:1rem;border-left:2px solid var(--border)">
+    {% for c in &comments %}
+    <div class="text-sm" style="margin-bottom:0.5rem">
+        <span style="font-weight:600">{{ c.username }}</span>
+        {% if c.upvote %}
+        <span class="badge badge-success" style="font-size:0.7rem">▲</span>
+        {% else %}
+        <span class="badge badge-danger" style="font-size:0.7rem">▼</span>
+        {% endif %}
+        <span class="text-muted" style="margin-left:0.25rem">{{ c.created_at }}</span>
+        <p style="margin:0.15rem 0 0 0">{{ c.comment }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
