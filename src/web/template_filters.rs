@@ -70,6 +70,29 @@ pub fn format_uptime(started_at: &str, _env: &dyn askama::Values) -> askama::Res
     compute_uptime(started_at)
 }
 
+fn format_roubles_value(n: i64) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result
+}
+
+#[askama::filter_fn]
+pub fn format_roubles(value: &Option<i64>, _env: &dyn askama::Values) -> askama::Result<String> {
+    match value {
+        Some(n) => Ok(format!("₽{}", format_roubles_value(*n))),
+        None => Ok("—".to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +192,30 @@ mod tests {
         assert_eq!(format!("{:.1}", (50.0_f64).clamp(0.0, 100.0)), "50.0");
         assert_eq!(format!("{:.1}", (-5.0_f64).clamp(0.0, 100.0)), "0.0");
         assert_eq!(format!("{:.1}", (150.0_f64).clamp(0.0, 100.0)), "100.0");
+    }
+
+    #[test]
+    fn format_roubles_thousands() {
+        assert_eq!(format_roubles_value(1500), "1,500");
+    }
+
+    #[test]
+    fn format_roubles_millions() {
+        assert_eq!(format_roubles_value(6_722_609), "6,722,609");
+    }
+
+    #[test]
+    fn format_roubles_zero() {
+        assert_eq!(format_roubles_value(0), "0");
+    }
+
+    #[test]
+    fn format_roubles_small() {
+        assert_eq!(format_roubles_value(999), "999");
+    }
+
+    #[test]
+    fn format_roubles_exact_thousand() {
+        assert_eq!(format_roubles_value(1000), "1,000");
     }
 }
