@@ -107,19 +107,58 @@ impl ClientSupervisor {
             states.push(state);
         }
 
-        // Write updated state
+        // Merge updated state, preserving restart-owned fields
         {
             let mut state_lock = self.state.write().await;
-            *state_lock = states.clone();
+            for new_state in &states {
+                if let Some(existing) = state_lock.iter_mut().find(|s| s.index == new_state.index) {
+                    // Update fields owned by check_client
+                    existing.container_status = new_state.container_status.clone();
+                    existing.fika_status = new_state.fika_status.clone();
+                    existing.players = new_state.players.clone();
+                    existing.cpu_percent = new_state.cpu_percent;
+                    existing.memory_mb = new_state.memory_mb;
+                    existing.health = new_state.health.clone();
+                    existing.consecutive_failures = new_state.consecutive_failures;
+                } else {
+                    // New client, add it
+                    state_lock.push(new_state.clone());
+                }
+            }
+            // Remove clients that no longer exist
+            state_lock.retain(|s| states.iter().any(|ns| ns.index == s.index));
         }
 
         // Handle auto-restart for clients that need it
         if self.clients_config.restart_policy == RestartPolicy::Auto && server_up {
-            for state in states {
-                if self.should_restart(&state) {
-                    if let Err(e) = self.restart_client(&state).await {
-                        tracing::error!("Failed to restart client {}: {}", state.container_name, e);
+            for state in &states {
+                if self.should_restart(state) {
+                    // Mark as restarting before spawning
+                    {
+                        let mut state_lock = self.state.write().await;
+                        if let Some(s) = state_lock.iter_mut().find(|s| s.index == state.index) {
+                            s.restarting = true;
+                        }
                     }
+
+                    let container_mgr = self.container_mgr.clone();
+                    let shared_state = Arc::clone(&self.state);
+                    let container_name = state.container_name.clone();
+                    let index = state.index;
+                    let failures = state.consecutive_failures;
+                    let backoff_cap = self.clients_config.restart_backoff_cap;
+
+                    tokio::spawn(async move {
+                        restart_client_task(
+                            container_mgr,
+                            shared_state,
+                            container_name,
+                            index,
+                            failures,
+                            backoff_cap,
+                        )
+                        .await;
+                    });
                 }
             }
         }
@@ -234,46 +273,49 @@ impl ClientSupervisor {
         (state.health == ClientHealth::Down || state.health == ClientHealth::Degraded)
             && state.consecutive_failures <= self.clients_config.max_restart_attempts
     }
+}
 
-    async fn restart_client(&self, state: &ClientState) -> anyhow::Result<()> {
-        tracing::info!("Restarting client {}", state.container_name);
-
-        // Update state to mark as restarting
-        {
-            let mut state_lock = self.state.write().await;
-            if let Some(s) = state_lock.iter_mut().find(|s| s.index == state.index) {
-                s.restarting = true;
-            }
-        }
-
-        // Calculate backoff delay
-        let delay = backoff_duration(
-            state.consecutive_failures,
-            self.clients_config.restart_backoff_cap,
-        );
-        tracing::debug!(
-            "Backing off {}s before restart (failures: {})",
-            delay.as_secs(),
-            state.consecutive_failures
-        );
-        tokio::time::sleep(delay).await;
-
-        // Perform restart
-        let result = self.container_mgr.restart(&state.container_name).await;
-
-        // Update state
-        {
-            let mut state_lock = self.state.write().await;
-            if let Some(s) = state_lock.iter_mut().find(|s| s.index == state.index) {
+async fn restart_client_task(
+    container_mgr: ContainerManager,
+    state: Arc<RwLock<Vec<ClientState>>>,
+    container_name: String,
+    index: u32,
+    consecutive_failures: u32,
+    backoff_cap: u64,
+) {
+    // Ensure restarting flag is cleared even on panic
+    let _guard = scopeguard::guard((state.clone(), index), |(state, index)| {
+        tokio::spawn(async move {
+            let mut state_lock = state.write().await;
+            if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
                 s.restarting = false;
-                if result.is_ok() {
-                    s.restart_count += 1;
-                    s.last_restart = Some(Utc::now());
-                }
+            }
+        });
+    });
+
+    let delay = backoff_duration(consecutive_failures, backoff_cap);
+    tracing::info!(
+        container = %container_name,
+        delay_secs = delay.as_secs(),
+        failures = consecutive_failures,
+        "Backing off before restart"
+    );
+    tokio::time::sleep(delay).await;
+
+    let result = container_mgr.restart(&container_name).await;
+
+    {
+        let mut state_lock = state.write().await;
+        if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
+            if result.is_ok() {
+                s.restart_count += 1;
+                s.last_restart = Some(Utc::now());
             }
         }
+    }
 
-        result
+    if let Err(e) = result {
+        tracing::error!(container = %container_name, error = %e, "Failed to restart client");
     }
 }
 
