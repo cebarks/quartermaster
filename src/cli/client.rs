@@ -62,25 +62,31 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
     let clients_config = require_clients_config(&ctx.config)?;
     let container_mgr = require_container_manager(ctx)?;
 
-    // Get live data from containers
-    let mut states = Vec::new();
+    // Get live data from containers (including PROFILE_ID for Fika correlation)
+    let mut states: Vec<(u32, String, &str, Option<String>)> = Vec::new();
     for index in 1..=clients_config.count {
         let name = client_container_name(index);
 
-        // Get container status
-        let container_status = match container_mgr.inspect(&name).await {
+        let (container_status, profile_id) = match container_mgr.inspect(&name).await {
             Ok(info) => {
                 let running = info.state.as_ref().and_then(|s| s.running).unwrap_or(false);
-                if running {
-                    "running"
+                let status = if running { "running" } else { "stopped" };
+                let pid = if running {
+                    info.config.and_then(|c| c.env).and_then(|env| {
+                        env.iter()
+                            .find(|e| e.starts_with("PROFILE_ID="))
+                            .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                            .map(String::from)
+                    })
                 } else {
-                    "stopped"
-                }
+                    None
+                };
+                (status, pid)
             }
-            Err(_) => "not found",
+            Err(_) => ("not found", None),
         };
 
-        states.push((index, name, container_status));
+        states.push((index, name, container_status, profile_id));
     }
 
     // Get Fika API data if server is running
@@ -101,17 +107,21 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
             );
             println!("{}", "-".repeat(60));
 
-            for (index, name, container_status) in &states {
-                let fika_state = if let Some(ref map) = headless_map {
-                    // Fika uses session_id as key, we need to map by container name or index
-                    // For now, just show if we found any data
-                    if map.is_empty() {
-                        "no data"
-                    } else {
-                        "connected"
+            for (index, name, container_status, profile_id) in &states {
+                let fika_state: String = if let Some(ref map) = headless_map {
+                    match profile_id {
+                        Some(pid) => match map.get(pid) {
+                            Some(info) => match &info.state {
+                                EHeadlessStatus::Ready => "Ready".into(),
+                                EHeadlessStatus::InRaid => "In Raid".into(),
+                                EHeadlessStatus::Unknown(s) => format!("Unknown({s})"),
+                            },
+                            None => "no data".into(),
+                        },
+                        None => "no profile".into(),
                     }
                 } else {
-                    "server offline"
+                    "server offline".into()
                 };
 
                 println!(
@@ -149,19 +159,39 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
                 println!("  Restart count: {}", restart_count);
             }
 
-            // Show Fika data if available
+            // Extract PROFILE_ID and show per-client Fika data
+            let profile_id = if running {
+                inspect.config.and_then(|c| c.env).and_then(|env| {
+                    env.iter()
+                        .find(|e| e.starts_with("PROFILE_ID="))
+                        .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                        .map(String::from)
+                })
+            } else {
+                None
+            };
+
+            if let Some(ref pid) = profile_id {
+                println!("  Profile ID: {}", pid);
+            }
+
             if let Some(ref map) = headless_map {
-                if let Some((session_id, info)) = map.iter().next() {
-                    println!("\nFika Status:");
-                    println!("  Session ID: {}", session_id);
-                    let state_str = match info.state {
-                        EHeadlessStatus::Ready => "Ready",
-                        EHeadlessStatus::InRaid => "In Raid",
-                        EHeadlessStatus::Unknown(_) => "Unknown",
-                    };
-                    println!("  State: {}", state_str);
-                    println!("  Players: {}", info.players.join(", "));
-                    println!("  Level: {}", info.level);
+                if let Some(ref pid) = profile_id {
+                    if let Some(info) = map.get(pid) {
+                        println!("\nFika Status:");
+                        let state_str = match info.state {
+                            EHeadlessStatus::Ready => "Ready",
+                            EHeadlessStatus::InRaid => "In Raid",
+                            EHeadlessStatus::Unknown(_) => "Unknown",
+                        };
+                        println!("  State: {}", state_str);
+                        println!("  Players: {}", info.players.join(", "));
+                        println!("  Level: {}", info.level);
+                    } else {
+                        println!("\nFika Status: no data for this client");
+                    }
+                } else {
+                    println!("\nFika Status: no PROFILE_ID (container not running?)");
                 }
             }
         }
