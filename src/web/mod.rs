@@ -3,6 +3,7 @@ pub mod csrf;
 pub mod error;
 pub mod flash;
 pub mod handlers;
+pub mod proxy;
 pub mod proxy_metrics;
 pub mod sse;
 pub mod state;
@@ -65,6 +66,9 @@ pub async fn start_server(
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
+    let tls_enabled = config.tls_enabled;
+    let spt_dir_for_tls = spt_dir.clone();
+
     let db = Arc::new(parking_lot::Mutex::new(db));
     let app_state = web::Data::new(AppState {
         db,
@@ -85,8 +89,6 @@ pub async fn start_server(
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
     });
 
-    tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
-
     let governor_conf = GovernorConfigBuilder::default()
         .seconds_per_request(12) // 5 per minute = 1 per 12 seconds replenish
         .burst_size(5) // allow bursting up to 5
@@ -99,23 +101,26 @@ pub async fn start_server(
         .finish()
         .expect("invalid search governor config");
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
-            .wrap(
-                SessionMiddleware::builder(CookieSessionStore::default(), session_key.clone())
-                    .session_lifecycle(
-                        PersistentSession::default().session_ttl(CookieDuration::days(7)),
-                    )
-                    .cookie_http_only(true)
-                    .cookie_same_site(actix_web::cookie::SameSite::Strict)
-                    .cookie_secure(false)
-                    .build(),
-            )
-            .wrap(middleware::NormalizePath::trim())
             .wrap(tracing_actix_web::TracingLogger::default())
             .service(
                 web::scope("/quma")
+                    .wrap(
+                        SessionMiddleware::builder(
+                            CookieSessionStore::default(),
+                            session_key.clone(),
+                        )
+                        .session_lifecycle(
+                            PersistentSession::default().session_ttl(CookieDuration::days(7)),
+                        )
+                        .cookie_http_only(true)
+                        .cookie_same_site(actix_web::cookie::SameSite::Strict)
+                        .cookie_secure(tls_enabled)
+                        .build(),
+                    )
+                    .wrap(middleware::NormalizePath::trim())
                     // Static assets (public, before auth scope to avoid shadowing)
                     .route("/assets/{path:.*}", web::get().to(serve_asset))
                     // Auth routes (public)
@@ -323,10 +328,23 @@ pub async fn start_server(
                             ),
                     ),
             )
-    })
-    .bind(&bind_addr)
-    .with_context(|| format!("failed to bind to {bind_addr}"))?
-    .run()
-    .await
-    .context("web server error")
+            // Proxy catch-all — everything not under /quma/ goes to SPT
+            .default_service(web::to(proxy::proxy_handler))
+    });
+
+    let server = if tls_enabled {
+        let tls_config = crate::tls::load_or_generate_tls_config(&config, &spt_dir_for_tls)
+            .context("failed to configure TLS")?;
+        tracing::info!("Quartermaster starting on https://{bind_addr}");
+        server
+            .bind_rustls_0_23(&bind_addr, tls_config)
+            .with_context(|| format!("failed to bind TLS to {bind_addr}"))?
+    } else {
+        tracing::info!("Quartermaster starting on http://{bind_addr} (TLS disabled)");
+        server
+            .bind(&bind_addr)
+            .with_context(|| format!("failed to bind to {bind_addr}"))?
+    };
+
+    server.run().await.context("web server error")
 }

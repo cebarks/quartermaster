@@ -3,8 +3,6 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-// TODO(task-5): Remove this allow once the proxy handler uses this function
-#[allow(dead_code)]
 pub fn load_or_generate_tls_config(
     config: &crate::config::Config,
     spt_dir: &Path,
