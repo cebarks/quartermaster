@@ -8,16 +8,16 @@
     <h1>Client {{ client.index }}</h1>
     {% if user.role.can_control_server() %}
     <div class="flex gap-1">
-        <form method="post" action="/clients/{{ client.index }}/start" style="display:inline">
+        <form method="post" action="/quma/clients/{{ client.index }}/start" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
         </form>
-        <form method="post" action="/clients/{{ client.index }}/restart" style="display:inline"
+        <form method="post" action="/quma/clients/{{ client.index }}/restart" style="display:inline"
               onsubmit="return confirm('Restart client {{ client.index }}?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Restart</button>
         </form>
-        <form method="post" action="/clients/{{ client.index }}/stop" style="display:inline"
+        <form method="post" action="/quma/clients/{{ client.index }}/stop" style="display:inline"
               onsubmit="return confirm('Stop client {{ client.index }}?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-danger">{% call icons::stop() %}{% endcall %} Stop</button>
@@ -163,5 +163,5 @@
     </table>
 </div>
 
-<p class="text-muted text-sm mt-2"><a href="/clients">← Back to clients list</a></p>
+<p class="text-muted text-sm mt-2"><a href="/quma/clients">← Back to clients list</a></p>
 {% endblock %}

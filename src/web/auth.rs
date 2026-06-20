@@ -87,7 +87,7 @@ pub async fn auth_middleware(
 
     let Some(user_id) = user_id else {
         let response = HttpResponse::SeeOther()
-            .insert_header(("Location", "/login"))
+            .insert_header(("Location", "/quma/login"))
             .finish();
         return Ok(req.into_response(response).map_into_boxed_body());
     };
@@ -109,7 +109,7 @@ pub async fn auth_middleware(
 
     let redirect_login = || {
         HttpResponse::SeeOther()
-            .insert_header(("Location", "/login"))
+            .insert_header(("Location", "/quma/login"))
             .finish()
     };
 

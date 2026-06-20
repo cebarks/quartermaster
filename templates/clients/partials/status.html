@@ -20,7 +20,7 @@
     <tbody>
         {% for client in clients %}
         <tr>
-            <td><a href="/clients/{{ client.index }}">Client {{ client.index }}</a></td>
+            <td><a href="/quma/clients/{{ client.index }}">Client {{ client.index }}</a></td>
             <td>
                 {% match client.container_status %}
                 {% when crate::client::ContainerStatus::Running %}

@@ -7,13 +7,13 @@
 
 <div class="tab-bar">
     <button class="tab active" id="tab-users"
-            hx-get="/api/admin/users"
+            hx-get="/quma/api/admin/users"
             hx-target="#admin-content"
             hx-swap="innerHTML"
             hx-push-url="#users"
             onclick="setActiveTab(this)">Users</button>
     <button class="tab" id="tab-invites"
-            hx-get="/api/admin/invites"
+            hx-get="/quma/api/admin/invites"
             hx-target="#admin-content"
             hx-swap="innerHTML"
             hx-push-url="#invites"

@@ -25,11 +25,11 @@
 
 {% if user.role.can_manage_mods() %}
 <div class="flex gap-1 mb-2">
-    <form method="post" action="/mods/{{ mod_info.id }}/update">
+    <form method="post" action="/quma/mods/{{ mod_info.id }}/update">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn">{% call icons::refresh() %}{% endcall %} Update</button>
     </form>
-    <form method="post" action="/mods/{{ mod_info.id }}/remove"
+    <form method="post" action="/quma/mods/{{ mod_info.id }}/remove"
           data-name="{{ mod_info.name }}"
           onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -48,7 +48,7 @@
             <tr>
                 <td>
                     {% if let Some(dep_mod) = &dep.dep_mod %}
-                    <a href="/mods/{{ dep_mod.id }}">{{ dep_mod.name }}</a>
+                    <a href="/quma/mods/{{ dep_mod.id }}">{{ dep_mod.name }}</a>
                     {% else %}
                     <span class="text-muted">Unknown (ID: {{ dep.dep.depends_on_mod_id }})</span>
                     {% endif %}

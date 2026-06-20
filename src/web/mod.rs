@@ -112,204 +112,213 @@ pub async fn start_server(
             )
             .wrap(middleware::NormalizePath::trim())
             .wrap(tracing_actix_web::TracingLogger::default())
-            // Static assets (public, before auth scope to avoid shadowing)
-            .route("/assets/{path:.*}", web::get().to(serve_asset))
-            // Auth routes (public)
-            .route("/login", web::get().to(handlers::auth::login_page))
-            .route("/logout", web::post().to(handlers::auth::logout))
-            // Rate-limited auth routes (5 req/min/IP on login POST + register)
             .service(
-                web::resource("/login")
-                    .wrap(Governor::new(&governor_conf))
-                    .route(web::post().to(handlers::auth::login_submit)),
-            )
-            .service(
-                web::resource("/register")
-                    .wrap(Governor::new(&governor_conf))
-                    .route(web::get().to(handlers::auth::register_page))
-                    .route(web::post().to(handlers::auth::register_submit)),
-            )
-            // Password reset (public, rate-limited)
-            .service(
-                web::resource("/reset-password")
-                    .wrap(Governor::new(&governor_conf))
-                    .route(web::get().to(handlers::auth::reset_password_page))
-                    .route(web::post().to(handlers::auth::reset_password_submit)),
-            )
-            // HTMX API (authenticated, registered before catch-all scope)
-            .service(
-                web::scope("/api")
-                    .wrap(from_fn(auth::auth_middleware))
-                    .route("/events", web::get().to(crate::web::sse::events_stream))
-                    .route(
-                        "/mods/check-updates",
-                        web::get().to(handlers::mods::check_updates_partial),
-                    )
-                    .route(
-                        "/mods/update-status",
-                        web::get().to(handlers::mods::update_status_partial),
-                    )
-                    .route(
-                        "/mods/list",
-                        web::get().to(handlers::mods::list_body_partial),
-                    )
-                    .route(
-                        "/mods/dep-tree",
-                        web::get().to(handlers::mods::dep_tree_partial),
-                    )
-                    .route(
-                        "/status/server",
-                        web::get().to(handlers::status::server_partial),
-                    )
-                    .route(
-                        "/status/mods",
-                        web::get().to(handlers::status::mods_partial),
-                    )
-                    .route(
-                        "/status/integrity",
-                        web::get().to(handlers::status::integrity_partial),
-                    )
-                    .route(
-                        "/dashboard/server-status",
-                        web::get().to(handlers::dashboard::server_status_partial),
-                    )
-                    .route(
-                        "/dashboard/clients-status",
-                        web::get().to(handlers::clients::dashboard_clients_status_partial),
-                    )
-                    .route(
-                        "/clients/status",
-                        web::get().to(handlers::clients::client_status_partial),
-                    )
-                    .route(
-                        "/tasks/status",
-                        web::get().to(handlers::tasks::task_status_partial),
-                    )
-                    .route(
-                        "/tasks/{id}/dismiss",
-                        web::post().to(handlers::tasks::dismiss_task),
-                    )
-                    .route("/logs/app", web::get().to(handlers::logs::app_logs_json))
-                    .route(
-                        "/logs/app/stream",
-                        web::get().to(handlers::logs::app_logs_stream),
-                    )
-                    .route(
-                        "/logs/server",
-                        web::get().to(handlers::logs::server_logs_json),
-                    )
-                    .route(
-                        "/logs/server/stream",
-                        web::get().to(handlers::logs::server_logs_stream),
-                    )
-                    // Mod request routes
+                web::scope("/quma")
+                    // Static assets (public, before auth scope to avoid shadowing)
+                    .route("/assets/{path:.*}", web::get().to(serve_asset))
+                    // Auth routes (public)
+                    .route("/login", web::get().to(handlers::auth::login_page))
+                    .route("/logout", web::post().to(handlers::auth::logout))
+                    // Rate-limited auth routes (5 req/min/IP on login POST + register)
                     .service(
-                        web::resource("/requests/search")
-                            .wrap(Governor::new(&search_governor_conf))
-                            .route(web::get().to(handlers::requests::search_mods)),
+                        web::resource("/login")
+                            .wrap(Governor::new(&governor_conf))
+                            .route(web::post().to(handlers::auth::login_submit)),
                     )
-                    .route(
-                        "/mods/requests",
-                        web::get().to(handlers::requests::requests_tab),
-                    )
-                    .route(
-                        "/requests",
-                        web::post().to(handlers::requests::create_request),
-                    )
-                    .route(
-                        "/requests/{id}/vote",
-                        web::post().to(handlers::requests::vote),
-                    )
-                    .route(
-                        "/requests/{id}/votes",
-                        web::get().to(handlers::requests::vote_comments),
-                    )
-                    .route(
-                        "/requests/{id}/resolve",
-                        web::post().to(handlers::requests::resolve_request),
-                    )
-                    // Admin API (requires can_manage_users via scoped middleware)
                     .service(
-                        web::scope("/admin")
-                            .wrap(from_fn(handlers::admin::admin_middleware))
-                            .route("/users", web::get().to(handlers::admin::admin_users))
-                            .route("/invites", web::get().to(handlers::admin::admin_invites))
+                        web::resource("/register")
+                            .wrap(Governor::new(&governor_conf))
+                            .route(web::get().to(handlers::auth::register_page))
+                            .route(web::post().to(handlers::auth::register_submit)),
+                    )
+                    // Password reset (public, rate-limited)
+                    .service(
+                        web::resource("/reset-password")
+                            .wrap(Governor::new(&governor_conf))
+                            .route(web::get().to(handlers::auth::reset_password_page))
+                            .route(web::post().to(handlers::auth::reset_password_submit)),
+                    )
+                    // HTMX API (authenticated, registered before catch-all scope)
+                    .service(
+                        web::scope("/api")
+                            .wrap(from_fn(auth::auth_middleware))
+                            .route("/events", web::get().to(crate::web::sse::events_stream))
                             .route(
-                                "/users/{id}/role",
-                                web::post().to(handlers::admin::change_role),
+                                "/mods/check-updates",
+                                web::get().to(handlers::mods::check_updates_partial),
                             )
                             .route(
-                                "/users/{id}/disable",
-                                web::post().to(handlers::admin::toggle_disable),
+                                "/mods/update-status",
+                                web::get().to(handlers::mods::update_status_partial),
                             )
                             .route(
-                                "/users/{id}/reset-password",
-                                web::post().to(handlers::admin::create_reset_token),
+                                "/mods/list",
+                                web::get().to(handlers::mods::list_body_partial),
                             )
-                            .route("/invites", web::post().to(handlers::admin::create_invite)),
-                    ),
-            )
-            // Authenticated routes — admin checks are per-handler via require_admin()
-            .service(
-                web::scope("")
-                    .wrap(from_fn(auth::auth_middleware))
-                    .route("/", web::get().to(handlers::dashboard::dashboard))
-                    .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
-                    .route("/status", web::get().to(handlers::status::status_page))
-                    .route("/queue", web::get().to(handlers::queue::queue_page))
-                    .route("/logs", web::get().to(handlers::logs::logs_page))
-                    .route("/admin", web::get().to(handlers::admin::admin_page))
-                    .route("/mods", web::get().to(handlers::mods::list_mods))
-                    .route("/clients", web::get().to(handlers::clients::client_list))
-                    .route(
-                        "/clients/{n}",
-                        web::get().to(handlers::clients::client_detail),
+                            .route(
+                                "/mods/dep-tree",
+                                web::get().to(handlers::mods::dep_tree_partial),
+                            )
+                            .route(
+                                "/status/server",
+                                web::get().to(handlers::status::server_partial),
+                            )
+                            .route(
+                                "/status/mods",
+                                web::get().to(handlers::status::mods_partial),
+                            )
+                            .route(
+                                "/status/integrity",
+                                web::get().to(handlers::status::integrity_partial),
+                            )
+                            .route(
+                                "/dashboard/server-status",
+                                web::get().to(handlers::dashboard::server_status_partial),
+                            )
+                            .route(
+                                "/dashboard/clients-status",
+                                web::get().to(handlers::clients::dashboard_clients_status_partial),
+                            )
+                            .route(
+                                "/clients/status",
+                                web::get().to(handlers::clients::client_status_partial),
+                            )
+                            .route(
+                                "/tasks/status",
+                                web::get().to(handlers::tasks::task_status_partial),
+                            )
+                            .route(
+                                "/tasks/{id}/dismiss",
+                                web::post().to(handlers::tasks::dismiss_task),
+                            )
+                            .route("/logs/app", web::get().to(handlers::logs::app_logs_json))
+                            .route(
+                                "/logs/app/stream",
+                                web::get().to(handlers::logs::app_logs_stream),
+                            )
+                            .route(
+                                "/logs/server",
+                                web::get().to(handlers::logs::server_logs_json),
+                            )
+                            .route(
+                                "/logs/server/stream",
+                                web::get().to(handlers::logs::server_logs_stream),
+                            )
+                            // Mod request routes
+                            .service(
+                                web::resource("/requests/search")
+                                    .wrap(Governor::new(&search_governor_conf))
+                                    .route(web::get().to(handlers::requests::search_mods)),
+                            )
+                            .route(
+                                "/mods/requests",
+                                web::get().to(handlers::requests::requests_tab),
+                            )
+                            .route(
+                                "/requests",
+                                web::post().to(handlers::requests::create_request),
+                            )
+                            .route(
+                                "/requests/{id}/vote",
+                                web::post().to(handlers::requests::vote),
+                            )
+                            .route(
+                                "/requests/{id}/votes",
+                                web::get().to(handlers::requests::vote_comments),
+                            )
+                            .route(
+                                "/requests/{id}/resolve",
+                                web::post().to(handlers::requests::resolve_request),
+                            )
+                            // Admin API (requires can_manage_users via scoped middleware)
+                            .service(
+                                web::scope("/admin")
+                                    .wrap(from_fn(handlers::admin::admin_middleware))
+                                    .route("/users", web::get().to(handlers::admin::admin_users))
+                                    .route(
+                                        "/invites",
+                                        web::get().to(handlers::admin::admin_invites),
+                                    )
+                                    .route(
+                                        "/users/{id}/role",
+                                        web::post().to(handlers::admin::change_role),
+                                    )
+                                    .route(
+                                        "/users/{id}/disable",
+                                        web::post().to(handlers::admin::toggle_disable),
+                                    )
+                                    .route(
+                                        "/users/{id}/reset-password",
+                                        web::post().to(handlers::admin::create_reset_token),
+                                    )
+                                    .route(
+                                        "/invites",
+                                        web::post().to(handlers::admin::create_invite),
+                                    ),
+                            ),
                     )
-                    .route("/mods/install", web::post().to(handlers::mods::install_mod))
-                    .route(
-                        "/mods/update-all",
-                        web::post().to(handlers::mods::update_all_mods),
-                    )
-                    .route(
-                        "/mods/{id}/update",
-                        web::post().to(handlers::mods::update_mod),
-                    )
-                    .route(
-                        "/mods/{id}/remove",
-                        web::post().to(handlers::mods::remove_mod),
-                    )
-                    .route(
-                        "/server/start",
-                        web::post().to(handlers::server::start_server),
-                    )
-                    .route(
-                        "/server/stop",
-                        web::post().to(handlers::server::stop_server),
-                    )
-                    .route(
-                        "/server/restart",
-                        web::post().to(handlers::server::restart_server),
-                    )
-                    .route(
-                        "/queue/{id}/cancel",
-                        web::post().to(handlers::queue::cancel_op),
-                    )
-                    .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
-                    .route(
-                        "/clients/{n}/restart",
-                        web::post().to(handlers::clients::client_restart),
-                    )
-                    .route(
-                        "/clients/{n}/stop",
-                        web::post().to(handlers::clients::client_stop),
-                    )
-                    .route(
-                        "/clients/{n}/start",
-                        web::post().to(handlers::clients::client_start),
-                    )
-                    .route(
-                        "/clients/scale",
-                        web::post().to(handlers::clients::client_scale),
+                    // Authenticated routes — admin checks are per-handler via require_admin()
+                    .service(
+                        web::scope("")
+                            .wrap(from_fn(auth::auth_middleware))
+                            .route("/", web::get().to(handlers::dashboard::dashboard))
+                            .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
+                            .route("/status", web::get().to(handlers::status::status_page))
+                            .route("/queue", web::get().to(handlers::queue::queue_page))
+                            .route("/logs", web::get().to(handlers::logs::logs_page))
+                            .route("/admin", web::get().to(handlers::admin::admin_page))
+                            .route("/mods", web::get().to(handlers::mods::list_mods))
+                            .route("/clients", web::get().to(handlers::clients::client_list))
+                            .route(
+                                "/clients/{n}",
+                                web::get().to(handlers::clients::client_detail),
+                            )
+                            .route("/mods/install", web::post().to(handlers::mods::install_mod))
+                            .route(
+                                "/mods/update-all",
+                                web::post().to(handlers::mods::update_all_mods),
+                            )
+                            .route(
+                                "/mods/{id}/update",
+                                web::post().to(handlers::mods::update_mod),
+                            )
+                            .route(
+                                "/mods/{id}/remove",
+                                web::post().to(handlers::mods::remove_mod),
+                            )
+                            .route(
+                                "/server/start",
+                                web::post().to(handlers::server::start_server),
+                            )
+                            .route(
+                                "/server/stop",
+                                web::post().to(handlers::server::stop_server),
+                            )
+                            .route(
+                                "/server/restart",
+                                web::post().to(handlers::server::restart_server),
+                            )
+                            .route(
+                                "/queue/{id}/cancel",
+                                web::post().to(handlers::queue::cancel_op),
+                            )
+                            .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
+                            .route(
+                                "/clients/{n}/restart",
+                                web::post().to(handlers::clients::client_restart),
+                            )
+                            .route(
+                                "/clients/{n}/stop",
+                                web::post().to(handlers::clients::client_stop),
+                            )
+                            .route(
+                                "/clients/{n}/start",
+                                web::post().to(handlers::clients::client_start),
+                            )
+                            .route(
+                                "/clients/scale",
+                                web::post().to(handlers::clients::client_scale),
+                            ),
                     ),
             )
     })

@@ -505,7 +505,7 @@ pub async fn install_mod(
 
         set_flash(&session, "Mod queued for install", "success");
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/queue"))
+            .insert_header(("Location", "/quma/queue"))
             .finish());
     }
 
@@ -513,7 +513,7 @@ pub async fn install_mod(
     if state.tasks.has_running_for_mod(mod_id) {
         set_flash(&session, "This mod is already being installed", "warning");
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/mods"))
+            .insert_header(("Location", "/quma/mods"))
             .finish());
     }
 
@@ -630,7 +630,7 @@ pub async fn update_mod(
     if version.version == installed.version {
         set_flash(&session, "Already up to date", "warning");
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", format!("/mods/{mod_db_id}")))
+            .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
             .finish());
     }
 
@@ -666,7 +666,7 @@ pub async fn update_mod(
 
         set_flash(&session, "Update queued", "success");
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/queue"))
+            .insert_header(("Location", "/quma/queue"))
             .finish());
     }
 
@@ -674,7 +674,7 @@ pub async fn update_mod(
     if state.tasks.has_running_for_mod(installed.forge_mod_id) {
         set_flash(&session, "This mod is already being updated", "warning");
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", format!("/mods/{mod_db_id}")))
+            .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
             .finish());
     }
 
@@ -811,7 +811,7 @@ pub async fn remove_mod(
 
         set_flash(&session, "Mod queued for removal", "success");
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/queue"))
+            .insert_header(("Location", "/quma/queue"))
             .finish());
     }
 
@@ -856,7 +856,7 @@ pub async fn update_all_mods(
 
     if installed.is_empty() {
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/mods"))
+            .insert_header(("Location", "/quma/mods"))
             .finish());
     }
 
@@ -903,7 +903,7 @@ pub async fn update_all_mods(
 
         set_flash(&session, "All updates queued", "success");
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/queue"))
+            .insert_header(("Location", "/quma/queue"))
             .finish());
     }
 
@@ -914,7 +914,7 @@ pub async fn update_all_mods(
             "warning",
         );
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/mods"))
+            .insert_header(("Location", "/quma/mods"))
             .finish());
     }
 

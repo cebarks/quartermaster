@@ -167,7 +167,7 @@ pub async fn login_submit(
     set_session_user(&session, &session_user).map_err(WebError::from)?;
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/"))
+        .insert_header(("Location", "/quma/"))
         .finish())
 }
 
@@ -361,7 +361,7 @@ pub async fn register_submit(
 
     match result {
         Ok(_user_id) => Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/login"))
+            .insert_header(("Location", "/quma/login"))
             .finish()),
         Err(msg) => render_register_error(&msg, form.code, profiles, csrf_token),
     }

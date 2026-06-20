@@ -5,14 +5,14 @@
     {{ e.installed_version }} <span style="color: var(--success)">→ {{ new_ver }}</span>
 </span>
 <span id="mod-update-{{ e.db_id }}" hx-swap-oob="true">
-    <form method="post" action="/mods/{{ e.db_id }}/update" style="display:inline">
+    <form method="post" action="/quma/mods/{{ e.db_id }}/update" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ e.csrf_token }}">
         <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
     </form>
 </span>
 {% else %}
 <span id="mod-update-{{ e.db_id }}" hx-swap-oob="true">
-    <form method="post" action="/mods/{{ e.db_id }}/update" style="display:inline">
+    <form method="post" action="/quma/mods/{{ e.db_id }}/update" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ e.csrf_token }}">
         <button type="submit" class="btn btn-sm btn-outline" disabled>{% call icons::refresh() %}{% endcall %} Update</button>
     </form>

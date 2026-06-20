@@ -16,26 +16,26 @@
 </div>
 
 <div class="stat-card-grid">
-    <a href="/mods" class="stat-card" style="border-left-color: var(--success)">
+    <a href="/quma/mods" class="stat-card" style="border-left-color: var(--success)">
         <div class="stat-label">Mods</div>
         <div class="stat-value">{{ mods.len() }}</div>
         <div class="stat-detail">installed</div>
     </a>
-    <a href="/queue" class="stat-card" style="border-left-color: {% if pending_count > 0 %}var(--warning){% else %}var(--success){% endif %}">
+    <a href="/quma/queue" class="stat-card" style="border-left-color: {% if pending_count > 0 %}var(--warning){% else %}var(--success){% endif %}">
         <div class="stat-label">Queue</div>
         <div class="stat-value">{{ pending_count }}</div>
         <div class="stat-detail">{% if pending_count > 0 %}pending{% else %}all clear{% endif %}</div>
     </a>
-    <a href="/status" class="stat-card" style="border-left-color: var(--border)">
+    <a href="/quma/status" class="stat-card" style="border-left-color: var(--border)">
         <div class="stat-label">Server</div>
-        <div hx-get="/api/dashboard/server-status" hx-trigger="load, sse:serverStateChanged" hx-swap="innerHTML">
+        <div hx-get="/quma/api/dashboard/server-status" hx-trigger="load, sse:serverStateChanged" hx-swap="innerHTML">
             <span class="text-muted text-sm loading-pulse">Checking...</span>
         </div>
     </a>
     {% if fika_installed %}
-    <a href="/clients" class="stat-card" style="border-left-color: var(--border)">
+    <a href="/quma/clients" class="stat-card" style="border-left-color: var(--border)">
         <div class="stat-label">Clients</div>
-        <div hx-get="/api/dashboard/clients-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+        <div hx-get="/quma/api/dashboard/clients-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
             <span class="text-muted text-sm loading-pulse">Checking...</span>
         </div>
     </a>
@@ -45,14 +45,14 @@
 <div class="card">
     <div class="flex-between mb-1">
         <h2>Installed Mods ({{ mods.len() }})</h2>
-        <span hx-get="/api/mods/check-updates" hx-trigger="load, every 60s" hx-swap="innerHTML">
+        <span hx-get="/quma/api/mods/check-updates" hx-trigger="load, every 60s" hx-swap="innerHTML">
             <span class="text-muted text-sm">Checking for updates...</span>
         </span>
     </div>
     {% if mods.is_empty() %}
     <div class="empty-state">
         <p>No mods installed.</p>
-        {% if user.role.can_manage_mods() %}<p class="mt-1"><a href="/mods">Go to Mods</a> to install your first mod.</p>{% endif %}
+        {% if user.role.can_manage_mods() %}<p class="mt-1"><a href="/quma/mods">Go to Mods</a> to install your first mod.</p>{% endif %}
     </div>
     {% else %}
     <table>
@@ -66,7 +66,7 @@
         <tbody>
             {% for m in mods %}
             <tr>
-                <td><a href="/mods/{{ m.id }}">{{ m.name }}</a></td>
+                <td><a href="/quma/mods/{{ m.id }}">{{ m.name }}</a></td>
                 <td>{{ m.version }}</td>
                 <td class="text-muted text-sm">{{ m.installed_at }}</td>
             </tr>
@@ -79,7 +79,7 @@
 {% if pending_count > 0 %}
 <div class="card">
     <h2>Pending Operations</h2>
-    <p>{{ pending_count }} operation(s) queued. <a href="/queue">View queue</a></p>
+    <p>{{ pending_count }} operation(s) queued. <a href="/quma/queue">View queue</a></p>
 </div>
 {% endif %}
 
