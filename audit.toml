@@ -1,0 +1,4 @@
+[advisories]
+ignore = [
+    # "RUSTSEC-YYYY-NNNN",  # reason for accepting the risk
+]
