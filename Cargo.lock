@@ -2436,56 +2436,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quartermaster"
-version = "0.1.0"
-dependencies = [
- "actix-governor",
- "actix-session",
- "actix-web",
- "actix-web-lab",
- "actix-web-rust-embed-responder",
- "anyhow",
- "argon2",
- "askama",
- "assert_cmd",
- "async-stream",
- "bollard",
- "bytestring",
- "chrono",
- "clap",
- "futures-util",
- "indicatif",
- "json_comments",
- "parking_lot",
- "predicates",
- "rand 0.9.4",
- "regex",
- "reqwest",
- "rolling-file",
- "rpassword",
- "rusqlite",
- "rust-embed",
- "scopeguard",
- "serde",
- "serde_json",
- "sevenz-rust2",
- "sha2",
- "subtle",
- "temp-env",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-actix-web",
- "tracing-appender",
- "tracing-subscriber",
- "zip",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3188,6 +3138,56 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "spt-quartermaster"
+version = "0.1.0"
+dependencies = [
+ "actix-governor",
+ "actix-session",
+ "actix-web",
+ "actix-web-lab",
+ "actix-web-rust-embed-responder",
+ "anyhow",
+ "argon2",
+ "askama",
+ "assert_cmd",
+ "async-stream",
+ "bollard",
+ "bytestring",
+ "chrono",
+ "clap",
+ "futures-util",
+ "indicatif",
+ "json_comments",
+ "parking_lot",
+ "predicates",
+ "rand 0.9.4",
+ "regex",
+ "reqwest",
+ "rolling-file",
+ "rpassword",
+ "rusqlite",
+ "rust-embed",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "sevenz-rust2",
+ "sha2",
+ "subtle",
+ "temp-env",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-actix-web",
+ "tracing-appender",
+ "tracing-subscriber",
+ "zip",
 ]
 
 [[package]]
