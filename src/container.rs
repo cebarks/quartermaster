@@ -196,7 +196,6 @@ impl ContainerManager {
         ))
     }
 
-    #[allow(dead_code)]
     pub async fn inspect(&self, container: &str) -> Result<ContainerInspectResponse> {
         self.docker
             .inspect_container(

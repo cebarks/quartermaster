@@ -4,356 +4,348 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
-use crate::container::ContainerManager;
+use crate::container::{
+    ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
+    DEFAULT_CONTAINER_NAME, DEFAULT_SPT_PORT, SPT_SERVER_IMAGE,
+};
 use crate::db::users::Role;
 use crate::db::Database;
-use crate::forge::client::ForgeClient;
-use crate::spt::detect::{detect_spt_dir, read_spt_version, validate_spt_dir};
-use crate::spt::profiles::list_profiles;
+use crate::spt::detect::{read_spt_version, validate_spt_dir};
 use crate::web::auth::hash_password;
 
-use super::common::{confirm, find_unmanaged_mod_dirs};
+use super::common::find_unmanaged_mod_dirs;
 use super::Cli;
 
-const FIKA_FORGE_MOD_ID: i64 = 2326;
-
 pub async fn run(path: Option<PathBuf>, no_fika: bool, cli: &Cli) -> Result<()> {
-    todo!("rewritten in Task 4")
-}
+    println!("=== Quartermaster Setup ===\n");
 
-fn detect_spt_directory(cli: &Cli, non_interactive: bool) -> Result<PathBuf> {
-    match detect_spt_dir(cli.spt_dir.as_deref(), None) {
-        Ok(dir) => {
-            println!("Found SPT directory: {}", dir.display());
-            if !non_interactive && !confirm("Use this directory?")? {
-                bail!("Setup cancelled. Use --spt-dir to specify the SPT directory.");
-            }
-            Ok(dir)
-        }
-        Err(_) => {
-            if non_interactive {
-                bail!("Could not auto-detect SPT directory. Use --spt-dir to specify it.");
-            }
-            print!("Enter SPT server directory path: ");
-            std::io::stdout().flush()?;
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            let path = PathBuf::from(input.trim());
-            validate_spt_dir(&path)?;
-            Ok(path)
+    // --- Collect input ---
+    let data_dir = resolve_data_dir(path)?;
+    let install_fika = if no_fika { false } else { prompt_fika()? };
+    let admin_password = prompt_admin_password()?;
+
+    // --- Detect path ---
+    let mgr = ContainerManager::new().context(
+        "No container runtime found. Install Podman or Docker and ensure the socket is enabled.",
+    )?;
+
+    let dir_state = classify_directory(&data_dir)?;
+
+    match dir_state {
+        DirState::Empty => bootstrap(&mgr, &data_dir, install_fika, &admin_password, cli).await,
+        DirState::ExistingSpt => {
+            wrap_existing(&mgr, &data_dir, install_fika, &admin_password, cli).await
         }
     }
 }
 
-async fn configure_container(
-    spt_dir: &Path,
-    config: &mut Config,
-    non_interactive: bool,
-) -> Result<()> {
-    println!("\n--- Container Configuration ---");
+#[derive(Debug)]
+enum DirState {
+    Empty,
+    ExistingSpt,
+}
 
-    if let Some(name) = config.server_container.as_deref() {
-        println!("Container already configured: {name}");
-        return Ok(());
+fn classify_directory(path: &Path) -> Result<DirState> {
+    if !path.exists() {
+        return Ok(DirState::Empty);
     }
 
-    let mgr = ContainerManager::new()?;
-    let detected = mgr.detect_spt_containers(spt_dir).await?;
+    if path.is_file() {
+        bail!("{} is a file, not a directory.", path.display());
+    }
 
-    if detected.len() == 1 {
-        let name = &detected[0];
-        println!("Detected Podman container: {name}");
-        if non_interactive || confirm("Use this container?")? {
-            config.server_container = Some(name.clone());
-            return Ok(());
-        }
-    } else if detected.len() > 1 {
-        println!("Multiple containers detected:");
-        for (i, name) in detected.iter().enumerate() {
-            println!("  [{}] {}", i + 1, name);
-        }
-        if !non_interactive {
-            print!("Select [1-{}] or press Enter to skip: ", detected.len());
-            std::io::stdout().flush()?;
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            let input = input.trim();
-            if !input.is_empty() {
-                if let Ok(choice) = input.parse::<usize>() {
-                    if choice >= 1 && choice <= detected.len() {
-                        config.server_container = Some(detected[choice - 1].clone());
-                        return Ok(());
-                    }
-                }
-            }
-        }
+    // Check if empty
+    let mut entries = std::fs::read_dir(path)
+        .with_context(|| format!("failed to read directory {}", path.display()))?;
+
+    if entries.next().is_none() {
+        return Ok(DirState::Empty);
+    }
+
+    // Non-empty — check if it's a valid SPT install
+    if validate_spt_dir(path).is_ok() {
+        return Ok(DirState::ExistingSpt);
+    }
+
+    bail!(
+        "Directory {} exists and contains files but is not a valid SPT installation.\n\
+         Use an empty directory for a fresh setup, or point at an existing SPT install.",
+        path.display()
+    );
+}
+
+fn resolve_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(p) = explicit {
+        return Ok(p);
+    }
+
+    let default = dirs::home_dir()
+        .map(|h| h.join("spt-server"))
+        .unwrap_or_else(|| PathBuf::from("./spt-server"));
+
+    print!("Where should server data live? [{}]: ", default.display());
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let trimmed = input.trim();
+
+    if trimmed.is_empty() {
+        Ok(default)
     } else {
-        println!("No Podman containers detected.");
+        Ok(PathBuf::from(trimmed))
     }
-
-    if !non_interactive {
-        print!("Enter container name (or press Enter to skip): ");
-        std::io::stdout().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        let name = input.trim();
-        if !name.is_empty() {
-            config.server_container = Some(name.to_string());
-        } else {
-            println!(
-                "Skipping container setup. Set it later with: quma config set server_container <name>"
-            );
-        }
-    }
-
-    Ok(())
 }
 
-/// Read and optionally update SPT's http.json networking config.
-fn configure_networking(spt_dir: &Path, config: &mut Config, non_interactive: bool) -> Result<()> {
-    println!("\n--- Network Configuration ---");
+fn prompt_fika() -> Result<bool> {
+    print!("Install Fika for multiplayer? [Y/n]: ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let trimmed = input.trim();
 
-    let http_json_path = spt_dir.join("SPT/SPT_Data/configs/http.json");
-
-    if http_json_path.exists() {
-        let contents = std::fs::read_to_string(&http_json_path)?;
-        let mut json: serde_json::Value = serde_json::from_str(&contents)
-            .with_context(|| format!("failed to parse {}", http_json_path.display()))?;
-
-        let current_ip = json
-            .get("ip")
-            .and_then(|v| v.as_str())
-            .unwrap_or("127.0.0.1");
-        let current_port = json.get("port").and_then(|v| v.as_u64()).unwrap_or(6969) as u16;
-
-        println!("Current SPT server bind: {current_ip}:{current_port}");
-
-        if current_ip == "127.0.0.1" {
-            println!("SPT is bound to localhost — remote players won't be able to connect.");
-            let should_update =
-                non_interactive || confirm("Set bind to 0.0.0.0 (all interfaces)?")?;
-            if should_update {
-                json["ip"] = serde_json::Value::String("0.0.0.0".to_string());
-                let updated = serde_json::to_string_pretty(&json)?;
-                std::fs::write(&http_json_path, updated)?;
-                println!("Updated http.json: ip = 0.0.0.0");
-                println!(
-                    "WARNING: SPT server will now listen on all network interfaces.\n\
-                     Ensure your firewall allows TCP port {} only from trusted networks.\n\
-                     Without firewall rules, the server is accessible from the public internet.",
-                    current_port
-                );
-            }
-        }
-
-        config.server_host = Some(
-            json.get("ip")
-                .and_then(|v| v.as_str())
-                .unwrap_or("0.0.0.0")
-                .to_string(),
-        );
-        config.server_port = Some(current_port);
-    } else {
-        println!("http.json not found — using defaults (127.0.0.1:6969)");
-        config.server_host = Some("127.0.0.1".to_string());
-        config.server_port = Some(6969);
-    }
-
-    Ok(())
+    Ok(trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("y")
+        || trimmed.eq_ignore_ascii_case("yes"))
 }
 
-async fn install_fika(ctx: &super::common::CliContext) -> Result<()> {
-    println!("\n--- Fika Installation ---");
+fn prompt_admin_password() -> Result<String> {
+    loop {
+        let password = rpassword::prompt_password("Admin password (min 8 chars): ")
+            .context("failed to read password")?;
 
-    if ctx.db.get_mod_by_forge_id(FIKA_FORGE_MOD_ID)?.is_some() {
-        println!("Fika is already installed.");
-        return Ok(());
-    }
-
-    println!("Looking up Fika on Forge...");
-    let versions = ctx
-        .forge
-        .get_versions(FIKA_FORGE_MOD_ID, Some(&ctx.spt_info.spt_version))
-        .await?;
-
-    let version = match versions.into_iter().next() {
-        Some(v) => v,
-        None => {
-            println!(
-                "Warning: no Fika version compatible with SPT {} found. Skipping Fika install.",
-                ctx.spt_info.spt_version
-            );
-            return Ok(());
+        if password.len() < 8 {
+            println!("Password must be at least 8 characters. Try again.");
+            continue;
         }
-    };
 
-    println!("Installing Fika v{}...", version.version);
-    crate::cli::install::install_with_deps(ctx, FIKA_FORGE_MOD_ID, version.id).await?;
+        let confirm = rpassword::prompt_password("Confirm password: ")
+            .context("failed to read password confirmation")?;
 
-    println!("Fika installed successfully.");
-    Ok(())
+        if password != confirm {
+            println!("Passwords do not match. Try again.");
+            continue;
+        }
+
+        return Ok(password);
+    }
 }
 
-async fn first_boot(config: &Config, spt_dir: &Path, non_interactive: bool) -> Result<()> {
-    println!("\n--- First Boot ---");
+fn create_container_opts(data_dir: &Path, install_fika: bool) -> CreateContainerOpts {
+    let fika_mode = if install_fika { "install" } else { "disabled" };
 
-    let container = match config.server_container.as_deref() {
-        Some(c) => c,
-        None => bail!("no server container configured"),
-    };
-    let mgr = ContainerManager::new()?;
-
-    let running = match mgr.is_running(container).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Warning: could not check if server is running: {e:#}");
-            false
-        }
-    };
-    if running {
-        println!("Server is already running.");
-        return Ok(());
+    CreateContainerOpts {
+        name: DEFAULT_CONTAINER_NAME.to_string(),
+        image: SPT_SERVER_IMAGE.to_string(),
+        env: vec![
+            ("LISTEN_ALL_NETWORKS".to_string(), "true".to_string()),
+            ("FIKA_MODE".to_string(), fika_mode.to_string()),
+        ],
+        volumes: vec![VolumeMount {
+            host_path: data_dir.to_path_buf(),
+            container_path: "/opt/server".to_string(),
+            read_only: false,
+            selinux: SelinuxLabel::Private,
+        }],
+        ports: vec![PortMapping {
+            host_port: DEFAULT_SPT_PORT,
+            container_port: DEFAULT_SPT_PORT,
+            protocol: Protocol::Tcp,
+        }],
+        labels: vec![],
+        user: None,
     }
+}
 
-    if !non_interactive && !confirm("Start SPT server for first boot (generates fika.jsonc)?")? {
-        println!("Skipping first boot. Start the server manually to generate config files.");
-        return Ok(());
+async fn check_container_name_available(mgr: &ContainerManager) -> Result<()> {
+    match mgr.inspect(DEFAULT_CONTAINER_NAME).await {
+        Ok(_) => bail!(
+            "Container '{}' already exists. Remove it with \
+             `podman rm {0}` or `docker rm {0}` and re-run setup.",
+            DEFAULT_CONTAINER_NAME
+        ),
+        Err(_) => Ok(()),
     }
+}
 
-    println!("Starting SPT server...");
-    mgr.start(container).await?;
-
+async fn wait_for_server(config: &Config, spt_dir: &Path) -> Result<()> {
     let (host, port) = crate::server_detect::resolve_server_addr(config, spt_dir);
     let spt_client = crate::spt::server::SptClient::new(&host, port)?;
 
-    println!("Waiting for server to start (timeout: 90s)...");
+    println!("Waiting for server to start (timeout: 180s)...");
     let start_time = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(90);
+    let timeout = std::time::Duration::from_secs(180);
 
     loop {
         if start_time.elapsed() > timeout {
-            println!("Server did not respond within 90s. Check `quma server logs` for errors.");
-            println!("You may need to start and configure it manually.");
-            return Ok(());
+            bail!(
+                "Server did not respond within 180s. Check container logs with \
+                 `podman logs {}` or `docker logs {0}`.",
+                DEFAULT_CONTAINER_NAME
+            );
         }
 
-        let ping = spt_client.ping().await?;
-        if ping.ok {
-            println!("Server is ready (responded in {}ms).", ping.latency_ms);
-            break;
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    }
-
-    // Stop the server after first boot
-    println!("Stopping server after first boot...");
-    mgr.stop(container).await?;
-    println!("Server stopped.");
-
-    Ok(())
-}
-
-/// Replace a boolean value in raw JSONC text, preserving comments and formatting.
-fn replace_json_bool(raw: &str, key: &str, value: bool) -> String {
-    let pattern = format!("\"{}\"", key);
-    let mut result = String::with_capacity(raw.len());
-    let remaining = raw;
-
-    if let Some(key_pos) = remaining.find(&pattern) {
-        let after_key = key_pos + pattern.len();
-        if let Some(colon_offset) = remaining[after_key..].find(':') {
-            let after_colon = after_key + colon_offset + 1;
-            let rest = &remaining[after_colon..];
-            let trimmed = rest.trim_start();
-            let ws_len = rest.len() - trimmed.len();
-            let old_val = if trimmed.starts_with("true") {
-                "true"
-            } else {
-                "false"
-            };
-            result.push_str(&remaining[..after_colon + ws_len]);
-            result.push_str(if value { "true" } else { "false" });
-            result.push_str(&remaining[after_colon + ws_len + old_val.len()..]);
-            return result;
-        }
-    }
-
-    remaining.to_string()
-}
-
-/// Configure key fika.jsonc settings after first boot generates the file.
-fn configure_fika(spt_dir: &Path, non_interactive: bool) -> Result<()> {
-    println!("\n--- Fika Configuration ---");
-
-    let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
-    if !fika_config_path.exists() {
-        println!("fika.jsonc not found — Fika may not have generated its config yet.");
-        println!("Start the server manually, then edit fika.jsonc.");
-        return Ok(());
-    }
-
-    let raw = std::fs::read_to_string(&fika_config_path)
-        .with_context(|| format!("failed to read {}", fika_config_path.display()))?;
-    let stripped = json_comments::StripComments::new(raw.as_bytes());
-    let json: serde_json::Value =
-        serde_json::from_reader(stripped).with_context(|| "failed to parse fika.jsonc")?;
-
-    if non_interactive {
-        println!("Using Fika defaults (non-interactive mode).");
-        return Ok(());
-    }
-
-    println!("Configure Fika settings (press Enter to keep default):\n");
-
-    let settings = [
-        ("friendlyFire", "Friendly fire", true),
-        ("forceSaveOnDeath", "Force save on death", true),
-        ("sharedQuestProgression", "Shared quest progression", false),
-    ];
-
-    let mut updated_raw = raw.clone();
-    let mut changed = false;
-
-    for (key, label, fallback) in &settings {
-        let current = json
-            .get(*key)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(*fallback);
-        print!("  {} [{}]: ", label, if current { "Y/n" } else { "y/N" });
-        std::io::stdout().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        let input_trimmed = input.trim();
-        if !input_trimmed.is_empty() {
-            let new_val = input_trimmed.eq_ignore_ascii_case("y")
-                || input_trimmed.eq_ignore_ascii_case("yes");
-            if new_val != current {
-                updated_raw = replace_json_bool(&updated_raw, key, new_val);
-                changed = true;
+        match spt_client.ping().await {
+            Ok(ping) if ping.ok => {
+                println!("Server is ready (responded in {}ms).", ping.latency_ms);
+                return Ok(());
+            }
+            _ => {
+                // Connection refused or not ready yet — keep waiting
+                print!(".");
+                std::io::stdout().flush()?;
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         }
     }
+}
 
-    if changed {
-        std::fs::write(&fika_config_path, updated_raw)?;
-        println!("Fika config updated.");
+fn create_config(data_dir: &Path, cli: &Cli) -> Result<(Config, PathBuf)> {
+    let config_path = Config::resolve_path(cli.config.as_deref(), Some(data_dir));
+    let mut config = if config_path.exists() {
+        Config::load(&config_path)?
     } else {
-        println!("No changes made.");
+        Config::default()
+    };
+    config.spt_dir = Some(data_dir.to_path_buf());
+    config.server_container = Some(DEFAULT_CONTAINER_NAME.to_string());
+    config.server_host = Some("0.0.0.0".to_string());
+    config.server_port = Some(DEFAULT_SPT_PORT);
+    config.ensure_session_secret();
+    config.save(&config_path)?;
+    println!("Config saved to {}", config_path.display());
+    Ok((config, config_path))
+}
+
+fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database> {
+    let db_path = data_dir.join("quartermaster.db");
+    let db = Database::open(&db_path)
+        .with_context(|| format!("failed to create database at {}", db_path.display()))?;
+    println!("Database initialized at {}", db_path.display());
+
+    if db.admin_exists()? {
+        println!("Admin user already exists.");
+    } else {
+        let password_hash = hash_password(admin_password)?;
+        db.insert_user("admin", None, Some(&password_hash), Role::Admin)
+            .map_err(|e| anyhow::anyhow!("failed to create admin user: {e}"))?;
+        println!("Admin user 'admin' created.");
     }
+
+    Ok(db)
+}
+
+fn print_summary(config: &Config, data_dir: &Path, install_fika: bool) {
+    println!("\n=== Setup Complete ===\n");
+    println!("SPT directory: {}", data_dir.display());
+    if let Some(ref container) = config.server_container {
+        println!("Container: {container}");
+    }
+    println!(
+        "Fika: {}",
+        if install_fika {
+            "installed"
+        } else {
+            "disabled"
+        }
+    );
+    println!("Web UI: http://{}:{}", config.web_bind, config.web_port);
+    println!("Admin user: admin");
+    println!("\nNext steps:");
+    println!("  quma serve              Start the web UI");
+    println!("  quma server start       Start the SPT server");
+    println!("  quma invite             Generate invite codes for players");
+    println!("\nNetwork requirements (for multiplayer):");
+    println!("  TCP 6969 inbound        SPT server");
+    println!("  UDP 25565 inbound       Fika P2P raids (whoever hosts)");
+    println!("  Consider UPnP or VPN as alternatives to port forwarding.");
+}
+
+// --- Path A: Bootstrap ---
+
+async fn bootstrap(
+    mgr: &ContainerManager,
+    data_dir: &Path,
+    install_fika: bool,
+    admin_password: &str,
+    cli: &Cli,
+) -> Result<()> {
+    println!("\nNo existing SPT installation found. Bootstrapping from scratch...\n");
+
+    // 1. Create data directory
+    std::fs::create_dir_all(data_dir)
+        .with_context(|| format!("failed to create directory {}", data_dir.display()))?;
+    println!("Created {}", data_dir.display());
+
+    // 2. Check container name available
+    check_container_name_available(mgr).await?;
+
+    // 3. Pull image
+    println!("Pulling {}...", SPT_SERVER_IMAGE);
+    mgr.pull_image(SPT_SERVER_IMAGE).await?;
+    println!("Image pulled.");
+
+    // 4. Create container
+    let opts = create_container_opts(data_dir, install_fika);
+    mgr.create_container(opts).await?;
+    println!("Container '{}' created.", DEFAULT_CONTAINER_NAME);
+
+    // 5. First boot
+    println!("\nStarting first boot...");
+    mgr.start(DEFAULT_CONTAINER_NAME).await?;
+
+    // 6. Create config (needed for wait_for_server to resolve address)
+    let (config, _config_path) = create_config(data_dir, cli)?;
+
+    // 7. Wait for server
+    wait_for_server(&config, data_dir).await?;
+
+    // 8. Stop server
+    println!("\nStopping server after first boot...");
+    mgr.stop(DEFAULT_CONTAINER_NAME).await?;
+    println!("Server stopped.");
+
+    // 9. Create DB and admin
+    create_db_and_admin(data_dir, admin_password)?;
+
+    // 10. Summary
+    print_summary(&config, data_dir, install_fika);
 
     Ok(())
 }
 
-/// Scan for unmanaged mods (same as quma init step 4).
-fn scan_unmanaged(spt_dir: &Path, db: &Database) -> Result<()> {
-    let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(spt_dir, db)?;
+// --- Path B: Wrap Existing ---
 
+async fn wrap_existing(
+    mgr: &ContainerManager,
+    data_dir: &Path,
+    install_fika: bool,
+    admin_password: &str,
+    cli: &Cli,
+) -> Result<()> {
+    let spt_info = read_spt_version(data_dir)?;
+    println!(
+        "\nExisting SPT {} (EFT {}) detected.\n",
+        spt_info.spt_version, spt_info.tarkov_version
+    );
+
+    // 1. Detect or create container
+    let container_name = detect_or_create_container(mgr, data_dir, install_fika).await?;
+
+    // 2. Create config
+    let (mut config, config_path) = create_config(data_dir, cli)?;
+    config.server_container = Some(container_name);
+    config.save(&config_path)?;
+
+    // 3. Create DB and admin
+    let db = create_db_and_admin(data_dir, admin_password)?;
+
+    // 4. Scan unmanaged mods
+    let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(data_dir, &db)?;
     if unmanaged_dirs.is_empty() {
-        println!("\nNo unmanaged mod files found.");
+        println!("No unmanaged mod files found.");
     } else {
         println!(
-            "\nFound {} unmanaged mod director{} ({} files):",
+            "Found {} unmanaged mod director{} ({} files).",
             unmanaged_dirs.len(),
             if unmanaged_dirs.len() == 1 {
                 "y"
@@ -365,180 +357,130 @@ fn scan_unmanaged(spt_dir: &Path, db: &Database) -> Result<()> {
         for dir in unmanaged_dirs.keys() {
             println!("  {}", dir);
         }
-        println!("\nUse `quma track <path> <forge_mod_id>` to associate them with Forge entries.");
+        println!("Use `quma track <path> <forge_mod_id>` to associate them.");
     }
+
+    // 5. Summary
+    print_summary(&config, data_dir, install_fika);
 
     Ok(())
 }
 
-fn create_admin_user(spt_dir: &Path, db: &Database, non_interactive: bool) -> Result<()> {
-    println!("\n--- Admin User ---");
+async fn detect_or_create_container(
+    mgr: &ContainerManager,
+    data_dir: &Path,
+    install_fika: bool,
+) -> Result<String> {
+    let detected = mgr.detect_spt_containers(data_dir).await?;
 
-    if db.admin_exists()? {
-        println!("Admin user already exists.");
-        return Ok(());
+    if detected.len() == 1 {
+        println!("Detected existing container: {}", detected[0]);
+        return Ok(detected[0].clone());
     }
 
-    if non_interactive {
-        println!("No admin user created (non-interactive mode).");
-        println!("Create one later with the web UI (`quma serve`) or `quma invite`.");
-        return Ok(());
+    if detected.len() > 1 {
+        // Prefer quma-managed container
+        // detect_containers_by_label isn't async-friendly here, so just pick first
+        println!("Multiple containers detected, using first: {}", detected[0]);
+        return Ok(detected[0].clone());
     }
 
-    let profiles = list_profiles(spt_dir)?;
-    if profiles.is_empty() {
-        println!("No SPT profiles found. Start the server and create a profile first.");
-        println!("Then run `quma setup` again to create an admin user.");
-        return Ok(());
-    }
+    // No container found — create one
+    println!("No existing container found. Creating one...");
+    check_container_name_available(mgr).await?;
 
-    println!("Select an SPT profile for the admin user:");
-    for (i, p) in profiles.iter().enumerate() {
-        println!("  [{}] {} (AID: {})", i + 1, p.username, p.aid);
-    }
+    println!("Pulling {}...", SPT_SERVER_IMAGE);
+    mgr.pull_image(SPT_SERVER_IMAGE).await?;
 
-    print!("Select [1-{}]: ", profiles.len());
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let choice: usize = input
-        .trim()
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid selection"))?;
+    let opts = create_container_opts(data_dir, install_fika);
+    mgr.create_container(opts).await?;
+    println!("Container '{}' created.", DEFAULT_CONTAINER_NAME);
 
-    if choice == 0 || choice > profiles.len() {
-        bail!("selection out of range");
-    }
-
-    let profile = &profiles[choice - 1];
-
-    // Prompt for password without echoing to terminal
-    let password = rpassword::prompt_password("Password (min 8 chars): ")
-        .context("failed to read password")?;
-
-    if password.len() < 8 {
-        bail!("password must be at least 8 characters");
-    }
-
-    let password_hash = hash_password(&password)?;
-
-    db.insert_user(
-        &profile.username,
-        Some(&profile.aid),
-        Some(&password_hash),
-        Role::Admin,
-    )
-    .map_err(|e| anyhow::anyhow!("failed to create admin user: {e}"))?;
-
-    println!("Admin user '{}' created.", profile.username);
-    Ok(())
-}
-
-fn print_summary(config: &Config, spt_dir: &Path, skip_fika: bool) {
-    println!("\n=== Setup Complete ===\n");
-    println!("SPT directory: {}", spt_dir.display());
-    if let Some(ref container) = config.server_container {
-        println!("Container: {container}");
-    }
-    if !skip_fika {
-        println!("Fika: installed");
-    }
-    println!("Web UI: http://{}:{}", config.web_bind, config.web_port);
-    println!("\nNext steps:");
-    println!("  quma serve              Start the web UI");
-    println!("  quma server start       Start the SPT server");
-    println!("  quma invite             Generate invite codes for players");
-    println!("\nNetwork requirements (for multiplayer):");
-    println!("  TCP 6969 inbound        SPT server");
-    println!("  UDP 25565 inbound       Fika P2P raids (whoever hosts)");
-    println!("  Consider UPnP or VPN as alternatives to port forwarding.");
+    Ok(DEFAULT_CONTAINER_NAME.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn create_http_json(spt_dir: &Path, ip: &str, port: u16) -> PathBuf {
-        let configs_dir = spt_dir.join("SPT/SPT_Data/configs");
-        std::fs::create_dir_all(&configs_dir).unwrap();
-        let path = configs_dir.join("http.json");
-        std::fs::write(&path, format!(r#"{{"ip": "{ip}", "port": {port}}}"#)).unwrap();
-        path
-    }
-
     #[test]
-    fn configure_networking_updates_localhost_to_all_interfaces() {
+    fn classify_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        create_http_json(tmp.path(), "127.0.0.1", 6969);
-
-        let mut config = Config::default();
-        configure_networking(tmp.path(), &mut config, true).unwrap();
-
-        assert_eq!(config.server_host, Some("0.0.0.0".to_string()));
-        assert_eq!(config.server_port, Some(6969));
-
-        // Verify the file was actually updated
-        let updated =
-            std::fs::read_to_string(tmp.path().join("SPT/SPT_Data/configs/http.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&updated).unwrap();
-        assert_eq!(json["ip"].as_str().unwrap(), "0.0.0.0");
+        let state = classify_directory(tmp.path()).unwrap();
+        assert!(matches!(state, DirState::Empty));
     }
 
     #[test]
-    fn configure_networking_preserves_non_localhost() {
+    fn classify_nonexistent_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        create_http_json(tmp.path(), "0.0.0.0", 7000);
-
-        let mut config = Config::default();
-        configure_networking(tmp.path(), &mut config, true).unwrap();
-
-        assert_eq!(config.server_host, Some("0.0.0.0".to_string()));
-        assert_eq!(config.server_port, Some(7000));
+        let nonexistent = tmp.path().join("does-not-exist");
+        let state = classify_directory(&nonexistent).unwrap();
+        assert!(matches!(state, DirState::Empty));
     }
 
     #[test]
-    fn configure_networking_handles_missing_file() {
-        let tmp = tempfile::tempdir().unwrap();
-
-        let mut config = Config::default();
-        configure_networking(tmp.path(), &mut config, true).unwrap();
-
-        assert_eq!(config.server_host, Some("127.0.0.1".to_string()));
-        assert_eq!(config.server_port, Some(6969));
-    }
-
-    #[test]
-    fn scan_unmanaged_with_empty_db() {
+    fn classify_valid_spt_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path();
-        // Create mod directories
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/SomeMod")).unwrap();
-        std::fs::write(spt_dir.join("SPT/user/mods/SomeMod/mod.dll"), b"test").unwrap();
+
+        // Create minimum SPT structure
+        std::fs::create_dir_all(spt_dir.join("SPT")).unwrap();
+        std::fs::write(spt_dir.join("SPT/SPT.Server.exe"), b"").unwrap();
+        let configs_dir = spt_dir.join("SPT/SPT_Data/configs");
+        std::fs::create_dir_all(&configs_dir).unwrap();
+        std::fs::write(
+            configs_dir.join("core.json"),
+            r#"{"compatibleTarkovVersion": "0.16.9-40087"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
         std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
-        let db = Database::open_in_memory().unwrap();
-        // Should not panic, should report unmanaged dirs
-        scan_unmanaged(spt_dir, &db).unwrap();
+        let state = classify_directory(spt_dir).unwrap();
+        assert!(matches!(state, DirState::ExistingSpt));
     }
 
     #[test]
-    fn create_admin_user_skips_in_non_interactive() {
+    fn classify_non_spt_nonempty_dir_fails() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open_in_memory().unwrap();
-
-        // Non-interactive should skip without error
-        create_admin_user(tmp.path(), &db, true).unwrap();
-        assert!(!db.admin_exists().unwrap());
+        std::fs::write(tmp.path().join("random.txt"), b"hello").unwrap();
+        let result = classify_directory(tmp.path());
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not a valid SPT installation"));
     }
 
     #[test]
-    fn create_admin_user_skips_when_admin_exists() {
+    fn classify_file_path_fails() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open_in_memory().unwrap();
-        db.insert_user("admin", Some("aid123"), Some("hash"), Role::Admin)
-            .unwrap();
+        let file = tmp.path().join("afile");
+        std::fs::write(&file, b"data").unwrap();
+        let result = classify_directory(&file);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("is a file"));
+    }
 
-        // Should skip with message, not prompt
-        create_admin_user(tmp.path(), &db, false).unwrap();
+    #[test]
+    fn create_container_opts_fika_enabled() {
+        let dir = PathBuf::from("/data/spt");
+        let opts = create_container_opts(&dir, true);
+        assert!(opts
+            .env
+            .iter()
+            .any(|(k, v)| k == "FIKA_MODE" && v == "install"));
+        assert_eq!(opts.name, "spt-server");
+        assert_eq!(opts.volumes[0].container_path, "/opt/server");
+    }
+
+    #[test]
+    fn create_container_opts_fika_disabled() {
+        let dir = PathBuf::from("/data/spt");
+        let opts = create_container_opts(&dir, false);
+        assert!(opts
+            .env
+            .iter()
+            .any(|(k, v)| k == "FIKA_MODE" && v == "disabled"));
     }
 }
