@@ -95,32 +95,19 @@ pub async fn proxy_handler(
                 .proxy_metrics
                 .record_request(req.path(), latency_ms, is_error);
 
-            // Check if this is a watched endpoint before consuming the body
+            // Check if this is a watched endpoint
             let is_register = req.method() == actix_web::http::Method::POST
-                && req.path() == "/launcher/profile/register";
+                && req.path() == "/launcher/profile/register"
+                && status.is_success();
 
-            let response_body = if is_register {
-                // Buffer the body for inspection
-                match resp.bytes().await {
-                    Ok(bytes) => {
-                        if status.is_success() {
-                            let body_clone = bytes.clone();
-                            let db = state.db.clone();
-                            let events = state.events.clone();
-                            tokio::task::spawn_blocking(move || {
-                                handle_player_registration(body_clone, db, events);
-                            });
-                        }
-                        ProxyBody::Buffered(bytes)
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "failed to read registration response body");
-                        ProxyBody::Empty
-                    }
-                }
-            } else {
-                ProxyBody::Stream(resp)
-            };
+            if is_register {
+                let spt_dir = state.spt_dir.clone();
+                let db = state.db.clone();
+                let events = state.events.clone();
+                tokio::task::spawn_blocking(move || {
+                    handle_player_registration(spt_dir, db, events);
+                });
+            }
 
             let client_ip = req
                 .peer_addr()
@@ -180,18 +167,10 @@ pub async fn proxy_handler(
                 }
             }
 
-            match response_body {
-                ProxyBody::Buffered(bytes) => Ok(builder.body(bytes)),
-                ProxyBody::Stream(resp) => {
-                    let stream = resp.bytes_stream().map(|result| {
-                        result.map_err(|e| {
-                            actix_web::error::PayloadError::Io(std::io::Error::other(e))
-                        })
-                    });
-                    Ok(builder.streaming(stream))
-                }
-                ProxyBody::Empty => Ok(builder.finish()),
-            }
+            let stream = resp.bytes_stream().map(|result| {
+                result.map_err(|e| actix_web::error::PayloadError::Io(std::io::Error::other(e)))
+            });
+            Ok(builder.streaming(stream))
         }
         Err(e) => {
             state
@@ -209,92 +188,72 @@ pub async fn proxy_handler(
     }
 }
 
-enum ProxyBody {
-    Buffered(web::Bytes),
-    Stream(reqwest::Response),
-    Empty,
-}
-
 fn handle_player_registration(
-    body: web::Bytes,
+    spt_dir: std::path::PathBuf,
     db: std::sync::Arc<parking_lot::Mutex<crate::db::Database>>,
     events: tokio::sync::broadcast::Sender<crate::web::sse::ServerEvent>,
 ) {
-    let body_str = match std::str::from_utf8(&body) {
-        Ok(s) => s,
+    // SPT's registration endpoint returns an empty 200. To find the new profile,
+    // scan the profiles directory for any profile IDs not already in quma's DB.
+    let profiles_dir = spt_dir.join("SPT/user/profiles");
+    let entries = match std::fs::read_dir(&profiles_dir) {
+        Ok(e) => e,
         Err(e) => {
-            tracing::warn!(error = %e, "registration response is not valid UTF-8");
+            tracing::warn!(error = %e, "failed to read profiles directory for new user detection");
             return;
         }
     };
 
-    // Try to parse as JSON — the exact format will be discovered during testing.
-    // Common SPT patterns: the response may be a JSON string (profile ID) or a JSON object.
-    let json: serde_json::Value = match serde_json::from_str(body_str) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(error = %e, body = %body_str, "failed to parse registration response as JSON");
-            return;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let profile_id = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(id) if path.extension().and_then(|e| e.to_str()) == Some("json") => id.to_string(),
+            _ => continue,
+        };
+
+        // Read profile to get username
+        let profile_json: serde_json::Value = match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+        {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let username = profile_json
+            .pointer("/info/username")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&profile_id);
+
+        let db = db.lock();
+
+        match db.get_user_by_spt_profile_id(&profile_id) {
+            Ok(Some(_)) => continue,
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, profile_id = %profile_id, "failed to check for existing user");
+                continue;
+            }
         }
-    };
 
-    // Extract profile_id — try common field names
-    let profile_id = json
-        .get("profileId")
-        .or_else(|| json.get("profile_id"))
-        .or_else(|| json.get("id"))
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            // SPT may return the profile ID as a bare JSON string
-            json.as_str()
-        });
-
-    let profile_id = match profile_id {
-        Some(id) if !id.is_empty() => id.to_string(),
-        _ => {
-            tracing::warn!(body = %body_str, "could not extract profile ID from registration response");
-            return;
-        }
-    };
-
-    // Extract username if available
-    let username = json
-        .get("username")
-        .or_else(|| json.get("nickname"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(&profile_id);
-
-    let db = db.lock();
-
-    match db.get_user_by_spt_profile_id(&profile_id) {
-        Ok(Some(_)) => {
-            tracing::info!(profile_id = %profile_id, "player already exists in quma, skipping auto-create");
-            return;
-        }
-        Ok(None) => {}
-        Err(e) => {
-            tracing::warn!(error = %e, profile_id = %profile_id, "failed to check for existing user");
-            return;
-        }
-    }
-
-    match db.insert_user(
-        username,
-        Some(&profile_id),
-        None,
-        crate::db::users::Role::Player,
-    ) {
-        Ok(user_id) => {
-            tracing::info!(
-                user_id,
-                username = %username,
-                profile_id = %profile_id,
-                "auto-created locked quma account for new SPT player"
-            );
-            let _ = events.send(crate::web::sse::ServerEvent::PlayerRegistered);
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, username = %username, "failed to auto-create user");
+        match db.insert_user(
+            username,
+            Some(&profile_id),
+            None,
+            crate::db::users::Role::Player,
+        ) {
+            Ok(user_id) => {
+                tracing::info!(
+                    user_id,
+                    username = %username,
+                    profile_id = %profile_id,
+                    "auto-created locked quma account for new SPT player"
+                );
+                let _ = events.send(crate::web::sse::ServerEvent::PlayerRegistered);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, username = %username, "failed to auto-create user");
+            }
         }
     }
 }
