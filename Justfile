@@ -23,3 +23,9 @@ run *ARGS:
 
 serve *ARGS:
     cargo run -- serve {{ARGS}}
+
+audit:
+    cargo audit
+
+release-dry-run:
+    dist build
