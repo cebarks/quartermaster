@@ -44,19 +44,19 @@
 
 <div class="tab-bar">
     <button class="tab active" data-tab="quests"
-            hx-get="/api/profiles/{{ profile_username }}/quests"
+            hx-get="/quma/api/profiles/{{ profile_username }}/quests"
             hx-target="#tab-content"
             hx-swap="innerHTML"
             hx-trigger="click"
             hx-push-url="false">Quests</button>
     <button class="tab" data-tab="traders"
-            hx-get="/api/profiles/{{ profile_username }}/traders"
+            hx-get="/quma/api/profiles/{{ profile_username }}/traders"
             hx-target="#tab-content"
             hx-swap="innerHTML"
             hx-trigger="click"
             hx-push-url="false">Traders</button>
     <button class="tab" data-tab="hideout"
-            hx-get="/api/profiles/{{ profile_username }}/hideout"
+            hx-get="/quma/api/profiles/{{ profile_username }}/hideout"
             hx-target="#tab-content"
             hx-swap="innerHTML"
             hx-trigger="click"

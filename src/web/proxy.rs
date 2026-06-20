@@ -1,0 +1,259 @@
+use std::time::Instant;
+
+use actix_web::web::{self, Data};
+use actix_web::{HttpRequest, HttpResponse};
+use futures_util::StreamExt;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+use crate::web::state::AppState;
+
+static HOP_BY_HOP_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+];
+
+pub async fn proxy_handler(
+    req: HttpRequest,
+    mut payload: web::Payload,
+    state: Data<AppState>,
+) -> actix_web::Result<HttpResponse> {
+    if !state.config.proxy_enabled {
+        return Err(actix_web::error::ErrorNotFound("proxy not enabled"));
+    }
+
+    // Detect WebSocket upgrade and delegate to the WS proxy handler
+    if req
+        .headers()
+        .get("upgrade")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false)
+    {
+        return crate::web::proxy_ws::ws_proxy_handler(req, payload, state).await;
+    }
+
+    // Read the full body for HTTP requests
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk.map_err(|e| {
+            actix_web::error::ErrorBadRequest(format!("failed to read request body: {e}"))
+        })?;
+        body.extend_from_slice(&chunk);
+    }
+    let body = body.freeze();
+
+    let path = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or(req.path());
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let upstream_url = format!("https://{host}:{port}{path}");
+
+    let mut headers = HeaderMap::new();
+    for (name, value) in req.headers() {
+        let name_str = name.as_str().to_lowercase();
+        if HOP_BY_HOP_HEADERS.contains(&name_str.as_str()) {
+            continue;
+        }
+        if let Ok(hn) = HeaderName::from_bytes(name.as_str().as_bytes()) {
+            if let Ok(hv) = HeaderValue::from_bytes(value.as_bytes()) {
+                headers.insert(hn, hv);
+            }
+        }
+    }
+
+    // Convert actix-web Method to reqwest Method
+    let method = reqwest::Method::from_bytes(req.method().as_str().as_bytes()).map_err(|e| {
+        tracing::error!(error = %e, method = %req.method(), "invalid HTTP method");
+        actix_web::error::ErrorBadRequest("invalid HTTP method")
+    })?;
+
+    let start = Instant::now();
+    let upstream_resp = state
+        .proxy_client
+        .request(method, &upstream_url)
+        .headers(headers)
+        .body(body)
+        .send()
+        .await;
+
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    match upstream_resp {
+        Ok(resp) => {
+            let status = resp.status();
+            let is_error = status.is_server_error() || status.is_client_error();
+            let resp_headers = resp.headers().clone();
+
+            state
+                .proxy_metrics
+                .record_request(req.path(), latency_ms, is_error);
+
+            // Check if this is a watched endpoint
+            let is_register = req.method() == actix_web::http::Method::POST
+                && req.path() == "/launcher/profile/register"
+                && status.is_success();
+
+            if is_register {
+                let spt_dir = state.spt_dir.clone();
+                let db = state.db.clone();
+                let events = state.events.clone();
+                tokio::task::spawn_blocking(move || {
+                    handle_player_registration(spt_dir, db, events);
+                });
+            }
+
+            let client_ip = req
+                .peer_addr()
+                .map(|a| a.ip().to_string())
+                .unwrap_or_default();
+            let body_size = resp_headers
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0);
+
+            if status.is_server_error() {
+                tracing::error!(
+                    client_ip = %client_ip,
+                    method = %req.method(),
+                    path = %req.path(),
+                    status = status.as_u16(),
+                    latency_ms,
+                    body_size,
+                    "proxy"
+                );
+            } else if status.is_client_error() {
+                tracing::warn!(
+                    client_ip = %client_ip,
+                    method = %req.method(),
+                    path = %req.path(),
+                    status = status.as_u16(),
+                    latency_ms,
+                    body_size,
+                    "proxy"
+                );
+            } else {
+                tracing::info!(
+                    client_ip = %client_ip,
+                    method = %req.method(),
+                    path = %req.path(),
+                    status = status.as_u16(),
+                    latency_ms,
+                    body_size,
+                    "proxy"
+                );
+            }
+
+            let mut builder = HttpResponse::build(
+                actix_web::http::StatusCode::from_u16(status.as_u16())
+                    .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY),
+            );
+
+            for (name, value) in resp_headers.iter() {
+                let name_str = name.as_str().to_lowercase();
+                if HOP_BY_HOP_HEADERS.contains(&name_str.as_str()) {
+                    continue;
+                }
+                // Convert reqwest header types to actix-web compatible types
+                if let Ok(value_str) = value.to_str() {
+                    builder.insert_header((name.as_str(), value_str));
+                }
+            }
+
+            let stream = resp.bytes_stream().map(|result| {
+                result.map_err(|e| actix_web::error::PayloadError::Io(std::io::Error::other(e)))
+            });
+            Ok(builder.streaming(stream))
+        }
+        Err(e) => {
+            state
+                .proxy_metrics
+                .record_request(req.path(), latency_ms, true);
+            tracing::error!(
+                method = %req.method(),
+                path = %req.path(),
+                error = %e,
+                latency_ms,
+                "proxy upstream unreachable"
+            );
+            Err(actix_web::error::ErrorBadGateway("SPT server unreachable"))
+        }
+    }
+}
+
+fn handle_player_registration(
+    spt_dir: std::path::PathBuf,
+    db: std::sync::Arc<parking_lot::Mutex<crate::db::Database>>,
+    events: tokio::sync::broadcast::Sender<crate::web::sse::ServerEvent>,
+) {
+    // SPT's registration endpoint returns an empty 200. To find the new profile,
+    // scan the profiles directory for any profile IDs not already in quma's DB.
+    let profiles_dir = spt_dir.join("SPT/user/profiles");
+    let entries = match std::fs::read_dir(&profiles_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to read profiles directory for new user detection");
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let profile_id = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(id) if path.extension().and_then(|e| e.to_str()) == Some("json") => id.to_string(),
+            _ => continue,
+        };
+
+        // Read profile to get username
+        let profile_json: serde_json::Value = match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+        {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let username = profile_json
+            .pointer("/info/username")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&profile_id);
+
+        let db = db.lock();
+
+        match db.get_user_by_spt_profile_id(&profile_id) {
+            Ok(Some(_)) => continue,
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, profile_id = %profile_id, "failed to check for existing user");
+                continue;
+            }
+        }
+
+        match db.insert_user(
+            username,
+            Some(&profile_id),
+            None,
+            crate::db::users::Role::Player,
+        ) {
+            Ok(user_id) => {
+                tracing::info!(
+                    user_id,
+                    username = %username,
+                    profile_id = %profile_id,
+                    "auto-created locked quma account for new SPT player"
+                );
+                let _ = events.send(crate::web::sse::ServerEvent::PlayerRegistered);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, username = %username, "failed to auto-create user");
+            }
+        }
+    }
+}

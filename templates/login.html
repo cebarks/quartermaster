@@ -10,7 +10,7 @@
     {% if let Some(error) = error %}
     <div class="alert alert-error">{{ error }}</div>
     {% endif %}
-    <form method="post" action="/login">
+    <form method="post" action="/quma/login">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="username">Username</label>
         <input type="text" id="username" name="username" required autofocus>

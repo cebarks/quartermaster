@@ -10,7 +10,7 @@
 </div>
 
 <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
-    <select hx-get="/api/profiles/{{ profile_username }}/quests"
+    <select hx-get="/quma/api/profiles/{{ profile_username }}/quests"
             hx-target="#tab-content"
             hx-swap="innerHTML"
             hx-include="[name='search']"
@@ -24,7 +24,7 @@
         <option value="locked"{% if status_filter == "locked" %} selected{% endif %}>Locked</option>
     </select>
     <input type="text" name="search" value="{{ search_filter }}" placeholder="Search quests..."
-           hx-get="/api/profiles/{{ profile_username }}/quests"
+           hx-get="/quma/api/profiles/{{ profile_username }}/quests"
            hx-target="#tab-content"
            hx-swap="innerHTML"
            hx-include="[name='status']"

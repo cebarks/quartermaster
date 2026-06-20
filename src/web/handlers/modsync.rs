@@ -194,6 +194,6 @@ pub async fn save_settings(
 
     set_flash(&session, "ModSync settings saved", "success");
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/modsync"))
+        .insert_header(("Location", "/quma/modsync"))
         .finish())
 }

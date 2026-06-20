@@ -3,6 +3,9 @@ pub mod csrf;
 pub mod error;
 pub mod flash;
 pub mod handlers;
+pub mod proxy;
+pub mod proxy_metrics;
+pub mod proxy_ws;
 pub mod sse;
 pub mod state;
 pub mod tasks;
@@ -80,6 +83,16 @@ pub async fn start_server(
         }
     }
 
+    let tls_enabled = config.tls_enabled;
+    let spt_dir_for_tls = spt_dir.clone();
+
+    let proxy_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("failed to build proxy HTTP client");
+
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
@@ -98,9 +111,9 @@ pub async fn start_server(
         modsync_installed: std::sync::atomic::AtomicBool::new(modsync_installed),
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
         game_data,
+        proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
+        proxy_client,
     });
-
-    tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
 
     let governor_conf = GovernorConfigBuilder::default()
         .seconds_per_request(12) // 5 per minute = 1 per 12 seconds replenish
@@ -114,246 +127,277 @@ pub async fn start_server(
         .finish()
         .expect("invalid search governor config");
 
-    HttpServer::new(move || {
+    let server_builder = HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
-            .wrap(
-                SessionMiddleware::builder(CookieSessionStore::default(), session_key.clone())
-                    .session_lifecycle(
-                        PersistentSession::default().session_ttl(CookieDuration::days(7)),
-                    )
-                    .cookie_http_only(true)
-                    .cookie_same_site(actix_web::cookie::SameSite::Strict)
-                    .cookie_secure(false)
-                    .build(),
-            )
-            .wrap(middleware::NormalizePath::trim())
+            .app_data(web::PayloadConfig::new(64 * 1024 * 1024))
+            .wrap(middleware::NormalizePath::new(
+                middleware::TrailingSlash::MergeOnly,
+            ))
             .wrap(tracing_actix_web::TracingLogger::default())
-            // Static assets (public, before auth scope to avoid shadowing)
-            .route("/assets/{path:.*}", web::get().to(serve_asset))
-            // Auth routes (public)
-            .route("/login", web::get().to(handlers::auth::login_page))
-            .route("/logout", web::post().to(handlers::auth::logout))
-            // Rate-limited auth routes (5 req/min/IP on login POST + register)
             .service(
-                web::resource("/login")
-                    .wrap(Governor::new(&governor_conf))
-                    .route(web::post().to(handlers::auth::login_submit)),
-            )
-            .service(
-                web::resource("/register")
-                    .wrap(Governor::new(&governor_conf))
-                    .route(web::get().to(handlers::auth::register_page))
-                    .route(web::post().to(handlers::auth::register_submit)),
-            )
-            // Password reset (public, rate-limited)
-            .service(
-                web::resource("/reset-password")
-                    .wrap(Governor::new(&governor_conf))
-                    .route(web::get().to(handlers::auth::reset_password_page))
-                    .route(web::post().to(handlers::auth::reset_password_submit)),
-            )
-            // HTMX API (authenticated, registered before catch-all scope)
-            .service(
-                web::scope("/api")
-                    .wrap(from_fn(auth::auth_middleware))
-                    .route("/events", web::get().to(crate::web::sse::events_stream))
-                    .route(
-                        "/mods/check-updates",
-                        web::get().to(handlers::mods::check_updates_partial),
+                web::scope("/quma")
+                    .wrap(
+                        SessionMiddleware::builder(
+                            CookieSessionStore::default(),
+                            session_key.clone(),
+                        )
+                        .session_lifecycle(
+                            PersistentSession::default().session_ttl(CookieDuration::days(7)),
+                        )
+                        .cookie_http_only(true)
+                        .cookie_same_site(actix_web::cookie::SameSite::Strict)
+                        .cookie_secure(tls_enabled)
+                        .build(),
                     )
-                    .route(
-                        "/mods/update-status",
-                        web::get().to(handlers::mods::update_status_partial),
-                    )
-                    .route(
-                        "/mods/list",
-                        web::get().to(handlers::mods::list_body_partial),
-                    )
-                    .route(
-                        "/mods/dep-tree",
-                        web::get().to(handlers::mods::dep_tree_partial),
-                    )
-                    .route(
-                        "/status/server",
-                        web::get().to(handlers::status::server_partial),
-                    )
-                    .route(
-                        "/status/mods",
-                        web::get().to(handlers::status::mods_partial),
-                    )
-                    .route(
-                        "/status/integrity",
-                        web::get().to(handlers::status::integrity_partial),
-                    )
-                    .route(
-                        "/dashboard/server-status",
-                        web::get().to(handlers::dashboard::server_status_partial),
-                    )
-                    .route(
-                        "/dashboard/clients-status",
-                        web::get().to(handlers::clients::dashboard_clients_status_partial),
-                    )
-                    .route(
-                        "/clients/status",
-                        web::get().to(handlers::clients::client_status_partial),
-                    )
-                    .route(
-                        "/profiles/{username}/quests",
-                        web::get().to(handlers::profiles::quests_partial),
-                    )
-                    .route(
-                        "/profiles/{username}/traders",
-                        web::get().to(handlers::profiles::traders_partial),
-                    )
-                    .route(
-                        "/profiles/{username}/hideout",
-                        web::get().to(handlers::profiles::hideout_partial),
-                    )
-                    .route(
-                        "/tasks/status",
-                        web::get().to(handlers::tasks::task_status_partial),
-                    )
-                    .route(
-                        "/tasks/{id}/dismiss",
-                        web::post().to(handlers::tasks::dismiss_task),
-                    )
-                    .route("/logs/app", web::get().to(handlers::logs::app_logs_json))
-                    .route(
-                        "/logs/app/stream",
-                        web::get().to(handlers::logs::app_logs_stream),
-                    )
-                    .route(
-                        "/logs/server",
-                        web::get().to(handlers::logs::server_logs_json),
-                    )
-                    .route(
-                        "/logs/server/stream",
-                        web::get().to(handlers::logs::server_logs_stream),
-                    )
-                    // Mod request routes
+                    // Static assets (public, before auth scope to avoid shadowing)
+                    .route("/assets/{path:.*}", web::get().to(serve_asset))
+                    // Auth routes (public)
+                    .route("/login", web::get().to(handlers::auth::login_page))
+                    .route("/logout", web::post().to(handlers::auth::logout))
+                    // Rate-limited auth routes (5 req/min/IP on login POST + register)
                     .service(
-                        web::resource("/requests/search")
-                            .wrap(Governor::new(&search_governor_conf))
-                            .route(web::get().to(handlers::requests::search_mods)),
+                        web::resource("/login")
+                            .wrap(Governor::new(&governor_conf))
+                            .route(web::post().to(handlers::auth::login_submit)),
                     )
-                    .route(
-                        "/mods/requests",
-                        web::get().to(handlers::requests::requests_tab),
-                    )
-                    .route(
-                        "/requests",
-                        web::post().to(handlers::requests::create_request),
-                    )
-                    .route(
-                        "/requests/{id}/vote",
-                        web::post().to(handlers::requests::vote),
-                    )
-                    .route(
-                        "/requests/{id}/votes",
-                        web::get().to(handlers::requests::vote_comments),
-                    )
-                    .route(
-                        "/requests/{id}/resolve",
-                        web::post().to(handlers::requests::resolve_request),
-                    )
-                    // Admin API (requires can_manage_users via scoped middleware)
                     .service(
-                        web::scope("/admin")
-                            .wrap(from_fn(handlers::admin::admin_middleware))
-                            .route("/users", web::get().to(handlers::admin::admin_users))
-                            .route("/invites", web::get().to(handlers::admin::admin_invites))
+                        web::resource("/register")
+                            .wrap(Governor::new(&governor_conf))
+                            .route(web::get().to(handlers::auth::register_page))
+                            .route(web::post().to(handlers::auth::register_submit)),
+                    )
+                    // Password reset (public, rate-limited)
+                    .service(
+                        web::resource("/reset-password")
+                            .wrap(Governor::new(&governor_conf))
+                            .route(web::get().to(handlers::auth::reset_password_page))
+                            .route(web::post().to(handlers::auth::reset_password_submit)),
+                    )
+                    // HTMX API (authenticated, registered before catch-all scope)
+                    .service(
+                        web::scope("/api")
+                            .wrap(from_fn(auth::auth_middleware))
+                            .route("/events", web::get().to(crate::web::sse::events_stream))
                             .route(
-                                "/users/{id}/role",
-                                web::post().to(handlers::admin::change_role),
+                                "/mods/check-updates",
+                                web::get().to(handlers::mods::check_updates_partial),
                             )
                             .route(
-                                "/users/{id}/disable",
-                                web::post().to(handlers::admin::toggle_disable),
+                                "/mods/update-status",
+                                web::get().to(handlers::mods::update_status_partial),
                             )
                             .route(
-                                "/users/{id}/reset-password",
-                                web::post().to(handlers::admin::create_reset_token),
+                                "/mods/list",
+                                web::get().to(handlers::mods::list_body_partial),
                             )
-                            .route("/invites", web::post().to(handlers::admin::create_invite)),
+                            .route(
+                                "/mods/dep-tree",
+                                web::get().to(handlers::mods::dep_tree_partial),
+                            )
+                            .route(
+                                "/status/server",
+                                web::get().to(handlers::status::server_partial),
+                            )
+                            .route(
+                                "/status/mods",
+                                web::get().to(handlers::status::mods_partial),
+                            )
+                            .route(
+                                "/status/integrity",
+                                web::get().to(handlers::status::integrity_partial),
+                            )
+                            .route(
+                                "/status/proxy",
+                                web::get().to(handlers::status::proxy_metrics_partial),
+                            )
+                            .route(
+                                "/dashboard/server-status",
+                                web::get().to(handlers::dashboard::server_status_partial),
+                            )
+                            .route(
+                                "/dashboard/clients-status",
+                                web::get().to(handlers::clients::dashboard_clients_status_partial),
+                            )
+                            .route(
+                                "/clients/status",
+                                web::get().to(handlers::clients::client_status_partial),
+                            )
+                            .route(
+                                "/profiles/{username}/quests",
+                                web::get().to(handlers::profiles::quests_partial),
+                            )
+                            .route(
+                                "/profiles/{username}/traders",
+                                web::get().to(handlers::profiles::traders_partial),
+                            )
+                            .route(
+                                "/profiles/{username}/hideout",
+                                web::get().to(handlers::profiles::hideout_partial),
+                            )
+                            .route(
+                                "/tasks/status",
+                                web::get().to(handlers::tasks::task_status_partial),
+                            )
+                            .route(
+                                "/tasks/{id}/dismiss",
+                                web::post().to(handlers::tasks::dismiss_task),
+                            )
+                            .route("/logs/app", web::get().to(handlers::logs::app_logs_json))
+                            .route(
+                                "/logs/app/stream",
+                                web::get().to(handlers::logs::app_logs_stream),
+                            )
+                            .route(
+                                "/logs/server",
+                                web::get().to(handlers::logs::server_logs_json),
+                            )
+                            .route(
+                                "/logs/server/stream",
+                                web::get().to(handlers::logs::server_logs_stream),
+                            )
+                            // Mod request routes
+                            .service(
+                                web::resource("/requests/search")
+                                    .wrap(Governor::new(&search_governor_conf))
+                                    .route(web::get().to(handlers::requests::search_mods)),
+                            )
+                            .route(
+                                "/mods/requests",
+                                web::get().to(handlers::requests::requests_tab),
+                            )
+                            .route(
+                                "/requests",
+                                web::post().to(handlers::requests::create_request),
+                            )
+                            .route(
+                                "/requests/{id}/vote",
+                                web::post().to(handlers::requests::vote),
+                            )
+                            .route(
+                                "/requests/{id}/votes",
+                                web::get().to(handlers::requests::vote_comments),
+                            )
+                            .route(
+                                "/requests/{id}/resolve",
+                                web::post().to(handlers::requests::resolve_request),
+                            )
+                            // Admin API (requires can_manage_users via scoped middleware)
+                            .service(
+                                web::scope("/admin")
+                                    .wrap(from_fn(handlers::admin::admin_middleware))
+                                    .route("/users", web::get().to(handlers::admin::admin_users))
+                                    .route(
+                                        "/invites",
+                                        web::get().to(handlers::admin::admin_invites),
+                                    )
+                                    .route(
+                                        "/users/{id}/role",
+                                        web::post().to(handlers::admin::change_role),
+                                    )
+                                    .route(
+                                        "/users/{id}/disable",
+                                        web::post().to(handlers::admin::toggle_disable),
+                                    )
+                                    .route(
+                                        "/users/{id}/reset-password",
+                                        web::post().to(handlers::admin::create_reset_token),
+                                    )
+                                    .route(
+                                        "/invites",
+                                        web::post().to(handlers::admin::create_invite),
+                                    ),
+                            ),
+                    )
+                    // Authenticated routes -- admin checks are per-handler via require_admin()
+                    .service(
+                        web::scope("")
+                            .wrap(from_fn(auth::auth_middleware))
+                            .route("/", web::get().to(handlers::dashboard::dashboard))
+                            .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
+                            .route("/status", web::get().to(handlers::status::status_page))
+                            .route("/queue", web::get().to(handlers::queue::queue_page))
+                            .route("/logs", web::get().to(handlers::logs::logs_page))
+                            .route("/admin", web::get().to(handlers::admin::admin_page))
+                            .route("/mods", web::get().to(handlers::mods::list_mods))
+                            .route("/modsync", web::get().to(handlers::modsync::modsync_page))
+                            .route(
+                                "/modsync/settings",
+                                web::post().to(handlers::modsync::save_settings),
+                            )
+                            .route("/clients", web::get().to(handlers::clients::client_list))
+                            .route(
+                                "/clients/{n}",
+                                web::get().to(handlers::clients::client_detail),
+                            )
+                            .route(
+                                "/profiles/{username}",
+                                web::get().to(handlers::profiles::profile_page),
+                            )
+                            .route("/mods/install", web::post().to(handlers::mods::install_mod))
+                            .route(
+                                "/mods/update-all",
+                                web::post().to(handlers::mods::update_all_mods),
+                            )
+                            .route(
+                                "/mods/{id}/update",
+                                web::post().to(handlers::mods::update_mod),
+                            )
+                            .route(
+                                "/mods/{id}/remove",
+                                web::post().to(handlers::mods::remove_mod),
+                            )
+                            .route(
+                                "/server/start",
+                                web::post().to(handlers::server::start_server),
+                            )
+                            .route(
+                                "/server/stop",
+                                web::post().to(handlers::server::stop_server),
+                            )
+                            .route(
+                                "/server/restart",
+                                web::post().to(handlers::server::restart_server),
+                            )
+                            .route(
+                                "/queue/{id}/cancel",
+                                web::post().to(handlers::queue::cancel_op),
+                            )
+                            .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
+                            .route(
+                                "/clients/{n}/restart",
+                                web::post().to(handlers::clients::client_restart),
+                            )
+                            .route(
+                                "/clients/{n}/stop",
+                                web::post().to(handlers::clients::client_stop),
+                            )
+                            .route(
+                                "/clients/{n}/start",
+                                web::post().to(handlers::clients::client_start),
+                            )
+                            .route(
+                                "/clients/scale",
+                                web::post().to(handlers::clients::client_scale),
+                            ),
                     ),
             )
-            // Authenticated routes — admin checks are per-handler via require_admin()
-            .service(
-                web::scope("")
-                    .wrap(from_fn(auth::auth_middleware))
-                    .route("/", web::get().to(handlers::dashboard::dashboard))
-                    .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
-                    .route("/status", web::get().to(handlers::status::status_page))
-                    .route("/queue", web::get().to(handlers::queue::queue_page))
-                    .route("/logs", web::get().to(handlers::logs::logs_page))
-                    .route("/admin", web::get().to(handlers::admin::admin_page))
-                    .route("/mods", web::get().to(handlers::mods::list_mods))
-                    .route("/modsync", web::get().to(handlers::modsync::modsync_page))
-                    .route(
-                        "/modsync/settings",
-                        web::post().to(handlers::modsync::save_settings),
-                    )
-                    .route("/clients", web::get().to(handlers::clients::client_list))
-                    .route(
-                        "/clients/{n}",
-                        web::get().to(handlers::clients::client_detail),
-                    )
-                    .route(
-                        "/profiles/{username}",
-                        web::get().to(handlers::profiles::profile_page),
-                    )
-                    .route("/mods/install", web::post().to(handlers::mods::install_mod))
-                    .route(
-                        "/mods/update-all",
-                        web::post().to(handlers::mods::update_all_mods),
-                    )
-                    .route(
-                        "/mods/{id}/update",
-                        web::post().to(handlers::mods::update_mod),
-                    )
-                    .route(
-                        "/mods/{id}/remove",
-                        web::post().to(handlers::mods::remove_mod),
-                    )
-                    .route(
-                        "/server/start",
-                        web::post().to(handlers::server::start_server),
-                    )
-                    .route(
-                        "/server/stop",
-                        web::post().to(handlers::server::stop_server),
-                    )
-                    .route(
-                        "/server/restart",
-                        web::post().to(handlers::server::restart_server),
-                    )
-                    .route(
-                        "/queue/{id}/cancel",
-                        web::post().to(handlers::queue::cancel_op),
-                    )
-                    .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
-                    .route(
-                        "/clients/{n}/restart",
-                        web::post().to(handlers::clients::client_restart),
-                    )
-                    .route(
-                        "/clients/{n}/stop",
-                        web::post().to(handlers::clients::client_stop),
-                    )
-                    .route(
-                        "/clients/{n}/start",
-                        web::post().to(handlers::clients::client_start),
-                    )
-                    .route(
-                        "/clients/scale",
-                        web::post().to(handlers::clients::client_scale),
-                    ),
-            )
-    })
-    .bind(&bind_addr)
-    .with_context(|| format!("failed to bind to {bind_addr}"))?
-    .run()
-    .await
-    .context("web server error")
+            .default_service(web::to(proxy::proxy_handler))
+    });
+
+    let server = if config.tls_enabled {
+        let tls_config = crate::tls::load_or_generate_tls_config(&config, &spt_dir_for_tls)
+            .context("failed to configure TLS")?;
+        tracing::info!("Quartermaster starting on https://{bind_addr}");
+        server_builder
+            .bind_rustls_0_23(&bind_addr, tls_config)
+            .with_context(|| format!("failed to bind TLS to {bind_addr}"))?
+    } else {
+        tracing::info!("Quartermaster starting on http://{bind_addr} (TLS disabled)");
+        server_builder
+            .bind(&bind_addr)
+            .with_context(|| format!("failed to bind to {bind_addr}"))?
+    };
+
+    server.run().await.context("web server error")
 }

@@ -1,18 +1,18 @@
 <div class="status-filter mb-1">
     <button class="btn btn-sm {% if active_filter == "pending" %}btn-outline active{% else %}btn-outline{% endif %}"
-            hx-get="/api/mods/requests?status=pending"
+            hx-get="/quma/api/mods/requests?status=pending"
             hx-target="#mods-tab-content"
             hx-swap="innerHTML">Pending</button>
     <button class="btn btn-sm {% if active_filter == "approved" %}btn-outline active{% else %}btn-outline{% endif %}"
-            hx-get="/api/mods/requests?status=approved"
+            hx-get="/quma/api/mods/requests?status=approved"
             hx-target="#mods-tab-content"
             hx-swap="innerHTML">Approved</button>
     <button class="btn btn-sm {% if active_filter == "rejected" %}btn-outline active{% else %}btn-outline{% endif %}"
-            hx-get="/api/mods/requests?status=rejected"
+            hx-get="/quma/api/mods/requests?status=rejected"
             hx-target="#mods-tab-content"
             hx-swap="innerHTML">Rejected</button>
     <button class="btn btn-sm {% if active_filter == "all" %}btn-outline active{% else %}btn-outline{% endif %}"
-            hx-get="/api/mods/requests?status=all"
+            hx-get="/quma/api/mods/requests?status=all"
             hx-target="#mods-tab-content"
             hx-swap="innerHTML">All</button>
 </div>
@@ -21,7 +21,7 @@
     <h3>Request a Mod</h3>
     <div>
         <input type="text" id="mod-search-input" placeholder="Search Forge by name, paste a URL, or enter a mod ID..."
-               hx-get="/api/requests/search"
+               hx-get="/quma/api/requests/search"
                hx-trigger="input changed delay:300ms"
                hx-target="#search-results"
                hx-swap="innerHTML"
@@ -33,7 +33,7 @@
     </div>
     <div id="search-results"></div>
     <form id="request-create-form" style="display:none"
-          hx-post="/api/requests"
+          hx-post="/quma/api/requests"
           hx-target="#mods-tab-content"
           hx-swap="innerHTML">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -91,14 +91,14 @@
         <span class="text-muted text-sm">by {{ r.requester_username }} · {{ r.request.created_at }}</span>
         <div class="vote-buttons flex gap-1" style="align-items:center;flex-wrap:wrap">
             {% if r.request.status == "pending" %}
-            <form hx-post="/api/requests/{{ r.request.id }}/vote" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML" style="display:inline">
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/vote" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="upvote" value="true">
                 <input type="hidden" name="comment" class="vote-comment-field" value="">
                 <button type="submit" class="btn btn-sm {% if r.current_user_vote == Some(true) %}btn-success{% else %}btn-outline{% endif %}">▲</button>
             </form>
             <span class="vote-score" style="font-weight:700;min-width:2ch;text-align:center">{{ r.vote_score }}</span>
-            <form hx-post="/api/requests/{{ r.request.id }}/vote" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML" style="display:inline">
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/vote" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="upvote" value="false">
                 <input type="hidden" name="comment" class="vote-comment-field" value="">
@@ -111,7 +111,7 @@
             <span class="text-muted text-sm" style="margin-left:0.5rem">{{ r.upvote_count }}↑ {{ r.downvote_count }}↓</span>
             {% if r.comment_count > 0 %}
             <button class="btn btn-sm btn-outline" style="margin-left:0.25rem"
-                    hx-get="/api/requests/{{ r.request.id }}/votes"
+                    hx-get="/quma/api/requests/{{ r.request.id }}/votes"
                     hx-target="#comments-{{ r.request.id }}"
                     hx-swap="innerHTML">{{ r.comment_count }} comment{% if r.comment_count != 1 %}s{% endif %}</button>
             {% endif %}
@@ -131,7 +131,7 @@
     {% endif %}
     {% if r.request.status == "pending" && user.role.can_manage_mods() %}
     <div class="mt-1 resolve-form" style="display:flex;gap:0.5rem;align-items:flex-start;flex-wrap:wrap">
-        <form hx-post="/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+        <form hx-post="/quma/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
               style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="action" value="approve">
@@ -141,7 +141,7 @@
             </label>
             <button type="submit" class="btn btn-sm btn-success">Approve</button>
         </form>
-        <form hx-post="/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+        <form hx-post="/quma/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
               style="display:flex;gap:0.5rem;align-items:center">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="action" value="reject">

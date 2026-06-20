@@ -142,7 +142,7 @@ pub async fn client_restart(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     };
@@ -164,7 +164,7 @@ pub async fn client_restart(
         None => {
             set_flash(&session, &format!("Client {index} not found"), "error");
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     };
@@ -182,7 +182,7 @@ pub async fn client_restart(
     }
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/clients/{index}")))
+        .insert_header(("Location", format!("/quma/clients/{index}")))
         .finish())
 }
 
@@ -211,7 +211,7 @@ pub async fn client_stop(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     };
@@ -232,7 +232,7 @@ pub async fn client_stop(
         None => {
             set_flash(&session, &format!("Client {index} not found"), "error");
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     };
@@ -250,7 +250,7 @@ pub async fn client_stop(
     }
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/clients/{index}")))
+        .insert_header(("Location", format!("/quma/clients/{index}")))
         .finish())
 }
 
@@ -279,7 +279,7 @@ pub async fn client_start(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     };
@@ -300,7 +300,7 @@ pub async fn client_start(
         None => {
             set_flash(&session, &format!("Client {index} not found"), "error");
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     };
@@ -318,7 +318,7 @@ pub async fn client_start(
     }
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/clients/{index}")))
+        .insert_header(("Location", format!("/quma/clients/{index}")))
         .finish())
 }
 
@@ -354,7 +354,7 @@ pub async fn client_scale(
             "error",
         );
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/clients"))
+            .insert_header(("Location", "/quma/clients"))
             .finish());
     }
 
@@ -398,7 +398,7 @@ pub async fn client_scale(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     }
@@ -413,7 +413,7 @@ pub async fn client_scale(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     };
@@ -433,7 +433,7 @@ pub async fn client_scale(
                 "error",
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/clients"))
+                .insert_header(("Location", "/quma/clients"))
                 .finish());
         }
     };
@@ -485,7 +485,7 @@ pub async fn client_scale(
     );
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/clients"))
+        .insert_header(("Location", "/quma/clients"))
         .finish())
 }
 

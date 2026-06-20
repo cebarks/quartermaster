@@ -18,7 +18,7 @@
                 <form style="display:inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <select name="role"
-                            hx-post="/api/admin/users/{{ u.id }}/role"
+                            hx-post="/quma/api/admin/users/{{ u.id }}/role"
                             hx-target="closest tr"
                             hx-swap="outerHTML"
                             hx-include="closest form"
@@ -73,7 +73,7 @@
                     <form style="display:inline">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="button" class="btn btn-sm {% if u.disabled %}btn-success{% else %}btn-danger{% endif %}"
-                                hx-post="/api/admin/users/{{ u.id }}/disable"
+                                hx-post="/quma/api/admin/users/{{ u.id }}/disable"
                                 hx-target="closest tr"
                                 hx-swap="outerHTML"
                                 hx-include="closest form"
@@ -84,7 +84,7 @@
                     <form style="display:inline">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="button" class="btn btn-sm btn-outline"
-                                hx-post="/api/admin/users/{{ u.id }}/reset-password"
+                                hx-post="/quma/api/admin/users/{{ u.id }}/reset-password"
                                 hx-target="closest tr"
                                 hx-swap="outerHTML"
                                 hx-include="closest form"
