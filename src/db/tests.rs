@@ -882,3 +882,102 @@ fn list_mod_requests_all_statuses() {
     let approved = db.list_mod_requests(Some("approved"), user_id).unwrap();
     assert_eq!(approved.len(), 0);
 }
+
+#[test]
+fn list_users_alphabetical_order() {
+    let db = test_db();
+    db.insert_user("charlie", "p3", Some("pw"), Role::Player)
+        .unwrap();
+    db.insert_user("alice", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    db.insert_user("bob", "p2", Some("pw"), Role::Moderator)
+        .unwrap();
+
+    let users = db.list_users().unwrap();
+    assert_eq!(users.len(), 3);
+    assert_eq!(users[0].username, "alice");
+    assert_eq!(users[1].username, "bob");
+    assert_eq!(users[2].username, "charlie");
+}
+
+#[test]
+fn disable_admin_allowed_with_backup_admin() {
+    let db = test_db();
+    let admin1 = db
+        .insert_user("admin1", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    db.insert_user("admin2", "p2", Some("pw"), Role::Admin)
+        .unwrap();
+
+    let affected = db.set_user_disabled(admin1, true).unwrap();
+    assert_eq!(affected, 1);
+    let user = db.get_user_by_id(admin1).unwrap().unwrap();
+    assert!(user.disabled);
+}
+
+#[test]
+fn update_invite_user_unconditional() {
+    let db = test_db();
+    let admin_id = db
+        .insert_user("admin", "p1", Some("pw"), Role::Admin)
+        .unwrap();
+    db.create_invite("CODE-1", Some(admin_id), None).unwrap();
+
+    // Use the invite (sets used_by to admin_id)
+    let used = db.use_invite("CODE-1", admin_id).unwrap();
+    assert_eq!(used, 1);
+
+    // Now unconditionally update to a different user
+    let new_user = db
+        .insert_user("newbie", "p2", Some("pw"), Role::Player)
+        .unwrap();
+    let updated = db.update_invite_user("CODE-1", new_user).unwrap();
+    assert_eq!(updated, 1);
+
+    let invite = db.get_invite("CODE-1").unwrap().unwrap();
+    assert_eq!(invite.used_by, Some(new_user));
+}
+
+#[test]
+fn list_requests_mixed_votes_score() {
+    let db = test_db();
+    let user1 = setup_user(&db);
+    let user2 = setup_admin(&db);
+    let user3 = db
+        .insert_user("voter3", "aid3", Some("hash"), Role::Player)
+        .unwrap();
+
+    let req_id = db
+        .create_mod_request(user1, 100, "Mod A", None, None, "unknown", None)
+        .unwrap();
+
+    // 2 upvotes, 1 downvote → score = 1
+    db.upsert_vote(req_id, user1, true, None).unwrap();
+    db.upsert_vote(req_id, user2, true, Some("good mod"))
+        .unwrap();
+    db.upsert_vote(req_id, user3, false, Some("not needed"))
+        .unwrap();
+
+    let views = db.list_mod_requests(Some("pending"), user1).unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].upvote_count, 2);
+    assert_eq!(views[0].downvote_count, 1);
+    assert_eq!(views[0].vote_score, 1);
+    assert_eq!(views[0].comment_count, 2);
+}
+
+#[test]
+fn list_requests_current_user_no_vote() {
+    let db = test_db();
+    let requester = setup_user(&db);
+    let viewer = db
+        .insert_user("viewer", "aid-v", Some("hash"), Role::Player)
+        .unwrap();
+
+    db.create_mod_request(requester, 100, "Mod", None, None, "unknown", None)
+        .unwrap();
+
+    let views = db.list_mod_requests(Some("pending"), viewer).unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].current_user_vote, None);
+}

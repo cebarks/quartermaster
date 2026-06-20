@@ -100,6 +100,7 @@ bytestring = "1"
 assert_cmd = "2"
 predicates = "3"
 temp-env = "0.3"
+wiremock = "0.6"
 
 [profile.release]
 strip = true
