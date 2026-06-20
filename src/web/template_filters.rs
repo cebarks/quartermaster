@@ -27,6 +27,21 @@ pub fn format_size_i64(bytes: &i64, _env: &dyn askama::Values) -> askama::Result
     Ok(format_bytes(*bytes))
 }
 
+#[askama::filter_fn]
+pub fn format_size_u64(bytes: &u64, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(format_bytes(*bytes as i64))
+}
+
+#[askama::filter_fn]
+pub fn fmt_pct(val: &f64, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(format!("{:.1}%", val))
+}
+
+#[askama::filter_fn]
+pub fn clamp_pct(val: &f64, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(format!("{:.1}", val.clamp(0.0, 100.0)))
+}
+
 fn compute_uptime(started_at: &str) -> Result<String, askama::Error> {
     use chrono::{DateTime, Utc};
     let started: DateTime<Utc> = started_at
