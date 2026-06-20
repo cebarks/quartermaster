@@ -3,7 +3,10 @@ use actix_web::web::{self, Data, Form, Html, Path, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
-use crate::db::mods::{InstalledFile, InstalledMod, ModDependency};
+use crate::db::mods::{
+    InstalledFile, InstalledMod, ModDependency, ModListFilter, ModSortColumn, ModStatusFilter,
+    SortDirection,
+};
 use crate::db::users::Role;
 use crate::forge::models::DependencyNode;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
@@ -26,6 +29,58 @@ const INFRASTRUCTURE_FORGE_IDS: &[i64] = &[
 
 fn is_infrastructure_mod(forge_mod_id: i64) -> bool {
     INFRASTRUCTURE_FORGE_IDS.contains(&forge_mod_id)
+}
+
+fn parse_mod_list_query(query: &ModListQuery) -> ModListFilter {
+    let search = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+
+    let status = match query.status.as_deref() {
+        Some("enabled") => Some(ModStatusFilter::Enabled),
+        Some("disabled") => Some(ModStatusFilter::Disabled),
+        _ => None,
+    };
+
+    let sort_column = match query.sort.as_deref() {
+        Some("version") => ModSortColumn::Version,
+        Some("files") => ModSortColumn::Files,
+        Some("size") => ModSortColumn::Size,
+        Some("installed") => ModSortColumn::Installed,
+        _ => ModSortColumn::Name,
+    };
+
+    let sort_dir = match query.dir.as_deref() {
+        Some("desc") => SortDirection::Desc,
+        _ => SortDirection::Asc,
+    };
+
+    ModListFilter {
+        search,
+        status,
+        sort_column,
+        sort_dir,
+    }
+}
+
+fn sort_column_str(col: ModSortColumn) -> &'static str {
+    match col {
+        ModSortColumn::Name => "name",
+        ModSortColumn::Version => "version",
+        ModSortColumn::Files => "files",
+        ModSortColumn::Size => "size",
+        ModSortColumn::Installed => "installed",
+    }
+}
+
+fn sort_dir_str(dir: SortDirection) -> &'static str {
+    match dir {
+        SortDirection::Asc => "asc",
+        SortDirection::Desc => "desc",
+    }
 }
 
 // -- View models --
@@ -57,6 +112,11 @@ struct ModListTemplate {
     csrf_token: String,
     #[allow(dead_code)]
     fika_installed: bool,
+    filter_q: String,
+    filter_status: String,
+    sort_column: String,
+    sort_dir: String,
+    has_any_mods: bool,
 }
 
 #[derive(Template)]
@@ -108,14 +168,15 @@ struct UpdateStatusTemplate {
 
 #[derive(Template)]
 #[template(path = "mods/partials/list_body.html")]
-#[allow(dead_code)] // infrastructure/modsync_installed not used in partial but needed for filtering
 struct ListBodyTemplate {
     user: SessionUser,
-    infrastructure: Vec<ModListEntry>,
-    modsync_installed: bool,
     mods: Vec<ModListEntry>,
     grand_total_size: i64,
     csrf_token: String,
+    filter_q: String,
+    filter_status: String,
+    sort_column: String,
+    sort_dir: String,
 }
 
 // -- Form structs --
@@ -129,6 +190,14 @@ pub struct InstallForm {
 #[derive(serde::Deserialize)]
 pub struct ModSearchQuery {
     pub q: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ModListQuery {
+    pub q: Option<String>,
+    pub status: Option<String>,
+    pub sort: Option<String>,
+    pub dir: Option<String>,
 }
 
 pub struct InstallSearchResult {
@@ -164,32 +233,52 @@ pub async fn list_mods(
     state: Data<AppState>,
     req: HttpRequest,
     session: Session,
+    query: Query<ModListQuery>,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let filter = parse_mod_list_query(&query);
+    let filter_q = query.q.clone().unwrap_or_default();
+    let filter_status = query.status.clone().unwrap_or_else(|| "all".to_string());
+    let sc = sort_column_str(filter.sort_column).to_string();
+    let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
 
-    let all_entries = web::block(move || {
+    let (all_unfiltered, filtered_entries) = web::block(move || {
         let db = db.lock();
-        let mods_with_counts = db.list_mods_with_file_counts()?;
-        let entries: Vec<ModListEntry> = mods_with_counts
-            .into_iter()
-            .map(|(mod_info, file_count, total_size)| ModListEntry {
-                mod_info,
-                file_count,
-                total_size,
-            })
-            .collect();
-        Ok::<_, anyhow::Error>(entries)
+        let all = db.list_mods_with_file_counts()?;
+        let filtered = db.list_mods_filtered(&filter)?;
+        Ok::<_, anyhow::Error>((all, filtered))
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let (infrastructure, mods): (Vec<_>, Vec<_>) = all_entries
+    let all_entries: Vec<ModListEntry> = all_unfiltered
+        .into_iter()
+        .map(|(mod_info, file_count, total_size)| ModListEntry {
+            mod_info,
+            file_count,
+            total_size,
+        })
+        .collect();
+
+    let (infrastructure, non_infra): (Vec<_>, Vec<_>) = all_entries
         .into_iter()
         .partition(|e| is_infrastructure_mod(e.mod_info.forge_mod_id));
+
+    let has_any_mods = !non_infra.is_empty();
+
+    let mods: Vec<ModListEntry> = filtered_entries
+        .into_iter()
+        .map(|(mod_info, file_count, total_size)| ModListEntry {
+            mod_info,
+            file_count,
+            total_size,
+        })
+        .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
+        .collect();
 
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
     let modsync_installed = crate::config::is_modsync_installed(&state.spt_dir);
@@ -205,6 +294,11 @@ pub async fn list_mods(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        filter_q,
+        filter_status,
+        sort_column: sc,
+        sort_dir: sd,
+        has_any_mods,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -1305,44 +1399,47 @@ pub async fn list_body_partial(
     state: Data<AppState>,
     req: HttpRequest,
     session: Session,
+    query: Query<ModListQuery>,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    // No capability check — Players can view the mod list; the template
-    // already gates admin-only columns with {% if user.role.can_manage_mods() %}.
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let filter = parse_mod_list_query(&query);
+    let filter_q = query.q.clone().unwrap_or_default();
+    let filter_status = query.status.clone().unwrap_or_else(|| "all".to_string());
+    let sc = sort_column_str(filter.sort_column).to_string();
+    let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
 
-    let all_entries = web::block(move || {
+    let filtered_entries = web::block(move || {
         let db = db.lock();
-        let mods_with_counts = db.list_mods_with_file_counts()?;
-        let entries: Vec<ModListEntry> = mods_with_counts
-            .into_iter()
-            .map(|(mod_info, file_count, total_size)| ModListEntry {
-                mod_info,
-                file_count,
-                total_size,
-            })
-            .collect();
-        Ok::<_, anyhow::Error>(entries)
+        let filtered = db.list_mods_filtered(&filter)?;
+        Ok::<_, anyhow::Error>(filtered)
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let (infrastructure, mods): (Vec<_>, Vec<_>) = all_entries
+    let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
-        .partition(|e| is_infrastructure_mod(e.mod_info.forge_mod_id));
+        .map(|(mod_info, file_count, total_size)| ModListEntry {
+            mod_info,
+            file_count,
+            total_size,
+        })
+        .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
+        .collect();
 
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
-    let modsync_installed = crate::config::is_modsync_installed(&state.spt_dir);
 
     let tmpl = ListBodyTemplate {
         user,
-        infrastructure,
-        modsync_installed,
         mods,
         grand_total_size,
         csrf_token,
+        filter_q,
+        filter_status,
+        sort_column: sc,
+        sort_dir: sd,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
