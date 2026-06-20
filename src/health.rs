@@ -216,7 +216,8 @@ pub fn check_integrity_from(
         .map(|f| f.as_str())
         .collect();
 
-    let dir_counts = crate::cli::common::group_untracked_by_mod_dir(&untracked);
+    let mut dir_counts = crate::cli::common::group_untracked_by_mod_dir(&untracked);
+    dir_counts.remove("BepInEx/plugins/spt");
 
     let untracked_dirs: Vec<UntrackedDir> = dir_counts
         .into_iter()
