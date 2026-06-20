@@ -1,5 +1,5 @@
 <tr{% if u.id == current_user_id %} class="current-user"{% endif %}>
-    <td><strong>{{ u.username }}</strong>
+    <td><strong><a href="/profiles/{{ u.username }}">{{ u.username }}</a></strong>
         {% if let Some(msg) = row_message %}
         <div class="toast toast-success" style="margin-top:0.25rem;font-size:0.85rem">{{ msg }}</div>
         {% endif %}
