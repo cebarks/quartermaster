@@ -42,6 +42,10 @@ fn default_proxy_enabled() -> bool {
     true
 }
 
+fn default_leaderboard_min_raids() -> u32 {
+    5
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum LogFormat {
@@ -400,6 +404,9 @@ pub struct Config {
 
     #[serde(default = "default_proxy_enabled")]
     pub proxy_enabled: bool,
+
+    #[serde(default = "default_leaderboard_min_raids")]
+    pub leaderboard_min_raids: u32,
 }
 
 impl Default for Config {
@@ -425,6 +432,7 @@ impl Default for Config {
             tls_cert: None,
             tls_key: None,
             proxy_enabled: true,
+            leaderboard_min_raids: 5,
         }
     }
 }
@@ -608,6 +616,11 @@ impl Config {
                 self.proxy_enabled = true;
             } else if val.eq_ignore_ascii_case("false") {
                 self.proxy_enabled = false;
+            }
+        }
+        if let Ok(val) = std::env::var("QUMA_LEADERBOARD_MIN_RAIDS") {
+            if let Ok(v) = val.parse::<u32>() {
+                self.leaderboard_min_raids = v;
             }
         }
     }
@@ -1212,5 +1225,26 @@ proxy_enabled = false
                 assert!(!config.proxy_enabled);
             },
         );
+    }
+
+    #[test]
+    fn leaderboard_min_raids_default() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert_eq!(config.leaderboard_min_raids, 5);
+    }
+
+    #[test]
+    fn leaderboard_min_raids_custom() {
+        let config: Config = toml::from_str("leaderboard_min_raids = 10").expect("should parse");
+        assert_eq!(config.leaderboard_min_raids, 10);
+    }
+
+    #[test]
+    fn leaderboard_min_raids_env_override() {
+        temp_env::with_vars([("QUMA_LEADERBOARD_MIN_RAIDS", Some("3"))], || {
+            let mut config = Config::default();
+            config.apply_env_overrides();
+            assert_eq!(config.leaderboard_min_raids, 3);
+        });
     }
 }

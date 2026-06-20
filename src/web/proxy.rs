@@ -74,6 +74,15 @@ pub async fn proxy_handler(
         actix_web::error::ErrorBadRequest("invalid HTTP method")
     })?;
 
+    // Clone body for raid tracking BEFORE it's consumed by the upstream request
+    let raid_body = if req.method() == actix_web::http::Method::POST
+        && (req.path() == "/client/match/local/start" || req.path() == "/client/match/local/end")
+    {
+        Some(body.clone())
+    } else {
+        None
+    };
+
     let start = Instant::now();
     let upstream_resp = state
         .proxy_client
@@ -107,6 +116,37 @@ pub async fn proxy_handler(
                 tokio::task::spawn_blocking(move || {
                     handle_player_registration(spt_dir, db, events);
                 });
+            }
+
+            let is_raid_start = req.method() == actix_web::http::Method::POST
+                && req.path() == "/client/match/local/start"
+                && status.is_success();
+
+            let is_raid_end = req.method() == actix_web::http::Method::POST
+                && req.path() == "/client/match/local/end"
+                && status.is_success();
+
+            if is_raid_start || is_raid_end {
+                if let Some(profile_id) = crate::web::raid_tracker::extract_session_id(&req) {
+                    if let Some(body_clone) = raid_body {
+                        let spt_dir = state.spt_dir.clone();
+                        let db = state.db.clone();
+                        let events = state.events.clone();
+                        if is_raid_start {
+                            tokio::task::spawn_blocking(move || {
+                                crate::web::raid_tracker::handle_raid_start(
+                                    body_clone, profile_id, spt_dir, db, events,
+                                );
+                            });
+                        } else {
+                            tokio::task::spawn_blocking(move || {
+                                crate::web::raid_tracker::handle_raid_end(
+                                    body_clone, profile_id, spt_dir, db, events,
+                                );
+                            });
+                        }
+                    }
+                }
             }
 
             let client_ip = req

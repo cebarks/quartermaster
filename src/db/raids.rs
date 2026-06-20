@@ -82,6 +82,22 @@ pub struct ServerRaidStats {
     pub recent_raids: Vec<(Raid, String)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LeaderboardEntry {
+    pub username: String,
+    pub total_raids: i64,
+    pub total_kills: i64,
+    pub total_deaths: i64,
+    pub kd_ratio: f64,
+    pub survival_rate: f64,
+    pub headshot_count: i64,
+    pub headshot_ratio: f64,
+    pub longest_kill: f64,
+    pub favorite_weapon: Option<String>,
+    pub favorite_map: Option<String>,
+    pub favorite_extract: Option<String>,
+}
+
 impl Database {
     #[allow(dead_code)] // Used by Task 2 (raid start event)
     #[allow(clippy::too_many_arguments)] // All parameters needed for raid creation
@@ -522,6 +538,90 @@ impl Database {
             let raid = row_to_raid(row)?;
             let username: String = row.get(20)?;
             Ok((raid, username))
+        })?;
+        rows.collect()
+    }
+
+    pub fn get_leaderboard(&self, min_raids: u32) -> rusqlite::Result<Vec<LeaderboardEntry>> {
+        let mut stmt = self.conn.prepare(
+            "WITH raid_stats AS (
+                SELECT
+                    r.user_id,
+                    u.username,
+                    COUNT(*) AS total_raids,
+                    SUM(CASE WHEN r.exit_status = 'Survived' THEN 1 ELSE 0 END) AS survived,
+                    SUM(CASE WHEN r.exit_status = 'Killed' THEN 1 ELSE 0 END) AS total_deaths,
+                    (SELECT r2.map FROM raids r2
+                     WHERE r2.user_id = r.user_id AND r2.ended_at IS NOT NULL
+                     GROUP BY r2.map ORDER BY COUNT(*) DESC, r2.map ASC LIMIT 1
+                    ) AS favorite_map,
+                    (SELECT r3.exit_name FROM raids r3
+                     WHERE r3.user_id = r.user_id AND r3.exit_status = 'Survived'
+                       AND r3.exit_name IS NOT NULL AND r3.ended_at IS NOT NULL
+                     GROUP BY r3.exit_name ORDER BY COUNT(*) DESC, r3.exit_name ASC LIMIT 1
+                    ) AS favorite_extract
+                FROM raids r
+                JOIN users u ON r.user_id = u.id
+                WHERE r.ended_at IS NOT NULL
+                GROUP BY r.user_id
+                HAVING COUNT(*) >= ?1
+            ),
+            kill_stats AS (
+                SELECT
+                    r.user_id,
+                    COUNT(rk.id) AS total_kills,
+                    SUM(CASE WHEN rk.body_part = 'Head' THEN 1 ELSE 0 END) AS headshot_count,
+                    MAX(rk.distance) AS longest_kill,
+                    (SELECT rk2.weapon FROM raid_kills rk2
+                     JOIN raids r2 ON rk2.raid_id = r2.id
+                     WHERE r2.user_id = r.user_id AND rk2.weapon IS NOT NULL
+                     GROUP BY rk2.weapon ORDER BY COUNT(*) DESC, rk2.weapon ASC LIMIT 1
+                    ) AS favorite_weapon
+                FROM raids r
+                JOIN raid_kills rk ON rk.raid_id = r.id
+                WHERE r.ended_at IS NOT NULL
+                GROUP BY r.user_id
+            )
+            SELECT
+                rs.username,
+                rs.total_raids,
+                COALESCE(ks.total_kills, 0) AS total_kills,
+                rs.total_deaths,
+                CASE WHEN rs.total_deaths = 0
+                    THEN CAST(COALESCE(ks.total_kills, 0) AS REAL)
+                    ELSE CAST(COALESCE(ks.total_kills, 0) AS REAL) / rs.total_deaths
+                END AS kd_ratio,
+                CASE WHEN rs.total_raids = 0 THEN 0.0
+                    ELSE CAST(rs.survived AS REAL) / rs.total_raids * 100.0
+                END AS survival_rate,
+                COALESCE(ks.headshot_count, 0) AS headshot_count,
+                CASE WHEN COALESCE(ks.total_kills, 0) = 0 THEN 0.0
+                    ELSE CAST(COALESCE(ks.headshot_count, 0) AS REAL) / ks.total_kills * 100.0
+                END AS headshot_ratio,
+                COALESCE(ks.longest_kill, 0.0) AS longest_kill,
+                ks.favorite_weapon,
+                rs.favorite_map,
+                rs.favorite_extract
+            FROM raid_stats rs
+            LEFT JOIN kill_stats ks ON rs.user_id = ks.user_id
+            ORDER BY total_kills DESC",
+        )?;
+
+        let rows = stmt.query_map(params![min_raids], |row| {
+            Ok(LeaderboardEntry {
+                username: row.get(0)?,
+                total_raids: row.get(1)?,
+                total_kills: row.get(2)?,
+                total_deaths: row.get(3)?,
+                kd_ratio: row.get(4)?,
+                survival_rate: row.get(5)?,
+                headshot_count: row.get(6)?,
+                headshot_ratio: row.get(7)?,
+                longest_kill: row.get(8)?,
+                favorite_weapon: row.get(9)?,
+                favorite_map: row.get(10)?,
+                favorite_extract: row.get(11)?,
+            })
         })?;
         rows.collect()
     }
@@ -1164,5 +1264,241 @@ mod tests {
 
         let kills = db.get_raid_with_kills(raid_id).unwrap();
         assert!(kills.is_none());
+    }
+
+    #[test]
+    fn leaderboard_empty_when_no_data() {
+        let db = Database::open_in_memory().unwrap();
+        let entries = db.get_leaderboard(0).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn leaderboard_respects_min_raids() {
+        let db = Database::open_in_memory().unwrap();
+        let user1 = db
+            .insert_user("alice", Some("p-alice"), Some("hash"), Role::Player)
+            .unwrap();
+        let user2 = db
+            .insert_user("bob", Some("p-bob"), Some("hash"), Role::Player)
+            .unwrap();
+
+        // alice: 3 completed raids
+        for i in 0..3 {
+            let rid = db
+                .insert_raid(
+                    user1,
+                    "p-alice",
+                    None,
+                    "Pmc",
+                    Some("USEC"),
+                    "Customs",
+                    None,
+                    &format!("2024-01-01T{:02}:00:00Z", 10 + i),
+                    Some(1000),
+                    Some(10),
+                    Some(0),
+                )
+                .unwrap();
+            db.finish_raid(
+                rid,
+                &format!("2024-01-01T{:02}:30:00Z", 10 + i),
+                Some(1800),
+                "Survived",
+                Some("Gate 3"),
+                None,
+                None,
+                Some(1500),
+                Some(11),
+            )
+            .unwrap();
+        }
+
+        // bob: 1 completed raid (below threshold of 2)
+        let rid = db
+            .insert_raid(
+                user2,
+                "p-bob",
+                None,
+                "Pmc",
+                Some("BEAR"),
+                "Woods",
+                None,
+                "2024-01-01T14:00:00Z",
+                Some(500),
+                Some(5),
+                Some(0),
+            )
+            .unwrap();
+        db.finish_raid(
+            rid,
+            "2024-01-01T14:30:00Z",
+            Some(1800),
+            "Killed",
+            None,
+            Some("scav"),
+            None,
+            Some(600),
+            Some(5),
+        )
+        .unwrap();
+
+        // min_raids = 2: only alice qualifies
+        let entries = db.get_leaderboard(2).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].username, "alice");
+
+        // min_raids = 0: both qualify
+        let entries = db.get_leaderboard(0).unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn leaderboard_stats_correct() {
+        let db = Database::open_in_memory().unwrap();
+        let user_id = db
+            .insert_user("carol", Some("p-carol"), Some("hash"), Role::Player)
+            .unwrap();
+
+        // Raid 1: Survived, 2 kills (1 headshot), extract "Gate 3"
+        let r1 = db
+            .insert_raid(
+                user_id,
+                "p-carol",
+                None,
+                "Pmc",
+                Some("USEC"),
+                "Customs",
+                None,
+                "2024-01-01T10:00:00Z",
+                Some(1000),
+                Some(10),
+                Some(0),
+            )
+            .unwrap();
+        db.finish_raid(
+            r1,
+            "2024-01-01T10:30:00Z",
+            Some(1800),
+            "Survived",
+            Some("Gate 3"),
+            None,
+            None,
+            Some(1500),
+            Some(11),
+        )
+        .unwrap();
+        db.insert_raid_kills(
+            r1,
+            &[
+                NewRaidKill {
+                    victim_name: Some("Scav1".to_string()),
+                    victim_side: Some("Savage".to_string()),
+                    victim_role: Some("assault".to_string()),
+                    weapon: Some("AK-74".to_string()),
+                    distance: Some(50.0),
+                    body_part: Some("Head".to_string()),
+                    kill_time: None,
+                },
+                NewRaidKill {
+                    victim_name: Some("PMC1".to_string()),
+                    victim_side: Some("Usec".to_string()),
+                    victim_role: None,
+                    weapon: Some("AK-74".to_string()),
+                    distance: Some(150.0),
+                    body_part: Some("Thorax".to_string()),
+                    kill_time: None,
+                },
+            ],
+        )
+        .unwrap();
+
+        // Raid 2: Killed, 1 kill, no extract
+        let r2 = db
+            .insert_raid(
+                user_id,
+                "p-carol",
+                None,
+                "Pmc",
+                Some("USEC"),
+                "Customs",
+                None,
+                "2024-01-01T11:00:00Z",
+                Some(1500),
+                Some(11),
+                Some(2),
+            )
+            .unwrap();
+        db.finish_raid(
+            r2,
+            "2024-01-01T11:15:00Z",
+            Some(900),
+            "Killed",
+            None,
+            Some("scav-123"),
+            None,
+            Some(1600),
+            Some(11),
+        )
+        .unwrap();
+        db.insert_raid_kills(
+            r2,
+            &[NewRaidKill {
+                victim_name: Some("Scav2".to_string()),
+                victim_side: Some("Savage".to_string()),
+                victim_role: Some("assault".to_string()),
+                weapon: Some("M4A1".to_string()),
+                distance: Some(200.0),
+                body_part: Some("Head".to_string()),
+                kill_time: None,
+            }],
+        )
+        .unwrap();
+
+        // Raid 3: Survived, 0 kills, extract "Gate 3"
+        let r3 = db
+            .insert_raid(
+                user_id,
+                "p-carol",
+                None,
+                "Pmc",
+                Some("USEC"),
+                "Woods",
+                None,
+                "2024-01-01T12:00:00Z",
+                Some(1600),
+                Some(11),
+                Some(3),
+            )
+            .unwrap();
+        db.finish_raid(
+            r3,
+            "2024-01-01T12:30:00Z",
+            Some(1800),
+            "Survived",
+            Some("Gate 3"),
+            None,
+            None,
+            Some(1800),
+            Some(12),
+        )
+        .unwrap();
+
+        let entries = db.get_leaderboard(0).unwrap();
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+
+        assert_eq!(e.username, "carol");
+        assert_eq!(e.total_raids, 3);
+        assert_eq!(e.total_kills, 3);
+        assert_eq!(e.total_deaths, 1);
+        assert!((e.kd_ratio - 3.0).abs() < 0.01);
+        assert!((e.survival_rate - 66.666).abs() < 0.01);
+        assert_eq!(e.headshot_count, 2);
+        assert!((e.headshot_ratio - 66.666).abs() < 0.01);
+        assert!((e.longest_kill - 200.0).abs() < 0.01);
+        assert_eq!(e.favorite_weapon.as_deref(), Some("AK-74"));
+        assert_eq!(e.favorite_map.as_deref(), Some("Customs"));
+        assert_eq!(e.favorite_extract.as_deref(), Some("Gate 3"));
     }
 }

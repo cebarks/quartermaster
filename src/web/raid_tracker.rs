@@ -11,7 +11,6 @@ use crate::web::sse::ServerEvent;
 
 // ── Request/Response Structs ──────────────────────────────────────
 
-#[allow(dead_code)] // Used by Task 5 (proxy handler)
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RaidStartRequest {
@@ -21,15 +20,14 @@ pub struct RaidStartRequest {
     pub player_side: Option<String>,
 }
 
-#[allow(dead_code)] // Used by Task 6 (proxy handler)
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RaidEndRequest {
+    #[allow(dead_code)] // Deserialized from JSON but not read directly
     pub server_id: Option<String>,
     pub results: RaidEndResults,
 }
 
-#[allow(dead_code)] // Used by Task 6 (proxy handler)
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RaidEndResults {
@@ -41,7 +39,6 @@ pub struct RaidEndResults {
     pub profile: serde_json::Value,
 }
 
-#[allow(dead_code)] // Used by Task 6 (proxy handler)
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct VictimEntry {
@@ -54,7 +51,6 @@ pub struct VictimEntry {
     pub time: Option<String>,
 }
 
-#[allow(dead_code)] // Used by Task 5-6 (raid event processing)
 #[derive(Debug, Serialize)]
 pub struct ProfileSnapshot {
     pub xp: i64,
@@ -66,7 +62,6 @@ pub struct ProfileSnapshot {
 // ── Helper Functions ──────────────────────────────────────────────
 
 /// Extract PHPSESSID from Cookie header by splitting on `;`, trimming, and finding entry starting with `PHPSESSID=`
-#[allow(dead_code)] // Used by Task 5-6 (proxy handlers)
 pub fn extract_session_id(req: &HttpRequest) -> Option<String> {
     let cookie_header = req.headers().get("cookie")?.to_str().ok()?;
     for entry in cookie_header.split(';') {
@@ -80,7 +75,6 @@ pub fn extract_session_id(req: &HttpRequest) -> Option<String> {
 
 /// Read on-disk profile JSON and extract XP/level/victim count from the appropriate character (PMC or Scav).
 /// Returns `None` if file doesn't exist or can't be parsed.
-#[allow(dead_code)] // Used by Task 5 (raid start handler)
 pub fn snapshot_profile(
     spt_dir: &Path,
     profile_id: &str,
@@ -141,7 +135,6 @@ pub fn snapshot_profile(
 // ── Event Handlers ────────────────────────────────────────────────
 
 /// Handle raid start event: parse request, snapshot profile, insert raid row, broadcast event
-#[allow(dead_code)] // Used by Task 5 (proxy handler)
 pub fn handle_raid_start(
     body: Bytes,
     spt_profile_id: String,
@@ -227,7 +220,6 @@ pub fn handle_raid_start(
 }
 
 /// Handle raid end event: parse request, find open raid, extract stats from profile, finish raid, insert kills, broadcast event
-#[allow(dead_code)] // Used by Task 6 (proxy handler)
 pub fn handle_raid_end(
     body: Bytes,
     spt_profile_id: String,
