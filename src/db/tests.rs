@@ -24,6 +24,8 @@ fn create_in_memory_db() {
     assert!(tables.contains(&"users".to_string()));
     assert!(tables.contains(&"invite_codes".to_string()));
     assert!(tables.contains(&"pending_operations".to_string()));
+    assert!(tables.contains(&"mod_requests".to_string()));
+    assert!(tables.contains(&"mod_request_votes".to_string()));
 }
 
 #[test]
