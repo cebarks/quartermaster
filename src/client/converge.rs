@@ -364,6 +364,7 @@ pub async fn converge(
         scale_down(
             container_mgr,
             clients_config,
+            config,
             spt_dir,
             spt_client,
             current_count,
@@ -389,13 +390,31 @@ pub async fn converge(
     Ok(())
 }
 
+/// Poll the SPT server until it responds to ping, or until timeout.
+///
+/// Returns `true` if the server became ready, `false` on timeout.
+async fn await_server_ready(spt_client: &SptClient, timeout_secs: u64) -> bool {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        if let Ok(result) = spt_client.ping().await {
+            if result.ok {
+                return true;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
 /// Scale up from current_count to desired_count.
 async fn scale_up(
     container_mgr: &ContainerManager,
     clients_config: &ClientsConfig,
     config: &Config,
     spt_dir: &Path,
-    _spt_client: &SptClient,
+    spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
 ) -> Result<()> {
@@ -405,11 +424,31 @@ async fn scale_up(
     let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
     edit_headless_amount(&fika_config_path, desired_count)?;
 
-    // 2. Restart SPT server to pick up new headless count
-    info!("Restarting SPT server to register new headless clients");
-    // TODO: This should use the server lifecycle manager when available
-    // For now, we'll assume the server is already running and the config change will
-    // be picked up on next restart (which the supervisor will handle)
+    // 2. Restart SPT server to pick up new headless count and generate profiles
+    let container = config
+        .server_container
+        .as_deref()
+        .expect("server_container validated by ClientsConfig::validate");
+
+    info!("Stopping SPT server");
+    container_mgr
+        .stop(container)
+        .await
+        .context("failed to stop SPT server for headless config update")?;
+
+    info!("Starting SPT server");
+    container_mgr
+        .start(container)
+        .await
+        .context("failed to start SPT server after headless config update")?;
+
+    info!("Waiting for SPT server to become ready");
+    if !await_server_ready(spt_client, 120).await {
+        warn!(
+            "SPT server did not respond within 120s after restart. \
+             Proceeding with profile discovery — profiles may not be available yet."
+        );
+    }
 
     // 3. Discover available profiles for assignment
     // Headless profiles are created by the SPT server when it starts with Fika's
@@ -442,9 +481,11 @@ async fn scale_up(
 }
 
 /// Scale down from current_count to desired_count.
+#[allow(clippy::too_many_arguments)]
 async fn scale_down(
     container_mgr: &ContainerManager,
     _clients_config: &ClientsConfig,
+    config: &Config,
     spt_dir: &Path,
     _spt_client: &SptClient,
     current_count: u32,
@@ -474,8 +515,20 @@ async fn scale_down(
     edit_headless_amount(&fika_config_path, desired_count)?;
 
     // 3. Restart SPT server to deregister removed clients
+    let container = config
+        .server_container
+        .as_deref()
+        .expect("server_container validated by ClientsConfig::validate");
+
     info!("Restarting SPT server to deregister removed headless clients");
-    // TODO: This should use the server lifecycle manager when available
+    container_mgr
+        .stop(container)
+        .await
+        .context("failed to stop SPT server for client deregistration")?;
+    container_mgr
+        .start(container)
+        .await
+        .context("failed to start SPT server after client deregistration")?;
 
     Ok(())
 }
