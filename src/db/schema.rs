@@ -7,6 +7,7 @@ const MIGRATION_004: &str = include_str!("../../migrations/004_file_source.sql")
 const MIGRATION_005: &str = include_str!("../../migrations/005_add_disabled_column.sql");
 const MIGRATION_006: &str = include_str!("../../migrations/006_password_reset_tokens.sql");
 const MIGRATION_007: &str = include_str!("../../migrations/007_mod_requests.sql");
+const MIGRATION_008: &str = include_str!("../../migrations/008_nullable_profile_id.sql");
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     let current_version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -44,6 +45,11 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if current_version < 7 {
         conn.execute_batch(MIGRATION_007)?;
         conn.pragma_update(None, "user_version", 7)?;
+    }
+
+    if current_version < 8 {
+        conn.execute_batch(MIGRATION_008)?;
+        conn.pragma_update(None, "user_version", 8)?;
     }
 
     Ok(())

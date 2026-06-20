@@ -212,7 +212,7 @@ fn reverse_dependencies() {
 fn insert_and_get_user() {
     let db = test_db();
     let id = db
-        .insert_user("alice", "profile-abc", Some("hashed_pw"), Role::Admin)
+        .insert_user("alice", Some("profile-abc"), Some("hashed_pw"), Role::Admin)
         .unwrap();
     assert!(id > 0);
 
@@ -221,7 +221,7 @@ fn insert_and_get_user() {
         .unwrap()
         .expect("user should exist");
     assert_eq!(user.username, "alice");
-    assert_eq!(user.spt_profile_id, "profile-abc");
+    assert_eq!(user.spt_profile_id.as_deref(), Some("profile-abc"));
     assert_eq!(user.password_hash.as_deref(), Some("hashed_pw"));
     assert_eq!(user.role, Role::Admin);
 
@@ -236,7 +236,7 @@ fn insert_and_get_user() {
 fn insert_user_without_password() {
     let db = test_db();
     let id = db
-        .insert_user("trusty", "profile-xyz", None, Role::Player)
+        .insert_user("trusty", Some("profile-xyz"), None, Role::Player)
         .unwrap();
     let user = db
         .get_user_by_username("trusty")
@@ -247,15 +247,32 @@ fn insert_user_without_password() {
 }
 
 #[test]
+fn insert_user_without_profile() {
+    let db = test_db();
+    let id = db
+        .insert_user("admin", None, Some("hashed_pw"), Role::Admin)
+        .unwrap();
+    assert!(id > 0);
+
+    let user = db
+        .get_user_by_username("admin")
+        .unwrap()
+        .expect("user should exist");
+    assert_eq!(user.username, "admin");
+    assert!(user.spt_profile_id.is_none());
+    assert_eq!(user.role, Role::Admin);
+}
+
+#[test]
 fn admin_exists_check() {
     let db = test_db();
     assert!(!db.admin_exists().unwrap());
 
-    db.insert_user("player1", "p1", Some("pw"), Role::Player)
+    db.insert_user("player1", Some("p1"), Some("pw"), Role::Player)
         .unwrap();
     assert!(!db.admin_exists().unwrap());
 
-    db.insert_user("admin1", "a1", Some("pw"), Role::Admin)
+    db.insert_user("admin1", Some("a1"), Some("pw"), Role::Admin)
         .unwrap();
     assert!(db.admin_exists().unwrap());
 }
@@ -264,7 +281,7 @@ fn admin_exists_check() {
 fn create_and_use_invite() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", "adm-profile", Some("pw"), Role::Admin)
+        .insert_user("admin", Some("adm-profile"), Some("pw"), Role::Admin)
         .unwrap();
 
     let invite_id = db
@@ -280,7 +297,7 @@ fn create_and_use_invite() {
     assert!(invite.used_by.is_none());
 
     let new_user_id = db
-        .insert_user("newbie", "new-profile", Some("pw"), Role::Player)
+        .insert_user("newbie", Some("new-profile"), Some("pw"), Role::Player)
         .unwrap();
     let used = db.use_invite("INVITE-123", new_user_id).unwrap();
     assert_eq!(used, 1);
@@ -293,7 +310,7 @@ fn create_and_use_invite() {
     assert!(invite.used_at.is_some());
 
     let another_user_id = db
-        .insert_user("another", "anot-profile", Some("pw"), Role::Player)
+        .insert_user("another", Some("anot-profile"), Some("pw"), Role::Player)
         .unwrap();
     let reused = db.use_invite("INVITE-123", another_user_id).unwrap();
     assert_eq!(reused, 0, "already-used invite should not be reusable");
@@ -315,14 +332,14 @@ fn create_invite_without_creator() {
 fn expired_invite_rejected() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", "adm-profile", Some("pw"), Role::Admin)
+        .insert_user("admin", Some("adm-profile"), Some("pw"), Role::Admin)
         .unwrap();
 
     db.create_invite("EXPIRED-1", Some(admin_id), Some("2020-01-01 00:00:00"))
         .unwrap();
 
     let user_id = db
-        .insert_user("latecomer", "late-profile", Some("pw"), Role::Player)
+        .insert_user("latecomer", Some("late-profile"), Some("pw"), Role::Player)
         .unwrap();
     let used = db.use_invite("EXPIRED-1", user_id).unwrap();
     assert_eq!(used, 0, "expired invite should be rejected");
@@ -445,7 +462,7 @@ fn role_serde_lowercase() {
 fn get_user_by_id() {
     let db = test_db();
     let id = db
-        .insert_user("alice", "profile-abc", Some("hashed_pw"), Role::Admin)
+        .insert_user("alice", Some("profile-abc"), Some("hashed_pw"), Role::Admin)
         .unwrap();
     let user = db.get_user_by_id(id).unwrap().expect("user should exist");
     assert_eq!(user.username, "alice");
@@ -460,7 +477,12 @@ fn get_user_by_id() {
 fn user_disabled_default() {
     let db = test_db();
     let id = db
-        .insert_user("alice", "profile-abc", Some("hashed_pw"), Role::Player)
+        .insert_user(
+            "alice",
+            Some("profile-abc"),
+            Some("hashed_pw"),
+            Role::Player,
+        )
         .unwrap();
     let user = db.get_user_by_id(id).unwrap().expect("user should exist");
     assert!(!user.disabled);
@@ -470,7 +492,7 @@ fn user_disabled_default() {
 fn update_user_role() {
     let db = test_db();
     let id = db
-        .insert_user("alice", "p1", Some("pw"), Role::Player)
+        .insert_user("alice", Some("p1"), Some("pw"), Role::Player)
         .unwrap();
     let affected = db.update_user_role(id, Role::Moderator).unwrap();
     assert_eq!(affected, 1);
@@ -482,7 +504,7 @@ fn update_user_role() {
 fn update_user_role_last_admin_guard() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", "p1", Some("pw"), Role::Admin)
+        .insert_user("admin", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
     // Only admin — guard should block demotion
     let affected = db.update_user_role(admin_id, Role::Player).unwrap();
@@ -495,9 +517,9 @@ fn update_user_role_last_admin_guard() {
 fn update_user_role_allows_demotion_with_other_admins() {
     let db = test_db();
     let admin1 = db
-        .insert_user("admin1", "p1", Some("pw"), Role::Admin)
+        .insert_user("admin1", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
-    db.insert_user("admin2", "p2", Some("pw"), Role::Admin)
+    db.insert_user("admin2", Some("p2"), Some("pw"), Role::Admin)
         .unwrap();
     let affected = db.update_user_role(admin1, Role::Player).unwrap();
     assert_eq!(affected, 1);
@@ -509,7 +531,7 @@ fn update_user_role_allows_demotion_with_other_admins() {
 fn set_user_disabled() {
     let db = test_db();
     let id = db
-        .insert_user("alice", "p1", Some("pw"), Role::Player)
+        .insert_user("alice", Some("p1"), Some("pw"), Role::Player)
         .unwrap();
     let affected = db.set_user_disabled(id, true).unwrap();
     assert_eq!(affected, 1);
@@ -526,7 +548,7 @@ fn set_user_disabled() {
 fn set_user_disabled_last_admin_guard() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", "p1", Some("pw"), Role::Admin)
+        .insert_user("admin", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
     let affected = db.set_user_disabled(admin_id, true).unwrap();
     assert_eq!(affected, 0, "should not disable the last admin");
@@ -538,7 +560,7 @@ fn set_user_disabled_last_admin_guard() {
 fn update_user_password() {
     let db = test_db();
     let id = db
-        .insert_user("alice", "p1", Some("old_hash"), Role::Player)
+        .insert_user("alice", Some("p1"), Some("old_hash"), Role::Player)
         .unwrap();
     let affected = db.update_user_password(id, "new_hash").unwrap();
     assert_eq!(affected, 1);
@@ -550,13 +572,13 @@ fn update_user_password() {
 fn count_admins() {
     let db = test_db();
     assert_eq!(db.count_admins().unwrap(), 0);
-    db.insert_user("admin1", "p1", Some("pw"), Role::Admin)
+    db.insert_user("admin1", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
     assert_eq!(db.count_admins().unwrap(), 1);
-    db.insert_user("player1", "p2", Some("pw"), Role::Player)
+    db.insert_user("player1", Some("p2"), Some("pw"), Role::Player)
         .unwrap();
     assert_eq!(db.count_admins().unwrap(), 1);
-    db.insert_user("admin2", "p3", Some("pw"), Role::Admin)
+    db.insert_user("admin2", Some("p3"), Some("pw"), Role::Admin)
         .unwrap();
     assert_eq!(db.count_admins().unwrap(), 2);
 }
@@ -565,7 +587,7 @@ fn count_admins() {
 fn list_invite_codes_with_usernames() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", "p1", Some("pw"), Role::Admin)
+        .insert_user("admin", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
     db.create_invite("CODE-1", Some(admin_id), None).unwrap();
     db.create_invite("CODE-2", None, None).unwrap();
@@ -583,7 +605,7 @@ fn list_invite_codes_with_usernames() {
 fn reset_token_crud() {
     let db = test_db();
     let user_id = db
-        .insert_user("alice", "p1", Some("pw"), Role::Player)
+        .insert_user("alice", Some("p1"), Some("pw"), Role::Player)
         .unwrap();
 
     let token_id = db
@@ -607,7 +629,7 @@ fn reset_token_crud() {
 fn reset_token_replaces_existing() {
     let db = test_db();
     let user_id = db
-        .insert_user("alice", "p1", Some("pw"), Role::Player)
+        .insert_user("alice", Some("p1"), Some("pw"), Role::Player)
         .unwrap();
 
     db.create_reset_token(user_id, "token-old", "2099-01-01T00:00:00Z")
@@ -639,7 +661,7 @@ fn password_reset_tokens_table_exists() {
 fn update_user_password_sets_changed_at() {
     let db = test_db();
     let id = db
-        .insert_user("alice", "p1", Some("old_hash"), Role::Player)
+        .insert_user("alice", Some("p1"), Some("old_hash"), Role::Player)
         .unwrap();
 
     // Before update, password_changed_at should be NULL
@@ -673,9 +695,9 @@ fn update_user_password_sets_changed_at() {
 fn count_admins_excludes_disabled() {
     let db = test_db();
     let admin1 = db
-        .insert_user("admin1", "p1", Some("pw"), Role::Admin)
+        .insert_user("admin1", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
-    db.insert_user("admin2", "p2", Some("pw"), Role::Admin)
+    db.insert_user("admin2", Some("p2"), Some("pw"), Role::Admin)
         .unwrap();
     assert_eq!(db.count_admins().unwrap(), 2);
     db.set_user_disabled(admin1, true).unwrap();
@@ -685,12 +707,12 @@ fn count_admins_excludes_disabled() {
 // -- Mod Request tests --
 
 fn setup_user(db: &Database) -> i64 {
-    db.insert_user("testuser", "aid1", Some("hash123"), Role::Player)
+    db.insert_user("testuser", Some("aid1"), Some("hash123"), Role::Player)
         .unwrap()
 }
 
 fn setup_admin(db: &Database) -> i64 {
-    db.insert_user("admin", "aid2", Some("hash456"), Role::Admin)
+    db.insert_user("admin", Some("aid2"), Some("hash456"), Role::Admin)
         .unwrap()
 }
 
@@ -886,11 +908,11 @@ fn list_mod_requests_all_statuses() {
 #[test]
 fn list_users_alphabetical_order() {
     let db = test_db();
-    db.insert_user("charlie", "p3", Some("pw"), Role::Player)
+    db.insert_user("charlie", Some("p3"), Some("pw"), Role::Player)
         .unwrap();
-    db.insert_user("alice", "p1", Some("pw"), Role::Admin)
+    db.insert_user("alice", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
-    db.insert_user("bob", "p2", Some("pw"), Role::Moderator)
+    db.insert_user("bob", Some("p2"), Some("pw"), Role::Moderator)
         .unwrap();
 
     let users = db.list_users().unwrap();
@@ -904,9 +926,9 @@ fn list_users_alphabetical_order() {
 fn disable_admin_allowed_with_backup_admin() {
     let db = test_db();
     let admin1 = db
-        .insert_user("admin1", "p1", Some("pw"), Role::Admin)
+        .insert_user("admin1", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
-    db.insert_user("admin2", "p2", Some("pw"), Role::Admin)
+    db.insert_user("admin2", Some("p2"), Some("pw"), Role::Admin)
         .unwrap();
 
     let affected = db.set_user_disabled(admin1, true).unwrap();
@@ -919,7 +941,7 @@ fn disable_admin_allowed_with_backup_admin() {
 fn update_invite_user_unconditional() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", "p1", Some("pw"), Role::Admin)
+        .insert_user("admin", Some("p1"), Some("pw"), Role::Admin)
         .unwrap();
     db.create_invite("CODE-1", Some(admin_id), None).unwrap();
 
@@ -929,7 +951,7 @@ fn update_invite_user_unconditional() {
 
     // Now unconditionally update to a different user
     let new_user = db
-        .insert_user("newbie", "p2", Some("pw"), Role::Player)
+        .insert_user("newbie", Some("p2"), Some("pw"), Role::Player)
         .unwrap();
     let updated = db.update_invite_user("CODE-1", new_user).unwrap();
     assert_eq!(updated, 1);
@@ -944,7 +966,7 @@ fn list_requests_mixed_votes_score() {
     let user1 = setup_user(&db);
     let user2 = setup_admin(&db);
     let user3 = db
-        .insert_user("voter3", "aid3", Some("hash"), Role::Player)
+        .insert_user("voter3", Some("aid3"), Some("hash"), Role::Player)
         .unwrap();
 
     let req_id = db
@@ -971,7 +993,7 @@ fn list_requests_current_user_no_vote() {
     let db = test_db();
     let requester = setup_user(&db);
     let viewer = db
-        .insert_user("viewer", "aid-v", Some("hash"), Role::Player)
+        .insert_user("viewer", Some("aid-v"), Some("hash"), Role::Player)
         .unwrap();
 
     db.create_mod_request(requester, 100, "Mod", None, None, "unknown", None)

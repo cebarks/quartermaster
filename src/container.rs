@@ -3,13 +3,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use bollard::models::{ContainerCreateBody, ContainerInspectResponse, HostConfig};
+use bollard::models::{ContainerCreateBody, ContainerInspectResponse, HostConfig, PortBinding};
 use bollard::query_parameters::{
-    CreateContainerOptionsBuilder, ListContainersOptionsBuilder, LogsOptionsBuilder,
-    RemoveContainerOptionsBuilder, StartContainerOptions, StopContainerOptionsBuilder,
+    CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
+    LogsOptionsBuilder, RemoveContainerOptionsBuilder, StartContainerOptions,
+    StopContainerOptionsBuilder,
 };
 use bollard::Docker;
 use futures_util::Stream;
+
+pub const SPT_SERVER_IMAGE: &str = "ghcr.io/zhliau/fika-spt-server-docker:latest";
+pub const DEFAULT_CONTAINER_NAME: &str = "spt-server";
+pub const DEFAULT_SPT_PORT: u16 = 6969;
 
 #[derive(Clone)]
 pub struct ContainerManager {
@@ -66,11 +71,36 @@ impl VolumeMount {
 }
 
 #[derive(Debug, Clone)]
+pub enum Protocol {
+    Tcp,
+    #[allow(dead_code)]
+    Udp,
+}
+
+#[derive(Debug, Clone)]
+pub struct PortMapping {
+    pub host_port: u16,
+    pub container_port: u16,
+    pub protocol: Protocol,
+}
+
+impl PortMapping {
+    pub fn container_key(&self) -> String {
+        let proto = match self.protocol {
+            Protocol::Tcp => "tcp",
+            Protocol::Udp => "udp",
+        };
+        format!("{}/{proto}", self.container_port)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct CreateContainerOpts {
     pub name: String,
     pub image: String,
     pub env: Vec<(String, String)>,
     pub volumes: Vec<VolumeMount>,
+    pub ports: Vec<PortMapping>,
     pub labels: Vec<(String, String)>,
     pub user: Option<String>,
 }
@@ -185,10 +215,40 @@ impl ContainerManager {
         )
     }
 
+    pub async fn pull_image(&self, image: &str) -> Result<()> {
+        tracing::info!(image, "pulling container image");
+        use futures_util::TryStreamExt;
+        self.docker
+            .create_image(
+                Some(
+                    CreateImageOptionsBuilder::default()
+                        .from_image(image)
+                        .build(),
+                ),
+                None,
+                None,
+            )
+            .try_collect::<Vec<_>>()
+            .await
+            .with_context(|| format!("failed to pull image '{image}'"))?;
+        Ok(())
+    }
+
     pub async fn create_container(&self, opts: CreateContainerOpts) -> Result<String> {
         let env: Vec<String> = opts.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
         let binds: Vec<String> = opts.volumes.iter().map(|v| v.to_bind_string()).collect();
         let labels: HashMap<String, String> = opts.all_labels().into_iter().collect();
+
+        let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+        for pm in &opts.ports {
+            port_bindings.insert(
+                pm.container_key(),
+                Some(vec![PortBinding {
+                    host_port: Some(pm.host_port.to_string()),
+                    ..Default::default()
+                }]),
+            );
+        }
 
         let body = ContainerCreateBody {
             image: Some(opts.image.clone()),
@@ -197,6 +257,11 @@ impl ContainerManager {
             user: opts.user.clone(),
             host_config: Some(HostConfig {
                 binds: Some(binds),
+                port_bindings: if port_bindings.is_empty() {
+                    None
+                } else {
+                    Some(port_bindings)
+                },
                 ..Default::default()
             }),
             ..Default::default()
@@ -327,6 +392,7 @@ mod tests {
             image: "test:latest".to_string(),
             env: vec![],
             volumes: vec![],
+            ports: vec![],
             labels: vec![("custom".to_string(), "value".to_string())],
             user: None,
         };

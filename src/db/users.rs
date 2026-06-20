@@ -65,7 +65,7 @@ impl TryFrom<String> for Role {
 pub struct User {
     pub id: i64,
     pub username: String,
-    pub spt_profile_id: String,
+    pub spt_profile_id: Option<String>,
     pub password_hash: Option<String>,
     pub role: Role,
     pub disabled: bool,
@@ -121,7 +121,7 @@ impl Database {
     pub fn insert_user(
         &self,
         username: &str,
-        spt_profile_id: &str,
+        spt_profile_id: Option<&str>,
         password_hash: Option<&str>,
         role: Role,
     ) -> rusqlite::Result<i64> {

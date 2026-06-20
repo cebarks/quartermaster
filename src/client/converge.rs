@@ -566,6 +566,7 @@ async fn create_client_container(
         image: clients_config.image.clone(),
         env,
         volumes,
+        ports: vec![],
         labels,
         user: None,
     };

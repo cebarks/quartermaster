@@ -27,15 +27,18 @@ fn build_user_profiles(
     users
         .iter()
         .map(|u| {
-            if u.spt_profile_id.is_empty() {
+            let Some(ref profile_id) = u.spt_profile_id else {
+                return ProfileStatus::NotFound;
+            };
+            if profile_id.is_empty() {
                 return ProfileStatus::NotFound;
             }
-            match profile_stats.get(&u.spt_profile_id) {
+            match profile_stats.get(profile_id) {
                 Some(stats) => ProfileStatus::Found(stats.clone()),
                 None => {
                     let profile_path = spt_dir
                         .join("SPT/user/profiles")
-                        .join(format!("{}.json", u.spt_profile_id));
+                        .join(format!("{}.json", profile_id));
                     if profile_path.exists() {
                         ProfileStatus::ParseError
                     } else {
@@ -502,7 +505,7 @@ async fn render_user_row(
     .ok_or(WebError::NotFound)?;
 
     let spt_dir = state.spt_dir.clone();
-    let aid = user.spt_profile_id.clone();
+    let aid = user.spt_profile_id.clone().unwrap_or_default();
     let profile_stats = web::block(move || load_all_profile_stats(&spt_dir))
         .await
         .map_err(WebError::from)?;

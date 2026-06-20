@@ -343,7 +343,12 @@ pub async fn register_submit(
             return Ok(Err("Invite code is invalid or expired".to_string()));
         }
 
-        let user_id = db.insert_user(&username, &profile_id, Some(&password_hash), Role::Player)?;
+        let user_id = db.insert_user(
+            &username,
+            Some(&profile_id),
+            Some(&password_hash),
+            Role::Player,
+        )?;
 
         // Update the invite to point to the real user_id (no IS NULL guard needed)
         db.update_invite_user(&code, user_id)?;
