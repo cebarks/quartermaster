@@ -679,3 +679,204 @@ fn count_admins_excludes_disabled() {
     db.set_user_disabled(admin1, true).unwrap();
     assert_eq!(db.count_admins().unwrap(), 1);
 }
+
+// -- Mod Request tests --
+
+fn setup_user(db: &Database) -> i64 {
+    db.insert_user("testuser", "aid1", Some("hash123"), Role::Player)
+        .unwrap()
+}
+
+fn setup_admin(db: &Database) -> i64 {
+    db.insert_user("admin", "aid2", Some("hash456"), Role::Admin)
+        .unwrap()
+}
+
+#[test]
+fn create_and_get_mod_request() {
+    let db = test_db();
+    let user_id = setup_user(&db);
+    let req_id = db
+        .create_mod_request(
+            user_id,
+            100,
+            "Test Mod",
+            Some("test-mod"),
+            Some("A desc"),
+            "unknown",
+            Some("I want this"),
+        )
+        .unwrap();
+    assert!(req_id > 0);
+
+    let req = db.get_mod_request(req_id).unwrap().unwrap();
+    assert_eq!(req.forge_mod_id, 100);
+    assert_eq!(req.mod_name, "Test Mod");
+    assert_eq!(req.mod_slug.as_deref(), Some("test-mod"));
+    assert_eq!(req.status, "pending");
+    assert_eq!(req.reason.as_deref(), Some("I want this"));
+    assert!(req.resolved_by.is_none());
+}
+
+#[test]
+fn has_pending_request_for_mod() {
+    let db = test_db();
+    let user_id = setup_user(&db);
+    assert!(!db.has_pending_request_for_mod(100).unwrap());
+
+    db.create_mod_request(user_id, 100, "Mod", None, None, "unknown", None)
+        .unwrap();
+    assert!(db.has_pending_request_for_mod(100).unwrap());
+}
+
+#[test]
+fn resolved_request_does_not_block_new_request() {
+    let db = test_db();
+    let user_id = setup_user(&db);
+    let admin_id = setup_admin(&db);
+
+    let req_id = db
+        .create_mod_request(user_id, 100, "Mod", None, None, "unknown", None)
+        .unwrap();
+    db.resolve_mod_request(req_id, "rejected", admin_id, Some("Not now"))
+        .unwrap();
+
+    assert!(!db.has_pending_request_for_mod(100).unwrap());
+}
+
+#[test]
+fn resolve_mod_request_only_pending() {
+    let db = test_db();
+    let user_id = setup_user(&db);
+    let admin_id = setup_admin(&db);
+
+    let req_id = db
+        .create_mod_request(user_id, 100, "Mod", None, None, "unknown", None)
+        .unwrap();
+
+    let rows = db
+        .resolve_mod_request(req_id, "approved", admin_id, None)
+        .unwrap();
+    assert_eq!(rows, 1);
+
+    let rows = db
+        .resolve_mod_request(req_id, "rejected", admin_id, None)
+        .unwrap();
+    assert_eq!(rows, 0);
+
+    let req = db.get_mod_request(req_id).unwrap().unwrap();
+    assert_eq!(req.status, "approved");
+    assert!(req.resolved_at.is_some());
+}
+
+#[test]
+fn upsert_vote_and_toggle() {
+    let db = test_db();
+    let user_id = setup_user(&db);
+    let req_id = db
+        .create_mod_request(user_id, 100, "Mod", None, None, "unknown", None)
+        .unwrap();
+
+    db.upsert_vote(req_id, user_id, true, Some("Great mod!"))
+        .unwrap();
+    let vote = db.get_vote(req_id, user_id).unwrap().unwrap();
+    assert!(vote.upvote);
+    assert_eq!(vote.comment.as_deref(), Some("Great mod!"));
+
+    db.upsert_vote(req_id, user_id, false, None).unwrap();
+    let vote = db.get_vote(req_id, user_id).unwrap().unwrap();
+    assert!(!vote.upvote);
+    assert!(vote.comment.is_none());
+
+    db.delete_vote(req_id, user_id).unwrap();
+    assert!(db.get_vote(req_id, user_id).unwrap().is_none());
+}
+
+#[test]
+fn list_mod_requests_with_votes() {
+    let db = test_db();
+    let user1 = setup_user(&db);
+    let user2 = setup_admin(&db);
+
+    let req_id = db
+        .create_mod_request(user1, 100, "Mod A", None, None, "compatible", None)
+        .unwrap();
+
+    db.upsert_vote(req_id, user1, true, Some("yes please"))
+        .unwrap();
+    db.upsert_vote(req_id, user2, true, None).unwrap();
+
+    let views = db.list_mod_requests(Some("pending"), user1).unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].vote_score, 2);
+    assert_eq!(views[0].upvote_count, 2);
+    assert_eq!(views[0].downvote_count, 0);
+    assert_eq!(views[0].comment_count, 1);
+    assert_eq!(views[0].current_user_vote, Some(true));
+    assert_eq!(views[0].requester_username, "testuser");
+}
+
+#[test]
+fn list_vote_comments_only_with_text() {
+    let db = test_db();
+    let user1 = setup_user(&db);
+    let user2 = setup_admin(&db);
+
+    let req_id = db
+        .create_mod_request(user1, 100, "Mod", None, None, "unknown", None)
+        .unwrap();
+
+    db.upsert_vote(req_id, user1, true, Some("Love it"))
+        .unwrap();
+    db.upsert_vote(req_id, user2, false, None).unwrap();
+
+    let comments = db.list_vote_comments(req_id).unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].username, "testuser");
+    assert!(comments[0].upvote);
+    assert_eq!(comments[0].comment, "Love it");
+}
+
+#[test]
+fn update_mod_request_cache() {
+    let db = test_db();
+    let user_id = setup_user(&db);
+
+    let req_id = db
+        .create_mod_request(user_id, 100, "Old Name", None, None, "unknown", None)
+        .unwrap();
+
+    db.update_mod_request_cache(
+        req_id,
+        "New Name",
+        Some("new-slug"),
+        Some("New desc"),
+        "compatible",
+    )
+    .unwrap();
+
+    let req = db.get_mod_request(req_id).unwrap().unwrap();
+    assert_eq!(req.mod_name, "New Name");
+    assert_eq!(req.mod_slug.as_deref(), Some("new-slug"));
+    assert_eq!(req.fika_compatible, "compatible");
+}
+
+#[test]
+fn list_mod_requests_all_statuses() {
+    let db = test_db();
+    let user_id = setup_user(&db);
+
+    db.create_mod_request(user_id, 100, "Mod A", None, None, "unknown", None)
+        .unwrap();
+    db.create_mod_request(user_id, 200, "Mod B", None, None, "unknown", None)
+        .unwrap();
+
+    let all = db.list_mod_requests(None, user_id).unwrap();
+    assert_eq!(all.len(), 2);
+
+    let pending = db.list_mod_requests(Some("pending"), user_id).unwrap();
+    assert_eq!(pending.len(), 2);
+
+    let approved = db.list_mod_requests(Some("approved"), user_id).unwrap();
+    assert_eq!(approved.len(), 0);
+}
