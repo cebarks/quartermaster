@@ -115,6 +115,14 @@ impl GameData {
         })
     }
 
+    pub fn load_empty() -> Self {
+        Self {
+            quest_names: HashMap::new(),
+            trader_info: HashMap::new(),
+            hideout_areas: build_hideout_areas(),
+        }
+    }
+
     fn load_quest_names(spt_dir: &Path) -> Result<HashMap<String, String>> {
         let path = spt_dir.join("SPT/SPT_Data/database/templates/quests.json");
         if !path.exists() {

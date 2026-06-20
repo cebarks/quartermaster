@@ -30,6 +30,7 @@ use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging::LogBroadcast;
 use crate::spt::detect::SptInfo;
+use crate::spt::game_data::GameData;
 
 use state::AppState;
 
@@ -64,6 +65,11 @@ pub async fn start_server(
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
+    let game_data = Arc::new(GameData::load(&spt_dir).unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "failed to load SPT game data, lookups will return raw IDs");
+        GameData::load_empty()
+    }));
+
     let db = Arc::new(parking_lot::Mutex::new(db));
     let app_state = web::Data::new(AppState {
         db,
@@ -81,6 +87,7 @@ pub async fn start_server(
         converging,
         fika_installed,
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
+        game_data,
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
