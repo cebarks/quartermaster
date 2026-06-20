@@ -8,6 +8,7 @@ mod forge;
 mod health;
 mod invite;
 mod logging;
+mod modsync;
 mod ops;
 mod queue;
 mod server_detect;
