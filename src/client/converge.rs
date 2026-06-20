@@ -1,12 +1,13 @@
 use crate::config::{ClientsConfig, Config};
 use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
+use crate::spt::profiles;
 use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Label key for marking containers as managed by quartermaster
 const MANAGED_BY_LABEL: &str = "quma.managed-by";
@@ -65,6 +66,93 @@ pub fn discover_new_profiles(profiles_dir: &Path, before: &HashSet<String>) -> V
 
     new_profiles.sort();
     new_profiles
+}
+
+/// Collect profile IDs already assigned to running managed containers via their PROFILE_ID env var.
+async fn assigned_profile_ids(
+    container_mgr: &ContainerManager,
+    managed_names: &[String],
+) -> HashSet<String> {
+    let mut assigned = HashSet::new();
+    for name in managed_names {
+        if let Ok(info) = container_mgr.inspect(name).await {
+            if let Some(pid) = info.config.and_then(|c| c.env).and_then(|env| {
+                env.iter()
+                    .find(|e| e.starts_with("PROFILE_ID="))
+                    .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                    .map(String::from)
+            }) {
+                assigned.insert(pid);
+            }
+        }
+    }
+    assigned
+}
+
+/// Select profile IDs to assign to new containers during scale-up.
+///
+/// Reads profiles from `<spt_dir>/SPT/user/profiles/`, filters out those already
+/// assigned to running containers, and prefers profiles whose username starts with
+/// `headless_` (Fika's auto-generated headless profiles). Returns up to `needed`
+/// profile IDs.
+async fn select_profiles_for_assignment(
+    container_mgr: &ContainerManager,
+    spt_dir: &Path,
+    managed_names: &[String],
+    needed: u32,
+) -> Vec<Option<String>> {
+    let already_assigned = assigned_profile_ids(container_mgr, managed_names).await;
+
+    let all_profiles = match profiles::list_profiles(spt_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("Failed to read profiles directory: {e}. Containers will be created without PROFILE_ID.");
+            return vec![None; needed as usize];
+        }
+    };
+
+    // Filter to unassigned profiles, preferring headless_ prefixed usernames
+    let mut headless_profiles: Vec<String> = Vec::new();
+    let mut other_profiles: Vec<String> = Vec::new();
+
+    for profile in &all_profiles {
+        if already_assigned.contains(&profile.aid) {
+            continue;
+        }
+        if profile.username.starts_with("headless_") {
+            headless_profiles.push(profile.aid.clone());
+        } else {
+            other_profiles.push(profile.aid.clone());
+        }
+    }
+
+    // Headless profiles first, then other profiles as fallback
+    let available: Vec<String> = headless_profiles
+        .into_iter()
+        .chain(other_profiles)
+        .collect();
+
+    let mut assignments: Vec<Option<String>> = Vec::with_capacity(needed as usize);
+    for i in 0..needed as usize {
+        if i < available.len() {
+            assignments.push(Some(available[i].clone()));
+        } else {
+            assignments.push(None);
+        }
+    }
+
+    let assigned_count = assignments.iter().filter(|a| a.is_some()).count();
+    if assigned_count < needed as usize {
+        warn!(
+            "Only {} of {} profiles available for assignment. \
+             Remaining containers will be created without PROFILE_ID. \
+             Headless profiles are generated when the SPT server starts with Fika — \
+             restart the server to create them, then run `quma client scale` again.",
+            assigned_count, needed
+        );
+    }
+
+    assignments
 }
 
 /// Set up overlay directory for a client, copying isolated paths from the install directory.
@@ -323,13 +411,31 @@ async fn scale_up(
     // For now, we'll assume the server is already running and the config change will
     // be picked up on next restart (which the supervisor will handle)
 
-    // 3. Wait for new profiles to appear
-    // TODO: Implement profile discovery with timeout
-    // For now, we'll skip this and assume profiles exist
+    // 3. Discover available profiles for assignment
+    // Headless profiles are created by the SPT server when it starts with Fika's
+    // headless.amount > 0. If profiles don't exist yet (server hasn't been restarted
+    // since headless amount was increased), containers are created without PROFILE_ID
+    // and will need a re-scale after the server generates the profiles.
+    let new_count = desired_count - current_count;
+    let managed = container_mgr
+        .detect_containers_by_label(MANAGED_BY_LABEL, MANAGED_BY_VALUE)
+        .await
+        .unwrap_or_default();
+    let profile_assignments =
+        select_profiles_for_assignment(container_mgr, spt_dir, &managed, new_count).await;
 
     // 4. Create containers for new clients
-    for i in (current_count + 1)..=desired_count {
-        create_client_container(container_mgr, clients_config, config, spt_dir, i).await?;
+    for (offset, profile_id) in profile_assignments.into_iter().enumerate() {
+        let i = current_count + 1 + offset as u32;
+        create_client_container(
+            container_mgr,
+            clients_config,
+            config,
+            spt_dir,
+            i,
+            profile_id,
+        )
+        .await?;
     }
 
     Ok(())
@@ -375,12 +481,17 @@ async fn scale_down(
 }
 
 /// Create a container for a single client.
+///
+/// If `profile_id` is `Some`, the container gets a `PROFILE_ID` env var that allows
+/// the CLI status command and supervisor to correlate this container with the Fika
+/// headless API (which keys its response by profile/session ID).
 async fn create_client_container(
     container_mgr: &ContainerManager,
     clients_config: &ClientsConfig,
     config: &Config,
     spt_dir: &Path,
     index: u32,
+    profile_id: Option<String>,
 ) -> Result<()> {
     let name = client_container_name(index);
     let overlay_dir = spt_dir.join("clients").join(index.to_string());
@@ -422,6 +533,18 @@ async fn create_client_container(
             client_port(clients_config.base_udp_port, index).to_string(),
         ),
     ];
+
+    // Add PROFILE_ID for Fika API correlation
+    if let Some(ref pid) = profile_id {
+        env.push(("PROFILE_ID".to_string(), pid.clone()));
+        info!("Assigning profile {pid} to client {index}");
+    } else {
+        warn!(
+            "No profile available for client {index}. \
+             Fika status correlation will not work until a profile is assigned. \
+             Restart the SPT server to generate headless profiles, then re-scale."
+        );
+    }
 
     // Add SPT server host/port if configured
     if let Some(ref host) = config.server_host {
