@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}Admin — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("admin", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("admin", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>Admin Panel</h1>
 

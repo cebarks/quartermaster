@@ -22,6 +22,7 @@ fn record_extracted_files(db: &Database, mod_db_id: i64, files: &[ExtractedFile]
 pub fn install_mod_from_archive(
     db: &Database,
     spt_dir: &Path,
+    config: &crate::config::Config,
     forge_mod_id: i64,
     version_id: i64,
     name: &str,
@@ -38,12 +39,16 @@ pub fn install_mod_from_archive(
         file_count = extracted.len(),
         "mod installed, files recorded"
     );
+    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
+        tracing::warn!(error = %e, "failed to regenerate ModSync config");
+    }
     Ok(db_id)
 }
 
 pub fn update_mod_from_archive(
     db: &Database,
     spt_dir: &Path,
+    config: &crate::config::Config,
     mod_db_id: i64,
     version_id: i64,
     version_str: &str,
@@ -74,16 +79,27 @@ pub fn update_mod_from_archive(
 
     record_extracted_files(db, mod_db_id, &extracted)?;
     db.update_mod(mod_db_id, version_id, version_str)?;
+    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
+        tracing::warn!(error = %e, "failed to regenerate ModSync config");
+    }
     Ok(())
 }
 
-pub fn remove_mod_by_id(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
+pub fn remove_mod_by_id(
+    db: &Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    mod_db_id: i64,
+) -> Result<()> {
     tracing::info!(mod_db_id, "removing mod");
     let files = db.get_files_for_mod(mod_db_id)?;
     let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = paths.len(), "deleting mod files");
     crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
     db.delete_mod(mod_db_id)?;
+    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
+        tracing::warn!(error = %e, "failed to regenerate ModSync config");
+    }
     Ok(())
 }
 
@@ -196,6 +212,7 @@ pub fn collect_all_reverse_deps(db: &Database, mod_db_id: i64) -> Result<Vec<Ins
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use crate::db::Database;
     use std::io::Write;
     use tempfile::TempDir;
@@ -236,6 +253,7 @@ mod tests {
         let db_id = install_mod_from_archive(
             &db,
             spt_dir.path(),
+            &Config::default(),
             100,
             200,
             "TestMod",
@@ -272,6 +290,7 @@ mod tests {
         let db_id = install_mod_from_archive(
             &db,
             spt_dir.path(),
+            &Config::default(),
             100,
             200,
             "TestMod",
@@ -286,7 +305,16 @@ mod tests {
             ("SPT/user/mods/TestMod/package.json", b"{\"v\":\"2\"}"),
             ("SPT/user/mods/TestMod/new_file.ts", b"new"),
         ]);
-        update_mod_from_archive(&db, spt_dir.path(), db_id, 300, "2.0.0", zip_v2.path()).unwrap();
+        update_mod_from_archive(
+            &db,
+            spt_dir.path(),
+            &Config::default(),
+            db_id,
+            300,
+            "2.0.0",
+            zip_v2.path(),
+        )
+        .unwrap();
 
         let updated = db.get_mod(db_id).unwrap().unwrap();
         assert_eq!(updated.version, "2.0.0");
@@ -309,6 +337,7 @@ mod tests {
         let db_id = install_mod_from_archive(
             &db,
             spt_dir.path(),
+            &Config::default(),
             100,
             200,
             "TestMod",
@@ -323,7 +352,7 @@ mod tests {
             .join("SPT/user/mods/TestMod/package.json")
             .exists());
 
-        remove_mod_by_id(&db, spt_dir.path(), db_id).unwrap();
+        remove_mod_by_id(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
 
         assert!(!spt_dir
             .path()

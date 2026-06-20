@@ -4,6 +4,7 @@ pub mod clients;
 pub mod dashboard;
 pub mod logs;
 pub mod mods;
+pub mod modsync;
 pub mod queue;
 pub mod requests;
 pub mod server;

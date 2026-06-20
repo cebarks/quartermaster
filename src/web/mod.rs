@@ -57,6 +57,7 @@ pub async fn start_server(
     client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     converging: Arc<std::sync::atomic::AtomicBool>,
     fika_installed: bool,
+    modsync_installed: bool,
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
 
@@ -64,9 +65,17 @@ pub async fn start_server(
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
-    let db = Arc::new(parking_lot::Mutex::new(db));
+    let db_arc = Arc::new(parking_lot::Mutex::new(db));
+
+    // Regenerate ModSync config on startup to ensure consistency
+    if modsync_installed && config.modsync.is_some() {
+        if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
+            tracing::warn!(error = %e, "failed to regenerate ModSync config on startup");
+        }
+    }
+
     let app_state = web::Data::new(AppState {
-        db,
+        db: db_arc,
         forge,
         config: config.clone(),
         config_path,
@@ -80,6 +89,7 @@ pub async fn start_server(
         client_states,
         converging,
         fika_installed,
+        modsync_installed: std::sync::atomic::AtomicBool::new(modsync_installed),
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
     });
 
@@ -260,6 +270,11 @@ pub async fn start_server(
                     .route("/logs", web::get().to(handlers::logs::logs_page))
                     .route("/admin", web::get().to(handlers::admin::admin_page))
                     .route("/mods", web::get().to(handlers::mods::list_mods))
+                    .route("/modsync", web::get().to(handlers::modsync::modsync_page))
+                    .route(
+                        "/modsync/settings",
+                        web::post().to(handlers::modsync::save_settings),
+                    )
                     .route("/clients", web::get().to(handlers::clients::client_list))
                     .route(
                         "/clients/{n}",

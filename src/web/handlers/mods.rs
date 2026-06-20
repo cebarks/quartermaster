@@ -41,7 +41,10 @@ struct ModListTemplate {
     tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    #[allow(dead_code)]
     fika_installed: bool,
+    #[allow(dead_code)]
+    modsync_installed: bool,
 }
 
 #[derive(Template)]
@@ -54,7 +57,16 @@ struct ModDetailTemplate {
     dependencies: Vec<DepEntry>,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    #[allow(dead_code)]
     fika_installed: bool,
+    #[allow(dead_code)]
+    modsync_installed: bool,
+    has_client_files: bool,
+    sync_enforced: Option<bool>,
+    sync_silent: Option<bool>,
+    sync_restart_required: Option<bool>,
+    sync_enabled: Option<bool>,
+    modsync_managed: bool,
 }
 
 #[derive(Template)]
@@ -146,6 +158,7 @@ pub async fn list_mods(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -182,6 +195,16 @@ pub async fn mod_detail(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let has_client_files = archive_files
+        .iter()
+        .any(|f| f.file_path.starts_with("BepInEx/"));
+    let forge_id_str = mod_info.forge_mod_id.to_string();
+    let overrides = state
+        .config
+        .modsync
+        .as_ref()
+        .and_then(|ms| ms.overrides.get(&forge_id_str));
+
     let tmpl = ModDetailTemplate {
         user,
         mod_info,
@@ -191,6 +214,13 @@ pub async fn mod_detail(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
+        has_client_files,
+        sync_enforced: overrides.and_then(|o| o.enforced),
+        sync_silent: overrides.and_then(|o| o.silent),
+        sync_restart_required: overrides.and_then(|o| o.restart_required),
+        sync_enabled: overrides.and_then(|o| o.enabled),
+        modsync_managed: state.is_modsync_installed() && state.config.modsync.is_some(),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -522,10 +552,12 @@ pub async fn install_mod(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config.clone();
     let version = version.clone();
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
     let update_cache = state.update_cache.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -548,7 +580,10 @@ pub async fn install_mod(
             let version_id = version.id;
             let version_str = version.version.clone();
             let spt_dir2 = spt_dir.clone();
+            let spt_dir3 = spt_dir.clone();
             let db2 = db.clone();
+            let db3 = db.clone();
+            let config2 = config.clone();
             let db_id = actix_web::web::block(move || {
                 let db = db.lock();
                 let db_id = db.insert_mod(
@@ -571,6 +606,13 @@ pub async fn install_mod(
             })
             .await;
 
+            // Regenerate ModSync config if enabled
+            let _ = actix_web::web::block(move || {
+                let db = db3.lock();
+                crate::modsync::regenerate_if_enabled(&spt_dir3, &config2, &db)
+            })
+            .await;
+
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -579,6 +621,11 @@ pub async fn install_mod(
             Ok(()) => {
                 tracing::info!(mod_id, "mod installed successfully");
                 update_cache.invalidate();
+                // Re-check ModSync detection (installing ModSync itself changes this)
+                state_clone.modsync_installed.store(
+                    crate::config::is_modsync_installed(&spt_dir),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 tasks.complete(task_id, "Mod installed successfully".to_string());
             }
             Err(e) => {
@@ -685,6 +732,7 @@ pub async fn update_mod(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config.clone();
     let version = version.clone();
     let update_cache = state.update_cache.clone();
 
@@ -711,6 +759,9 @@ pub async fn update_mod(
             let version_id = version.id;
             let version_str = version.version.clone();
             let staging_path = staging_dir.path().to_path_buf();
+            let spt_dir2 = spt_dir.clone();
+            let db2 = db.clone();
+            let config2 = config.clone();
             actix_web::web::block(move || {
                 let db = db.lock();
                 let old_files = db.get_files_for_mod(mod_db_id)?;
@@ -740,6 +791,14 @@ pub async fn update_mod(
                 Ok::<_, anyhow::Error>(())
             })
             .await??;
+
+            // Regenerate ModSync config if enabled
+            let _ = actix_web::web::block(move || {
+                let db = db2.lock();
+                crate::modsync::regenerate_if_enabled(&spt_dir2, &config2, &db)
+            })
+            .await;
+
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -817,17 +876,23 @@ pub async fn remove_mod(
 
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config.clone();
 
     tracing::info!(mod_db_id, mod_name = %installed.name, "removing mod");
     web::block(move || {
         let db = db.lock();
-        crate::ops::remove_mod_by_id(&db, &spt_dir, mod_db_id)
+        crate::ops::remove_mod_by_id(&db, &spt_dir, &config, mod_db_id)
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
     state.update_cache.invalidate();
+    // Re-check ModSync detection (removing ModSync itself changes this)
+    state.modsync_installed.store(
+        crate::config::is_modsync_installed(&state.spt_dir),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     set_flash(&session, "Mod removed", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/mods"))
@@ -923,8 +988,10 @@ pub async fn update_all_mods(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config.clone();
     let installed = installed.clone();
     let update_cache = state.update_cache.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let total = results.updates.len();
@@ -1008,7 +1075,22 @@ pub async fn update_all_mods(
             }
         }
 
+        // Regenerate ModSync config after all updates
+        let spt_dir2 = spt_dir.clone();
+        let db2 = db.clone();
+        let config2 = config.clone();
+        let _ = actix_web::web::block(move || {
+            let db = db2.lock();
+            crate::modsync::regenerate_if_enabled(&spt_dir2, &config2, &db)
+        })
+        .await;
+
         update_cache.invalidate();
+        // Re-check ModSync detection (updating mods might affect ModSync state)
+        state_clone.modsync_installed.store(
+            crate::config::is_modsync_installed(&spt_dir),
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         if success_count == total {
             tasks.complete(task_id, format!("All {total} mods updated successfully"));
