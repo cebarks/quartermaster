@@ -177,7 +177,7 @@ async fn configure_container(
         if !name.is_empty() {
             config.server_container = Some(name.to_string());
         } else {
-            println!("Skipping container setup. Set server_container in quartermaster.toml");
+            println!("Skipping container setup. Set server_container in quartermaster.toml.");
         }
     }
 
@@ -440,7 +440,7 @@ fn scan_unmanaged(spt_dir: &Path, db: &Database) -> Result<()> {
         for dir in unmanaged_dirs.keys() {
             println!("  {}", dir);
         }
-        println!("\nUse `quma track <path> <forge_mod_id>` to associate them with Forge entries.");
+        println!("\nManage them through the web UI or reinstall via Forge.");
     }
 
     Ok(())

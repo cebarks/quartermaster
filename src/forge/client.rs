@@ -12,8 +12,6 @@ const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
 pub struct ForgeClient {
     client: reqwest::Client,
     base_url: String,
-    #[allow(dead_code)]
-    token: Option<String>,
 }
 
 impl ForgeClient {
@@ -46,11 +44,7 @@ impl ForgeClient {
             .build()
             .context("failed to build HTTP client")?;
 
-        Ok(Self {
-            client,
-            base_url,
-            token,
-        })
+        Ok(Self { client, base_url })
     }
 
     /// Search mods by query string.

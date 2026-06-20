@@ -37,20 +37,6 @@ pub struct SessionUser {
     pub role: Role,
 }
 
-/// Helper to extract SessionUser from session data (mainly for testing)
-#[allow(dead_code)]
-pub fn get_session_user(session: &Session) -> Option<SessionUser> {
-    let user_id = session.get::<i64>("user_id").ok()??;
-    let username = session.get::<String>("username").ok()??;
-    let role_str = session.get::<String>("role").ok()??;
-    let role = Role::try_from(role_str).ok()?;
-    Some(SessionUser {
-        user_id,
-        username,
-        role,
-    })
-}
-
 pub fn require_auth(req: &HttpRequest) -> std::result::Result<SessionUser, WebError> {
     req.extensions()
         .get::<SessionUser>()
@@ -66,12 +52,6 @@ pub fn require_capability(
         return Err(WebError::Forbidden);
     }
     Ok(())
-}
-
-/// Helper for tests - checks if user has admin capabilities
-#[allow(dead_code)]
-pub fn require_admin(user: &SessionUser) -> std::result::Result<(), WebError> {
-    require_capability(user, Role::can_manage_users)
 }
 
 pub fn set_session_user(session: &Session, user: &SessionUser) -> Result<()> {
@@ -225,9 +205,9 @@ mod tests {
         };
 
         // Admin can manage users
-        assert!(require_admin(&admin).is_ok());
-        assert!(require_admin(&moderator).is_err());
-        assert!(require_admin(&player).is_err());
+        assert!(require_capability(&admin, Role::can_manage_users).is_ok());
+        assert!(require_capability(&moderator, Role::can_manage_users).is_err());
+        assert!(require_capability(&player, Role::can_manage_users).is_err());
 
         // Admin and moderator can manage mods
         assert!(require_capability(&admin, Role::can_manage_mods).is_ok());

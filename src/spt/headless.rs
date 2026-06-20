@@ -51,19 +51,6 @@ impl<'de> Deserialize<'de> for EHeadlessStatus {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct HeadlessAvailableClient {
-    #[serde(alias = "headlessSessionID")]
-    pub headless_session_id: String,
-    #[serde(default)]
-    pub alias: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct HeadlessRestartConfig {
-    pub amount: u32,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,25 +100,6 @@ mod tests {
         assert_eq!(raiding.state, EHeadlessStatus::InRaid);
         assert_eq!(raiding.players.len(), 2);
         assert_eq!(raiding.requester_session_id.as_deref(), Some("req789"));
-    }
-
-    #[test]
-    fn deserialize_available_clients() {
-        let json = r#"[
-            {"headlessSessionID": "abc123", "alias": "Headless 1"},
-            {"headlessSessionID": "def456", "alias": "Headless 2"}
-        ]"#;
-        let clients: Vec<HeadlessAvailableClient> = serde_json::from_str(json).unwrap();
-        assert_eq!(clients.len(), 2);
-        assert_eq!(clients[0].headless_session_id, "abc123");
-        assert_eq!(clients[0].alias, "Headless 1");
-    }
-
-    #[test]
-    fn deserialize_restart_config() {
-        let json = r#"{"amount": 10}"#;
-        let config: HeadlessRestartConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.amount, 10);
     }
 
     #[test]

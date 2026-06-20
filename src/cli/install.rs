@@ -92,7 +92,7 @@ pub async fn run(
             None,
         )?;
         println!(
-            "Server is running — operation queued. Run `quma apply` when the server is stopped."
+            "Server is running — operation queued. It will be applied on next server restart."
         );
         return Ok(());
     }

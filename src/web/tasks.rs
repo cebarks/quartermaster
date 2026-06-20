@@ -38,10 +38,6 @@ impl TaskStatus {
 #[derive(Debug, Clone)]
 pub struct TaskInfo {
     pub status: TaskStatus,
-    #[allow(dead_code)]
-    pub mod_name: String,
-    #[allow(dead_code)]
-    pub action: String,
     pub forge_mod_id: i64,
 }
 
@@ -97,8 +93,6 @@ impl TaskTracker {
             status: TaskStatus::Running {
                 message: format!("{} {}...", action, mod_name),
             },
-            mod_name: mod_name.to_string(),
-            action: action.to_string(),
             forge_mod_id,
         };
         inner.tasks.insert(id, info);

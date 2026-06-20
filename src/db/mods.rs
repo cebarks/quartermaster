@@ -3,6 +3,7 @@ use rusqlite::{params, OptionalExtension};
 use super::Database;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model — fields populated by query results
 pub struct InstalledMod {
     pub id: i64,
     pub forge_mod_id: i64,
@@ -15,6 +16,7 @@ pub struct InstalledMod {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model
 pub struct InstalledFile {
     pub id: i64,
     pub mod_id: i64,
@@ -25,6 +27,7 @@ pub struct InstalledFile {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model
 pub struct ModDependency {
     pub id: i64,
     pub mod_id: i64,
@@ -235,6 +238,7 @@ impl Database {
         rows.collect()
     }
 
+    #[cfg(test)]
     pub fn delete_dependencies_for_mod(&self, mod_id: i64) -> rusqlite::Result<usize> {
         self.conn.execute(
             "DELETE FROM mod_dependencies WHERE mod_id = ?1",

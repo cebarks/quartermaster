@@ -1,52 +1,6 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 use super::common::CliContext;
-
-/// Interactive apply — prompts for confirmation, then drains the queue.
-pub async fn run(force: bool, ctx: &CliContext) -> Result<()> {
-    if !force {
-        let running = crate::server_detect::is_server_running(
-            &ctx.config,
-            &ctx.spt_dir,
-            ctx.container_mgr.as_ref(),
-        )
-        .await?;
-        if running {
-            bail!(
-                "SPT server is running — stop it first or use --force.\n\
-                 Applying changes while the server is running may cause instability."
-            );
-        }
-    }
-
-    let pending = ctx.db.list_pending_ops()?;
-    if pending.is_empty() {
-        println!("No pending operations to apply.");
-        return Ok(());
-    }
-
-    println!("Pending operations ({}):", pending.len());
-    for op in &pending {
-        println!(
-            "  {} {} (Forge ID: {}){}",
-            op.action,
-            op.mod_name,
-            op.forge_mod_id,
-            op.forge_version_id
-                .map(|v| format!(", version ID: {v}"))
-                .unwrap_or_default()
-        );
-    }
-
-    if !super::common::confirm("Apply all pending operations?")? {
-        println!("Cancelled.");
-        return Ok(());
-    }
-
-    let applied = drain_all(ctx).await?;
-    println!("\n{applied} operation(s) applied.");
-    Ok(())
-}
 
 /// Apply all pending operations without prompting for confirmation.
 /// Returns the number of operations successfully applied.

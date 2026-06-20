@@ -7,7 +7,6 @@ pub mod check;
 pub mod client;
 pub mod common;
 pub mod generate;
-pub mod init;
 pub mod install;
 pub mod invite;
 pub mod list;
@@ -16,7 +15,6 @@ pub mod serve;
 pub mod server;
 pub mod setup;
 pub mod status;
-pub mod track;
 pub mod update;
 
 #[derive(Parser)]
@@ -52,12 +50,6 @@ pub enum Command {
         /// Skip Fika installation (server management only)
         #[arg(long)]
         skip_fika: bool,
-    },
-
-    /// Initialize Quartermaster for an SPT server
-    Init {
-        /// SPT directory path (auto-detects if omitted)
-        path: Option<PathBuf>,
     },
 
     /// Install a mod and its dependencies
@@ -96,23 +88,8 @@ pub enum Command {
         json: bool,
     },
 
-    /// Associate an unmanaged mod with a Forge entry
-    Track {
-        /// Relative path from SPT root (e.g. user/mods/SAIN)
-        path: String,
-        /// Forge mod ID or slug
-        forge_mod_id: String,
-    },
-
     /// Check all installed mods for updates
     Check,
-
-    /// Apply pending queued operations
-    Apply {
-        /// Apply even if SPT server is running
-        #[arg(long)]
-        force: bool,
-    },
 
     /// Run health checks against SPT server and mod integrity
     Status {
@@ -181,20 +158,6 @@ pub enum ServerAction {
         /// Follow log output
         #[arg(long, short)]
         follow: bool,
-    },
-    /// Alias for `quma status`
-    Status {
-        #[arg(long)]
-        json: bool,
-    },
-    /// Create a new SPT server container
-    Create {
-        /// Container name
-        #[arg(long, default_value = "spt-server")]
-        name: String,
-        /// Host port to map to container port 6969
-        #[arg(long, default_value = "6969")]
-        port: u16,
     },
 }
 

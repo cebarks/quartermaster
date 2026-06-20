@@ -74,6 +74,7 @@ pub struct User {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model
 pub struct InviteCode {
     pub id: i64,
     pub code: String,
@@ -92,6 +93,7 @@ pub struct InviteCodeWithUsers {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model
 pub struct ResetToken {
     pub id: i64,
     pub user_id: i64,
@@ -101,6 +103,7 @@ pub struct ResetToken {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model
 pub struct PendingOperation {
     pub id: i64,
     pub action: String,
@@ -211,6 +214,7 @@ impl Database {
         )
     }
 
+    #[cfg(test)]
     pub fn count_admins(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0",
@@ -371,6 +375,7 @@ impl Database {
             .execute("DELETE FROM pending_operations WHERE id = ?1", params![id])
     }
 
+    #[cfg(test)]
     pub fn clear_pending_ops(&self) -> rusqlite::Result<usize> {
         self.conn.execute("DELETE FROM pending_operations", [])
     }

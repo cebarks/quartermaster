@@ -3,22 +3,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use bollard::models::{
-    ContainerCreateBody, ContainerInspectResponse, ContainerStatsResponse, EventMessage,
-    HostConfig, PortBinding,
-};
+use bollard::models::{ContainerCreateBody, ContainerInspectResponse, HostConfig};
 use bollard::query_parameters::{
-    CreateContainerOptionsBuilder, CreateImageOptionsBuilder, EventsOptionsBuilder,
-    ListContainersOptionsBuilder, LogsOptionsBuilder, RemoveContainerOptionsBuilder,
-    StartContainerOptions, StatsOptionsBuilder, StopContainerOptionsBuilder,
+    CreateContainerOptionsBuilder, ListContainersOptionsBuilder, LogsOptionsBuilder,
+    RemoveContainerOptionsBuilder, StartContainerOptions, StopContainerOptionsBuilder,
 };
 use bollard::Docker;
 use futures_util::Stream;
-
-pub const SPT_SERVER_IMAGE: &str = "ghcr.io/zhliau/fika-spt-server-docker:latest";
-#[allow(dead_code)]
-pub const DEFAULT_CONTAINER_NAME: &str = "spt-server";
-pub const DEFAULT_SPT_PORT: u16 = 6969;
 
 #[derive(Clone)]
 pub struct ContainerManager {
@@ -28,7 +19,6 @@ pub struct ContainerManager {
 #[derive(Debug, Clone)]
 pub enum SelinuxLabel {
     Private,
-    #[allow(dead_code)]
     Shared,
     #[allow(dead_code)]
     None,
@@ -42,13 +32,6 @@ impl SelinuxLabel {
             SelinuxLabel::None => "",
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum Protocol {
-    Tcp,
-    #[allow(dead_code)]
-    Udp,
 }
 
 #[derive(Debug, Clone)]
@@ -83,29 +66,11 @@ impl VolumeMount {
 }
 
 #[derive(Debug, Clone)]
-pub struct PortMapping {
-    pub host_port: u16,
-    pub container_port: u16,
-    pub protocol: Protocol,
-}
-
-impl PortMapping {
-    pub fn container_key(&self) -> String {
-        let proto = match self.protocol {
-            Protocol::Tcp => "tcp",
-            Protocol::Udp => "udp",
-        };
-        format!("{}/{proto}", self.container_port)
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct CreateContainerOpts {
     pub name: String,
     pub image: String,
     pub env: Vec<(String, String)>,
     pub volumes: Vec<VolumeMount>,
-    pub ports: Vec<PortMapping>,
     pub labels: Vec<(String, String)>,
     pub user: Option<String>,
 }
@@ -135,11 +100,6 @@ impl ContainerManager {
         })
     }
 
-    #[allow(dead_code)]
-    pub fn docker(&self) -> &Arc<Docker> {
-        &self.docker
-    }
-
     pub async fn start(&self, container: &str) -> Result<()> {
         tracing::debug!(container, "starting container");
         self.docker
@@ -159,7 +119,6 @@ impl ContainerManager {
             .with_context(|| format!("failed to stop container '{container}'"))
     }
 
-    #[allow(dead_code)]
     pub async fn restart(&self, container: &str) -> Result<()> {
         self.stop(container).await?;
         self.start(container).await
@@ -196,7 +155,6 @@ impl ContainerManager {
         ))
     }
 
-    #[allow(dead_code)]
     pub async fn inspect(&self, container: &str) -> Result<ContainerInspectResponse> {
         self.docker
             .inspect_container(
@@ -205,17 +163,6 @@ impl ContainerManager {
             )
             .await
             .with_context(|| format!("failed to inspect container '{container}'"))
-    }
-
-    #[allow(dead_code)]
-    pub fn stats_stream(
-        &self,
-        container: &str,
-    ) -> impl Stream<Item = Result<ContainerStatsResponse, bollard::errors::Error>> {
-        self.docker.stats(
-            container,
-            Some(StatsOptionsBuilder::default().stream(true).build()),
-        )
     }
 
     pub fn log_stream(
@@ -238,51 +185,10 @@ impl ContainerManager {
         )
     }
 
-    #[allow(dead_code)]
-    pub fn container_events(
-        &self,
-    ) -> impl Stream<Item = Result<EventMessage, bollard::errors::Error>> {
-        let mut filters = HashMap::new();
-        filters.insert("type", vec!["container"]);
-        self.docker.events(Some(
-            EventsOptionsBuilder::default().filters(&filters).build(),
-        ))
-    }
-
-    pub async fn pull_image(&self, image: &str) -> Result<()> {
-        tracing::info!(image, "pulling container image");
-        use futures_util::TryStreamExt;
-        self.docker
-            .create_image(
-                Some(
-                    CreateImageOptionsBuilder::default()
-                        .from_image(image)
-                        .build(),
-                ),
-                None,
-                None,
-            )
-            .try_collect::<Vec<_>>()
-            .await
-            .with_context(|| format!("failed to pull image '{image}'"))?;
-        Ok(())
-    }
-
     pub async fn create_container(&self, opts: CreateContainerOpts) -> Result<String> {
         let env: Vec<String> = opts.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
         let binds: Vec<String> = opts.volumes.iter().map(|v| v.to_bind_string()).collect();
         let labels: HashMap<String, String> = opts.all_labels().into_iter().collect();
-
-        let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
-        for pm in &opts.ports {
-            port_bindings.insert(
-                pm.container_key(),
-                Some(vec![PortBinding {
-                    host_port: Some(pm.host_port.to_string()),
-                    ..Default::default()
-                }]),
-            );
-        }
 
         let body = ContainerCreateBody {
             image: Some(opts.image.clone()),
@@ -291,7 +197,6 @@ impl ContainerManager {
             user: opts.user.clone(),
             host_config: Some(HostConfig {
                 binds: Some(binds),
-                port_bindings: Some(port_bindings),
                 ..Default::default()
             }),
             ..Default::default()
@@ -309,7 +214,6 @@ impl ContainerManager {
         Ok(response.id)
     }
 
-    #[allow(dead_code)]
     pub async fn remove_container(&self, container: &str) -> Result<()> {
         tracing::debug!(container, "removing container");
         self.docker
@@ -321,7 +225,6 @@ impl ContainerManager {
             .with_context(|| format!("failed to remove container '{container}'"))
     }
 
-    #[allow(dead_code)]
     pub async fn detect_containers_by_label(&self, key: &str, value: &str) -> Result<Vec<String>> {
         let label_filter = format!("{key}={value}");
         let mut filters = HashMap::new();
@@ -424,29 +327,11 @@ mod tests {
             image: "test:latest".to_string(),
             env: vec![],
             volumes: vec![],
-            ports: vec![],
             labels: vec![("custom".to_string(), "value".to_string())],
             user: None,
         };
         let labels = opts.all_labels();
         assert!(labels.iter().any(|(k, v)| k == "managed-by" && v == "quma"));
-    }
-
-    #[test]
-    fn port_mapping_to_key() {
-        let pm = PortMapping {
-            host_port: 25565,
-            container_port: 25565,
-            protocol: Protocol::Udp,
-        };
-        assert_eq!(pm.container_key(), "25565/udp");
-
-        let pm_tcp = PortMapping {
-            host_port: 8080,
-            container_port: 80,
-            protocol: Protocol::Tcp,
-        };
-        assert_eq!(pm_tcp.container_key(), "80/tcp");
     }
 
     #[test]

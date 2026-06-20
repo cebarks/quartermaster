@@ -1,6 +1,5 @@
 use anyhow::{bail, Result};
 
-use crate::config::Config;
 use crate::container::ContainerManager;
 use crate::spt::server::SptClient;
 
@@ -13,8 +12,6 @@ pub async fn run(action: &ServerAction, ctx: &CliContext) -> Result<()> {
         ServerAction::Stop => stop(ctx).await,
         ServerAction::Restart { drain, skip_queue } => restart(ctx, *drain, *skip_queue).await,
         ServerAction::Logs { follow } => logs(ctx, *follow).await,
-        ServerAction::Status { json } => crate::cli::status::run(*json, ctx).await,
-        ServerAction::Create { .. } => unreachable!("handled in main.rs"),
     }
 }
 
@@ -88,59 +85,6 @@ async fn logs(ctx: &CliContext, follow: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn create_container(name: &str, port: u16, cli: &super::Cli) -> Result<()> {
-    let spt_dir = cli
-        .spt_dir
-        .clone()
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-    println!("Pulling {}...", crate::container::SPT_SERVER_IMAGE);
-    let mgr = ContainerManager::new()?;
-    mgr.pull_image(crate::container::SPT_SERVER_IMAGE).await?;
-
-    println!("Creating container '{name}'...");
-    mgr.create_container(crate::container::CreateContainerOpts {
-        name: name.to_string(),
-        image: crate::container::SPT_SERVER_IMAGE.to_string(),
-        env: vec![
-            ("TAKE_OWNERSHIP".to_string(), "true".to_string()),
-            ("CHANGE_PERMISSIONS".to_string(), "true".to_string()),
-            ("LISTEN_ALL_NETWORKS".to_string(), "true".to_string()),
-        ],
-        volumes: vec![crate::container::VolumeMount {
-            host_path: spt_dir.clone(),
-            container_path: "/opt/tarkov".to_string(),
-            read_only: false,
-            selinux: crate::container::SelinuxLabel::Private,
-        }],
-        ports: vec![crate::container::PortMapping {
-            host_port: port,
-            container_port: crate::container::DEFAULT_SPT_PORT,
-            protocol: crate::container::Protocol::Tcp,
-        }],
-        labels: vec![("app".to_string(), "spt-server".to_string())],
-        user: Some("root".to_string()),
-    })
-    .await?;
-    println!("Container '{name}' created successfully.");
-
-    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
-    let mut config = if config_path.exists() {
-        Config::load(&config_path)?
-    } else {
-        Config::default()
-    };
-
-    if config.server_container.is_none() {
-        config.server_container = Some(name.to_string());
-        config.save(&config_path)?;
-        println!("Updated config: server_container = {name}");
-    }
-
-    Ok(())
-}
-
 async fn wait_for_ping(ctx: &CliContext, timeout_secs: u64) -> Result<()> {
     let (host, port) = crate::server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
     let spt_client = SptClient::new(&host, port)?;
@@ -170,8 +114,7 @@ fn require_container(ctx: &CliContext) -> Result<(&ContainerManager, &str)> {
     match (&ctx.config.server_container, &ctx.container_mgr) {
         (None, _) => bail!(
             "no server_container configured.\n\
-             Run `quma server create` to create one, or\n\
-             set server_container in quartermaster.toml"
+             Set server_container in quartermaster.toml or run `quma setup`"
         ),
         (Some(_), None) => bail!(
             "failed to connect to Podman socket.\n\
