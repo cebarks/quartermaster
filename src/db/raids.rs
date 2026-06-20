@@ -170,8 +170,12 @@ impl Database {
 
     #[allow(dead_code)] // Used by Task 2 (raid end event)
     pub fn insert_raid_kills(&self, raid_id: i64, kills: &[NewRaidKill]) -> rusqlite::Result<()> {
+        if kills.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute_batch("BEGIN")?;
         for kill in kills {
-            self.conn.execute(
+            if let Err(e) = self.conn.execute(
                 "INSERT INTO raid_kills (raid_id, victim_name, victim_side, victim_role, weapon, distance, body_part, kill_time)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
@@ -184,9 +188,67 @@ impl Database {
                     kill.body_part,
                     kill.kill_time
                 ],
-            )?;
+            ) {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
         }
-        Ok(())
+        self.conn.execute_batch("COMMIT")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_raid_with_kills(
+        &self,
+        raid_id: i64,
+        ended_at: &str,
+        play_time_seconds: Option<i64>,
+        exit_status: &str,
+        exit_name: Option<&str>,
+        killer_id: Option<&str>,
+        killer_aid: Option<&str>,
+        xp_after: Option<i64>,
+        level_after: Option<i64>,
+        kills: &[NewRaidKill],
+    ) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN")?;
+        if let Err(e) = self.finish_raid(
+            raid_id,
+            ended_at,
+            play_time_seconds,
+            exit_status,
+            exit_name,
+            killer_id,
+            killer_aid,
+            xp_after,
+            level_after,
+        ) {
+            let _ = self.conn.execute_batch("ROLLBACK");
+            return Err(e);
+        }
+        if !kills.is_empty() {
+            // insert_raid_kills manages its own transaction when called standalone,
+            // but here we're already inside one, so insert directly
+            for kill in kills {
+                if let Err(e) = self.conn.execute(
+                    "INSERT INTO raid_kills (raid_id, victim_name, victim_side, victim_role, weapon, distance, body_part, kill_time)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        raid_id,
+                        kill.victim_name,
+                        kill.victim_side,
+                        kill.victim_role,
+                        kill.weapon,
+                        kill.distance,
+                        kill.body_part,
+                        kill.kill_time
+                    ],
+                ) {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    return Err(e);
+                }
+            }
+        }
+        self.conn.execute_batch("COMMIT")
     }
 
     #[allow(dead_code)] // Used by Task 3 (web UI)
@@ -281,7 +343,11 @@ impl Database {
             |row| row.get(0),
         )?;
 
-        let scav_raids: i64 = total_raids - pmc_raids;
+        let scav_raids: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM raids WHERE user_id = ?1 AND player_side = 'Savage'",
+            params![user_id],
+            |row| row.get(0),
+        )?;
 
         let pmc_survived: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM raids WHERE user_id = ?1 AND player_side = 'Pmc' AND exit_status = 'Survived'",

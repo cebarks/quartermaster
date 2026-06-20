@@ -271,8 +271,10 @@ pub fn handle_raid_end(
         .and_then(|v| serde_json::from_value::<Vec<VictimEntry>>(v.clone()).ok())
         .unwrap_or_default();
 
-    // Diff kills: take victims[victim_count_before..] where victim_count_before comes from the open raid row
-    let victim_count_before = open_raid.victim_count_before.unwrap_or(0) as usize;
+    // Diff kills: take victims[victim_count_before..] where victim_count_before comes from the open raid row.
+    // Clamp to array length to avoid silent data loss if profile was stale at snapshot time.
+    let victim_count_before = open_raid.victim_count_before.unwrap_or(0).max(0) as usize;
+    let victim_count_before = victim_count_before.min(victims.len());
     let new_victims: Vec<NewRaidKill> = victims
         .iter()
         .skip(victim_count_before)
@@ -289,8 +291,8 @@ pub fn handle_raid_end(
 
     let ended_at = chrono::Utc::now().to_rfc3339();
 
-    // Finish the raid
-    if let Err(e) = db_lock.finish_raid(
+    // Finish the raid and insert kills atomically
+    if let Err(e) = db_lock.finish_raid_with_kills(
         open_raid.id,
         &ended_at,
         end_req.results.play_time,
@@ -300,16 +302,10 @@ pub fn handle_raid_end(
         end_req.results.killer_aid.as_deref(),
         xp_after,
         level_after,
+        &new_victims,
     ) {
         tracing::warn!(error = %e, raid_id = open_raid.id, "failed to finish raid");
         return;
-    }
-
-    // Insert kills
-    if !new_victims.is_empty() {
-        if let Err(e) = db_lock.insert_raid_kills(open_raid.id, &new_victims) {
-            tracing::warn!(error = %e, raid_id = open_raid.id, "failed to insert raid kills");
-        }
     }
 
     drop(db_lock);

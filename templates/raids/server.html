@@ -20,7 +20,6 @@
     </div>
 </div>
 
-{% if !active_raids.is_empty() %}
 <div class="card" style="margin-bottom:1.5rem">
     <h2>Active Raids</h2>
     <div id="active-raids" hx-get="/quma/api/raids/active" hx-trigger="sse:raidStarted, sse:raidEnded" hx-swap="innerHTML">
@@ -45,7 +44,6 @@
         {% endif %}
     </div>
 </div>
-{% endif %}
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem">
     <div class="card">
