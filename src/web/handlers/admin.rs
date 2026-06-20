@@ -390,7 +390,7 @@ pub async fn create_reset_token(
 
     let host = req.connection_info().host().to_string();
     let scheme = req.connection_info().scheme().to_string();
-    let reset_link = format!("{scheme}://{host}/reset-password?token={token}");
+    let reset_link = format!("{scheme}://{host}/quma/reset-password?token={token}");
     render_user_row(
         &state,
         &session,
