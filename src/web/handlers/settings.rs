@@ -132,14 +132,16 @@ pub struct ServerSettingsForm {
 
 #[derive(serde::Deserialize)]
 pub struct QueueSettingsForm {
-    #[allow(dead_code)]
     csrf_token: String,
+    queue_changes: Option<String>,
+    auto_drain_on_lifecycle: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 pub struct ForgeSettingsForm {
-    #[allow(dead_code)]
     csrf_token: String,
+    forge_token: String,
+    forge_cache_ttl: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -251,22 +253,62 @@ pub async fn save_server_settings(
 }
 
 pub async fn save_queue_settings(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
-    _form: Form<QueueSettingsForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<QueueSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_users)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    config.queue_changes = form.queue_changes.is_some();
+    config.auto_drain_on_lifecycle = form.auto_drain_on_lifecycle.is_some();
+
+    config.save(&state.config_path).map_err(WebError::from)?;
+
+    set_flash(&session, "Queue settings saved", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=queue"))
         .finish())
 }
 
 pub async fn save_forge_settings(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
-    _form: Form<ForgeSettingsForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<ForgeSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_users)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let ttl: Option<u64> = if form.forge_cache_ttl.trim().is_empty() {
+        None
+    } else {
+        match form.forge_cache_ttl.trim().parse::<u64>() {
+            Ok(t) => Some(t),
+            Err(_) => {
+                set_flash(&session, "Invalid cache TTL value", "error");
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/settings?tab=forge"))
+                    .finish());
+            }
+        }
+    };
+
+    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    config.forge_token = non_empty_opt(&form.forge_token);
+    config.forge_cache_ttl = ttl;
+
+    config.save(&state.config_path).map_err(WebError::from)?;
+
+    set_flash(&session, "Forge settings saved", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=forge"))
         .finish())

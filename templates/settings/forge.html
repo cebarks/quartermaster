@@ -2,6 +2,23 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="card">
         <h2>Forge API</h2>
-        <p class="text-muted text-sm">Coming soon.</p>
+        <p class="text-muted text-sm mb-1">Configure SPT Forge API access and caching behavior.</p>
+
+        <div class="form-group">
+            <label for="forge_token">Forge API Token</label>
+            <div style="display: flex; gap: 0.5rem;">
+                <input type="password" id="forge_token" name="forge_token" value="{% if let Some(t) = &config.forge_token %}{{ t }}{% endif %}" placeholder="Optional: tok_xxx" style="flex: 1;">
+                <button type="button" class="btn" onclick="var i=document.getElementById('forge_token');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+            </div>
+            <p class="text-muted text-sm">Optional API token for authenticated Forge API requests. Leave blank for anonymous access.</p>
+        </div>
+
+        <div class="form-group">
+            <label for="forge_cache_ttl">Cache TTL (seconds)</label>
+            <input type="text" id="forge_cache_ttl" name="forge_cache_ttl" value="{% if let Some(ttl) = config.forge_cache_ttl %}{{ ttl }}{% endif %}" placeholder="86400">
+            <p class="text-muted text-sm">How long to cache Forge API responses. Leave blank to disable caching. Default: 86400 (24 hours).</p>
+        </div>
+
+        <button type="submit" class="btn">Save Forge Settings</button>
     </div>
 </form>
