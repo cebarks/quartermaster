@@ -45,7 +45,6 @@ struct ModListTemplate {
     fika_installed: bool,
     #[allow(dead_code)]
     modsync_installed: bool,
-
 }
 
 #[derive(Template)]

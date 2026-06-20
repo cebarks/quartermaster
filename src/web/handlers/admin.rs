@@ -50,7 +50,6 @@ fn build_user_profiles(
 // -- Templates --
 
 #[derive(Template)]
-
 #[template(path = "admin.html")]
 struct AdminPageTemplate {
     user: SessionUser,

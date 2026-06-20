@@ -270,6 +270,11 @@ pub async fn start_server(
                     .route("/logs", web::get().to(handlers::logs::logs_page))
                     .route("/admin", web::get().to(handlers::admin::admin_page))
                     .route("/mods", web::get().to(handlers::mods::list_mods))
+                    .route("/modsync", web::get().to(handlers::modsync::modsync_page))
+                    .route(
+                        "/modsync/settings",
+                        web::post().to(handlers::modsync::save_settings),
+                    )
                     .route("/clients", web::get().to(handlers::clients::client_list))
                     .route(
                         "/clients/{n}",

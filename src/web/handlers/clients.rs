@@ -26,7 +26,6 @@ struct ClientsListTemplate {
     target_count: u32,
 }
 
-
 #[derive(Template)]
 #[template(path = "clients/detail.html")]
 struct ClientDetailTemplate {
