@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use super::Database;
 
@@ -247,8 +247,6 @@ impl Database {
         rows.collect()
     }
 }
-
-use rusqlite::OptionalExtension;
 
 fn row_to_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModRequest> {
     Ok(ModRequest {
