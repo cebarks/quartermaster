@@ -2,6 +2,26 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="card">
         <h2>SPT Server</h2>
-        <p class="text-muted text-sm">Coming soon.</p>
+
+        <div class="form-group">
+            <label for="server_container">Container Name</label>
+            <input type="text" id="server_container" name="server_container" value="{% if let Some(v) = &config.server_container %}{{ v }}{% endif %}" placeholder="Podman container name (optional)">
+        </div>
+
+        <div class="form-group">
+            <label for="server_host">Host</label>
+            <input type="text" id="server_host" name="server_host" value="{% if let Some(v) = &config.server_host %}{{ v }}{% endif %}" placeholder="Auto-detected if blank">
+        </div>
+
+        <div class="form-group">
+            <label for="server_port">Port</label>
+            <input type="number" id="server_port" name="server_port" value="{% if let Some(v) = config.server_port %}{{ v }}{% endif %}" min="1" max="65535" placeholder="6969">
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="auto_start_server" {% if config.auto_start_server %}checked{% endif %}> Auto-Start Server</label>
+        </div>
+
+        <button type="submit" class="btn">Save Server Settings</button>
     </div>
 </form>

@@ -7,8 +7,17 @@ use crate::config::{Config, LogFormat, RestartPolicy, RotationPolicy};
 use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
-use crate::web::flash::{take_flash, FlashMessage};
+use crate::web::flash::{set_flash, take_flash, FlashMessage};
 use crate::web::state::AppState;
+
+fn non_empty_opt(s: &str) -> Option<String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
 
 #[derive(serde::Deserialize)]
 pub struct SettingsQuery {
@@ -103,14 +112,22 @@ pub async fn settings_page(
 // Stub form structs (will be filled in by later tasks)
 #[derive(serde::Deserialize)]
 pub struct WebSettingsForm {
-    #[allow(dead_code)]
     csrf_token: String,
+    web_bind: String,
+    web_port: u16,
+    tls_enabled: Option<String>,
+    tls_cert: String,
+    tls_key: String,
+    proxy_enabled: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 pub struct ServerSettingsForm {
-    #[allow(dead_code)]
     csrf_token: String,
+    server_container: String,
+    server_host: String,
+    server_port: String,
+    auto_start_server: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -139,22 +156,95 @@ pub struct ClientsSettingsForm {
 
 // Stub save handlers (will be implemented by later tasks)
 pub async fn save_web_settings(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
-    _form: Form<WebSettingsForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<WebSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_users)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let tls_on = form.tls_enabled.is_some();
+    let cert = form.tls_cert.trim();
+    let key = form.tls_key.trim();
+
+    if tls_on && (cert.is_empty() || key.is_empty()) {
+        set_flash(
+            &session,
+            "TLS certificate and key paths are required when TLS is enabled",
+            "error",
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/settings?tab=web"))
+            .finish());
+    }
+
+    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    config.web_bind = form.web_bind.trim().to_string();
+    config.web_port = form.web_port;
+    config.tls_enabled = tls_on;
+    config.tls_cert = if cert.is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(cert))
+    };
+    config.tls_key = if key.is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(key))
+    };
+    config.proxy_enabled = form.proxy_enabled.is_some();
+
+    config.save(&state.config_path).map_err(WebError::from)?;
+
+    set_flash(
+        &session,
+        "Web settings saved. Restart required for changes to take effect.",
+        "success",
+    );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=web"))
         .finish())
 }
 
 pub async fn save_server_settings(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
-    _form: Form<ServerSettingsForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<ServerSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_users)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let port: Option<u16> = if form.server_port.trim().is_empty() {
+        None
+    } else {
+        match form.server_port.trim().parse::<u16>() {
+            Ok(p) if p > 0 => Some(p),
+            _ => {
+                set_flash(&session, "Invalid server port", "error");
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/settings?tab=server"))
+                    .finish());
+            }
+        }
+    };
+
+    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    config.server_container = non_empty_opt(&form.server_container);
+    config.server_host = non_empty_opt(&form.server_host);
+    config.server_port = port;
+    config.auto_start_server = form.auto_start_server.is_some();
+
+    config.save(&state.config_path).map_err(WebError::from)?;
+
+    set_flash(&session, "Server settings saved", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=server"))
         .finish())
