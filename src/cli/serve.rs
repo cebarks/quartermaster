@@ -161,6 +161,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     crate::web::start_server(
         config,
+        config_path,
         db,
         forge,
         spt_dir,
