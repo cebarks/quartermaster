@@ -32,7 +32,6 @@ pub struct AppState {
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
     pub server_transition: Arc<Mutex<Option<String>>>,
-    #[allow(dead_code)]
     pub game_data: Arc<GameData>,
 }
 

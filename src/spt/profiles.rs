@@ -30,7 +30,6 @@ pub enum ProfileStatus {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum QuestState {
     Locked,
     AvailableForStart,
@@ -43,7 +42,6 @@ pub enum QuestState {
 }
 
 impl QuestState {
-    #[allow(dead_code)]
     fn from_i32(v: i32) -> Self {
         match v {
             1 => Self::Locked,
@@ -57,7 +55,6 @@ impl QuestState {
         }
     }
 
-    #[allow(dead_code)]
     pub fn label(&self) -> &str {
         match self {
             Self::Locked => "Locked",
@@ -71,7 +68,6 @@ impl QuestState {
         }
     }
 
-    #[allow(dead_code)]
     pub fn css_class(&self) -> &str {
         match self {
             Self::Success => "badge-success",
@@ -84,14 +80,12 @@ impl QuestState {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct QuestEntry {
     pub qid: String,
     pub status: QuestState,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TraderEntry {
     pub trader_id: String,
     pub loyalty_level: i32,
@@ -100,14 +94,12 @@ pub struct TraderEntry {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct HideoutAreaEntry {
     pub area_type: i32,
     pub level: i32,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ProfileDetail {
     pub stats: SptProfileStats,
     pub quests: Vec<QuestEntry>,
@@ -220,6 +212,52 @@ struct HideoutAreaJson {
     level: i32,
 }
 
+fn extract_stats_from_pmc(pmc: PmcData) -> SptProfileStats {
+    let mut stats = SptProfileStats::default();
+
+    if let Some(info) = pmc.info {
+        stats.nickname = info.nickname;
+        stats.level = info.level;
+        stats.side = info.side;
+        stats.experience = info.experience;
+        stats.registration_date = info.registration_date;
+    }
+
+    if let Some(pmc_stats) = pmc.stats {
+        if let Some(eft) = pmc_stats.eft {
+            if let Some(counters) = eft.overall_counters.and_then(|c| c.items) {
+                let mut total_raids: i64 = 0;
+                let mut survived: i64 = 0;
+                let mut scav_kills: Option<i64> = None;
+                for item in &counters {
+                    if item.key.len() >= 2 && item.key[0] == "Sessions" && item.key[1] == "Pmc" {
+                        total_raids += item.value;
+                        if item.key.len() == 3 && item.key[2] == "Survived" {
+                            survived = item.value;
+                        }
+                    }
+                    if item.key.len() == 1 && item.key[0] == "KilledSavages" {
+                        scav_kills = Some(item.value);
+                    }
+                }
+                stats.scav_kills = scav_kills;
+                if total_raids > 0 {
+                    stats.raid_count = Some(total_raids);
+                    stats.survival_rate = Some(
+                        (survived as f64 / total_raids as f64 * 100.0 * 100.0).round() / 100.0,
+                    );
+                } else {
+                    stats.raid_count = Some(0);
+                }
+            }
+
+            stats.kill_count = eft.victims.map(|v| v.len());
+        }
+    }
+
+    stats
+}
+
 pub fn list_profiles(spt_dir: &Path) -> Result<Vec<SptProfile>> {
     let profiles_dir = spt_dir.join("SPT/user/profiles");
     if !profiles_dir.is_dir() {
@@ -290,53 +328,10 @@ pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats
             None => continue,
         };
 
-        let mut stats = SptProfileStats::default();
-
-        if let Some(pmc) = parsed.characters.and_then(|c| c.pmc) {
-            if let Some(info) = pmc.info {
-                stats.nickname = info.nickname;
-                stats.level = info.level;
-                stats.side = info.side;
-                stats.experience = info.experience;
-                stats.registration_date = info.registration_date;
-            }
-
-            if let Some(pmc_stats) = pmc.stats {
-                if let Some(eft) = pmc_stats.eft {
-                    if let Some(counters) = eft.overall_counters.and_then(|c| c.items) {
-                        let mut total_raids: i64 = 0;
-                        let mut survived: i64 = 0;
-                        let mut scav_kills: Option<i64> = None;
-                        for item in &counters {
-                            if item.key.len() >= 2
-                                && item.key[0] == "Sessions"
-                                && item.key[1] == "Pmc"
-                            {
-                                total_raids += item.value;
-                                if item.key.len() == 3 && item.key[2] == "Survived" {
-                                    survived = item.value;
-                                }
-                            }
-                            if item.key.len() == 1 && item.key[0] == "KilledSavages" {
-                                scav_kills = Some(item.value);
-                            }
-                        }
-                        stats.scav_kills = scav_kills;
-                        if total_raids > 0 {
-                            stats.raid_count = Some(total_raids);
-                            stats.survival_rate = Some(
-                                (survived as f64 / total_raids as f64 * 100.0 * 100.0).round()
-                                    / 100.0,
-                            );
-                        } else {
-                            stats.raid_count = Some(0);
-                        }
-                    }
-
-                    stats.kill_count = eft.victims.map(|v| v.len());
-                }
-            }
-        }
+        let stats = match parsed.characters.and_then(|c| c.pmc) {
+            Some(pmc) => extract_stats_from_pmc(pmc),
+            None => SptProfileStats::default(),
+        };
 
         map.insert(aid, stats);
     }
@@ -344,7 +339,6 @@ pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats
     map
 }
 
-#[allow(dead_code)]
 pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<ProfileDetail>> {
     let path = spt_dir
         .join("SPT/user/profiles")
@@ -354,7 +348,7 @@ pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<Pr
     let parsed: FullProfileJson = serde_json::from_str(&contents)
         .with_context(|| format!("failed to parse profile {}", path.display()))?;
 
-    let pmc = match parsed.characters.and_then(|c| c.pmc) {
+    let mut pmc = match parsed.characters.and_then(|c| c.pmc) {
         Some(pmc) => pmc,
         None => return Ok(None),
     };
@@ -364,49 +358,10 @@ pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<Pr
         return Ok(None);
     }
 
-    let mut stats = SptProfileStats::default();
-
-    if let Some(info) = pmc.info {
-        stats.nickname = info.nickname;
-        stats.level = info.level;
-        stats.side = info.side;
-        stats.experience = info.experience;
-        stats.registration_date = info.registration_date;
-    }
-
-    if let Some(pmc_stats) = pmc.stats {
-        if let Some(eft) = pmc_stats.eft {
-            if let Some(counters) = eft.overall_counters.and_then(|c| c.items) {
-                let mut total_raids: i64 = 0;
-                let mut survived: i64 = 0;
-                let mut scav_kills: Option<i64> = None;
-                for item in &counters {
-                    if item.key.len() >= 2 && item.key[0] == "Sessions" && item.key[1] == "Pmc" {
-                        total_raids += item.value;
-                        if item.key.len() == 3 && item.key[2] == "Survived" {
-                            survived = item.value;
-                        }
-                    }
-                    if item.key.len() == 1 && item.key[0] == "KilledSavages" {
-                        scav_kills = Some(item.value);
-                    }
-                }
-                stats.scav_kills = scav_kills;
-                if total_raids > 0 {
-                    stats.raid_count = Some(total_raids);
-                    stats.survival_rate = Some(
-                        (survived as f64 / total_raids as f64 * 100.0 * 100.0).round() / 100.0,
-                    );
-                } else {
-                    stats.raid_count = Some(0);
-                }
-            }
-            stats.kill_count = eft.victims.map(|v| v.len());
-        }
-    }
-
+    // Extract fields we need before consuming pmc
     let quests = pmc
         .quests
+        .take()
         .unwrap_or_default()
         .into_iter()
         .map(|q| QuestEntry {
@@ -417,6 +372,7 @@ pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<Pr
 
     let traders = pmc
         .traders_info
+        .take()
         .unwrap_or_default()
         .into_iter()
         .map(|(id, t)| TraderEntry {
@@ -429,6 +385,7 @@ pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<Pr
 
     let hideout = pmc
         .hideout
+        .take()
         .and_then(|h| h.areas)
         .unwrap_or_default()
         .into_iter()
@@ -437,6 +394,9 @@ pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<Pr
             level: a.level,
         })
         .collect();
+
+    // Now consume pmc for stats extraction
+    let stats = extract_stats_from_pmc(pmc);
 
     Ok(Some(ProfileDetail {
         stats,

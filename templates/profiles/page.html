@@ -37,8 +37,8 @@
             <div class="stat-value">{{ detail.stats.scav_kills.unwrap_or(0) }}</div>
         </div>
     </div>
-    {% if let Some(reg) = detail.stats.registration_date %}
-    <div class="text-muted text-sm" style="margin-top:0.75rem">Registered: {{ reg|fmt("{}") }}</div>
+    {% if let Some(reg) = registration_date %}
+    <div class="text-muted text-sm" style="margin-top:0.75rem">Registered: {{ reg }}</div>
     {% endif %}
 </div>
 

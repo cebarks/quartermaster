@@ -49,6 +49,7 @@ struct ProfilePageTemplate {
     detail: Option<ProfileDetail>,
     empty_reason: Option<String>,
     quests_html: String,
+    registration_date: Option<String>,
 }
 
 #[derive(Template)]
@@ -125,6 +126,12 @@ pub async fn profile_page(
         }
     };
 
+    let registration_date = detail.as_ref().and_then(|d| {
+        d.stats.registration_date.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.format("%Y-%m-%d").to_string())
+        })
+    });
+
     let quests_html = if let Some(ref d) = detail {
         let total = d.quests.len();
         let completed = d
@@ -163,6 +170,7 @@ pub async fn profile_page(
         detail,
         empty_reason,
         quests_html,
+        registration_date,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

@@ -1,6 +1,3 @@
-// Module will be integrated into web server state in task 2
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::Path;
 
