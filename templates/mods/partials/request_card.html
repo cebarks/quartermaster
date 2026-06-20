@@ -89,9 +89,10 @@
             <button type="submit" class="btn btn-sm btn-success">Approve</button>
         </form>
         <form hx-post="/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
-              style="display:inline">
+              style="display:flex;gap:0.5rem;align-items:center">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="action" value="reject">
+            <input type="text" name="comment" placeholder="Reason (optional)" style="flex:1;min-width:100px" class="text-sm">
             <button type="submit" class="btn btn-sm btn-danger">Reject</button>
         </form>
     </div>
