@@ -3,6 +3,7 @@ use actix_web::web::{self, Data, Html};
 use actix_web::HttpRequest;
 use askama::Template;
 
+use crate::container::ContainerStats;
 use crate::health::{self, IntegrityHealth, ModsHealth, ServerHealth};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
@@ -49,6 +50,50 @@ struct StatusIntegrityTemplate {
 #[template(path = "partials/proxy_metrics.html")]
 struct ProxyMetricsTemplate {
     proxy: crate::web::proxy_metrics::MetricsSnapshot,
+}
+
+#[derive(Template)]
+#[template(path = "partials/container_stats.html")]
+struct ContainerStatsTemplate {
+    available: bool,
+    cpu_percent: f64,
+    mem_usage: u64,
+    mem_limit: u64,
+    mem_percent: f64,
+    net_rx: u64,
+    net_tx: u64,
+    disk_read: u64,
+    disk_write: u64,
+}
+
+impl ContainerStatsTemplate {
+    fn unavailable() -> Self {
+        Self {
+            available: false,
+            cpu_percent: 0.0,
+            mem_usage: 0,
+            mem_limit: 0,
+            mem_percent: 0.0,
+            net_rx: 0,
+            net_tx: 0,
+            disk_read: 0,
+            disk_write: 0,
+        }
+    }
+
+    fn from_stats(stats: ContainerStats) -> Self {
+        Self {
+            available: true,
+            cpu_percent: stats.cpu_percent,
+            mem_usage: stats.mem_usage,
+            mem_limit: stats.mem_limit,
+            mem_percent: stats.mem_percent,
+            net_rx: stats.net_rx,
+            net_tx: stats.net_tx,
+            disk_read: stats.disk_read,
+            disk_write: stats.disk_write,
+        }
+    }
 }
 
 pub async fn status_page(
@@ -147,6 +192,29 @@ pub async fn proxy_metrics_partial(
         proxy: state.proxy_metrics.snapshot(),
     };
     Ok(Html::new(template.render().map_err(WebError::from)?))
+}
+
+pub async fn container_stats_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<Html> {
+    require_auth(&req)?;
+
+    let tmpl = match (
+        state.config.server_container.as_deref(),
+        state.container_mgr.as_ref(),
+    ) {
+        (Some(container), Some(mgr)) => match mgr.stats(container).await {
+            Ok(stats) => ContainerStatsTemplate::from_stats(stats),
+            Err(e) => {
+                tracing::trace!(error = %e, "container stats unavailable");
+                ContainerStatsTemplate::unavailable()
+            }
+        },
+        _ => ContainerStatsTemplate::unavailable(),
+    };
+
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
 pub(crate) async fn fetch_server_context(state: &AppState) -> (Option<String>, Option<String>) {

@@ -317,4 +317,13 @@ main > h1 { border-bottom: 1px solid var(--border); }
 .progress-fill { height: 100%; background: var(--accent); border-radius: 0.25rem; transition: width 0.3s; }
 .progress-fill-success { background: var(--success); }
 .progress-fill-muted { background: var(--text-muted); opacity: 0.3; }
+
+/* Container stats panel */
+.stats-panel { display: flex; flex-direction: column; gap: 0.6rem; }
+.stats-row { display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; }
+.stats-label { min-width: 60px; color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
+.stats-value { min-width: 180px; font-family: monospace; }
+.progress-fill-warning { background: var(--warning); }
+.progress-fill-danger { background: var(--danger); }
+
 .text-danger { color: var(--danger, #e74c3c); }

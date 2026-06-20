@@ -212,6 +212,10 @@ pub async fn start_server(
                                 web::get().to(handlers::status::proxy_metrics_partial),
                             )
                             .route(
+                                "/status/container-stats",
+                                web::get().to(handlers::status::container_stats_partial),
+                            )
+                            .route(
                                 "/dashboard/server-status",
                                 web::get().to(handlers::dashboard::server_status_partial),
                             )

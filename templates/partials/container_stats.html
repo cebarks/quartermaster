@@ -1,0 +1,31 @@
+<div class="card">
+    <h2>Container Resources</h2>
+    {% if available %}
+    <div class="stats-panel">
+        <div class="stats-row">
+            <span class="stats-label">CPU</span>
+            <span class="stats-value">{{ cpu_percent|fmt_pct }}</span>
+            <div class="progress-bar" style="flex:1">
+                <div class="progress-fill{% if cpu_percent >= 85.0 %} progress-fill-danger{% else if cpu_percent >= 60.0 %} progress-fill-warning{% else %} progress-fill-success{% endif %}" style="width:{{ cpu_percent|clamp_pct }}%"></div>
+            </div>
+        </div>
+        <div class="stats-row">
+            <span class="stats-label">Memory</span>
+            <span class="stats-value">{{ mem_usage|format_size_u64 }} / {{ mem_limit|format_size_u64 }} ({{ mem_percent|fmt_pct }})</span>
+            <div class="progress-bar" style="flex:1">
+                <div class="progress-fill{% if mem_percent >= 85.0 %} progress-fill-danger{% else if mem_percent >= 60.0 %} progress-fill-warning{% else %} progress-fill-success{% endif %}" style="width:{{ mem_percent|clamp_pct }}%"></div>
+            </div>
+        </div>
+        <div class="stats-row">
+            <span class="stats-label">Network</span>
+            <span class="stats-value">↓ {{ net_rx|format_size_u64 }}  ↑ {{ net_tx|format_size_u64 }}</span>
+        </div>
+        <div class="stats-row">
+            <span class="stats-label">Disk I/O</span>
+            <span class="stats-value">R {{ disk_read|format_size_u64 }}  W {{ disk_write|format_size_u64 }}</span>
+        </div>
+    </div>
+    {% else %}
+    <p class="text-muted">Container stats unavailable</p>
+    {% endif %}
+</div>
