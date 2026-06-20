@@ -110,7 +110,7 @@ pub async fn create_container(name: &str, port: u16, cli: &super::Cli) -> Result
         ],
         volumes: vec![crate::container::VolumeMount {
             host_path: spt_dir.clone(),
-            container_path: "/opt/tarkov".to_string(),
+            container_path: "/opt/server".to_string(),
             read_only: false,
             selinux: crate::container::SelinuxLabel::Private,
         }],
