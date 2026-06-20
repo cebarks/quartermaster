@@ -124,7 +124,6 @@ fn filter_started_at(started_at: Option<String>) -> Option<String> {
     started_at.filter(|s| !s.is_empty() && s != "0001-01-01T00:00:00Z")
 }
 
-#[allow(dead_code)] // Used in Task 2
 #[derive(Debug, Clone)]
 pub struct ContainerStats {
     pub cpu_percent: f64,
@@ -137,7 +136,6 @@ pub struct ContainerStats {
     pub disk_write: u64,
 }
 
-#[allow(dead_code)] // Used in Task 2
 fn compute_cpu_percent(container_delta: u64, system_delta: u64, num_cpus: u32) -> f64 {
     if system_delta == 0 || num_cpus == 0 {
         return 0.0;
@@ -145,7 +143,6 @@ fn compute_cpu_percent(container_delta: u64, system_delta: u64, num_cpus: u32) -
     (container_delta as f64 / system_delta as f64) * num_cpus as f64 * 100.0
 }
 
-#[allow(dead_code)] // Used in Task 2
 fn extract_blkio_bytes(entries: &[ContainerBlkioStatEntry]) -> (u64, u64) {
     let mut read = 0u64;
     let mut write = 0u64;
@@ -388,7 +385,6 @@ impl ContainerManager {
             .collect())
     }
 
-    #[allow(dead_code)] // Used in Task 2
     pub async fn stats(&self, container: &str) -> Result<ContainerStats> {
         let opts = StatsOptionsBuilder::default()
             .stream(false)
