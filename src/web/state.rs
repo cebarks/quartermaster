@@ -34,6 +34,7 @@ pub struct AppState {
     pub server_transition: Arc<Mutex<Option<String>>>,
     #[allow(dead_code)] // Used by Tasks 5-7 (proxy handlers, status page)
     pub proxy_metrics: ProxyMetrics,
+    pub proxy_client: reqwest::Client,
 }
 
 impl AppState {

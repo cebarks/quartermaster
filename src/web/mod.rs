@@ -71,6 +71,12 @@ pub async fn start_server(
     let spt_dir_for_tls = spt_dir.clone();
 
     let db = Arc::new(parking_lot::Mutex::new(db));
+    let proxy_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("failed to build proxy HTTP client");
     let app_state = web::Data::new(AppState {
         db,
         forge,
@@ -88,6 +94,7 @@ pub async fn start_server(
         fika_installed,
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
+        proxy_client,
     });
 
     let governor_conf = GovernorConfigBuilder::default()
@@ -105,6 +112,7 @@ pub async fn start_server(
     let server = HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
+            .app_data(web::PayloadConfig::new(64 * 1024 * 1024)) // 64 MiB for proxied game traffic
             .wrap(tracing_actix_web::TracingLogger::default())
             .service(
                 web::scope("/quma")

@@ -7,8 +7,6 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::web::state::AppState;
 
-const PROXY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-
 static HOP_BY_HOP_HEADERS: &[&str] = &[
     "connection",
     "keep-alive",
@@ -57,11 +55,6 @@ pub async fn proxy_handler(
     let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
     let upstream_url = format!("https://{host}:{port}{path}");
 
-    let client = build_proxy_client().map_err(|e| {
-        tracing::error!(error = %e, "failed to build proxy HTTP client");
-        actix_web::error::ErrorBadGateway("proxy client error")
-    })?;
-
     let mut headers = HeaderMap::new();
     for (name, value) in req.headers() {
         let name_str = name.as_str().to_lowercase();
@@ -82,10 +75,11 @@ pub async fn proxy_handler(
     })?;
 
     let start = Instant::now();
-    let upstream_resp = client
+    let upstream_resp = state
+        .proxy_client
         .request(method, &upstream_url)
         .headers(headers)
-        .body(body.to_vec())
+        .body(body)
         .send()
         .await;
 
@@ -190,11 +184,9 @@ pub async fn proxy_handler(
                 ProxyBody::Buffered(bytes) => Ok(builder.body(bytes)),
                 ProxyBody::Stream(resp) => {
                     let stream = resp.bytes_stream().map(|result| {
-                        result
-                            .map(|bytes| web::Bytes::from(bytes.to_vec()))
-                            .map_err(|e| {
-                                actix_web::error::PayloadError::Io(std::io::Error::other(e))
-                            })
+                        result.map_err(|e| {
+                            actix_web::error::PayloadError::Io(std::io::Error::other(e))
+                        })
                     });
                     Ok(builder.streaming(stream))
                 }
@@ -221,14 +213,6 @@ enum ProxyBody {
     Buffered(web::Bytes),
     Stream(reqwest::Response),
     Empty,
-}
-
-fn build_proxy_client() -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(PROXY_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
 }
 
 fn handle_player_registration(
