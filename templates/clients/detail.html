@@ -2,7 +2,7 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}Client {{ client.index }} — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("clients", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("clients", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
     <h1>Client {{ client.index }}</h1>

@@ -17,11 +17,15 @@ struct ClientsListTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    #[allow(dead_code)]
     fika_installed: bool,
+    #[allow(dead_code)]
+    modsync_installed: bool,
     clients: Vec<ClientState>,
     converging: bool,
     target_count: u32,
 }
+
 
 #[derive(Template)]
 #[template(path = "clients/detail.html")]
@@ -29,7 +33,10 @@ struct ClientDetailTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
+    #[allow(dead_code)]
     fika_installed: bool,
+    #[allow(dead_code)]
+    modsync_installed: bool,
     client: ClientState,
 }
 
@@ -70,6 +77,7 @@ pub async fn client_list(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
         clients,
         converging,
         target_count,
@@ -104,6 +112,7 @@ pub async fn client_detail(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
         client,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))

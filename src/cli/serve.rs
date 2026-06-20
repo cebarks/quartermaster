@@ -81,6 +81,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     };
 
     let fika_installed = is_fika_installed(&spt_dir);
+    let modsync_installed = crate::config::is_modsync_installed(&spt_dir);
     let converging = Arc::new(AtomicBool::new(false));
 
     // Initialize client supervisor if Fika is installed and clients configured
@@ -168,6 +169,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         client_states,
         converging,
         fika_installed,
+        modsync_installed,
     )
     .await
 }

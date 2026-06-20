@@ -30,6 +30,8 @@ struct DashboardTemplate {
     flash: Option<FlashMessage>,
     csrf_token: String,
     fika_installed: bool,
+    modsync_installed: bool,
+    modsync_managed: bool,
 }
 
 pub async fn dashboard(
@@ -56,6 +58,7 @@ pub async fn dashboard(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let modsync_installed = state.is_modsync_installed();
     let tmpl = DashboardTemplate {
         user,
         mods,
@@ -66,6 +69,8 @@ pub async fn dashboard(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
+        modsync_installed,
+        modsync_managed: modsync_installed && state.config.modsync.is_some(),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
