@@ -351,6 +351,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 installed_at: "2026-01-01T00:00:00Z".to_string(),
                 updated_at: None,
+                disabled: false,
             },
             InstalledMod {
                 id: 2,
@@ -361,6 +362,7 @@ mod tests {
                 version: "2.0.0".to_string(),
                 installed_at: "2026-01-01T00:00:00Z".to_string(),
                 updated_at: None,
+                disabled: false,
             },
         ];
         let mut loaded = std::collections::HashMap::new();
@@ -384,6 +386,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 installed_at: "2026-01-01T00:00:00Z".to_string(),
                 updated_at: None,
+                disabled: false,
             },
             InstalledMod {
                 id: 2,
@@ -394,6 +397,7 @@ mod tests {
                 version: "2.0.0".to_string(),
                 installed_at: "2026-01-01T00:00:00Z".to_string(),
                 updated_at: None,
+                disabled: false,
             },
         ];
         let mut loaded = std::collections::HashMap::new();
@@ -415,6 +419,7 @@ mod tests {
             version: "1.0.0".to_string(),
             installed_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: None,
+            disabled: false,
         }];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("TrackedMod".to_string(), serde_json::json!({}));
@@ -436,6 +441,7 @@ mod tests {
             version: "1.0.0".to_string(),
             installed_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: None,
+            disabled: false,
         }];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("sain".to_string(), serde_json::json!({}));

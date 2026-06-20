@@ -13,6 +13,7 @@ pub struct InstalledMod {
     pub version: String,
     pub installed_at: String,
     pub updated_at: Option<String>,
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +58,7 @@ impl Database {
     pub fn get_mod(&self, id: i64) -> rusqlite::Result<Option<InstalledMod>> {
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled
                  FROM installed_mods WHERE id = ?1",
                 params![id],
                 row_to_installed_mod,
@@ -68,7 +69,7 @@ impl Database {
     pub fn get_mod_by_forge_id(&self, forge_mod_id: i64) -> rusqlite::Result<Option<InstalledMod>> {
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled
                  FROM installed_mods WHERE forge_mod_id = ?1",
                 params![forge_mod_id],
                 row_to_installed_mod,
@@ -81,7 +82,7 @@ impl Database {
         let by_name = self
             .conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled
                  FROM installed_mods WHERE LOWER(name) = LOWER(?1)",
                 params![query],
                 row_to_installed_mod,
@@ -92,7 +93,7 @@ impl Database {
         }
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled
                  FROM installed_mods WHERE LOWER(slug) = LOWER(?1)",
                 params![query],
                 row_to_installed_mod,
@@ -102,7 +103,7 @@ impl Database {
 
     pub fn list_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled
              FROM installed_mods ORDER BY name",
         )?;
         let rows = stmt.query_map([], row_to_installed_mod)?;
@@ -112,7 +113,7 @@ impl Database {
     pub fn list_mods_with_file_counts(&self) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
-                    m.installed_at, m.updated_at, COUNT(f.id) as file_count,
+                    m.installed_at, m.updated_at, m.disabled, COUNT(f.id) as file_count,
                     COALESCE(SUM(f.file_size), 0) as total_size
              FROM installed_mods m
              LEFT JOIN installed_files f ON f.mod_id = m.id
@@ -121,8 +122,8 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| {
             let m = row_to_installed_mod(row)?;
-            let count: i64 = row.get(8)?;
-            let size: i64 = row.get(9)?;
+            let count: i64 = row.get(9)?;
+            let size: i64 = row.get(10)?;
             Ok((m, count as usize, size))
         })?;
         rows.collect()
@@ -204,6 +205,23 @@ impl Database {
         rows.collect()
     }
 
+    // ── Disable/Enable ─────────────────────────────────────────────────
+
+    pub fn set_mod_disabled(&self, id: i64, disabled: bool) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE installed_mods SET disabled = ?1 WHERE id = ?2",
+            params![disabled as i64, id],
+        )
+    }
+
+    /// Rename a tracked file path in the database (e.g. when disabling/enabling a mod).
+    pub fn rename_file_path(&self, file_id: i64, new_path: &str) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE installed_files SET file_path = ?1 WHERE id = ?2",
+            params![new_path, file_id],
+        )
+    }
+
     // ── Dependency CRUD ───────────────────────────────────────────────
 
     pub fn insert_dependency(
@@ -248,6 +266,7 @@ impl Database {
 }
 
 fn row_to_installed_mod(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledMod> {
+    let disabled_int: i64 = row.get(8)?;
     Ok(InstalledMod {
         id: row.get(0)?,
         forge_mod_id: row.get(1)?,
@@ -257,6 +276,7 @@ fn row_to_installed_mod(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledMo
         version: row.get(5)?,
         installed_at: row.get(6)?,
         updated_at: row.get(7)?,
+        disabled: disabled_int != 0,
     })
 }
 
@@ -313,5 +333,39 @@ mod tests {
         let (_, count, size) = &results[0];
         assert_eq!(*count, 0);
         assert_eq!(*size, 0);
+    }
+
+    #[test]
+    fn set_mod_disabled_toggles_flag() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+
+        let m = db.get_mod(mod_id).unwrap().unwrap();
+        assert!(!m.disabled, "mod should start enabled");
+
+        db.set_mod_disabled(mod_id, true).unwrap();
+        let m = db.get_mod(mod_id).unwrap().unwrap();
+        assert!(m.disabled, "mod should be disabled");
+
+        db.set_mod_disabled(mod_id, false).unwrap();
+        let m = db.get_mod(mod_id).unwrap().unwrap();
+        assert!(!m.disabled, "mod should be re-enabled");
+    }
+
+    #[test]
+    fn rename_file_path_updates_stored_path() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let file_id = db
+            .insert_file(mod_id, "SPT/user/mods/TestMod/src/mod.ts", None, Some(100))
+            .unwrap();
+
+        db.rename_file_path(file_id, "SPT/user/mods/TestMod.disabled/src/mod.ts")
+            .unwrap();
+        let files = db.get_files_for_mod(mod_id).unwrap();
+        assert_eq!(
+            files[0].file_path,
+            "SPT/user/mods/TestMod.disabled/src/mod.ts"
+        );
     }
 }

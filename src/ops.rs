@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::db::mods::InstalledMod;
 use crate::db::Database;
@@ -185,6 +185,177 @@ fn scan_runtime_recursive(
     Ok(())
 }
 
+/// Given a list of file paths belonging to a mod, find the unique top-level
+/// directories that contain them (e.g. `SPT/user/mods/ModName` or
+/// `BepInEx/plugins/PluginDir`). Returns relative paths.
+fn find_top_level_mod_dirs(file_paths: &[String]) -> Vec<String> {
+    let mut dirs = std::collections::BTreeSet::new();
+    for path in file_paths {
+        let parts: Vec<&str> = path.split('/').collect();
+        // SPT/user/mods/ModName/... → 4 components
+        if path.starts_with("SPT/user/mods/") && parts.len() >= 4 {
+            dirs.insert(format!(
+                "{}/{}/{}/{}",
+                parts[0], parts[1], parts[2], parts[3]
+            ));
+        // BepInEx/plugins/PluginDir/... → 3 components (if the file is inside a directory)
+        } else if path.starts_with("BepInEx/plugins/") && parts.len() >= 3 {
+            // Check if third component is a directory (has children) or a loose file
+            if parts.len() > 3 {
+                dirs.insert(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
+            }
+            // Loose files (e.g. BepInEx/plugins/something.dll) are handled separately
+        }
+    }
+    dirs.into_iter().collect()
+}
+
+/// Find loose files that are not inside a top-level mod directory.
+/// These are individual files like `BepInEx/plugins/something.dll`.
+fn find_loose_files<'a>(file_paths: &'a [String], top_dirs: &[String]) -> Vec<&'a str> {
+    file_paths
+        .iter()
+        .filter(|p| !top_dirs.iter().any(|d| p.starts_with(d)))
+        .map(|p| p.as_str())
+        .collect()
+}
+
+/// Disable a mod by renaming its top-level directories and loose files with
+/// a `.disabled` suffix, updating file paths in the database, and marking
+/// the mod as disabled.
+pub fn disable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
+    let mod_info = db
+        .get_mod(mod_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("mod not found"))?;
+    if mod_info.disabled {
+        anyhow::bail!("mod is already disabled");
+    }
+
+    let files = db.get_files_for_mod(mod_db_id)?;
+    let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
+    let top_dirs = find_top_level_mod_dirs(&file_paths);
+
+    tracing::info!(mod_db_id, name = %mod_info.name, "disabling mod");
+
+    // Rename top-level directories
+    for dir in &top_dirs {
+        let src = spt_dir.join(dir);
+        let dst = spt_dir.join(format!("{dir}.disabled"));
+        if src.exists() {
+            std::fs::rename(&src, &dst)
+                .with_context(|| format!("failed to rename {}", src.display()))?;
+            tracing::debug!(from = %src.display(), to = %dst.display(), "renamed directory");
+        }
+    }
+
+    // Rename loose files (individual DLLs etc. not inside a mod directory)
+    let loose = find_loose_files(&file_paths, &top_dirs);
+    for loose_path in &loose {
+        let src = spt_dir.join(loose_path);
+        let dst = spt_dir.join(format!("{loose_path}.disabled"));
+        if src.exists() {
+            std::fs::rename(&src, &dst)
+                .with_context(|| format!("failed to rename {}", src.display()))?;
+            tracing::debug!(from = %src.display(), to = %dst.display(), "renamed loose file");
+        }
+    }
+
+    // Update file paths in the database
+    for file in &files {
+        let new_path = if let Some(matching_dir) = top_dirs
+            .iter()
+            .find(|d| file.file_path.starts_with(d.as_str()))
+        {
+            file.file_path
+                .replacen(matching_dir, &format!("{matching_dir}.disabled"), 1)
+        } else if loose.contains(&file.file_path.as_str()) {
+            format!("{}.disabled", file.file_path)
+        } else {
+            continue;
+        };
+        db.rename_file_path(file.id, &new_path)?;
+    }
+
+    db.set_mod_disabled(mod_db_id, true)?;
+    tracing::info!(mod_db_id, name = %mod_info.name, "mod disabled");
+    Ok(())
+}
+
+/// Enable a previously disabled mod by removing the `.disabled` suffix from
+/// its directories and files, updating file paths in the database, and
+/// clearing the disabled flag.
+pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
+    let mod_info = db
+        .get_mod(mod_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("mod not found"))?;
+    if !mod_info.disabled {
+        anyhow::bail!("mod is not disabled");
+    }
+
+    let files = db.get_files_for_mod(mod_db_id)?;
+    let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
+    let top_dirs = find_top_level_mod_dirs(&file_paths);
+
+    tracing::info!(mod_db_id, name = %mod_info.name, "enabling mod");
+
+    // Rename top-level directories (strip .disabled suffix)
+    for dir in &top_dirs {
+        if dir.ends_with(".disabled") {
+            let restored = dir.strip_suffix(".disabled").unwrap();
+            let src = spt_dir.join(dir);
+            let dst = spt_dir.join(restored);
+            if src.exists() {
+                std::fs::rename(&src, &dst)
+                    .with_context(|| format!("failed to rename {}", src.display()))?;
+                tracing::debug!(from = %src.display(), to = %dst.display(), "restored directory");
+            }
+        }
+    }
+
+    // Rename loose files (strip .disabled suffix)
+    let loose = find_loose_files(&file_paths, &top_dirs);
+    for loose_path in &loose {
+        if loose_path.ends_with(".disabled") {
+            let restored = loose_path.strip_suffix(".disabled").unwrap();
+            let src = spt_dir.join(loose_path);
+            let dst = spt_dir.join(restored);
+            if src.exists() {
+                std::fs::rename(&src, &dst)
+                    .with_context(|| format!("failed to rename {}", src.display()))?;
+                tracing::debug!(from = %src.display(), to = %dst.display(), "restored loose file");
+            }
+        }
+    }
+
+    // Update file paths in the database (strip .disabled from paths)
+    for file in &files {
+        let new_path = if let Some(matching_dir) = top_dirs
+            .iter()
+            .find(|d| file.file_path.starts_with(d.as_str()))
+        {
+            if matching_dir.ends_with(".disabled") {
+                let restored_dir = matching_dir.strip_suffix(".disabled").unwrap();
+                file.file_path
+                    .replacen(matching_dir.as_str(), restored_dir, 1)
+            } else {
+                continue;
+            }
+        } else if file.file_path.ends_with(".disabled") {
+            file.file_path
+                .strip_suffix(".disabled")
+                .unwrap()
+                .to_string()
+        } else {
+            continue;
+        };
+        db.rename_file_path(file.id, &new_path)?;
+    }
+
+    db.set_mod_disabled(mod_db_id, false)?;
+    tracing::info!(mod_db_id, name = %mod_info.name, "mod enabled");
+    Ok(())
+}
+
 /// Recursively collect all transitive reverse dependencies of a mod.
 /// Returns them in BFS order (direct dependents first, then their dependents, etc.).
 pub fn collect_all_reverse_deps(db: &Database, mod_db_id: i64) -> Result<Vec<InstalledMod>> {
@@ -359,5 +530,172 @@ mod tests {
             .join("SPT/user/mods/TestMod/package.json")
             .exists());
         assert!(db.get_mod(db_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn find_top_level_mod_dirs_extracts_correctly() {
+        let paths = vec![
+            "SPT/user/mods/TestMod/package.json".to_string(),
+            "SPT/user/mods/TestMod/src/mod.ts".to_string(),
+            "BepInEx/plugins/PluginDir/plugin.dll".to_string(),
+            "BepInEx/plugins/loose.dll".to_string(),
+        ];
+        let dirs = find_top_level_mod_dirs(&paths);
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs.contains(&"SPT/user/mods/TestMod".to_string()));
+        assert!(dirs.contains(&"BepInEx/plugins/PluginDir".to_string()));
+        // loose.dll should NOT be a top-level dir
+    }
+
+    #[test]
+    fn find_loose_files_identifies_non_dir_files() {
+        let paths = vec![
+            "SPT/user/mods/TestMod/package.json".to_string(),
+            "BepInEx/plugins/loose.dll".to_string(),
+        ];
+        let top_dirs = vec!["SPT/user/mods/TestMod".to_string()];
+        let loose = find_loose_files(&paths, &top_dirs);
+        assert_eq!(loose, vec!["BepInEx/plugins/loose.dll"]);
+    }
+
+    #[test]
+    fn disable_and_enable_mod_renames_directories() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+        let zip = create_test_zip(&[
+            ("SPT/user/mods/TestMod/package.json", b"{\"name\":\"test\"}"),
+            ("SPT/user/mods/TestMod/src/mod.ts", b"export class Mod {}"),
+        ]);
+
+        let db_id = install_mod_from_archive(
+            &db,
+            spt_dir.path(),
+            &Config::default(),
+            100,
+            200,
+            "TestMod",
+            None,
+            "1.0.0",
+            zip.path(),
+        )
+        .unwrap();
+
+        // Verify mod is installed and enabled
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod/package.json")
+            .exists());
+        assert!(!db.get_mod(db_id).unwrap().unwrap().disabled);
+
+        // Disable the mod
+        disable_mod(&db, spt_dir.path(), db_id).unwrap();
+
+        // Directory should be renamed
+        assert!(!spt_dir.path().join("SPT/user/mods/TestMod").exists());
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod.disabled")
+            .exists());
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod.disabled/package.json")
+            .exists());
+
+        // DB should reflect disabled state
+        let m = db.get_mod(db_id).unwrap().unwrap();
+        assert!(m.disabled);
+
+        // File paths in DB should be updated
+        let files = db.get_files_for_mod(db_id).unwrap();
+        assert!(files
+            .iter()
+            .all(|f| f.file_path.contains("TestMod.disabled")));
+
+        // Enable the mod
+        enable_mod(&db, spt_dir.path(), db_id).unwrap();
+
+        // Directory should be restored
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod/package.json")
+            .exists());
+        assert!(!spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod.disabled")
+            .exists());
+
+        // DB should reflect enabled state
+        let m = db.get_mod(db_id).unwrap().unwrap();
+        assert!(!m.disabled);
+
+        // File paths in DB should be restored
+        let files = db.get_files_for_mod(db_id).unwrap();
+        assert!(files.iter().all(|f| !f.file_path.contains(".disabled")));
+    }
+
+    #[test]
+    fn disable_mod_handles_loose_files() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+        let zip = create_test_zip(&[("BepInEx/plugins/loose.dll", b"dll content")]);
+
+        let db_id = install_mod_from_archive(
+            &db,
+            spt_dir.path(),
+            &Config::default(),
+            100,
+            200,
+            "LooseMod",
+            None,
+            "1.0.0",
+            zip.path(),
+        )
+        .unwrap();
+
+        assert!(spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
+
+        disable_mod(&db, spt_dir.path(), db_id).unwrap();
+
+        assert!(!spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
+        assert!(spt_dir
+            .path()
+            .join("BepInEx/plugins/loose.dll.disabled")
+            .exists());
+
+        let files = db.get_files_for_mod(db_id).unwrap();
+        assert_eq!(files[0].file_path, "BepInEx/plugins/loose.dll.disabled");
+
+        enable_mod(&db, spt_dir.path(), db_id).unwrap();
+
+        assert!(spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
+        assert!(!spt_dir
+            .path()
+            .join("BepInEx/plugins/loose.dll.disabled")
+            .exists());
+    }
+
+    #[test]
+    fn disable_already_disabled_mod_errors() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+        let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
+
+        let db_id = install_mod_from_archive(
+            &db,
+            spt_dir.path(),
+            &Config::default(),
+            100,
+            200,
+            "TestMod",
+            None,
+            "1.0.0",
+            zip.path(),
+        )
+        .unwrap();
+
+        disable_mod(&db, spt_dir.path(), db_id).unwrap();
+        let result = disable_mod(&db, spt_dir.path(), db_id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already disabled"));
     }
 }

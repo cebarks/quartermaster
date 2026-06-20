@@ -317,6 +317,10 @@ pub async fn start_server(
                         web::post().to(handlers::mods::remove_mod),
                     )
                     .route(
+                        "/mods/{id}/toggle-disable",
+                        web::post().to(handlers::mods::toggle_disable),
+                    )
+                    .route(
                         "/server/start",
                         web::post().to(handlers::server::start_server),
                     )

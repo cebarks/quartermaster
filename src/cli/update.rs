@@ -240,6 +240,7 @@ mod tests {
             version: "1.0.0".to_string(),
             installed_at: "2025-01-01".to_string(),
             updated_at: None,
+            disabled: false,
         }];
 
         assert_eq!(mod_name_for_id(&mods, 100), "TestMod");
