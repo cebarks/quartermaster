@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -110,6 +111,60 @@ fn default_isolated_paths() -> Vec<String> {
     vec!["BepInEx/config".to_string()]
 }
 
+fn default_enforced() -> bool {
+    true
+}
+
+fn default_restart_required() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModSyncConfig {
+    #[serde(default = "default_enforced")]
+    pub enforced: bool,
+
+    #[serde(default)]
+    pub silent: bool,
+
+    #[serde(default = "default_restart_required")]
+    pub restart_required: bool,
+
+    #[serde(default)]
+    pub extra_sync_paths: Vec<String>,
+
+    #[serde(default)]
+    pub exclusions: Vec<String>,
+
+    #[serde(default)]
+    pub overrides: HashMap<String, ModSyncOverride>,
+}
+
+impl Default for ModSyncConfig {
+    fn default() -> Self {
+        Self {
+            enforced: true,
+            silent: false,
+            restart_required: true,
+            extra_sync_paths: Vec::new(),
+            exclusions: Vec::new(),
+            overrides: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModSyncOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforced: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silent: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClientsConfig {
     #[serde(default)]
@@ -180,6 +235,11 @@ impl ClientsConfig {
 
 pub fn is_fika_installed(spt_dir: &Path) -> bool {
     spt_dir.join("SPT/user/mods/fika-server").is_dir()
+}
+
+#[allow(dead_code)]
+pub fn is_modsync_installed(spt_dir: &Path) -> bool {
+    spt_dir.join("user/mods/Corter-ModSync").is_dir()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -315,6 +375,10 @@ pub struct Config {
     pub clients: Option<ClientsConfig>,
 
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modsync: Option<ModSyncConfig>,
+
+    #[serde(default)]
     #[serde(skip_serializing_if = "LoggingConfig::is_default")]
     pub logging: LoggingConfig,
 }
@@ -336,6 +400,7 @@ impl Default for Config {
             update_check_interval: 300,
             forge_cache_ttl: Some(86400),
             clients: None,
+            modsync: None,
             logging: LoggingConfig::default(),
         }
     }
@@ -958,6 +1023,96 @@ install_dir = "/opt/fika"
         assert!(!is_fika_installed(tmp.path()));
         std::fs::create_dir_all(tmp.path().join("SPT/user/mods/fika-server")).unwrap();
         assert!(is_fika_installed(tmp.path()));
+    }
+
+    #[test]
+    fn modsync_config_defaults() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert!(config.modsync.is_none());
+    }
+
+    #[test]
+    fn modsync_config_full_deserialization() {
+        let toml_str = r#"
+[modsync]
+enforced = false
+silent = true
+restart_required = false
+extra_sync_paths = ["BepInEx/config", "BepInEx/patchers"]
+exclusions = ["**/*.nosync", "BepInEx/plugins/spt"]
+
+[modsync.overrides.12345]
+enforced = true
+silent = false
+
+[modsync.overrides.67890]
+enabled = false
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        let ms = config.modsync.unwrap();
+        assert!(!ms.enforced);
+        assert!(ms.silent);
+        assert!(!ms.restart_required);
+        assert_eq!(
+            ms.extra_sync_paths,
+            vec!["BepInEx/config", "BepInEx/patchers"]
+        );
+        assert_eq!(ms.exclusions, vec!["**/*.nosync", "BepInEx/plugins/spt"]);
+        assert_eq!(ms.overrides.len(), 2);
+
+        let o1 = &ms.overrides["12345"];
+        assert_eq!(o1.enforced, Some(true));
+        assert_eq!(o1.silent, Some(false));
+        assert_eq!(o1.restart_required, None);
+        assert_eq!(o1.enabled, None);
+
+        let o2 = &ms.overrides["67890"];
+        assert_eq!(o2.enabled, Some(false));
+        assert_eq!(o2.enforced, None);
+    }
+
+    #[test]
+    fn modsync_config_minimal_with_defaults() {
+        let toml_str = "[modsync]\n";
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        let ms = config.modsync.unwrap();
+        assert!(ms.enforced); // default: true
+        assert!(!ms.silent); // default: false
+        assert!(ms.restart_required); // default: true
+        assert!(ms.extra_sync_paths.is_empty());
+        assert!(ms.exclusions.is_empty());
+        assert!(ms.overrides.is_empty());
+    }
+
+    #[test]
+    fn modsync_config_skip_serializing_when_none() {
+        let config = Config::default();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(
+            !serialized.contains("[modsync]"),
+            "None modsync should not be serialized"
+        );
+    }
+
+    #[test]
+    fn modsync_config_roundtrip() {
+        let mut config = Config::default();
+        config.modsync = Some(ModSyncConfig {
+            enforced: false,
+            silent: true,
+            ..ModSyncConfig::default()
+        });
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let reloaded: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(config.modsync, reloaded.modsync);
+    }
+
+    #[test]
+    fn modsync_detection() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!is_modsync_installed(tmp.path()));
+        std::fs::create_dir_all(tmp.path().join("user/mods/Corter-ModSync")).unwrap();
+        assert!(is_modsync_installed(tmp.path()));
     }
 
     #[test]
