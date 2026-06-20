@@ -1,5 +1,5 @@
 [package]
-name = "quartermaster"
+name = "spt-quartermaster"
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/cebarks/quartermaster"
