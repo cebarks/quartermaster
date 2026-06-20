@@ -68,6 +68,7 @@ chrono = { version = "0.4", features = ["serde"] }
 actix-web = { version = "4", features = ["rustls-0_23"] }
 actix-session = { version = "0.11", features = ["cookie-session"] }
 actix-governor = "0.10"
+actix-ws = "0.3"
 
 # Templating
 askama = "0.16"

@@ -5,6 +5,7 @@ pub mod flash;
 pub mod handlers;
 pub mod proxy;
 pub mod proxy_metrics;
+pub mod proxy_ws;
 pub mod sse;
 pub mod state;
 pub mod tasks;

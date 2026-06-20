@@ -28,7 +28,7 @@ pub async fn proxy_handler(
         return Err(actix_web::error::ErrorNotFound("proxy not enabled"));
     }
 
-    // Detect WebSocket upgrade — Task 6 will add the real handler
+    // Detect WebSocket upgrade and delegate to the WS proxy handler
     if req
         .headers()
         .get("upgrade")
@@ -36,9 +36,7 @@ pub async fn proxy_handler(
         .map(|v| v.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false)
     {
-        return Err(actix_web::error::ErrorNotImplemented(
-            "WebSocket proxy not yet implemented",
-        ));
+        return crate::web::proxy_ws::ws_proxy_handler(req, payload, state).await;
     }
 
     // Read the full body for HTTP requests
