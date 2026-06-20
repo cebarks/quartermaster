@@ -267,9 +267,10 @@ pub async fn start_server(
                                     .wrap(Governor::new(&search_governor_conf))
                                     .route(web::get().to(handlers::mods::search_mods)),
                             )
-                            .route(
-                                "/mods/{id}/compat-check",
-                                web::get().to(handlers::mods::compat_check),
+                            .service(
+                                web::resource("/mods/{id}/compat-check")
+                                    .wrap(Governor::new(&search_governor_conf))
+                                    .route(web::get().to(handlers::mods::compat_check)),
                             )
                             .route(
                                 "/mods/requests",
