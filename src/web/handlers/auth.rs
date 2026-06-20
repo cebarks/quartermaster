@@ -373,7 +373,7 @@ pub async fn logout(session: Session, form: Form<crate::web::csrf::CsrfForm>) ->
     }
     session.purge();
     HttpResponse::SeeOther()
-        .insert_header(("Location", "/login"))
+        .insert_header(("Location", "/quma/login"))
         .finish()
 }
 
@@ -608,6 +608,6 @@ pub async fn reset_password_submit(
     crate::web::flash::set_flash(&session, "Password updated — please log in.", "success");
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/login"))
+        .insert_header(("Location", "/quma/login"))
         .finish())
 }

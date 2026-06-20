@@ -7,7 +7,7 @@
 <div class="flex-between">
     <h1>Pending Operations</h1>
     {% if user.role.can_manage_queue() && !ops.is_empty() %}
-    <form method="post" action="/queue/apply"
+    <form method="post" action="/quma/queue/apply"
           onsubmit="return confirm('Apply all pending operations?')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-success">{% call icons::play() %}{% endcall %} Apply All</button>
@@ -49,7 +49,7 @@
                 <td class="text-muted text-sm">{{ op.queued_by.as_deref().unwrap_or("-") }}</td>
                 {% if user.role.can_manage_queue() %}
                 <td>
-                    <form method="post" action="/queue/{{ op.id }}/cancel" style="display:inline"
+                    <form method="post" action="/quma/queue/{{ op.id }}/cancel" style="display:inline"
                           onsubmit="return confirm('Cancel this operation?')">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-sm btn-outline">{% call icons::x() %}{% endcall %} Cancel</button>

@@ -589,7 +589,7 @@ pub async fn install_mod(
     });
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/mods"))
+        .insert_header(("Location", "/quma/mods"))
         .finish())
 }
 
@@ -758,7 +758,7 @@ pub async fn update_mod(
     });
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/mods/{mod_db_id}")))
+        .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
         .finish())
 }
 
@@ -830,7 +830,7 @@ pub async fn remove_mod(
     state.update_cache.invalidate();
     set_flash(&session, "Mod removed", "success");
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/mods"))
+        .insert_header(("Location", "/quma/mods"))
         .finish())
 }
 
@@ -1023,7 +1023,7 @@ pub async fn update_all_mods(
     });
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/mods"))
+        .insert_header(("Location", "/quma/mods"))
         .finish())
 }
 
