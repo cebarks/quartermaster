@@ -118,9 +118,9 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| {
             let m = row_to_installed_mod(row)?;
-            let count: usize = row.get(8)?;
+            let count: i64 = row.get(8)?;
             let size: i64 = row.get(9)?;
-            Ok((m, count, size))
+            Ok((m, count as usize, size))
         })?;
         rows.collect()
     }

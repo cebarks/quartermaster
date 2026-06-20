@@ -3,7 +3,7 @@ use std::io::Read;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use sevenz_rust2::{Password, SevenZReader};
+use sevenz_rust2::{ArchiveReader, Password};
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
@@ -50,7 +50,7 @@ fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
             let mut file = fs::File::open(archive_path)
                 .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
             let pwd = Password::empty();
-            let archive = sevenz_rust2::Archive::read(&mut file, pwd.as_slice())
+            let archive = sevenz_rust2::Archive::read(&mut file, &pwd)
                 .with_context(|| format!("failed to read 7z: {}", archive_path.display()))?;
             Ok(archive
                 .files
@@ -237,7 +237,7 @@ fn extract_mod_7z(
     spt_root: &Path,
     prefix: &str,
 ) -> Result<Vec<ExtractedFile>> {
-    let mut reader = SevenZReader::open(archive_path, Password::empty())
+    let mut reader = ArchiveReader::open(archive_path, Password::empty())
         .with_context(|| format!("failed to read 7z: {}", archive_path.display()))?;
 
     let mut extracted = Vec::new();
@@ -258,50 +258,59 @@ fn extract_mod_7z(
             }
 
             if relative.contains("..") {
-                return Err(sevenz_rust2::Error::other(format!(
-                    "archive entry contains path traversal: {raw_name}"
-                )));
+                return Err(sevenz_rust2::Error::Other(
+                    format!("archive entry contains path traversal: {raw_name}").into(),
+                ));
             }
 
             let dest = spt_root.join(relative);
             validate_dest_under_root(&dest, spt_root, &raw_name)
-                .map_err(|e| sevenz_rust2::Error::other(e.to_string()))?;
+                .map_err(|e| sevenz_rust2::Error::Other(e.to_string().into()))?;
 
             if entry.is_directory() {
                 fs::create_dir_all(&dest).map_err(|e| {
-                    sevenz_rust2::Error::io(std::io::Error::new(
-                        e.kind(),
-                        format!("failed to create directory: {}", dest.display()),
-                    ))
+                    sevenz_rust2::Error::Io(
+                        std::io::Error::new(
+                            e.kind(),
+                            format!("failed to create directory: {}", dest.display()),
+                        ),
+                        "".into(),
+                    )
                 })?;
                 return Ok(true);
             }
 
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
-                    sevenz_rust2::Error::io(std::io::Error::new(
-                        e.kind(),
-                        format!("failed to create directory: {}", parent.display()),
-                    ))
+                    sevenz_rust2::Error::Io(
+                        std::io::Error::new(
+                            e.kind(),
+                            format!("failed to create directory: {}", parent.display()),
+                        ),
+                        "".into(),
+                    )
                 })?;
             }
 
             let mut content = Vec::with_capacity(entry.size() as usize);
             std::io::copy(reader, &mut content).map_err(|e| {
-                sevenz_rust2::Error::io(std::io::Error::new(
-                    e.kind(),
-                    format!("failed to read 7z entry: {relative}"),
-                ))
+                sevenz_rust2::Error::Io(
+                    std::io::Error::new(e.kind(), format!("failed to read 7z entry: {relative}")),
+                    "".into(),
+                )
             })?;
 
             let hash = compute_hash(&content);
             let size = content.len() as u64;
 
             fs::write(&dest, &content).map_err(|e| {
-                sevenz_rust2::Error::io(std::io::Error::new(
-                    e.kind(),
-                    format!("failed to write file: {}", dest.display()),
-                ))
+                sevenz_rust2::Error::Io(
+                    std::io::Error::new(
+                        e.kind(),
+                        format!("failed to write file: {}", dest.display()),
+                    ),
+                    "".into(),
+                )
             })?;
 
             extracted.push(ExtractedFile {
@@ -666,12 +675,12 @@ mod tests {
 
     /// Create a test 7z archive with the given entries.
     fn create_test_7z(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
-        use sevenz_rust2::{SevenZArchiveEntry, SevenZWriter};
+        use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        let mut writer = SevenZWriter::create(tmp.path()).unwrap();
+        let mut writer = ArchiveWriter::create(tmp.path()).unwrap();
         for (name, content) in entries {
-            let entry = SevenZArchiveEntry::new_file(name);
+            let entry = ArchiveEntry::new_file(name);
             writer
                 .push_archive_entry(entry, Some(std::io::Cursor::new(content)))
                 .unwrap();

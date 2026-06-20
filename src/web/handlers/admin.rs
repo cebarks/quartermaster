@@ -368,7 +368,7 @@ pub async fn create_reset_token(
     }
 
     // Generate CSPRNG token via thread-local CSPRNG (ChaCha-based in rand 0.9)
-    use rand::RngCore;
+    use rand::Rng;
     let mut token_bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut token_bytes);
     let token = base64_url_encode(&token_bytes);

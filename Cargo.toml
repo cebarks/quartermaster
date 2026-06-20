@@ -15,18 +15,18 @@ path = "src/main.rs"
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.17"
+indicatif = "0.18"
 
 # Serialization & config
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # HTTP client (for Forge API)
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+reqwest = { version = "0.13", features = ["json", "rustls", "stream", "query"], default-features = false }
 
 # Streaming utilities (used by reqwest byte streams)
 futures-util = "0.3"
@@ -35,7 +35,7 @@ futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
 
 # Container management (Podman/Docker API)
-bollard = "0.20"
+bollard = "0.21"
 tokio-util = "0.7"
 
 # Error handling
@@ -44,12 +44,12 @@ thiserror = "2"
 
 # Crypto & hashing
 sha2 = "0.10"
-rand = "0.9"
+rand = "0.10"
 subtle = "2"
 
 # Archive handling
-zip = "2"
-sevenz-rust2 = "0.12"
+zip = "8"
+sevenz-rust2 = "0.21"
 tempfile = "3"
 
 # Time
@@ -71,7 +71,7 @@ actix-web-rust-embed-responder = "2.4"
 argon2 = "0.5"
 
 # Secure password input (no terminal echo)
-rpassword = "5"
+rpassword = "7"
 
 # Non-poisoning Mutex for web DB access
 parking_lot = "0.12"
@@ -91,7 +91,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "regis
 tracing-actix-web = "0.7"
 tracing-appender = "0.2"
 rolling-file = "0.2"
-actix-web-lab = "0.24"
+actix-web-lab = "0.26"
 async-stream = "0.3"
 tokio-stream = "0.1"
 bytestring = "1"
