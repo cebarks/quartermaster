@@ -30,4 +30,17 @@ pub struct AppState {
     pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
+    pub server_transition: Arc<Mutex<Option<String>>>,
+}
+
+impl AppState {
+    #[allow(dead_code)]
+    pub fn get_server_transition(&self) -> Option<String> {
+        self.server_transition.lock().clone()
+    }
+
+    #[allow(dead_code)]
+    pub fn set_server_transition(&self, transition: Option<&str>) {
+        *self.server_transition.lock() = transition.map(|s| s.to_string());
+    }
 }

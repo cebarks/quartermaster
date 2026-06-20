@@ -10,6 +10,8 @@ use crate::web::state::AppState;
 pub enum ServerEvent {
     TaskChanged,
     ModsChanged,
+    #[allow(dead_code)]
+    ServerTransition,
 }
 
 pub async fn events_stream(
@@ -27,6 +29,7 @@ pub async fn events_stream(
                     let msg = match event {
                         ServerEvent::TaskChanged => "event: taskChanged\ndata: \n\n",
                         ServerEvent::ModsChanged => "event: modsChanged\ndata: \n\n",
+                        ServerEvent::ServerTransition => "event: serverStateChanged\ndata: \n\n",
                     };
                     return Some((Ok::<_, actix_web::Error>(web::Bytes::from(msg)), rx));
                 }

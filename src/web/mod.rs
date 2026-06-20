@@ -80,6 +80,7 @@ pub async fn start_server(
         client_states,
         converging,
         fika_installed,
+        server_transition: Arc::new(parking_lot::Mutex::new(None)),
     });
 
     tracing::info!("Quartermaster web UI starting on http://{bind_addr}");
