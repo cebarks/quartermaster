@@ -327,3 +327,31 @@ main > h1 { border-bottom: 1px solid var(--border); }
 .progress-fill-danger { background: var(--danger); }
 
 .text-danger { color: var(--danger, #e74c3c); }
+
+/* Mod list filter bar */
+.mod-filter-bar {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    align-items: center;
+}
+.mod-filter-bar input[type="text"] {
+    flex: 1;
+    max-width: none;
+}
+.mod-filter-bar select {
+    width: auto;
+    min-width: 120px;
+}
+th a.sortable {
+    color: var(--text-muted);
+    text-decoration: none;
+    cursor: pointer;
+    user-select: none;
+}
+th a.sortable:hover {
+    color: var(--text);
+}
+th a.sortable.active {
+    color: var(--accent);
+}

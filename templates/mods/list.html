@@ -67,7 +67,7 @@
     {% endif %}
 </div>
 
-{% if mods.is_empty() %}
+{% if !has_any_mods %}
 <div class="card">
     <div class="empty-state">
         <p>No mods installed.</p>
@@ -76,52 +76,34 @@
 </div>
 {% else %}
 <div class="card">
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Version</th>
-                <th>Files</th>
-                <th>Size</th>
-                <th>Installed</th>
-                {% if user.role.can_manage_mods() %}<th>Actions</th>{% endif %}
-            </tr>
-        </thead>
-        <tbody id="mod-list-body"
+    <div class="mod-filter-bar">
+        <input type="text" placeholder="Filter mods..."
+               value="{{ filter_q }}"
+               name="q"
                hx-get="/quma/api/mods/list"
-               hx-trigger="sse:modsChanged"
-               hx-swap="innerHTML">
-            {% for m in &mods %}
-            <tr>
-                <td><a href="/quma/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a></td>
-                <td><span id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</span></td>
-                <td class="text-muted">{{ m.file_count }}</td>
-                <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
-                <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
-                {% if user.role.can_manage_mods() %}
-                <td>
-                    <span id="mod-update-{{ m.mod_info.id }}">
-                        <form method="post" action="/quma/mods/{{ m.mod_info.id }}/update" style="display:inline">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update</button>
-                        </form>
-                    </span>
-                    <form method="post" action="/quma/mods/{{ m.mod_info.id }}/remove" style="display:inline"
-                          data-name="{{ m.mod_info.name }}"
-                          onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-sm btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
-                    </form>
-                </td>
-                {% endif %}
-            </tr>
-            {% endfor %}
-            <tr class="tfoot-row">
-                <td colspan="{% if user.role.can_manage_mods() %}6{% else %}5{% endif %}" class="text-muted text-sm">
-                    Total: {{ mods.len() }} mods — {{ grand_total_size|format_size_i64 }}
-                </td>
-            </tr>
-        </tbody>
+               hx-trigger="input changed delay:300ms"
+               hx-target="#mod-list-table"
+               hx-swap="innerHTML"
+               hx-include="[name='status'],[name='sort'],[name='dir']">
+        <select name="status"
+                hx-get="/quma/api/mods/list"
+                hx-trigger="change"
+                hx-target="#mod-list-table"
+                hx-swap="innerHTML"
+                hx-include="[name='q'],[name='sort'],[name='dir']">
+            <option value="all"{% if filter_status == "all" %} selected{% endif %}>All</option>
+            <option value="enabled"{% if filter_status == "enabled" %} selected{% endif %}>Enabled</option>
+            <option value="disabled"{% if filter_status == "disabled" %} selected{% endif %}>Disabled</option>
+        </select>
+        <input type="hidden" name="sort" id="sort-input" value="{{ sort_column }}">
+        <input type="hidden" name="dir" id="dir-input" value="{{ sort_dir }}">
+    </div>
+    <table id="mod-list-table"
+           hx-get="/quma/api/mods/list"
+           hx-trigger="sse:modsChanged"
+           hx-swap="innerHTML"
+           hx-include="[name='q'],[name='status'],[name='sort'],[name='dir']">
+        {% include "mods/partials/list_body.html" %}
     </table>
     <span hx-get="/quma/api/mods/update-status" hx-trigger="load, sse:modsChanged" hx-swap="none"></span>
 </div>
