@@ -11,7 +11,12 @@ Built for Linux hosts running SPT in a Podman container.
 - **Change queue** — Mod operations queue while the server is running, then apply on restart
 - **Health checks** — Server liveness, version verification, mod load checks, file integrity (SHA256)
 - **Multi-user auth** — Invite-based registration, admin/player roles, session cookies
-- **Fika support** — Dedicated headless client management for Fika multiplayer
+- **Fika support** — Dedicated headless client management and scaling for Fika multiplayer
+- **HTTPS/WSS proxy** — Transparent reverse proxy to SPT server so clients connect through Quartermaster
+- **ModSync integration** — Auto-manages ModSync `config.jsonc` from installed mod state
+- **Player profiles** — View player profiles with quest, trader, and hideout progress
+- **Mod requests** — Players can request mods; admins review and approve with a voting system
+- **Mod enable/disable** — Toggle mods on and off without uninstalling
 - **Container lifecycle** — Start, stop, restart the SPT server container via Podman
 - **Systemd integration** — Generate and install a systemd service for the web UI
 
@@ -34,22 +39,18 @@ quma serve
 quma [OPTIONS] <COMMAND>
 
 Commands:
-  setup       Interactive guided setup for Fika multiplayer
-  init        Initialize Quartermaster for an SPT server
+  setup       Bootstrap or initialize Quartermaster for an SPT server
   install     Install a mod and its dependencies
   update      Update installed mods (specific or all)
   remove      Remove an installed mod
   list        List installed mods
-  track       Associate an unmanaged mod with a Forge entry
   check       Check all installed mods for updates
-  apply       Apply pending queued operations
   status      Run health checks against SPT server and mod integrity
-  server      Manage the SPT server container (start/stop/restart/logs/create)
+  server      Manage the SPT server container (start/stop/restart/logs)
   client      Manage Fika dedicated headless clients
   serve       Start the Quartermaster web UI
   generate    Generate configuration files (systemd service)
   invite      Generate an invite code for a player
-  config      View and modify configuration
 
 Options:
   --spt-dir <PATH>      Explicit SPT server directory
@@ -64,7 +65,7 @@ Mods can be referenced by name, Forge slug, or numeric Forge ID. Use `--force` o
 
 Start with `quma serve` (default: `0.0.0.0:9190`).
 
-The dashboard provides mod management, server controls, real-time log streaming, and admin tools. Players register via invite codes; admins can manage users and approve mod requests.
+The dashboard provides mod management, server controls, real-time log streaming, player profiles, mod request voting, and admin tools. Players register via invite codes; admins can manage users and approve mod requests. Includes a transparent HTTPS/WSS reverse proxy so game clients connect to the SPT server through Quartermaster.
 
 Built with HTMX and server-sent events — no JavaScript build step required.
 
@@ -73,12 +74,6 @@ Built with HTMX and server-sent events — no JavaScript build step required.
 Config lives at `<spt_dir>/quartermaster.toml`. All settings can be overridden with `QUMA_*` environment variables.
 
 ```bash
-# View current config
-quma config
-
-# Set a value
-quma config set server.bind "0.0.0.0"
-
 # Override via environment
 QUMA_SPT_DIR=~/spt-server quma status
 ```
@@ -93,6 +88,8 @@ just test       # cargo test
 just lint       # cargo fmt + cargo clippy
 just serve      # cargo run -- serve
 just run <ARGS> # cargo run -- <ARGS>
+just audit      # cargo audit
+just changelog  # git-cliff changelog generation
 ```
 
 ## Architecture
@@ -102,13 +99,15 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 | Layer | Purpose |
 |-------|---------|
 | `src/cli/` | One file per CLI subcommand (clap derive) |
-| `src/web/` | actix-web server, HTMX templates (Askama), SSE |
+| `src/web/` | actix-web server, HTMX templates (Askama), SSE, HTTPS/WSS proxy |
 | `src/db/` | SQLite via rusqlite (WAL mode) |
 | `src/forge/` | HTTP client for SPT Forge API |
-| `src/spt/` | SPT directory interaction, archive extraction, profiles |
+| `src/spt/` | SPT directory interaction, archive extraction, profiles, game data |
+| `src/client/` | Fika headless client supervisor and convergence |
 | `src/ops.rs` | Core mod operations (install/update/remove) |
 | `src/health.rs` | Health check system |
 | `src/queue.rs` | Change queue for deferred mod operations |
+| `src/modsync.rs` | ModSync config.jsonc auto-management |
 | `src/container.rs` | Podman container management |
 
 ## License

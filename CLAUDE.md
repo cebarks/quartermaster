@@ -19,6 +19,8 @@ just fmt            # cargo fmt
 just lint           # just fmt + just clippy
 just run <ARGS>     # cargo run -- <ARGS>
 just serve          # cargo run -- serve (starts web UI on 0.0.0.0:9190)
+just audit          # cargo audit
+just changelog      # git-cliff changelog generation
 ```
 
 Run a single test: `cargo test <test_name>` or `cargo test -p quartermaster <test_name>`
@@ -32,18 +34,25 @@ Single Rust binary — the CLI and actix-web server share the same codebase. The
 ### Core Layers
 
 - **`src/cli/`** — One file per CLI subcommand (clap derive). Each command's `run()` function is the entry point. `common.rs` holds `CliContext` (spt_dir, config, db, forge client) and shared helpers like `resolve_mod()` for resolving user input to Forge mod IDs.
-- **`src/web/`** — actix-web server. `mod.rs` defines all routes and middleware wiring. `state.rs` defines `AppState` (shared via `web::Data`). Handlers live in `web/handlers/` (one file per page group: auth, dashboard, mods, queue, server, status, logs, tasks). Authentication uses `RequireAuth` middleware with admin checks per-handler via `require_admin()`.
+- **`src/web/`** — actix-web server. `mod.rs` defines all routes and middleware wiring. `state.rs` defines `AppState` (shared via `web::Data`). Handlers live in `web/handlers/` (one file per page group: admin, auth, clients, dashboard, logs, mods, modsync, profiles, queue, requests, server, status, tasks). Authentication uses `RequireAuth` middleware with admin checks per-handler via `require_admin()`.
 - **`src/db/`** — SQLite via rusqlite (WAL mode, `busy_timeout=5000`). `schema.rs` runs migrations from `migrations/` directory. `mods.rs` has mod CRUD, `users.rs` has user/invite operations. Database is wrapped in `Arc<parking_lot::Mutex<Database>>` for web access.
 - **`src/forge/`** — HTTP client for SPT Forge API (`https://forge.sp-tarkov.com/api/v0`). `client.rs` is the reqwest-based client, `models.rs` defines API response types. Key quirk: `fika_compatibility` is a boolean on mod objects but a string enum on version objects.
 - **`src/spt/`** — SPT directory interaction. `detect.rs` auto-detects SPT installs and reads version info from `core.json`. `mods.rs` handles archive extraction (ZIP/7z), file hashing, and mod file management. `profiles.rs` reads SPT player profiles. `server.rs` handles SPT server HTTP communication (HTTPS with self-signed certs, zlib compression disabled via `responsecompressed: 0` header).
 - **`src/ops.rs`** — Core mod operations: `install_mod_from_archive`, `update_mod_from_archive`, `remove_mod_by_id`. These coordinate between db, filesystem, and archive extraction.
 - **`src/health.rs`** — Health check system: server liveness, version verification, mod load verification, file integrity (SHA256).
-- **`src/podman.rs`** — Podman container management for SPT server lifecycle.
+- **`src/container.rs`** — Podman container management for SPT server lifecycle.
 - **`src/queue.rs`** — Change queue: mod operations are queued when SPT server is running, applied when stopped.
 - **`src/server_detect.rs`** — Server running detection (Podman inspect or HTTP ping fallback).
 - **`src/logging.rs`** — Structured logging with tracing. Supports console, file (with rotation), and web broadcast (SSE to browser). `LogBroadcast` uses a tokio broadcast channel + ring buffer.
 - **`src/config.rs`** — Config types (serde TOML), env var overrides (`QUMA_*` prefix), and config resolution logic.
 - **`src/error.rs`** — `QumaError` enum via thiserror for domain-specific errors.
+- **`src/modsync.rs`** — ModSync integration: regenerates `config.jsonc` from installed mod state so clients auto-sync.
+- **`src/tls.rs`** — TLS certificate loading/generation for the HTTPS proxy.
+- **`src/invite.rs`** — Invite code generation and expiry parsing.
+- **`src/client/`** — Fika headless client management. `supervisor.rs` runs the convergence loop, `converge.rs` handles container creation/scaling/overlay setup.
+- **`src/spt/headless.rs`** — SPT server API types for headless client queries.
+- **`src/spt/game_data.rs`** — Loads quest/trader/hideout metadata from SPT data files for profile display.
+- **`src/db/requests.rs`** — Mod request/voting system (players request mods, admins approve).
 
 ### Web UI Stack
 
@@ -52,6 +61,7 @@ Single Rust binary — the CLI and actix-web server share the same codebase. The
 - **Sessions**: Signed cookies via actix-session (`CookieSessionStore`), 7-day TTL, SameSite=Strict, HttpOnly.
 - **Rate limiting**: actix-governor on `/login` POST and `/register` (5 req/min/IP).
 - **CSRF**: Token-based protection in `web/csrf.rs`.
+- **HTTPS/WSS Proxy**: `web/proxy.rs` and `web/proxy_ws.rs` provide a transparent reverse proxy to the SPT server, letting clients connect through Quartermaster. `web/proxy_metrics.rs` tracks request counts and latencies.
 
 ### Key Patterns
 
