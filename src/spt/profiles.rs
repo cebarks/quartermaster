@@ -105,6 +105,7 @@ pub struct ProfileDetail {
     pub quests: Vec<QuestEntry>,
     pub traders: Vec<TraderEntry>,
     pub hideout: Vec<HideoutAreaEntry>,
+    pub stash_value: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -143,6 +144,7 @@ struct PmcData {
     quests: Option<Vec<ProfileQuestEntry>>,
     traders_info: Option<HashMap<String, ProfileTraderInfo>>,
     hideout: Option<HideoutData>,
+    inventory: Option<InventoryData>,
 }
 
 #[derive(Deserialize, Default)]
@@ -212,6 +214,29 @@ struct HideoutAreaJson {
     level: i32,
 }
 
+#[derive(Deserialize, Default, Debug, Clone)]
+struct InventoryData {
+    stash: Option<String>,
+    items: Option<Vec<InventoryItem>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct InventoryItem {
+    #[serde(rename = "_id")]
+    id: String,
+    #[serde(rename = "_tpl")]
+    tpl: String,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
+    upd: Option<ItemUpd>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "PascalCase")]
+struct ItemUpd {
+    stack_objects_count: Option<i64>,
+}
+
 fn extract_stats_from_pmc(pmc: PmcData) -> SptProfileStats {
     let mut stats = SptProfileStats::default();
 
@@ -256,6 +281,44 @@ fn extract_stats_from_pmc(pmc: PmcData) -> SptProfileStats {
     }
 
     stats
+}
+
+fn calculate_stash_value(inventory: &InventoryData, prices: &HashMap<String, i64>) -> i64 {
+    let stash_id = match &inventory.stash {
+        Some(id) => id,
+        None => return 0,
+    };
+    let items = match &inventory.items {
+        Some(items) => items,
+        None => return 0,
+    };
+
+    let mut children: HashMap<&str, Vec<&InventoryItem>> = HashMap::new();
+    for item in items {
+        if let Some(ref pid) = item.parent_id {
+            children.entry(pid.as_str()).or_default().push(item);
+        }
+    }
+
+    let mut total: i64 = 0;
+    let mut stack = vec![stash_id.as_str()];
+    while let Some(parent) = stack.pop() {
+        if let Some(kids) = children.get(parent) {
+            for item in kids {
+                let count = item
+                    .upd
+                    .as_ref()
+                    .and_then(|u| u.stack_objects_count)
+                    .unwrap_or(1);
+                if let Some(&price) = prices.get(&item.tpl) {
+                    total = total.saturating_add(price.saturating_mul(count));
+                }
+                stack.push(&item.id);
+            }
+        }
+    }
+
+    total
 }
 
 pub fn list_profiles(spt_dir: &Path) -> Result<Vec<SptProfile>> {
@@ -339,7 +402,11 @@ pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats
     map
 }
 
-pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<ProfileDetail>> {
+pub fn load_profile_detail(
+    spt_dir: &Path,
+    profile_id: &str,
+    prices: &HashMap<String, i64>,
+) -> Result<Option<ProfileDetail>> {
     let path = spt_dir
         .join("SPT/user/profiles")
         .join(format!("{profile_id}.json"));
@@ -395,6 +462,11 @@ pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<Pr
         })
         .collect();
 
+    let stash_value = pmc
+        .inventory
+        .as_ref()
+        .map(|inv| calculate_stash_value(inv, prices));
+
     // Now consume pmc for stats extraction
     let stats = extract_stats_from_pmc(pmc);
 
@@ -403,6 +475,7 @@ pub fn load_profile_detail(spt_dir: &Path, profile_id: &str) -> Result<Option<Pr
         quests,
         traders,
         hideout,
+        stash_value,
     }))
 }
 
@@ -647,7 +720,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_detailed_profile(tmp.path(), "detail1");
 
-        let detail = load_profile_detail(tmp.path(), "detail1").unwrap().unwrap();
+        let detail = load_profile_detail(tmp.path(), "detail1", &HashMap::new())
+            .unwrap()
+            .unwrap();
         assert_eq!(detail.stats.nickname.as_deref(), Some("TestPlayer"));
         assert_eq!(detail.stats.level, Some(42));
         assert_eq!(detail.stats.scav_kills, Some(247));
@@ -718,7 +793,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = load_profile_detail(tmp.path(), "fresh1").unwrap();
+        let result = load_profile_detail(tmp.path(), "fresh1", &HashMap::new()).unwrap();
         assert!(result.is_none());
     }
 
@@ -727,7 +802,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("SPT/user/profiles")).unwrap();
 
-        let result = load_profile_detail(tmp.path(), "nonexistent");
+        let result = load_profile_detail(tmp.path(), "nonexistent", &HashMap::new());
         assert!(result.is_err());
     }
 
@@ -738,5 +813,169 @@ mod tests {
         let stats = load_all_profile_stats(tmp.path());
         let s = &stats["scav_test"];
         assert_eq!(s.scav_kills, Some(247));
+    }
+
+    #[test]
+    fn calculate_stash_value_basic() {
+        let mut prices = HashMap::new();
+        prices.insert("item_a".to_string(), 1000_i64);
+        prices.insert("item_b".to_string(), 500);
+
+        let inventory = InventoryData {
+            stash: Some("stash_root".to_string()),
+            items: Some(vec![
+                InventoryItem {
+                    id: "stash_root".to_string(),
+                    tpl: "stash_container".to_string(),
+                    parent_id: None,
+                    upd: None,
+                },
+                InventoryItem {
+                    id: "i1".to_string(),
+                    tpl: "item_a".to_string(),
+                    parent_id: Some("stash_root".to_string()),
+                    upd: None,
+                },
+                InventoryItem {
+                    id: "i2".to_string(),
+                    tpl: "item_b".to_string(),
+                    parent_id: Some("stash_root".to_string()),
+                    upd: None,
+                },
+            ]),
+        };
+
+        assert_eq!(calculate_stash_value(&inventory, &prices), 1500);
+    }
+
+    #[test]
+    fn calculate_stash_value_with_stacks() {
+        let mut prices = HashMap::new();
+        prices.insert("ammo".to_string(), 100_i64);
+        prices.insert("money".to_string(), 1);
+
+        let inventory = InventoryData {
+            stash: Some("stash_root".to_string()),
+            items: Some(vec![
+                InventoryItem {
+                    id: "stash_root".to_string(),
+                    tpl: "stash_container".to_string(),
+                    parent_id: None,
+                    upd: None,
+                },
+                InventoryItem {
+                    id: "i1".to_string(),
+                    tpl: "ammo".to_string(),
+                    parent_id: Some("stash_root".to_string()),
+                    upd: Some(ItemUpd {
+                        stack_objects_count: Some(30),
+                    }),
+                },
+                InventoryItem {
+                    id: "i2".to_string(),
+                    tpl: "money".to_string(),
+                    parent_id: Some("stash_root".to_string()),
+                    upd: Some(ItemUpd {
+                        stack_objects_count: Some(500000),
+                    }),
+                },
+            ]),
+        };
+
+        // 30*100 + 500000*1 = 503000
+        assert_eq!(calculate_stash_value(&inventory, &prices), 503000);
+    }
+
+    #[test]
+    fn calculate_stash_value_nested_items() {
+        let mut prices = HashMap::new();
+        prices.insert("backpack".to_string(), 20000_i64);
+        prices.insert("item_inside".to_string(), 5000);
+
+        let inventory = InventoryData {
+            stash: Some("stash_root".to_string()),
+            items: Some(vec![
+                InventoryItem {
+                    id: "stash_root".to_string(),
+                    tpl: "stash_container".to_string(),
+                    parent_id: None,
+                    upd: None,
+                },
+                InventoryItem {
+                    id: "bp1".to_string(),
+                    tpl: "backpack".to_string(),
+                    parent_id: Some("stash_root".to_string()),
+                    upd: None,
+                },
+                InventoryItem {
+                    id: "nested1".to_string(),
+                    tpl: "item_inside".to_string(),
+                    parent_id: Some("bp1".to_string()),
+                    upd: None,
+                },
+            ]),
+        };
+
+        // backpack + item inside it
+        assert_eq!(calculate_stash_value(&inventory, &prices), 25000);
+    }
+
+    #[test]
+    fn calculate_stash_value_unpriced_items_skipped() {
+        let mut prices = HashMap::new();
+        prices.insert("known".to_string(), 1000_i64);
+
+        let inventory = InventoryData {
+            stash: Some("stash_root".to_string()),
+            items: Some(vec![
+                InventoryItem {
+                    id: "stash_root".to_string(),
+                    tpl: "stash_container".to_string(),
+                    parent_id: None,
+                    upd: None,
+                },
+                InventoryItem {
+                    id: "i1".to_string(),
+                    tpl: "known".to_string(),
+                    parent_id: Some("stash_root".to_string()),
+                    upd: None,
+                },
+                InventoryItem {
+                    id: "i2".to_string(),
+                    tpl: "unknown_item".to_string(),
+                    parent_id: Some("stash_root".to_string()),
+                    upd: None,
+                },
+            ]),
+        };
+
+        assert_eq!(calculate_stash_value(&inventory, &prices), 1000);
+    }
+
+    #[test]
+    fn calculate_stash_value_empty_stash() {
+        let prices = HashMap::new();
+
+        let inventory = InventoryData {
+            stash: Some("stash_root".to_string()),
+            items: Some(vec![InventoryItem {
+                id: "stash_root".to_string(),
+                tpl: "stash_container".to_string(),
+                parent_id: None,
+                upd: None,
+            }]),
+        };
+
+        assert_eq!(calculate_stash_value(&inventory, &prices), 0);
+    }
+
+    #[test]
+    fn calculate_stash_value_no_stash_id() {
+        let prices = HashMap::new();
+        let inventory = InventoryData {
+            stash: None,
+            items: Some(vec![]),
+        };
+        assert_eq!(calculate_stash_value(&inventory, &prices), 0);
     }
 }
