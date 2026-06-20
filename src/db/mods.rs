@@ -37,14 +37,12 @@ pub struct ModDependency {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Used in Task 2 — web handler query parsing
 pub enum ModStatusFilter {
     Enabled,
     Disabled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Used in Task 2 — web handler query parsing
 pub enum ModSortColumn {
     Name,
     Version,
@@ -54,13 +52,11 @@ pub enum ModSortColumn {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Used in Task 2 — web handler query parsing
 pub enum SortDirection {
     Asc,
     Desc,
 }
 
-#[allow(dead_code)] // Used in Task 2 — web handler query parsing
 pub struct ModListFilter {
     pub search: Option<String>,
     pub status: Option<ModStatusFilter>,
@@ -161,7 +157,6 @@ impl Database {
         rows.collect()
     }
 
-    #[allow(dead_code)] // Used in Task 2 — web handler will call this
     pub fn list_mods_filtered(
         &self,
         filter: &ModListFilter,
