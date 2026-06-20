@@ -49,6 +49,9 @@ pub enum Command {
         /// Skip Fika installation
         #[arg(long)]
         no_fika: bool,
+        /// Skip ModSync installation
+        #[arg(long)]
+        no_modsync: bool,
     },
 
     /// Install a mod and its dependencies

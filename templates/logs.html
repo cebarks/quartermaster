@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}Logs — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("logs", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("logs", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>Logs</h1>
 
@@ -199,10 +199,54 @@
     let serverFollowing = false;
     let serverEventSource = null;
 
+    const ANSI_COLORS = [
+        'inherit',  '#e06c75', '#98c379', '#e5c07b',
+        '#61afef',  '#c678dd', '#56b6c2', '#abb2bf',
+    ];
+    const ANSI_BRIGHTS = [
+        '#5c6370', '#e06c75', '#98c379', '#e5c07b',
+        '#61afef', '#c678dd', '#56b6c2', '#ffffff',
+    ];
+
+    function ansiToHtml(raw) {
+        // HTML-escape first
+        let s = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        let result = '';
+        let open = 0;
+        const re = /\x1b\[([0-9;]*)m/g;
+        let last = 0;
+        let m;
+        while ((m = re.exec(s)) !== null) {
+            result += s.slice(last, m.index);
+            last = re.lastIndex;
+            const codes = m[1] ? m[1].split(';').map(Number) : [0];
+            for (const c of codes) {
+                if (c === 0) {
+                    while (open > 0) { result += '</span>'; open--; }
+                } else if (c === 1) {
+                    result += '<span style="font-weight:bold">'; open++;
+                } else if (c === 2) {
+                    result += '<span style="opacity:.7">'; open++;
+                } else if (c === 3) {
+                    result += '<span style="font-style:italic">'; open++;
+                } else if (c === 4) {
+                    result += '<span style="text-decoration:underline">'; open++;
+                } else if (c >= 30 && c <= 37) {
+                    result += '<span style="color:' + ANSI_COLORS[c - 30] + '">'; open++;
+                } else if (c >= 90 && c <= 97) {
+                    result += '<span style="color:' + ANSI_BRIGHTS[c - 90] + '">'; open++;
+                }
+            }
+        }
+        result += s.slice(last);
+        while (open > 0) { result += '</span>'; open--; }
+        return result;
+    }
+
     function renderServerLine(line) {
         const div = document.createElement('div');
         div.className = 'log-entry';
-        div.textContent = line;
+        div.innerHTML = ansiToHtml(line);
         return div;
     }
 

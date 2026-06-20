@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}ModSync — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("modsync", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>ModSync Settings</h1>
+
+{% if !modsync_installed %}
+<div class="card" style="border-left: 3px solid var(--warning)">
+    <p><strong>ModSync is not installed.</strong> Install it from Forge to enable mod synchronization.</p>
+</div>
+{% else %}
+
+{% if !modsync_managed %}
+<div class="card" style="border-left: 3px solid var(--warning)">
+    <p><strong>ModSync is installed but not managed by Quartermaster.</strong> Save settings below to enable automatic config generation.</p>
+    <p class="text-muted text-sm mt-1">Note: enabling management will overwrite the existing <code>config.jsonc</code>. The default <code>enforced = true</code> is stricter than ModSync's default — all synced mods will require clients to match the server exactly.</p>
+</div>
+{% endif %}
+
+<form method="post" action="/modsync/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="card">
+        <h2>Global Defaults</h2>
+        <p class="text-muted text-sm mb-1">Applied to all synced mods unless overridden per-mod.</p>
+        <div class="form-group">
+            <label><input type="checkbox" name="enforced" {% if enforced %}checked{% endif %}> <strong>Enforced</strong> — force clients to match server files exactly</label>
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" name="silent" {% if silent %}checked{% endif %}> <strong>Silent</strong> — auto-apply updates without prompting</label>
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" name="restart_required" {% if restart_required %}checked{% endif %}> <strong>Restart Required</strong> — require game restart after sync</label>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Extra Sync Paths</h2>
+        <p class="text-muted text-sm mb-1">Additional paths to sync beyond auto-detected mod files. One per line.</p>
+        <textarea name="extra_sync_paths" rows="4" class="form-control" placeholder="BepInEx/config">{{ extra_sync_paths }}</textarea>
+    </div>
+
+    <div class="card">
+        <h2>Exclusions</h2>
+        <p class="text-muted text-sm mb-1">Glob patterns for files to exclude from sync. One per line.</p>
+        <textarea name="exclusions" rows="4" class="form-control" placeholder="**/*.nosync">{{ exclusions }}</textarea>
+    </div>
+
+    <button type="submit" class="btn">Save Settings</button>
+</form>
+
+{% if modsync_managed %}
+<div class="card mt-2">
+    <h2>Per-Mod Sync Status</h2>
+    <p class="text-muted text-sm mb-1">Mods with client-side files that will be synced to players.</p>
+    {% if !has_client_mods %}
+    <p class="text-muted">No client-side mods installed.</p>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Mod</th>
+                <th>Enforced</th>
+                <th>Silent</th>
+                <th>Restart Req.</th>
+                <th>Enabled</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in mods %}
+            {% if entry.has_client_files %}
+            <tr>
+                <td><a href="/mods/{{ entry.mod_info.id }}">{{ entry.mod_info.name }}</a></td>
+                <td>{% match entry.override_enforced %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>
+                <td>{% match entry.override_silent %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>
+                <td>{% match entry.override_restart_required %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>
+                <td>{% match entry.override_enabled %}{% when Some with (false) %}<span style="color: var(--danger)">disabled</span>{% when _ %}yes{% endmatch %}</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

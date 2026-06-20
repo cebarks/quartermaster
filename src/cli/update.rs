@@ -188,6 +188,7 @@ pub async fn apply_update_by_version(
     crate::ops::update_mod_from_archive(
         &ctx.db,
         &ctx.spt_dir,
+        &ctx.config,
         installed.id,
         target_version_id,
         &version_info.version,
