@@ -4,8 +4,8 @@ use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::config::{
-    Config, ConsoleLogConfig, FileLogConfig, LogFormat, LoggingConfig, RestartPolicy,
-    RotationPolicy, WebLogConfig,
+    ClientsConfig, Config, ConsoleLogConfig, FileLogConfig, LogFormat, LoggingConfig,
+    RestartPolicy, RotationPolicy, WebLogConfig,
 };
 use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
@@ -164,8 +164,15 @@ pub struct LoggingSettingsForm {
 
 #[derive(serde::Deserialize)]
 pub struct ClientsSettingsForm {
-    #[allow(dead_code)]
     csrf_token: String,
+    count: u32,
+    install_dir: String,
+    restart_policy: String,
+    max_restart_attempts: u32,
+    restart_backoff_cap: u64,
+    base_udp_port: u16,
+    image: String,
+    isolated_paths: String,
 }
 
 // Stub save handlers (will be implemented by later tasks)
@@ -390,11 +397,76 @@ pub async fn save_logging_settings(
 }
 
 pub async fn save_clients_settings(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
-    _form: Form<ClientsSettingsForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<ClientsSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_users)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    if form.count > 0 && form.install_dir.trim().is_empty() {
+        set_flash(
+            &session,
+            "Install directory is required when client count > 0",
+            "error",
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/settings?tab=clients"))
+            .finish());
+    }
+
+    let max_port = form.base_udp_port as u32 + form.count.saturating_sub(1);
+    if form.count > 0 && max_port > 65535 {
+        set_flash(
+            &session,
+            &format!(
+                "Base UDP port ({}) + count ({}) exceeds port range (max would be {})",
+                form.base_udp_port, form.count, max_port
+            ),
+            "error",
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/settings?tab=clients"))
+            .finish());
+    }
+
+    let restart_policy = match form.restart_policy.as_str() {
+        "manual" => RestartPolicy::Manual,
+        _ => RestartPolicy::Auto,
+    };
+
+    let isolated: Vec<String> = form
+        .isolated_paths
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let clients = ClientsConfig {
+        count: form.count,
+        install_dir: std::path::PathBuf::from(form.install_dir.trim()),
+        restart_policy,
+        max_restart_attempts: form.max_restart_attempts,
+        restart_backoff_cap: form.restart_backoff_cap,
+        base_udp_port: form.base_udp_port,
+        image: form.image.trim().to_string(),
+        isolated_paths: isolated,
+    };
+
+    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    config.clients = if form.count == 0 && form.install_dir.trim().is_empty() {
+        None
+    } else {
+        Some(clients)
+    };
+
+    config.save(&state.config_path).map_err(WebError::from)?;
+
+    set_flash(&session, "Clients settings saved", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=clients"))
         .finish())
