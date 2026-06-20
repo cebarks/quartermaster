@@ -10,23 +10,23 @@
     <div class="flex gap-1">
         <form method="post" action="/server/start" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
+            <button type="submit" class="btn btn-sm btn-success" {% if transitioning %}disabled{% endif %}>{% call icons::play() %}{% endcall %} Start</button>
         </form>
         <form method="post" action="/server/restart" style="display:inline"
               onsubmit="return confirm('Restart the server?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Restart</button>
+            <button type="submit" class="btn btn-sm btn-warning" {% if transitioning %}disabled{% endif %}>{% call icons::refresh() %}{% endcall %} Restart</button>
         </form>
         <form method="post" action="/server/stop" style="display:inline"
               onsubmit="return confirm('Stop the server?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn btn-sm btn-danger">{% call icons::stop() %}{% endcall %} Stop</button>
+            <button type="submit" class="btn btn-sm btn-danger" {% if transitioning %}disabled{% endif %}>{% call icons::stop() %}{% endcall %} Stop</button>
         </form>
     </div>
     {% endif %}
 </div>
 
-<div hx-get="/api/status/server" hx-trigger="load, every 30s" hx-swap="innerHTML">
+<div hx-get="/api/status/server" hx-trigger="load, every 30s, sse:serverStateChanged" hx-swap="innerHTML">
     <div class="hero-card"><div class="hero-status"><span class="text-muted loading-pulse">Loading server status...</span></div></div>
 </div>
 

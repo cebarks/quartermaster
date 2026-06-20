@@ -28,7 +28,7 @@
     </a>
     <a href="/status" class="stat-card" style="border-left-color: var(--border)">
         <div class="stat-label">Server</div>
-        <div hx-get="/api/dashboard/server-status" hx-trigger="load" hx-swap="innerHTML">
+        <div hx-get="/api/dashboard/server-status" hx-trigger="load, sse:serverStateChanged" hx-swap="innerHTML">
             <span class="text-muted text-sm loading-pulse">Checking...</span>
         </div>
     </a>
