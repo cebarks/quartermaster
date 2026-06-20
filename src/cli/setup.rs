@@ -177,9 +177,7 @@ async fn configure_container(
         if !name.is_empty() {
             config.server_container = Some(name.to_string());
         } else {
-            println!(
-                "Skipping container setup. Set it later with: quma config set server_container <name>"
-            );
+            println!("Skipping container setup. Set server_container in quartermaster.toml");
         }
     }
 

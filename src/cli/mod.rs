@@ -6,7 +6,6 @@ pub mod apply;
 pub mod check;
 pub mod client;
 pub mod common;
-pub mod config_cmd;
 pub mod generate;
 pub mod init;
 pub mod install;
@@ -156,12 +155,6 @@ pub enum Command {
         #[arg(long)]
         expires: Option<String>,
     },
-
-    /// View and modify configuration
-    Config {
-        #[command(subcommand)]
-        action: Option<ConfigAction>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -213,12 +206,4 @@ pub enum GenerateTarget {
         #[arg(long)]
         install: bool,
     },
-}
-
-#[derive(Subcommand)]
-pub enum ConfigAction {
-    /// Set a config value
-    Set { key: String, value: String },
-    /// Get a config value
-    Get { key: String },
 }

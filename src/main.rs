@@ -161,16 +161,6 @@ async fn main() -> Result<()> {
                     reconfigure_logging(&reload_handles, &ctx.config, &cli, Some(&ctx.spt_dir));
                     cli::invite::run(expires.as_deref(), &ctx)
                 }
-                Command::Config { action } => {
-                    // Apply CLI verbosity to default config for early commands
-                    let filter = logging::resolve_log_filter(
-                        &config::LoggingConfig::default(),
-                        cli.verbose,
-                        cli.log_level.as_deref(),
-                    );
-                    reload_handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
-                    cli::config_cmd::run(action, &cli)
-                }
                 Command::Serve { .. } => unreachable!(),
             }
         }

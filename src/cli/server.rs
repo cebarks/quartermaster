@@ -171,7 +171,7 @@ fn require_container(ctx: &CliContext) -> Result<(&ContainerManager, &str)> {
         (None, _) => bail!(
             "no server_container configured.\n\
              Run `quma server create` to create one, or\n\
-             set it with: quma config set server_container <name>"
+             set server_container in quartermaster.toml"
         ),
         (Some(_), None) => bail!(
             "failed to connect to Podman socket.\n\
