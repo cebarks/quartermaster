@@ -249,8 +249,33 @@ pub fn is_fika_installed(spt_dir: &Path) -> bool {
     spt_dir.join("SPT/user/mods/fika-server").is_dir()
 }
 
+#[allow(dead_code)] // Used in modsync.rs and setup.rs (tasks 2-3)
+pub const NARCONET_FORGE_MOD_ID: i64 = 2441;
+
+pub fn find_narconet_dir(spt_dir: &Path) -> Option<PathBuf> {
+    let mods_dir = spt_dir.join("SPT/user/mods");
+    let entries = std::fs::read_dir(&mods_dir).ok()?;
+    let mut matches: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().ok().is_some_and(|ft| ft.is_dir()))
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.to_lowercase().contains("narconet"))
+        })
+        .map(|e| e.path())
+        .collect();
+    matches.sort_by(|a, b| {
+        a.file_name()
+            .unwrap()
+            .to_ascii_lowercase()
+            .cmp(&b.file_name().unwrap().to_ascii_lowercase())
+    });
+    matches.into_iter().next()
+}
+
 pub fn is_modsync_installed(spt_dir: &Path) -> bool {
-    spt_dir.join("SPT/user/mods/Corter-ModSync").is_dir()
+    find_narconet_dir(spt_dir).is_some()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1085,6 +1110,49 @@ install_dir = "/opt/fika"
     fn modsync_config_defaults() {
         let config: Config = toml::from_str("").expect("empty config");
         assert!(config.modsync.is_none());
+    }
+
+    #[test]
+    fn narconet_detection_not_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/some-other-mod")).unwrap();
+        assert!(!is_modsync_installed(tmp.path()));
+        assert!(find_narconet_dir(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn narconet_detection_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/narconet-server")).unwrap();
+        assert!(is_modsync_installed(tmp.path()));
+        assert_eq!(
+            find_narconet_dir(tmp.path()).unwrap(),
+            tmp.path().join("SPT/user/mods/narconet-server")
+        );
+    }
+
+    #[test]
+    fn narconet_detection_case_insensitive() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/MadManBeavis-NarcoNet")).unwrap();
+        assert!(is_modsync_installed(tmp.path()));
+        assert!(find_narconet_dir(tmp.path()).is_some());
+    }
+
+    #[test]
+    fn narconet_detection_multiple_picks_first_alphabetically() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/narconet-server")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/NarcoNet-Debug")).unwrap();
+        let found = find_narconet_dir(tmp.path()).unwrap();
+        // "NarcoNet-Debug" sorts before "narconet-server" case-insensitively
+        assert!(found
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_lowercase()
+            .starts_with("narconet"),);
     }
 
     #[test]
