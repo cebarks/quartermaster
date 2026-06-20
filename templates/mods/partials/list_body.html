@@ -1,4 +1,45 @@
 {% import "partials/icons.html" as icons %}
+<thead>
+    <tr>
+        <th>
+            <a href="#" class="sortable{% if sort_column == "name" %} active{% endif %}"
+               hx-get="/quma/api/mods/list?sort=name&amp;dir={% if sort_column == "name" %}{% if sort_dir == "asc" %}desc{% else %}asc{% endif %}{% else %}asc{% endif %}"
+               hx-target="#mod-list-table"
+               hx-swap="innerHTML"
+               hx-include="[name='q'],[name='status']">Name{% if sort_column == "name" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a>
+        </th>
+        <th>
+            <a href="#" class="sortable{% if sort_column == "version" %} active{% endif %}"
+               hx-get="/quma/api/mods/list?sort=version&amp;dir={% if sort_column == "version" %}{% if sort_dir == "asc" %}desc{% else %}asc{% endif %}{% else %}asc{% endif %}"
+               hx-target="#mod-list-table"
+               hx-swap="innerHTML"
+               hx-include="[name='q'],[name='status']">Version{% if sort_column == "version" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a>
+        </th>
+        <th>
+            <a href="#" class="sortable{% if sort_column == "files" %} active{% endif %}"
+               hx-get="/quma/api/mods/list?sort=files&amp;dir={% if sort_column == "files" %}{% if sort_dir == "asc" %}desc{% else %}asc{% endif %}{% else %}asc{% endif %}"
+               hx-target="#mod-list-table"
+               hx-swap="innerHTML"
+               hx-include="[name='q'],[name='status']">Files{% if sort_column == "files" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a>
+        </th>
+        <th>
+            <a href="#" class="sortable{% if sort_column == "size" %} active{% endif %}"
+               hx-get="/quma/api/mods/list?sort=size&amp;dir={% if sort_column == "size" %}{% if sort_dir == "asc" %}desc{% else %}asc{% endif %}{% else %}asc{% endif %}"
+               hx-target="#mod-list-table"
+               hx-swap="innerHTML"
+               hx-include="[name='q'],[name='status']">Size{% if sort_column == "size" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a>
+        </th>
+        <th>
+            <a href="#" class="sortable{% if sort_column == "installed" %} active{% endif %}"
+               hx-get="/quma/api/mods/list?sort=installed&amp;dir={% if sort_column == "installed" %}{% if sort_dir == "asc" %}desc{% else %}asc{% endif %}{% else %}asc{% endif %}"
+               hx-target="#mod-list-table"
+               hx-swap="innerHTML"
+               hx-include="[name='q'],[name='status']">Installed{% if sort_column == "installed" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a>
+        </th>
+        {% if user.role.can_manage_mods() %}<th>Actions</th>{% endif %}
+    </tr>
+</thead>
+<tbody>
 {% for m in &mods %}
 <tr>
     <td><a href="/quma/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a></td>
@@ -24,8 +65,20 @@
     {% endif %}
 </tr>
 {% endfor %}
+{% if mods.is_empty() %}
+<tr>
+    <td colspan="{% if user.role.can_manage_mods() %}6{% else %}5{% endif %}" class="text-muted" style="text-align:center;padding:2rem">
+        No mods match your filter.
+    </td>
+</tr>
+{% endif %}
 <tr class="tfoot-row">
     <td colspan="{% if user.role.can_manage_mods() %}6{% else %}5{% endif %}" class="text-muted text-sm">
         Total: {{ mods.len() }} mods — {{ grand_total_size|format_size_i64 }}
     </td>
 </tr>
+</tbody>
+<template>
+<input type="hidden" name="sort" value="{{ sort_column }}" id="sort-input" hx-swap-oob="true">
+<input type="hidden" name="dir" value="{{ sort_dir }}" id="dir-input" hx-swap-oob="true">
+</template>

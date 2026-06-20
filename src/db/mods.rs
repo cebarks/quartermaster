@@ -36,6 +36,34 @@ pub struct ModDependency {
     pub version_constraint: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModStatusFilter {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModSortColumn {
+    Name,
+    Version,
+    Files,
+    Size,
+    Installed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+pub struct ModListFilter {
+    pub search: Option<String>,
+    pub status: Option<ModStatusFilter>,
+    pub sort_column: ModSortColumn,
+    pub sort_dir: SortDirection,
+}
+
 impl Database {
     // ── Mod CRUD ──────────────────────────────────────────────────────
 
@@ -121,6 +149,71 @@ impl Database {
              ORDER BY m.name",
         )?;
         let rows = stmt.query_map([], |row| {
+            let m = row_to_installed_mod(row)?;
+            let count: i64 = row.get(9)?;
+            let size: i64 = row.get(10)?;
+            Ok((m, count as usize, size))
+        })?;
+        rows.collect()
+    }
+
+    pub fn list_mods_filtered(
+        &self,
+        filter: &ModListFilter,
+    ) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
+        let mut sql = String::from(
+            "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
+                    m.installed_at, m.updated_at, m.disabled, COUNT(f.id) as file_count,
+                    COALESCE(SUM(f.file_size), 0) as total_size
+             FROM installed_mods m
+             LEFT JOIN installed_files f ON f.mod_id = m.id",
+        );
+
+        let mut conditions: Vec<String> = Vec::new();
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(ref search) = filter.search {
+            conditions.push(format!(
+                "LOWER(m.name) LIKE LOWER('%' || ?{} || '%')",
+                param_values.len() + 1
+            ));
+            param_values.push(Box::new(search.clone()));
+        }
+
+        if let Some(status) = filter.status {
+            let disabled_val: i64 = match status {
+                ModStatusFilter::Enabled => 0,
+                ModStatusFilter::Disabled => 1,
+            };
+            conditions.push(format!("m.disabled = ?{}", param_values.len() + 1));
+            param_values.push(Box::new(disabled_val));
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        sql.push_str(" GROUP BY m.id ORDER BY ");
+
+        let order_expr = match filter.sort_column {
+            ModSortColumn::Name => "LOWER(m.name)",
+            ModSortColumn::Version => "m.version",
+            ModSortColumn::Files => "file_count",
+            ModSortColumn::Size => "total_size",
+            ModSortColumn::Installed => "m.installed_at",
+        };
+        sql.push_str(order_expr);
+
+        match filter.sort_dir {
+            SortDirection::Asc => sql.push_str(" ASC"),
+            SortDirection::Desc => sql.push_str(" DESC"),
+        }
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_ref.as_slice(), |row| {
             let m = row_to_installed_mod(row)?;
             let count: i64 = row.get(9)?;
             let size: i64 = row.get(10)?;
@@ -367,5 +460,99 @@ mod tests {
             files[0].file_path,
             "SPT/user/mods/TestMod.disabled/src/mod.ts"
         );
+    }
+
+    #[test]
+    fn list_mods_filtered_default_returns_all_sorted_by_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(1, 1, "Zulu", None, "1.0.0").unwrap();
+        db.insert_mod(2, 2, "Alpha", None, "2.0.0").unwrap();
+        db.insert_mod(3, 3, "Mike", None, "3.0.0").unwrap();
+
+        let filter = super::ModListFilter {
+            search: None,
+            status: None,
+            sort_column: super::ModSortColumn::Name,
+            sort_dir: super::SortDirection::Asc,
+        };
+        let results = db.list_mods_filtered(&filter).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].0.name, "Alpha");
+        assert_eq!(results[1].0.name, "Mike");
+        assert_eq!(results[2].0.name, "Zulu");
+    }
+
+    #[test]
+    fn list_mods_filtered_search_filters_by_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(1, 1, "SAIN", None, "1.0.0").unwrap();
+        db.insert_mod(2, 2, "Big Brain", None, "1.0.0").unwrap();
+        db.insert_mod(3, 3, "Looting Bots", None, "1.0.0").unwrap();
+
+        let filter = super::ModListFilter {
+            search: Some("brain".to_string()),
+            status: None,
+            sort_column: super::ModSortColumn::Name,
+            sort_dir: super::SortDirection::Asc,
+        };
+        let results = db.list_mods_filtered(&filter).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.name, "Big Brain");
+    }
+
+    #[test]
+    fn list_mods_filtered_status_enabled_excludes_disabled() {
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.insert_mod(1, 1, "EnabledMod", None, "1.0.0").unwrap();
+        let id2 = db.insert_mod(2, 2, "DisabledMod", None, "1.0.0").unwrap();
+        db.set_mod_disabled(id2, true).unwrap();
+        let _ = id1; // used only for insert
+
+        let filter = super::ModListFilter {
+            search: None,
+            status: Some(super::ModStatusFilter::Enabled),
+            sort_column: super::ModSortColumn::Name,
+            sort_dir: super::SortDirection::Asc,
+        };
+        let results = db.list_mods_filtered(&filter).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.name, "EnabledMod");
+    }
+
+    #[test]
+    fn list_mods_filtered_sort_by_size_desc() {
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.insert_mod(1, 1, "Small", None, "1.0.0").unwrap();
+        let id2 = db.insert_mod(2, 2, "Large", None, "1.0.0").unwrap();
+        db.insert_file(id1, "a.dll", None, Some(100)).unwrap();
+        db.insert_file(id2, "b.dll", None, Some(9999)).unwrap();
+
+        let filter = super::ModListFilter {
+            search: None,
+            status: None,
+            sort_column: super::ModSortColumn::Size,
+            sort_dir: super::SortDirection::Desc,
+        };
+        let results = db.list_mods_filtered(&filter).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0.name, "Large");
+        assert_eq!(results[1].0.name, "Small");
+    }
+
+    #[test]
+    fn list_mods_filtered_sort_name_is_case_insensitive() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(1, 1, "alpha", None, "1.0.0").unwrap();
+        db.insert_mod(2, 2, "Beta", None, "1.0.0").unwrap();
+
+        let filter = super::ModListFilter {
+            search: None,
+            status: None,
+            sort_column: super::ModSortColumn::Name,
+            sort_dir: super::SortDirection::Asc,
+        };
+        let results = db.list_mods_filtered(&filter).unwrap();
+        assert_eq!(results[0].0.name, "alpha");
+        assert_eq!(results[1].0.name, "Beta");
     }
 }
