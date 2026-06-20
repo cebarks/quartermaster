@@ -27,7 +27,7 @@ struct ModSyncOutputConfig {
 }
 
 pub fn modsync_config_path(spt_dir: &Path) -> PathBuf {
-    spt_dir.join("user/mods/Corter-ModSync/config.jsonc")
+    spt_dir.join("SPT/user/mods/Corter-ModSync/config.jsonc")
 }
 
 /// Generate ModSync config from DB state + quartermaster config.
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn regenerate_if_enabled_writes_when_configured_and_installed() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("user/mods/Corter-ModSync")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/Corter-ModSync")).unwrap();
 
         let db = Database::open_in_memory().unwrap();
         setup_db_with_client_mod(&db);
@@ -464,7 +464,7 @@ mod tests {
     fn full_lifecycle_install_update_remove() {
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path();
-        std::fs::create_dir_all(spt_dir.join("user/mods/Corter-ModSync")).unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/Corter-ModSync")).unwrap();
 
         let db = Database::open_in_memory().unwrap();
         let mut config = Config::default();
@@ -516,7 +516,7 @@ mod tests {
     fn full_lifecycle_mixed_mods() {
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path();
-        std::fs::create_dir_all(spt_dir.join("user/mods/Corter-ModSync")).unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/Corter-ModSync")).unwrap();
 
         let db = Database::open_in_memory().unwrap();
         let mut config = Config::default();

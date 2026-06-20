@@ -239,7 +239,7 @@ pub fn is_fika_installed(spt_dir: &Path) -> bool {
 
 #[allow(dead_code)]
 pub fn is_modsync_installed(spt_dir: &Path) -> bool {
-    spt_dir.join("user/mods/Corter-ModSync").is_dir()
+    spt_dir.join("SPT/user/mods/Corter-ModSync").is_dir()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1111,7 +1111,7 @@ enabled = false
     fn modsync_detection() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(!is_modsync_installed(tmp.path()));
-        std::fs::create_dir_all(tmp.path().join("user/mods/Corter-ModSync")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/Corter-ModSync")).unwrap();
         assert!(is_modsync_installed(tmp.path()));
     }
 

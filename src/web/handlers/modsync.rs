@@ -52,9 +52,15 @@ pub async fn modsync_page(
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let ms_config = state.config.modsync.clone();
+    // Re-read config from disk to pick up changes saved by save_settings
+    // (state.config is immutable behind Arc, so it goes stale after saves)
+    let live_config = crate::config::Config::load_with_env(&state.config_path)
+        .ok()
+        .and_then(|c| c.modsync);
+    let ms_config = live_config.or_else(|| state.config.modsync.clone());
 
     let db = state.db.clone();
+    let ms_config_for_block = ms_config.clone();
     let mods = web::block(move || {
         let db = db.lock();
         let all_mods = db.list_mods()?;
@@ -63,7 +69,7 @@ pub async fn modsync_page(
             let files = db.get_files_for_mod(m.id)?;
             let has_client = files.iter().any(|f| f.file_path.starts_with("BepInEx/"));
             let forge_id_str = m.forge_mod_id.to_string();
-            let overrides = ms_config
+            let overrides = ms_config_for_block
                 .as_ref()
                 .and_then(|c| c.overrides.get(&forge_id_str));
             entries.push(ModSyncModEntry {
@@ -82,7 +88,7 @@ pub async fn modsync_page(
     .map_err(WebError::from)?;
 
     let (enforced, silent, restart_required, extra_sync_paths, exclusions) =
-        if let Some(ref ms) = state.config.modsync {
+        if let Some(ref ms) = ms_config {
             (
                 ms.enforced,
                 ms.silent,
@@ -100,7 +106,7 @@ pub async fn modsync_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
-        modsync_managed: state.is_modsync_installed() && state.config.modsync.is_some(),
+        modsync_managed: state.is_modsync_installed() && ms_config.is_some(),
         enforced,
         silent,
         restart_required,
