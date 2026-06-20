@@ -5,6 +5,7 @@ pub mod dashboard;
 pub mod logs;
 pub mod mods;
 pub mod queue;
+pub mod requests;
 pub mod server;
 pub mod status;
 pub mod tasks;

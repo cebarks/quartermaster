@@ -114,7 +114,6 @@ pub async fn list_mods(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
@@ -200,8 +199,8 @@ pub async fn check_updates_partial(
     state: Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<Html> {
-    let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    let _user = require_auth(&req)?;
+    // No capability check — dashboard shows update badges to all users.
     let db = state.db.clone();
     let installed = web::block(move || {
         let db = db.lock();
@@ -276,8 +275,9 @@ pub async fn update_status_partial(
     req: HttpRequest,
     session: Session,
 ) -> actix_web::Result<Html> {
-    let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    let _user = require_auth(&req)?;
+    // No capability check — the OOB swap targets only exist in admin columns,
+    // so the response is silently ignored for Players.
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let db = state.db.clone();
@@ -1033,7 +1033,8 @@ pub async fn list_body_partial(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    // No capability check — Players can view the mod list; the template
+    // already gates admin-only columns with {% if user.role.can_manage_mods() %}.
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
 

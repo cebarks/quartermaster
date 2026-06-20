@@ -5,18 +5,34 @@
 {% block nav %}{% call nav::nav("mods", user, csrf_token, fika_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <div hx-get="/api/tasks/status" hx-trigger="load" hx-swap="outerHTML" id="task-status"></div>
-<div class="flex-between">
-    <h1>Installed Mods</h1>
-    {% if user.role.can_manage_mods() %}
-    <div class="flex gap-1">
-        <form method="post" action="/mods/update-all" style="display:inline"
-              onsubmit="return confirm('Update all mods?')">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update All</button>
-        </form>
-    </div>
-    {% endif %}
+
+{% if let Some(flash) = flash %}
+<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="tab-bar">
+    <button class="tab active" id="tab-installed"
+            onclick="window.location.href='/mods'; return false;">Installed</button>
+    <button class="tab" id="tab-requests"
+            hx-get="/api/mods/requests"
+            hx-target="#mods-tab-content"
+            hx-swap="innerHTML"
+            onclick="setModTab(this, 'requests')">Requests</button>
 </div>
+
+<div id="mods-tab-content">
+    <div class="flex-between">
+        <h2>Installed Mods</h2>
+        {% if user.role.can_manage_mods() %}
+        <div class="flex gap-1">
+            <form method="post" action="/mods/update-all" style="display:inline"
+                  onsubmit="return confirm('Update all mods?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update All</button>
+            </form>
+        </div>
+        {% endif %}
+    </div>
 
 <div class="card" style="padding: 0.75rem 1.25rem">
     <div class="flex-between">
@@ -99,4 +115,19 @@
     </form>
 </div>
 {% endif %}
+</div>
+
+<script>
+function setModTab(el, tab) {
+    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    location.hash = tab;
+}
+document.addEventListener('DOMContentLoaded', function() {
+    if (location.hash === '#requests') {
+        var btn = document.getElementById('tab-requests');
+        if (btn) { btn.click(); }
+    }
+});
+</script>
 {% endblock %}

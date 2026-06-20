@@ -29,6 +29,10 @@ fn default_update_check_interval() -> u64 {
     300
 }
 
+fn default_forge_cache_ttl() -> Option<u64> {
+    Some(86400)
+}
+
 fn default_auto_start_server() -> bool {
     true
 }
@@ -307,6 +311,9 @@ pub struct Config {
     #[serde(default = "default_update_check_interval")]
     pub update_check_interval: u64,
 
+    #[serde(default = "default_forge_cache_ttl")]
+    pub forge_cache_ttl: Option<u64>,
+
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clients: Option<ClientsConfig>,
@@ -331,6 +338,7 @@ impl Default for Config {
             web_bind: "0.0.0.0".to_string(),
             web_port: 9190,
             update_check_interval: 300,
+            forge_cache_ttl: Some(86400),
             clients: None,
             logging: LoggingConfig::default(),
         }
@@ -445,6 +453,12 @@ impl Config {
         if let Ok(val) = std::env::var("QUMA_UPDATE_CHECK_INTERVAL") {
             if let Ok(secs) = val.parse::<u64>() {
                 self.update_check_interval = secs;
+            }
+        }
+        if let Ok(val) = std::env::var("QUMA_FORGE_CACHE_TTL") {
+            if let Ok(secs) = val.parse::<u64>() {
+                tracing::debug!(var = "QUMA_FORGE_CACHE_TTL", value = %val, "env var override applied");
+                self.forge_cache_ttl = Some(secs);
             }
         }
         if let Ok(val) = std::env::var("QUMA_AUTO_START_SERVER") {

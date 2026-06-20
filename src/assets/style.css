@@ -287,3 +287,24 @@ main > h1 { border-bottom: 1px solid var(--border); }
 .highlight-flash { animation: highlight 2s ease-out; }
 
 .badge-info { background: var(--info, #17a2b8); color: #fff; }
+
+/* Mod requests */
+.request-card { position: relative; }
+.request-card .vote-buttons .btn-sm { min-width: 2rem; justify-content: center; }
+.vote-score { font-size: 1.1rem; }
+
+.search-card { transition: border-color 0.15s; }
+.search-card:hover { border-color: var(--accent); }
+.search-card.selected { border-color: var(--accent); }
+
+.status-filter { display: flex; gap: 0.25rem; }
+.status-filter .btn.active { border-color: var(--accent); color: var(--text); }
+
+.resolve-form input[type="text"] {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+}

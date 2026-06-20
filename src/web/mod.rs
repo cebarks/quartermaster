@@ -88,6 +88,12 @@ pub async fn start_server(
         .finish()
         .expect("invalid governor config");
 
+    let search_governor_conf = GovernorConfigBuilder::default()
+        .seconds_per_request(6) // 10 per minute = 1 per 6 seconds replenish
+        .burst_size(10)
+        .finish()
+        .expect("invalid search governor config");
+
     HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
@@ -192,6 +198,32 @@ pub async fn start_server(
                     .route(
                         "/logs/server/stream",
                         web::get().to(handlers::logs::server_logs_stream),
+                    )
+                    // Mod request routes
+                    .service(
+                        web::resource("/requests/search")
+                            .wrap(Governor::new(&search_governor_conf))
+                            .route(web::get().to(handlers::requests::search_mods)),
+                    )
+                    .route(
+                        "/mods/requests",
+                        web::get().to(handlers::requests::requests_tab),
+                    )
+                    .route(
+                        "/requests",
+                        web::post().to(handlers::requests::create_request),
+                    )
+                    .route(
+                        "/requests/{id}/vote",
+                        web::post().to(handlers::requests::vote),
+                    )
+                    .route(
+                        "/requests/{id}/votes",
+                        web::get().to(handlers::requests::vote_comments),
+                    )
+                    .route(
+                        "/requests/{id}/resolve",
+                        web::post().to(handlers::requests::resolve_request),
                     )
                     // Admin API (requires can_manage_users via scoped middleware)
                     .service(

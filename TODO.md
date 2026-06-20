@@ -27,7 +27,6 @@
 
 # Future Features
 
-- **Player mod request/voting**: Players can suggest mods via the web UI, admin approves/rejects
 - **Mod search**: `quma search` CLI command and web UI search page with HTMX live search
 - **Operation history**: `operation_history` table, `quma log` command, and web UI changelog page tracking all mod operations with timestamps, who performed them, and whether `--force` was used
 - **Trust mode auth**: No-password auth mode where players just pick their SPT profile — matches SPT's own security model
