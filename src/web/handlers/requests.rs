@@ -111,7 +111,7 @@ pub fn parse_forge_url(input: &str) -> Option<i64> {
     None
 }
 
-fn fika_compat_to_string(fc: &Option<FikaCompat>) -> String {
+pub(crate) fn fika_compat_to_string(fc: &Option<FikaCompat>) -> String {
     match fc {
         Some(FikaCompat::Compatible) => "compatible".to_string(),
         Some(FikaCompat::Incompatible) => "incompatible".to_string(),
