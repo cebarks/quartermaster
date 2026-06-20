@@ -1,5 +1,6 @@
 use crate::config::{ClientsConfig, Config};
 use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
+use crate::spt::headless::EHeadlessStatus;
 use crate::spt::profiles;
 use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
@@ -487,15 +488,56 @@ async fn scale_down(
     _clients_config: &ClientsConfig,
     config: &Config,
     spt_dir: &Path,
-    _spt_client: &SptClient,
+    spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
-    _force: bool,
+    force: bool,
 ) -> Result<()> {
     info!("Scaling down from {current_count} to {desired_count}");
 
-    // TODO: Check for in-raid clients and abort if force=false
-    // This requires the SptClient::headless_clients() call to check status
+    // Check for in-raid clients and abort if force=false
+    if !force {
+        // Collect PROFILE_IDs from containers being removed
+        let mut profile_ids_being_removed: Vec<(u32, String)> = Vec::new();
+        for i in (desired_count + 1)..=current_count {
+            let name = client_container_name(i);
+            if let Ok(info) = container_mgr.inspect(&name).await {
+                if let Some(pid) = info.config.and_then(|c| c.env).and_then(|env| {
+                    env.iter()
+                        .find(|e| e.starts_with("PROFILE_ID="))
+                        .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                        .map(String::from)
+                }) {
+                    profile_ids_being_removed.push((i, pid));
+                }
+            }
+        }
+
+        if !profile_ids_being_removed.is_empty() {
+            if let Ok(resp) = spt_client.headless_clients().await {
+                let mut in_raid_clients: Vec<String> = Vec::new();
+                for (index, profile_id) in &profile_ids_being_removed {
+                    if let Some(info) = resp.headlesses.get(profile_id) {
+                        if info.state == EHeadlessStatus::InRaid && !info.players.is_empty() {
+                            in_raid_clients.push(format!(
+                                "Client {} (session {}, {} player(s))",
+                                index,
+                                profile_id,
+                                info.players.len()
+                            ));
+                        }
+                    }
+                }
+
+                if !in_raid_clients.is_empty() {
+                    bail!(
+                        "Cannot scale down: client(s) in raid: {}. Use --force to override.",
+                        in_raid_clients.join(", ")
+                    );
+                }
+            }
+        }
+    }
 
     // 1. Remove containers for clients above desired_count
     for i in (desired_count + 1)..=current_count {
