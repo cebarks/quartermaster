@@ -237,7 +237,6 @@ pub fn is_fika_installed(spt_dir: &Path) -> bool {
     spt_dir.join("SPT/user/mods/fika-server").is_dir()
 }
 
-#[allow(dead_code)]
 pub fn is_modsync_installed(spt_dir: &Path) -> bool {
     spt_dir.join("SPT/user/mods/Corter-ModSync").is_dir()
 }

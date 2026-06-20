@@ -16,6 +16,17 @@ mod filters {
     pub use crate::web::template_filters::*;
 }
 
+// -- Constants --
+
+const INFRASTRUCTURE_FORGE_IDS: &[i64] = &[
+    2326, // Project Fika (client)
+    2357, // Project Fika - Server
+];
+
+fn is_infrastructure_mod(forge_mod_id: i64) -> bool {
+    INFRASTRUCTURE_FORGE_IDS.contains(&forge_mod_id)
+}
+
 // -- View models --
 
 struct ModListEntry {
@@ -35,6 +46,8 @@ struct DepEntry {
 #[template(path = "mods/list.html")]
 struct ModListTemplate {
     user: SessionUser,
+    infrastructure: Vec<ModListEntry>,
+    modsync_installed: bool,
     mods: Vec<ModListEntry>,
     grand_total_size: i64,
     spt_version: String,
@@ -43,8 +56,6 @@ struct ModListTemplate {
     csrf_token: String,
     #[allow(dead_code)]
     fika_installed: bool,
-    #[allow(dead_code)]
-    modsync_installed: bool,
 }
 
 #[derive(Template)]
@@ -96,8 +107,11 @@ struct UpdateStatusTemplate {
 
 #[derive(Template)]
 #[template(path = "mods/partials/list_body.html")]
+#[allow(dead_code)] // infrastructure/modsync_installed not used in partial but needed for filtering
 struct ListBodyTemplate {
     user: SessionUser,
+    infrastructure: Vec<ModListEntry>,
+    modsync_installed: bool,
     mods: Vec<ModListEntry>,
     grand_total_size: i64,
     csrf_token: String,
@@ -130,7 +144,7 @@ pub async fn list_mods(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
 
-    let mods = web::block(move || {
+    let all_entries = web::block(move || {
         let db = db.lock();
         let mods_with_counts = db.list_mods_with_file_counts()?;
         let entries: Vec<ModListEntry> = mods_with_counts
@@ -147,10 +161,17 @@ pub async fn list_mods(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let (infrastructure, mods): (Vec<_>, Vec<_>) = all_entries
+        .into_iter()
+        .partition(|e| is_infrastructure_mod(e.mod_info.forge_mod_id));
+
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
+    let modsync_installed = crate::config::is_modsync_installed(&state.spt_dir);
 
     let tmpl = ModListTemplate {
         user,
+        infrastructure,
+        modsync_installed,
         mods,
         grand_total_size,
         spt_version: state.spt_info.spt_version.clone(),
@@ -158,7 +179,6 @@ pub async fn list_mods(
         flash,
         csrf_token,
         fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -1120,7 +1140,7 @@ pub async fn list_body_partial(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
 
-    let mods = web::block(move || {
+    let all_entries = web::block(move || {
         let db = db.lock();
         let mods_with_counts = db.list_mods_with_file_counts()?;
         let entries: Vec<ModListEntry> = mods_with_counts
@@ -1137,10 +1157,17 @@ pub async fn list_body_partial(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let (infrastructure, mods): (Vec<_>, Vec<_>) = all_entries
+        .into_iter()
+        .partition(|e| is_infrastructure_mod(e.mod_info.forge_mod_id));
+
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
+    let modsync_installed = crate::config::is_modsync_installed(&state.spt_dir);
 
     let tmpl = ListBodyTemplate {
         user,
+        infrastructure,
+        modsync_installed,
         mods,
         grand_total_size,
         csrf_token,
