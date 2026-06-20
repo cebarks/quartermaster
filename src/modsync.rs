@@ -459,4 +459,118 @@ mod tests {
         let config_path = modsync_config_path(tmp.path());
         assert!(config_path.exists());
     }
+
+    #[test]
+    fn full_lifecycle_install_update_remove() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        std::fs::create_dir_all(spt_dir.join("user/mods/Corter-ModSync")).unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mut config = Config::default();
+        config.modsync = Some(ModSyncConfig::default());
+
+        // Install a client mod
+        let mod_id = db
+            .insert_mod(100, 200, "TestClientMod", Some("test-client"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/TestClientMod/test.dll",
+            Some("hash1"),
+            Some(1024),
+        )
+        .unwrap();
+
+        let result = regenerate_if_enabled(spt_dir, &config, &db).unwrap();
+        assert!(result);
+
+        let content = std::fs::read_to_string(modsync_config_path(spt_dir)).unwrap();
+        assert!(content.contains("TestClientMod"));
+        assert!(content.contains("BepInEx/plugins/TestClientMod"));
+
+        // Update — add a second file (simulating version update)
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/TestClientMod/extra.dll",
+            Some("hash2"),
+            Some(512),
+        )
+        .unwrap();
+
+        let result = regenerate_if_enabled(spt_dir, &config, &db).unwrap();
+        assert!(result);
+
+        // Remove the mod
+        db.delete_files_for_mod(mod_id).unwrap();
+        db.delete_mod(mod_id).unwrap();
+
+        let result = regenerate_if_enabled(spt_dir, &config, &db).unwrap();
+        assert!(result);
+
+        let content = std::fs::read_to_string(modsync_config_path(spt_dir)).unwrap();
+        assert!(!content.contains("TestClientMod"));
+    }
+
+    #[test]
+    fn full_lifecycle_mixed_mods() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        std::fs::create_dir_all(spt_dir.join("user/mods/Corter-ModSync")).unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mut config = Config::default();
+        config.modsync = Some(ModSyncConfig {
+            extra_sync_paths: vec!["BepInEx/config".to_string()],
+            exclusions: vec!["**/*.log".to_string()],
+            ..ModSyncConfig::default()
+        });
+
+        // Server-only mod — should not appear in syncPaths
+        let _server_mod = db
+            .insert_mod(200, 300, "ServerOnly", None, "1.0.0")
+            .unwrap();
+        db.insert_file(
+            _server_mod,
+            "SPT/user/mods/ServerOnly/package.json",
+            Some("s1"),
+            Some(100),
+        )
+        .unwrap();
+
+        // Client mod — should appear
+        let client_mod = db.insert_mod(300, 400, "ClientMod", None, "1.0.0").unwrap();
+        db.insert_file(
+            client_mod,
+            "BepInEx/plugins/ClientMod/client.dll",
+            Some("c1"),
+            Some(200),
+        )
+        .unwrap();
+
+        regenerate_if_enabled(spt_dir, &config, &db).unwrap();
+
+        let content = std::fs::read_to_string(modsync_config_path(spt_dir)).unwrap();
+        let json_part: String = content.lines().skip(1).collect::<Vec<_>>().join("\n");
+        let parsed: serde_json::Value = serde_json::from_str(&json_part).unwrap();
+
+        let paths: Vec<&str> = parsed["syncPaths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["path"].as_str().unwrap())
+            .collect();
+
+        assert!(paths.contains(&"BepInEx/plugins/ClientMod"));
+        assert!(paths.contains(&"BepInEx/config"));
+        assert!(!paths.iter().any(|p| p.contains("ServerOnly")));
+
+        let exclusions: Vec<&str> = parsed["exclusions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e.as_str().unwrap())
+            .collect();
+        assert_eq!(exclusions, vec!["**/*.log"]);
+    }
 }
