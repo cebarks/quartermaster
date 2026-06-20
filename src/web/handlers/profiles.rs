@@ -10,7 +10,6 @@ use crate::web::csrf;
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::state::AppState;
-use std::collections::HashMap;
 
 #[allow(unused_imports)]
 mod filters {
@@ -117,8 +116,11 @@ pub async fn profile_page(
         ),
         Some(profile_id) => {
             let spt_dir2 = spt_dir.clone();
-            match web::block(move || load_profile_detail(&spt_dir2, &profile_id, &HashMap::new()))
-                .await
+            let game_data = state.game_data.clone();
+            match web::block(move || {
+                load_profile_detail(&spt_dir2, &profile_id, game_data.prices())
+            })
+            .await
             {
                 Ok(Ok(Some(d))) => (Some(d), None),
                 Ok(Ok(None)) => (
@@ -332,7 +334,8 @@ async fn load_detail_for_user(
 
     let profile_id = spt_profile_id.ok_or(WebError::NotFound)?;
 
-    let detail = web::block(move || load_profile_detail(&spt_dir, &profile_id, &HashMap::new()))
+    let game_data = state.game_data.clone();
+    let detail = web::block(move || load_profile_detail(&spt_dir, &profile_id, game_data.prices()))
         .await
         .map_err(WebError::from)?
         .map_err(WebError::from)?;

@@ -211,6 +211,7 @@ impl GameData {
         self.hideout_areas.get(&area_type)
     }
 
+    #[allow(dead_code)]
     pub fn item_price(&self, tpl: &str) -> Option<i64> {
         self.prices.get(tpl).copied()
     }
