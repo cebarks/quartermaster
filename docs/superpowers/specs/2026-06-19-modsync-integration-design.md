@@ -1,0 +1,214 @@
+# ModSync Integration Design
+
+## Overview
+
+Integrate ModSync management into quartermaster so that quma handles the full lifecycle: installing ModSync as a mod, managing its `config.jsonc` (syncPaths, exclusions), and keeping the config in sync with installed mod state. ModSync is pull-based — clients sync at game launch — so quma's role is ensuring the config accurately reflects what's installed.
+
+## Background
+
+[ModSync](https://github.com/c-orter/ModSync) is an SPT/Fika mod that synchronizes mods from server to client. The server plugin exposes HTTP endpoints on the SPT server; clients pull file hashes and downloads at startup.
+
+Key ModSync concepts:
+- **syncPaths**: Directories/files to sync, with per-path options (`enforced`, `silent`, `restartRequired`)
+- **exclusions**: Glob patterns for files to skip
+- **Config file**: `user/mods/Corter-ModSync/config.jsonc` (JSONC format)
+- **Built-in paths**: ModSync always syncs its own updater and plugin DLL (hardcoded, not in config)
+
+## Detection & Installation
+
+### Detection
+
+Mirror the existing `is_fika_installed()` pattern:
+
+```rust
+pub fn is_modsync_installed(spt_dir: &Path) -> bool {
+    spt_dir.join("user/mods/Corter-ModSync").is_dir()
+}
+```
+
+Check on `quma serve` startup and set `modsync_installed: bool` on `AppState`, same as `fika_installed`.
+
+### Installation
+
+ModSync is installed via quma like any other Forge mod. When quma detects it's installing ModSync (by Forge slug `corter-modsync`), it:
+1. Sets `modsync_installed = true` on `AppState`
+2. If `[modsync]` config exists in `quartermaster.toml`, immediately generates `config.jsonc`
+3. If no `[modsync]` config, dashboard shows "ModSync: installed (not managed)" — admin enables management from settings
+
+### Config path
+
+Always `<spt_dir>/user/mods/Corter-ModSync/config.jsonc`.
+
+## Configuration Model
+
+New `[modsync]` section in `quartermaster.toml`:
+
+```toml
+[modsync]
+# Global defaults applied to all synced mods
+enforced = true          # default: true — force clients to match server
+silent = false           # default: false — prompt users before syncing
+restart_required = true  # default: true — require game restart after sync
+
+# Additional paths to sync beyond what quma auto-generates
+extra_sync_paths = ["BepInEx/config"]
+
+# Glob patterns to exclude from sync
+exclusions = ["**/*.nosync", "BepInEx/plugins/spt"]
+
+# Per-mod overrides — keyed by forge mod ID (stable identifier)
+[modsync.overrides.12345]
+enforced = false
+silent = true
+```
+
+### Design decisions
+
+- **Per-mod overrides keyed by Forge mod ID** — names can change, IDs are stable. Web UI displays mod name but stores the ID.
+- **`extra_sync_paths`** — for paths not tied to a specific mod (e.g., `BepInEx/config`). These use the global defaults for `enforced`/`silent`/`restart_required` — no per-path overrides for extras (keep it simple, admin can adjust globals).
+- **`exclusions`** — maps directly to ModSync's exclusions array, same glob syntax.
+- **Only client/hybrid mods generate syncPaths** — server-only mods (`user/mods/`) never need syncing. Quma already knows mod type from tracked file paths.
+- **`[modsync]` is optional** — if absent, config management is disabled even if ModSync is installed. Admin must opt in.
+
+### Rust types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModSyncConfig {
+    #[serde(default = "default_enforced")]
+    pub enforced: bool,           // default: true
+
+    #[serde(default)]
+    pub silent: bool,             // default: false
+
+    #[serde(default = "default_restart_required")]
+    pub restart_required: bool,   // default: true
+
+    #[serde(default)]
+    pub extra_sync_paths: Vec<String>,
+
+    #[serde(default)]
+    pub exclusions: Vec<String>,
+
+    #[serde(default)]
+    pub overrides: HashMap<i64, ModSyncOverride>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModSyncOverride {
+    pub enforced: Option<bool>,
+    pub silent: Option<bool>,
+    pub restart_required: Option<bool>,
+}
+```
+
+Added to `Config` as:
+```rust
+#[serde(default)]
+#[serde(skip_serializing_if = "Option::is_none")]
+pub modsync: Option<ModSyncConfig>,
+```
+
+## Config Generation
+
+New `src/modsync.rs` module with core logic.
+
+### Generating syncPaths from DB state
+
+1. Query all installed mods and their files from the DB
+2. For each mod, check if it has files under `BepInEx/` — if so, it's sync-relevant
+3. Group client-side files by top-level directory (e.g., `BepInEx/plugins/ModName/`, `BepInEx/patchers/SomePatcher.dll`) to produce minimal sync paths
+4. Apply global defaults (`enforced`, `silent`, `restart_required`) to each path
+5. Apply per-mod overrides from `[modsync.overrides.<forge_id>]` if they exist
+6. Append `extra_sync_paths` entries
+7. Add `exclusions` from config
+
+### Writing config.jsonc
+
+- Standard JSON with a header comment: `// Generated by quartermaster — manual edits will be overwritten`
+- ModSync's built-in paths (updater exe, plugin DLL) are hardcoded by ModSync, so quma doesn't include them
+- Atomic write: write to `.tmp` then rename
+
+### When regeneration triggers
+
+- After every successful `install_mod_from_archive`, `update_mod_from_archive`, `remove_mod_by_id`
+- After config changes via the web UI
+- On `quma serve` startup if ModSync is detected and `[modsync]` config exists
+- After queue drain completes
+
+### Function signature
+
+```rust
+pub fn regenerate_if_enabled(
+    spt_dir: &Path,
+    config: &Config,
+    db: &Database,
+) -> Result<bool>  // returns true if config was written
+```
+
+## Integration Points
+
+### ops.rs
+
+Call `modsync::regenerate_if_enabled(spt_dir, config, db)` at the end of:
+- `install_mod_from_archive`
+- `update_mod_from_archive`
+- `remove_mod_by_id`
+
+Synchronous and fast (DB read + file write), no async needed.
+
+### queue.rs
+
+Trigger regeneration after all queued operations complete during drain.
+
+### Web server startup
+
+Check `is_modsync_installed()`, set `AppState.modsync_installed`. If enabled, regenerate config to ensure consistency with DB state.
+
+## Web UI
+
+### Dashboard badge
+
+Small status indicator: "ModSync: active", "ModSync: installed (not managed)", or "ModSync: not installed". Links to settings.
+
+### Settings page
+
+Admin-only section at `/settings/modsync` (or section on existing settings page):
+
+- **Global defaults**: enforced/silent/restart_required toggles
+- **Extra sync paths**: text list, add/remove
+- **Exclusions**: text list with glob support, add/remove
+- **Per-mod overrides table**: lists all client/hybrid mods with toggles to override global defaults. Only shows mods with client-side files.
+
+### Per-mod detail
+
+On individual mod pages, if the mod has client-side files, show current sync settings (inherited defaults or overrides) with an edit link.
+
+## Error Handling & Edge Cases
+
+### ModSync uninstalled after config management enabled
+
+Skip regeneration silently (debug log). `[modsync]` config stays in `quartermaster.toml` — harmless, auto-resumes if ModSync is reinstalled.
+
+### ModSync installed via quma
+
+When quma installs ModSync (detected by slug `corter-modsync`), set `modsync_installed = true`. If `[modsync]` config exists, immediately generate `config.jsonc`. If not, show "installed (not managed)" on dashboard.
+
+### No client-side mods installed
+
+Valid state. `config.jsonc` generated with empty `syncPaths` (plus `extra_sync_paths`) and `exclusions`. ModSync handles this gracefully.
+
+### Config.jsonc already exists
+
+Overwritten on first regeneration. Header comment makes this clear. Quma owns the file entirely.
+
+### Concurrent writes
+
+Regeneration reads DB under `Arc<Mutex<Database>>`. Worst case: two successive writes with identical content — harmless.
+
+## Out of Scope
+
+- Triggering client syncs (ModSync is pull-based, no push mechanism)
+- Notifying players of available updates via web UI (future enhancement)
+- Hash precalculation for ModSync's server plugin
+- CLI commands for ModSync management (web UI is sufficient)
