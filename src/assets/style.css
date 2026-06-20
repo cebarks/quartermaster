@@ -311,3 +311,10 @@ main > h1 { border-bottom: 1px solid var(--border); }
     padding: 0.25rem 0.5rem;
     font-size: 0.85rem;
 }
+
+/* Progress bars */
+.progress-bar { height: 0.5rem; background: var(--border); border-radius: 0.25rem; overflow: hidden; min-width: 80px; }
+.progress-fill { height: 100%; background: var(--accent); border-radius: 0.25rem; transition: width 0.3s; }
+.progress-fill-success { background: var(--success); }
+.progress-fill-muted { background: var(--text-muted); opacity: 0.3; }
+.text-danger { color: var(--danger, #e74c3c); }

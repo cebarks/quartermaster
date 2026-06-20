@@ -189,6 +189,18 @@ pub async fn start_server(
                         web::get().to(handlers::clients::client_status_partial),
                     )
                     .route(
+                        "/profiles/{username}/quests",
+                        web::get().to(handlers::profiles::quests_partial),
+                    )
+                    .route(
+                        "/profiles/{username}/traders",
+                        web::get().to(handlers::profiles::traders_partial),
+                    )
+                    .route(
+                        "/profiles/{username}/hideout",
+                        web::get().to(handlers::profiles::hideout_partial),
+                    )
+                    .route(
                         "/tasks/status",
                         web::get().to(handlers::tasks::task_status_partial),
                     )
@@ -271,6 +283,10 @@ pub async fn start_server(
                     .route(
                         "/clients/{n}",
                         web::get().to(handlers::clients::client_detail),
+                    )
+                    .route(
+                        "/profiles/{username}",
+                        web::get().to(handlers::profiles::profile_page),
                     )
                     .route("/mods/install", web::post().to(handlers::mods::install_mod))
                     .route(
