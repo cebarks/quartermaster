@@ -3,7 +3,6 @@ mod client;
 mod config;
 mod container;
 mod db;
-mod error;
 mod forge;
 mod health;
 mod invite;
