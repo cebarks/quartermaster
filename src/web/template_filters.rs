@@ -93,6 +93,11 @@ pub fn format_roubles(value: &Option<i64>, _env: &dyn askama::Values) -> askama:
     }
 }
 
+#[askama::filter_fn]
+pub fn format_roubles_i64(value: &i64, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(format!("₽{}", format_roubles_value(*value)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

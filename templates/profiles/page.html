@@ -65,6 +65,12 @@
             hx-swap="innerHTML"
             hx-trigger="click"
             hx-push-url="false">Hideout</button>
+    <button class="tab" data-tab="stash"
+            hx-get="/quma/api/profiles/{{ profile_username }}/stash"
+            hx-target="#tab-content"
+            hx-swap="innerHTML"
+            hx-trigger="click"
+            hx-push-url="false">Stash</button>
 </div>
 
 <div id="tab-content">

@@ -16,12 +16,20 @@ pub struct HideoutMeta {
     pub max_level: i32,
 }
 
+#[derive(Debug, Clone)]
+pub struct ItemLocale {
+    pub name: String,
+    pub short_name: String,
+}
+
 #[derive(Debug)]
 pub struct GameData {
     quest_names: HashMap<String, String>,
     trader_info: HashMap<String, TraderMeta>,
     hideout_areas: HashMap<i32, HideoutMeta>,
     prices: HashMap<String, i64>,
+    item_locales: HashMap<String, ItemLocale>,
+    item_categories: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -34,6 +42,31 @@ struct QuestJsonEntry {
 struct TraderBase {
     nickname: Option<String>,
     currency: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HandbookJson {
+    #[serde(rename = "Categories")]
+    categories: Vec<HandbookCategory>,
+    #[serde(rename = "Items")]
+    items: Vec<HandbookItem>,
+}
+
+#[derive(Deserialize)]
+struct HandbookCategory {
+    #[serde(rename = "Id")]
+    id: String,
+    #[serde(rename = "ParentId")]
+    #[allow(dead_code)]
+    parent_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HandbookItem {
+    #[serde(rename = "Id")]
+    id: String,
+    #[serde(rename = "ParentId")]
+    parent_id: String,
 }
 
 const CORE_TRADER_IDS: &[&str] = &[
@@ -99,12 +132,16 @@ impl GameData {
         let trader_info = Self::load_trader_info(spt_dir)?;
         let hideout_areas = build_hideout_areas();
         let prices = Self::load_prices(spt_dir)?;
+        let item_locales = Self::load_item_locales(spt_dir)?;
+        let item_categories = Self::load_item_categories(spt_dir, &item_locales)?;
 
         tracing::info!(
             quests = quest_names.len(),
             traders = trader_info.len(),
             hideout_areas = hideout_areas.len(),
             prices = prices.len(),
+            item_locales = item_locales.len(),
+            item_categories = item_categories.len(),
             "loaded SPT game data"
         );
 
@@ -113,6 +150,8 @@ impl GameData {
             trader_info,
             hideout_areas,
             prices,
+            item_locales,
+            item_categories,
         })
     }
 
@@ -122,6 +161,8 @@ impl GameData {
             trader_info: HashMap::new(),
             hideout_areas: build_hideout_areas(),
             prices: HashMap::new(),
+            item_locales: HashMap::new(),
+            item_categories: HashMap::new(),
         }
     }
 
@@ -199,6 +240,78 @@ impl GameData {
         Ok(prices)
     }
 
+    fn load_item_locales(spt_dir: &Path) -> Result<HashMap<String, ItemLocale>> {
+        let path = spt_dir.join("SPT/SPT_Data/database/locales/global/en.json");
+        if !path.exists() {
+            tracing::warn!(
+                "en.json not found at {}, item names will show raw IDs",
+                path.display()
+            );
+            return Ok(HashMap::new());
+        }
+        let contents = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let locale: HashMap<String, String> = serde_json::from_str(&contents)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+
+        let mut item_locales = HashMap::new();
+        for (key, value) in &locale {
+            if let Some(tpl_id) = key.strip_suffix(" Name") {
+                let short_name = locale
+                    .get(&format!("{tpl_id} ShortName"))
+                    .cloned()
+                    .unwrap_or_else(|| value.clone());
+                item_locales.insert(
+                    tpl_id.to_string(),
+                    ItemLocale {
+                        name: value.clone(),
+                        short_name,
+                    },
+                );
+            }
+        }
+        Ok(item_locales)
+    }
+
+    fn load_item_categories(
+        spt_dir: &Path,
+        locales: &HashMap<String, ItemLocale>,
+    ) -> Result<HashMap<String, String>> {
+        let path = spt_dir.join("SPT/SPT_Data/database/templates/handbook.json");
+        if !path.exists() {
+            tracing::warn!(
+                "handbook.json not found at {}, item categories will show 'Other'",
+                path.display()
+            );
+            return Ok(HashMap::new());
+        }
+        let contents = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let handbook: HandbookJson = serde_json::from_str(&contents)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+
+        // Build category name lookup: category_id → display name
+        let cat_names: HashMap<&str, &str> = handbook
+            .categories
+            .iter()
+            .map(|c| {
+                let name = locales
+                    .get(&c.id)
+                    .map(|l| l.name.as_str())
+                    .unwrap_or("Other");
+                (c.id.as_str(), name)
+            })
+            .collect();
+
+        // Map each item template to its category's display name
+        let mut item_categories = HashMap::new();
+        for item in &handbook.items {
+            let cat_name = cat_names.get(item.parent_id.as_str()).unwrap_or(&"Other");
+            item_categories.insert(item.id.clone(), cat_name.to_string());
+        }
+        Ok(item_categories)
+    }
+
     pub fn quest_name<'a>(&'a self, qid: &'a str) -> &'a str {
         self.quest_names.get(qid).map(|s| s.as_str()).unwrap_or(qid)
     }
@@ -211,13 +324,33 @@ impl GameData {
         self.hideout_areas.get(&area_type)
     }
 
-    #[allow(dead_code)]
     pub fn item_price(&self, tpl: &str) -> Option<i64> {
         self.prices.get(tpl).copied()
     }
 
     pub fn prices(&self) -> &HashMap<String, i64> {
         &self.prices
+    }
+
+    pub fn item_name<'a>(&'a self, tpl: &'a str) -> &'a str {
+        self.item_locales
+            .get(tpl)
+            .map(|l| l.name.as_str())
+            .unwrap_or(tpl)
+    }
+
+    pub fn item_short_name<'a>(&'a self, tpl: &'a str) -> &'a str {
+        self.item_locales
+            .get(tpl)
+            .map(|l| l.short_name.as_str())
+            .unwrap_or(tpl)
+    }
+
+    pub fn item_category(&self, tpl: &str) -> &str {
+        self.item_categories
+            .get(tpl)
+            .map(|s| s.as_str())
+            .unwrap_or("Other")
     }
 }
 
@@ -265,6 +398,57 @@ mod tests {
         std::fs::write(
             pk_dir.join("base.json"),
             serde_json::to_string(&pk_base).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn create_test_item_data(dir: &Path) {
+        // en.json locale
+        let locale_dir = dir.join("SPT/SPT_Data/database/locales/global");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        let locale = serde_json::json!({
+            "5ca20d5986f774331e7c9602 Name": "WARTECH Berkut BB-102 backpack",
+            "5ca20d5986f774331e7c9602 ShortName": "Berkut",
+            "cat_backpacks Name": "Backpacks",
+            "cat_gear Name": "Gear",
+        });
+        std::fs::write(
+            locale_dir.join("en.json"),
+            serde_json::to_string(&locale).unwrap(),
+        )
+        .unwrap();
+
+        // items.json
+        let templates_dir = dir.join("SPT/SPT_Data/database/templates");
+        // templates dir already exists from create_test_spt_dir
+        let items = serde_json::json!({
+            "5ca20d5986f774331e7c9602": {
+                "_id": "5ca20d5986f774331e7c9602",
+                "_name": "item_equipment_backpack_wartech",
+                "_parent": "5448e53e4bdc2d60728b4567",
+                "_type": "Item",
+                "_props": {}
+            }
+        });
+        std::fs::write(
+            templates_dir.join("items.json"),
+            serde_json::to_string(&items).unwrap(),
+        )
+        .unwrap();
+
+        // handbook.json
+        let handbook = serde_json::json!({
+            "Categories": [
+                {"Id": "cat_backpacks", "ParentId": "cat_gear", "Icon": "", "Order": "100", "Color": ""},
+                {"Id": "cat_gear", "ParentId": null, "Icon": "", "Order": "100", "Color": ""}
+            ],
+            "Items": [
+                {"Id": "5ca20d5986f774331e7c9602", "ParentId": "cat_backpacks", "Price": 20000}
+            ]
+        });
+        std::fs::write(
+            templates_dir.join("handbook.json"),
+            serde_json::to_string(&handbook).unwrap(),
         )
         .unwrap();
     }
@@ -356,5 +540,53 @@ mod tests {
         // No prices.json created — should still load fine with empty prices
         let gd = GameData::load(tmp.path()).unwrap();
         assert!(gd.prices().is_empty());
+    }
+
+    #[test]
+    fn item_name_from_locale() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        create_test_item_data(tmp.path());
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert_eq!(
+            gd.item_name("5ca20d5986f774331e7c9602"),
+            "WARTECH Berkut BB-102 backpack"
+        );
+    }
+
+    #[test]
+    fn item_short_name_from_locale() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        create_test_item_data(tmp.path());
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert_eq!(gd.item_short_name("5ca20d5986f774331e7c9602"), "Berkut");
+    }
+
+    #[test]
+    fn item_name_unknown_returns_raw_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        create_test_item_data(tmp.path());
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert_eq!(gd.item_name("nonexistent_tpl"), "nonexistent_tpl");
+    }
+
+    #[test]
+    fn item_category_from_handbook() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        create_test_item_data(tmp.path());
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert_eq!(gd.item_category("5ca20d5986f774331e7c9602"), "Backpacks");
+    }
+
+    #[test]
+    fn item_category_unknown_returns_other() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        create_test_item_data(tmp.path());
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert_eq!(gd.item_category("nonexistent_tpl"), "Other");
     }
 }

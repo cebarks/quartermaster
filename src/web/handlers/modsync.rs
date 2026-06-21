@@ -183,7 +183,7 @@ pub async fn save_settings(
         .save(&state.config_path)
         .map_err(WebError::from)?;
 
-    // Regenerate ModSync config.jsonc
+    // Regenerate NarcoNet config.yaml
     if state.is_modsync_installed() {
         let db = state.db.clone();
         let spt_dir = state.spt_dir.clone();
@@ -195,7 +195,7 @@ pub async fn save_settings(
         .await;
     }
 
-    set_flash(&session, "ModSync settings saved", "success");
+    set_flash(&session, "NarcoNet settings saved", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/modsync"))
         .finish())

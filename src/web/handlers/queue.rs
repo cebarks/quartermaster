@@ -151,7 +151,7 @@ pub async fn apply_queue(
         }
     }
 
-    // Regenerate ModSync config after all queue operations
+    // Regenerate NarcoNet config after all queue operations
     {
         let db = state.db.clone();
         let spt_dir = state.spt_dir.clone();

@@ -69,6 +69,7 @@ pub struct User {
     pub password_hash: Option<String>,
     pub role: Role,
     pub disabled: bool,
+    pub stash_public: bool,
     pub created_at: String,
     pub password_changed_at: Option<String>,
 }
@@ -135,7 +136,7 @@ impl Database {
     pub fn get_user_by_username(&self, username: &str) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, stash_public, created_at, password_changed_at
                  FROM users WHERE username = ?1",
                 params![username],
                 row_to_user,
@@ -145,7 +146,7 @@ impl Database {
 
     pub fn list_users(&self) -> rusqlite::Result<Vec<User>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+            "SELECT id, username, spt_profile_id, password_hash, role, disabled, stash_public, created_at, password_changed_at
              FROM users ORDER BY username",
         )?;
         let rows = stmt.query_map([], row_to_user)?;
@@ -164,7 +165,7 @@ impl Database {
     pub fn get_user_by_id(&self, id: i64) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, stash_public, created_at, password_changed_at
                  FROM users WHERE id = ?1",
                 params![id],
                 row_to_user,
@@ -176,7 +177,7 @@ impl Database {
     pub fn get_user_by_spt_profile_id(&self, profile_id: &str) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, stash_public, created_at, password_changed_at
                  FROM users WHERE spt_profile_id = ?1",
                 params![profile_id],
                 row_to_user,
@@ -223,6 +224,13 @@ impl Database {
         self.conn.execute(
             "UPDATE users SET password_hash = ?1, password_changed_at = ?3 WHERE id = ?2",
             params![password_hash, user_id, now],
+        )
+    }
+
+    pub fn set_stash_public(&self, user_id: i64, public: bool) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE users SET stash_public = ?1 WHERE id = ?2",
+            params![public as i32, user_id],
         )
     }
 
@@ -409,8 +417,9 @@ fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         password_hash: row.get(3)?,
         role,
         disabled: row.get(5)?,
-        created_at: row.get(6)?,
-        password_changed_at: row.get(7)?,
+        stash_public: row.get(6)?,
+        created_at: row.get(7)?,
+        password_changed_at: row.get(8)?,
     })
 }
 

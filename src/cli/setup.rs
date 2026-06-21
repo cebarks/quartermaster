@@ -133,7 +133,7 @@ fn prompt_fika() -> Result<bool> {
 }
 
 fn prompt_modsync() -> Result<bool> {
-    print!("Install ModSync for client mod syncing? [Y/n]: ");
+    print!("Install NarcoNet for client mod syncing? [Y/n]: ");
     std::io::stdout().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
@@ -144,124 +144,61 @@ fn prompt_modsync() -> Result<bool> {
         || trimmed.eq_ignore_ascii_case("yes"))
 }
 
-const MODSYNC_GITHUB_REPO: &str = "c-orter/ModSync";
+async fn install_narconet_from_forge(
+    spt_dir: &Path,
+    db: &Database,
+    config: &Config,
+    forge_token: Option<String>,
+) -> Result<()> {
+    use crate::config::NARCONET_FORGE_MOD_ID;
+    use crate::forge::client::ForgeClient;
 
-async fn install_modsync_from_github(spt_dir: &Path) -> Result<()> {
-    use futures_util::StreamExt;
+    println!("\nInstalling NarcoNet...");
 
-    println!("\nInstalling ModSync...");
-
-    let client = reqwest::Client::builder()
-        .user_agent(format!("quartermaster/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    // Fetch latest release metadata
-    let release_url = format!("https://api.github.com/repos/{MODSYNC_GITHUB_REPO}/releases/latest");
-    let release: serde_json::Value = client
-        .get(&release_url)
-        .send()
+    let forge = ForgeClient::new(forge_token)?;
+    let forge_mod = forge
+        .get_mod(NARCONET_FORGE_MOD_ID, true)
         .await
-        .context("failed to fetch ModSync release info")?
-        .error_for_status()
-        .context("GitHub API returned error")?
-        .json()
-        .await
-        .context("failed to parse release JSON")?;
+        .context("failed to fetch NarcoNet mod info from Forge")?;
 
-    let asset = release["assets"]
-        .as_array()
-        .and_then(|assets| {
-            assets
-                .iter()
-                .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(".zip")))
-        })
-        .ok_or_else(|| anyhow::anyhow!("no .zip asset found in latest ModSync release"))?;
+    let version = forge_mod
+        .versions
+        .as_ref()
+        .and_then(|v| v.first())
+        .ok_or_else(|| anyhow::anyhow!("no versions found for NarcoNet on Forge"))?;
 
-    let download_url = asset["browser_download_url"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing download URL for ModSync asset"))?
-        .to_string();
+    let download_url = version
+        .link
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("NarcoNet version has no download link"))?;
 
-    let version = release["tag_name"]
-        .as_str()
-        .unwrap_or("unknown")
-        .to_string();
+    let version_str = &version.version;
+    let version_id = version.id;
+    println!("Downloading NarcoNet v{version_str}...");
 
-    println!("Downloading ModSync {version}...");
-
-    // Download to a temp file
     let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
-    let zip_path = tmp_dir.path().join("modsync.zip");
-
-    let resp = client
-        .get(download_url)
-        .send()
+    let archive_path = tmp_dir.path().join("narconet.zip");
+    forge
+        .download_file(download_url, &archive_path)
         .await
-        .context("failed to download ModSync")?
-        .error_for_status()
-        .context("ModSync download returned error")?;
+        .context("failed to download NarcoNet")?;
 
-    let mut stream = resp.bytes_stream();
-    let mut file = tokio::fs::File::create(&zip_path)
-        .await
-        .context("failed to create temp file")?;
+    println!("Extracting...");
+    // TODO(debt): consider extracting shared install logic with install_single_mod
+    let db_id = crate::ops::install_mod_from_archive(
+        db,
+        spt_dir,
+        config,
+        NARCONET_FORGE_MOD_ID,
+        version_id,
+        &forge_mod.name,
+        forge_mod.slug.as_deref(),
+        version_str,
+        &archive_path,
+    )?;
 
-    while let Some(chunk) = stream.next().await {
-        let bytes = chunk.context("error reading download stream")?;
-        tokio::io::AsyncWriteExt::write_all(&mut file, &bytes)
-            .await
-            .context("error writing to temp file")?;
-    }
-    tokio::io::AsyncWriteExt::flush(&mut file)
-        .await
-        .context("error flushing temp file")?;
-    drop(file);
-
-    // Extract relevant files into the SPT directory
-    // ModSync zip has: BepInEx/plugins/*, user/mods/Corter-ModSync/*
-    // The `user/mods/` prefix maps to `SPT/user/mods/` in our directory layout
-    let spt_dir = spt_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&zip_path).context("failed to open downloaded zip")?;
-        let mut archive =
-            zip::ZipArchive::new(file).context("failed to read ModSync zip archive")?;
-
-        let mut extracted = 0usize;
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).context("failed to read zip entry")?;
-
-            let name = entry.name().to_string();
-
-            // Map paths into the SPT directory
-            let dest = if let Some(rest) = name.strip_prefix("user/mods/") {
-                // user/mods/Corter-ModSync/* → SPT/user/mods/Corter-ModSync/*
-                spt_dir.join("SPT/user/mods").join(rest)
-            } else if name.starts_with("BepInEx/") {
-                spt_dir.join(&name)
-            } else {
-                // Skip other files (e.g. ModSync.Updater.exe — Windows only)
-                continue;
-            };
-
-            if entry.is_dir() {
-                std::fs::create_dir_all(&dest)?;
-            } else {
-                if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                let mut out = std::fs::File::create(&dest)?;
-                std::io::copy(&mut entry, &mut out)?;
-                extracted += 1;
-            }
-        }
-
-        println!("ModSync {version} installed ({extracted} files extracted).");
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .context("ModSync extraction task failed")??;
-
+    let file_count = db.get_files_for_mod(db_id)?.len();
+    println!("NarcoNet v{version_str} installed ({file_count} files).");
     Ok(())
 }
 
@@ -444,7 +381,7 @@ fn print_summary(
         }
     );
     println!(
-        "ModSync: {}",
+        "NarcoNet: {}",
         if install_modsync {
             "installed"
         } else {
@@ -519,11 +456,11 @@ async fn bootstrap(
     println!("Server stopped.");
 
     // 9. Create DB and admin
-    create_db_and_admin(data_dir, admin_password)?;
+    let db = create_db_and_admin(data_dir, admin_password)?;
 
-    // 10. Install ModSync
+    // 10. Install NarcoNet
     if install_modsync {
-        install_modsync_from_github(data_dir).await?;
+        install_narconet_from_forge(data_dir, &db, &config, config.forge_token.clone()).await?;
     }
 
     // 11. Summary
@@ -588,9 +525,9 @@ async fn wrap_existing(
         println!("\nManage them through the web UI or reinstall via Forge.");
     }
 
-    // 5. Install ModSync
+    // 5. Install NarcoNet
     if install_modsync {
-        install_modsync_from_github(data_dir).await?;
+        install_narconet_from_forge(data_dir, &db, &config, config.forge_token.clone()).await?;
     }
 
     // 6. Summary

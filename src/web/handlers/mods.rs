@@ -283,7 +283,7 @@ pub async fn list_mods(
         .collect();
 
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
-    let modsync_installed = crate::config::is_modsync_installed(&state.spt_dir);
+    let modsync_installed = state.is_modsync_installed();
     let svm_installed = state.is_svm_installed();
 
     let tmpl = ModListTemplate {
@@ -842,7 +842,7 @@ pub async fn install_mod(
             })
             .await;
 
-            // Regenerate ModSync config if enabled
+            // Regenerate NarcoNet config if enabled
             let _ = actix_web::web::block(move || {
                 let db = db3.lock();
                 crate::modsync::regenerate_if_enabled(&spt_dir3, &config2, &db)
@@ -857,7 +857,7 @@ pub async fn install_mod(
             Ok(()) => {
                 tracing::info!(mod_id, "mod installed successfully");
                 update_cache.invalidate();
-                // Re-check ModSync detection (installing ModSync itself changes this)
+                // Re-check NarcoNet detection (installing NarcoNet itself changes this)
                 state_clone.modsync_installed.store(
                     crate::config::is_modsync_installed(&spt_dir),
                     std::sync::atomic::Ordering::Relaxed,
@@ -1039,7 +1039,7 @@ pub async fn update_mod(
             })
             .await??;
 
-            // Regenerate ModSync config if enabled
+            // Regenerate NarcoNet config if enabled
             let _ = actix_web::web::block(move || {
                 let db = db2.lock();
                 crate::modsync::regenerate_if_enabled(&spt_dir2, &config2, &db)
@@ -1135,7 +1135,7 @@ pub async fn remove_mod(
     .map_err(WebError::from)?;
 
     state.update_cache.invalidate();
-    // Re-check ModSync detection (removing ModSync itself changes this)
+    // Re-check NarcoNet detection (removing NarcoNet itself changes this)
     state.modsync_installed.store(
         crate::config::is_modsync_installed(&state.spt_dir),
         std::sync::atomic::Ordering::Relaxed,
@@ -1383,7 +1383,7 @@ pub async fn update_all_mods(
             }
         }
 
-        // Regenerate ModSync config after all updates
+        // Regenerate NarcoNet config after all updates
         let spt_dir2 = spt_dir.clone();
         let db2 = db.clone();
         let config2 = config.clone();
@@ -1394,7 +1394,7 @@ pub async fn update_all_mods(
         .await;
 
         update_cache.invalidate();
-        // Re-check ModSync detection (updating mods might affect ModSync state)
+        // Re-check NarcoNet detection (updating mods might affect NarcoNet state)
         state_clone.modsync_installed.store(
             crate::config::is_modsync_installed(&spt_dir),
             std::sync::atomic::Ordering::Relaxed,

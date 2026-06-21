@@ -91,7 +91,7 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
             println!("  {} {}", entry.name, entry.version);
         }
         if modsync_installed {
-            println!("  ModSync");
+            println!("  NarcoNet");
         }
         println!();
     }

@@ -1,0 +1,6 @@
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<button class="btn btn-sm btn-outline"
+        hx-post="/quma/api/profiles/{{ profile_username }}/stash/visibility"
+        hx-target="#stash-visibility"
+        hx-swap="innerHTML"
+        hx-include="[name='csrf_token']">{% if stash_public %}Make stash private{% else %}Make stash public{% endif %}</button>

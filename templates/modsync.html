@@ -1,20 +1,20 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
-{% block title %}ModSync — Quartermaster{% endblock %}
+{% block title %}NarcoNet — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("modsync", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
 {% block content %}
-<h1>ModSync Settings</h1>
+<h1>NarcoNet Settings</h1>
 
 {% if !modsync_installed %}
 <div class="card" style="border-left: 3px solid var(--warning)">
-    <p><strong>ModSync is not installed.</strong> Install it from Forge to enable mod synchronization.</p>
+    <p><strong>NarcoNet is not installed.</strong> Install it from Forge to enable mod synchronization.</p>
 </div>
 {% else %}
 
 {% if !modsync_managed %}
 <div class="card" style="border-left: 3px solid var(--warning)">
-    <p><strong>ModSync is installed but not managed by Quartermaster.</strong> Save settings below to enable automatic config generation.</p>
-    <p class="text-muted text-sm mt-1">Note: enabling management will overwrite the existing <code>config.jsonc</code>. The default <code>enforced = true</code> is stricter than ModSync's default — all synced mods will require clients to match the server exactly.</p>
+    <p><strong>NarcoNet is installed but not managed by Quartermaster.</strong> Save settings below to enable automatic config generation.</p>
+    <p class="text-muted text-sm mt-1">Note: enabling management will overwrite the existing <code>config.yaml</code>. The default <code>enforced = true</code> is stricter than NarcoNet's default — all synced mods will require clients to match the server exactly.</p>
 </div>
 {% endif %}
 

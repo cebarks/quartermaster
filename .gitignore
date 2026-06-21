@@ -9,4 +9,5 @@ quartermaster.toml
 !CLAUDE.md
 
 spt-server/
+.dev/
 .venv/
