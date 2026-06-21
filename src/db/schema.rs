@@ -11,6 +11,7 @@ const MIGRATION_008: &str = include_str!("../../migrations/008_nullable_profile_
 const MIGRATION_009: &str = include_str!("../../migrations/009_add_mod_disabled.sql");
 const MIGRATION_010: &str = include_str!("../../migrations/010_raid_tracking.sql");
 const MIGRATION_011: &str = include_str!("../../migrations/011_stash_public.sql");
+const MIGRATION_012: &str = include_str!("../../migrations/012_raid_snapshots.sql");
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     let current_version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -68,6 +69,11 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if current_version < 11 {
         conn.execute_batch(MIGRATION_011)?;
         conn.pragma_update(None, "user_version", 11)?;
+    }
+
+    if current_version < 12 {
+        conn.execute_batch(MIGRATION_012)?;
+        conn.pragma_update(None, "user_version", 12)?;
     }
 
     Ok(())

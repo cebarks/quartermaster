@@ -690,7 +690,7 @@ mod tests {
             let mut stmt = db
                 .conn()
                 .prepare(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('raids', 'raid_kills') ORDER BY name",
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('raids', 'raid_kills', 'raid_snapshots') ORDER BY name",
                 )
                 .unwrap();
             stmt.query_map([], |row| row.get(0))
@@ -700,6 +700,7 @@ mod tests {
         };
         assert!(tables.contains(&"raids".to_string()));
         assert!(tables.contains(&"raid_kills".to_string()));
+        assert!(tables.contains(&"raid_snapshots".to_string()));
     }
 
     #[test]

@@ -61,6 +61,9 @@ zip = "8"
 sevenz-rust2 = "0.21"
 tempfile = "3"
 
+# Compression (profile snapshots)
+flate2 = "1"
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
