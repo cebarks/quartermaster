@@ -411,32 +411,35 @@ pub async fn check_updates_partial(
             }
         };
 
-        let mut count = 0usize;
-        for m in &installed {
-            let candidate = updates_data
-                .updates
-                .iter()
-                .find(|u| u.current_version.mod_id == m.forge_mod_id)
-                .map(|u| u.recommended_version.version.clone())
-                .filter(|v| v != &m.version);
+        let mods_with_candidates: Vec<_> = installed
+            .iter()
+            .filter(|m| {
+                updates_data.updates.iter().any(|u| {
+                    u.current_version.mod_id == m.forge_mod_id
+                        && u.recommended_version.version != m.version
+                })
+            })
+            .collect();
 
-            if candidate.is_some() {
-                if let Ok(versions) = state
-                    .forge
-                    .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
-                    .await
-                {
-                    if versions
-                        .last()
-                        .map(|v| &v.version)
-                        .is_some_and(|v| v != &m.version)
-                    {
-                        count += 1;
-                    }
-                }
-            }
-        }
-        count
+        let version_futures = mods_with_candidates.iter().map(|m| {
+            state
+                .forge
+                .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
+        });
+        let results = futures_util::future::join_all(version_futures).await;
+
+        mods_with_candidates
+            .iter()
+            .zip(results)
+            .filter(|(m, result)| {
+                result
+                    .as_ref()
+                    .ok()
+                    .and_then(|versions| versions.last())
+                    .map(|v| &v.version)
+                    .is_some_and(|v| v != &m.version)
+            })
+            .count()
     } else {
         0
     };
@@ -501,38 +504,46 @@ pub async fn update_status_partial(
         }
     };
 
-    let mut entries = Vec::with_capacity(installed.len());
-    for m in &installed {
-        let candidate = updates_data
-            .updates
-            .iter()
-            .find(|u| u.current_version.mod_id == m.forge_mod_id)
-            .map(|u| u.recommended_version.version.clone())
-            .filter(|v| v != &m.version);
+    let needs_check: Vec<usize> = installed
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| {
+            updates_data.updates.iter().any(|u| {
+                u.current_version.mod_id == m.forge_mod_id
+                    && u.recommended_version.version != m.version
+            })
+        })
+        .map(|(i, _)| i)
+        .collect();
 
-        let new_version = if candidate.is_some() {
-            match state
-                .forge
-                .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
-                .await
-            {
-                Ok(versions) => versions
-                    .last()
-                    .map(|v| v.version.clone())
-                    .filter(|v| v != &m.version),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+    let version_futures = needs_check.iter().map(|&i| {
+        let m = &installed[i];
+        state
+            .forge
+            .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
+    });
+    let version_results = futures_util::future::join_all(version_futures).await;
 
-        entries.push(UpdateStatusEntry {
+    let mut version_map: std::collections::HashMap<usize, Option<String>> =
+        std::collections::HashMap::new();
+    for (&idx, result) in needs_check.iter().zip(version_results) {
+        let new_ver = result
+            .ok()
+            .and_then(|versions| versions.last().map(|v| v.version.clone()))
+            .filter(|v| v != &installed[idx].version);
+        version_map.insert(idx, new_ver);
+    }
+
+    let entries: Vec<_> = installed
+        .iter()
+        .enumerate()
+        .map(|(i, m)| UpdateStatusEntry {
             db_id: m.id,
             installed_version: m.version.clone(),
-            new_version,
+            new_version: version_map.get(&i).and_then(|v| v.clone()),
             csrf_token: csrf_token.clone(),
-        });
-    }
+        })
+        .collect();
 
     let tmpl = UpdateStatusTemplate { entries };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
@@ -1011,32 +1022,43 @@ pub async fn update_mod(
             })
             .await??;
 
-            // Hold the lock only for file swap + DB writes
-            let version_id = version.id;
-            let version_str = version.version.clone();
+            // Step 1: Read old file paths (brief DB lock)
+            let db_read = db.clone();
+            let old_paths = actix_web::web::block(move || {
+                let db = db_read.lock();
+                let files = db.get_files_for_mod(mod_db_id)?;
+                Ok::<_, anyhow::Error>(files.into_iter().map(|f| f.file_path).collect::<Vec<_>>())
+            })
+            .await??;
+
+            // Step 2: Filesystem swap (no DB lock held)
             let staging_path = staging_dir.path().to_path_buf();
-            let spt_dir2 = spt_dir.clone();
-            let db2 = db.clone();
-            let config2 = config.clone();
-            actix_web::web::block(move || {
-                let db = db.lock();
-                let old_files = db.get_files_for_mod(mod_db_id)?;
-                let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
-                crate::spt::mods::delete_mod_files(&spt_dir, &old_paths)?;
-
-                let tx = db.begin_transaction()?;
-                db.delete_files_for_mod(mod_db_id)?;
-
+            let spt_dir_fs = spt_dir.clone();
+            let extracted = actix_web::web::block(move || {
+                crate::spt::mods::delete_mod_files(&spt_dir_fs, &old_paths)?;
                 for file in &extracted {
                     let src = staging_path.join(&file.path);
-                    let dst = spt_dir.join(&file.path);
+                    let dst = spt_dir_fs.join(&file.path);
                     if let Some(parent) = dst.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::rename(&src, &dst)
                         .or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
                 }
+                Ok::<_, anyhow::Error>(extracted)
+            })
+            .await??;
 
+            // Step 3: DB writes atomically (brief DB lock)
+            let version_id = version.id;
+            let version_str = version.version.clone();
+            let spt_dir2 = spt_dir.clone();
+            let db2 = db.clone();
+            let config2 = config.clone();
+            actix_web::web::block(move || {
+                let db = db.lock();
+                let tx = db.begin_transaction()?;
+                db.delete_files_for_mod(mod_db_id)?;
                 for file in &extracted {
                     db.insert_file(
                         mod_db_id,
@@ -1355,33 +1377,43 @@ pub async fn update_all_mods(
                 })
                 .await??;
 
-                // Hold the lock only for file swap + DB writes
-                let spt_dir = spt_dir.clone();
-                let db = db.clone();
-                let version_id = update.recommended_version.id;
-                let version_str = update.recommended_version.version.clone();
+                // Step 1: Read old file paths (brief DB lock)
+                let db_read = db.clone();
+                let old_paths = actix_web::web::block(move || {
+                    let db = db_read.lock();
+                    let files = db.get_files_for_mod(mod_db_id)?;
+                    Ok::<_, anyhow::Error>(
+                        files.into_iter().map(|f| f.file_path).collect::<Vec<_>>(),
+                    )
+                })
+                .await??;
+
+                // Step 2: Filesystem swap (no DB lock held)
                 let staging_path = staging_dir.path().to_path_buf();
-
-                actix_web::web::block(move || {
-                    let db = db.lock();
-                    let old_files = db.get_files_for_mod(mod_db_id)?;
-                    let old_paths: Vec<String> =
-                        old_files.into_iter().map(|f| f.file_path).collect();
-                    crate::spt::mods::delete_mod_files(&spt_dir, &old_paths)?;
-
-                    let tx = db.begin_transaction()?;
-                    db.delete_files_for_mod(mod_db_id)?;
-
+                let spt_dir_fs = spt_dir.clone();
+                let extracted = actix_web::web::block(move || {
+                    crate::spt::mods::delete_mod_files(&spt_dir_fs, &old_paths)?;
                     for file in &extracted {
                         let src = staging_path.join(&file.path);
-                        let dst = spt_dir.join(&file.path);
+                        let dst = spt_dir_fs.join(&file.path);
                         if let Some(parent) = dst.parent() {
                             std::fs::create_dir_all(parent)?;
                         }
                         std::fs::rename(&src, &dst)
                             .or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
                     }
+                    Ok::<_, anyhow::Error>(extracted)
+                })
+                .await??;
 
+                // Step 3: DB writes atomically (brief DB lock)
+                let db = db.clone();
+                let version_id = update.recommended_version.id;
+                let version_str = update.recommended_version.version.clone();
+                actix_web::web::block(move || {
+                    let db = db.lock();
+                    let tx = db.begin_transaction()?;
+                    db.delete_files_for_mod(mod_db_id)?;
                     for file in &extracted {
                         db.insert_file(
                             mod_db_id,
