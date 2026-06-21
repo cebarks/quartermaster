@@ -8,7 +8,7 @@ use crate::db::users::Role;
 use crate::spt::headless::EHeadlessStatus;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
-use crate::web::flash::{set_flash, take_flash, FlashMessage};
+use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::state::AppState;
 
 #[derive(Template)]
@@ -145,7 +145,7 @@ pub async fn client_restart(
             set_flash(
                 &session,
                 "Podman socket not available. Ensure podman.socket is enabled.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
@@ -168,7 +168,11 @@ pub async fn client_restart(
     let container_name = match container_name {
         Some(name) => name,
         None => {
-            set_flash(&session, &format!("Client {index} not found"), "error");
+            set_flash(
+                &session,
+                &format!("Client {index} not found"),
+                FlashType::Error,
+            );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
                 .finish());
@@ -180,11 +184,15 @@ pub async fn client_restart(
         set_flash(
             &session,
             &format!("Failed to restart client {index}: {e}"),
-            "error",
+            FlashType::Error,
         );
     } else {
         tracing::info!(container = %container_name, "client restarted");
-        set_flash(&session, &format!("Client {index} restarting"), "success");
+        set_flash(
+            &session,
+            &format!("Client {index} restarting"),
+            FlashType::Success,
+        );
     }
 
     Ok(HttpResponse::SeeOther()
@@ -214,7 +222,7 @@ pub async fn client_stop(
             set_flash(
                 &session,
                 "Podman socket not available. Ensure podman.socket is enabled.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
@@ -236,7 +244,11 @@ pub async fn client_stop(
     let container_name = match container_name {
         Some(name) => name,
         None => {
-            set_flash(&session, &format!("Client {index} not found"), "error");
+            set_flash(
+                &session,
+                &format!("Client {index} not found"),
+                FlashType::Error,
+            );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
                 .finish());
@@ -248,11 +260,15 @@ pub async fn client_stop(
         set_flash(
             &session,
             &format!("Failed to stop client {index}: {e}"),
-            "error",
+            FlashType::Error,
         );
     } else {
         tracing::info!(container = %container_name, "client stopped");
-        set_flash(&session, &format!("Client {index} stopped"), "success");
+        set_flash(
+            &session,
+            &format!("Client {index} stopped"),
+            FlashType::Success,
+        );
     }
 
     Ok(HttpResponse::SeeOther()
@@ -282,7 +298,7 @@ pub async fn client_start(
             set_flash(
                 &session,
                 "Podman socket not available. Ensure podman.socket is enabled.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
@@ -304,7 +320,11 @@ pub async fn client_start(
     let container_name = match container_name {
         Some(name) => name,
         None => {
-            set_flash(&session, &format!("Client {index} not found"), "error");
+            set_flash(
+                &session,
+                &format!("Client {index} not found"),
+                FlashType::Error,
+            );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
                 .finish());
@@ -316,11 +336,15 @@ pub async fn client_start(
         set_flash(
             &session,
             &format!("Failed to start client {index}: {e}"),
-            "error",
+            FlashType::Error,
         );
     } else {
         tracing::info!(container = %container_name, "client started");
-        set_flash(&session, &format!("Client {index} starting"), "success");
+        set_flash(
+            &session,
+            &format!("Client {index} starting"),
+            FlashType::Success,
+        );
     }
 
     Ok(HttpResponse::SeeOther()
@@ -357,7 +381,7 @@ pub async fn client_scale(
         set_flash(
             &session,
             "No clients configured in quartermaster.toml",
-            "error",
+            FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/clients"))
@@ -401,7 +425,7 @@ pub async fn client_scale(
                     "Cannot scale down: {} in raid. Use force to override.",
                     client_list
                 ),
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
@@ -416,7 +440,7 @@ pub async fn client_scale(
             set_flash(
                 &session,
                 "Podman socket not available. Ensure podman.socket is enabled.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
@@ -436,7 +460,7 @@ pub async fn client_scale(
             set_flash(
                 &session,
                 &format!("Failed to create SPT client: {e}"),
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/clients"))
@@ -487,7 +511,7 @@ pub async fn client_scale(
     set_flash(
         &session,
         &format!("Scaling to {target} client(s)..."),
-        "success",
+        FlashType::Success,
     );
 
     Ok(HttpResponse::SeeOther()

@@ -8,7 +8,7 @@ use crate::db::mods::InstalledMod;
 use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
-use crate::web::flash::{set_flash, take_flash, FlashMessage};
+use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -197,7 +197,7 @@ pub async fn save_settings(
         .await;
     }
 
-    set_flash(&session, "NarcoNet settings saved", "success");
+    set_flash(&session, "NarcoNet settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/modsync"))
         .finish())

@@ -10,7 +10,7 @@ use crate::config::{
 use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
-use crate::web::flash::{set_flash, take_flash, FlashMessage};
+use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::state::AppState;
 
 fn non_empty_opt(s: &str) -> Option<String> {
@@ -183,7 +183,7 @@ pub async fn save_web_settings(
         set_flash(
             &session,
             "TLS certificate and key paths are required when TLS is enabled",
-            "error",
+            FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/settings?tab=web"))
@@ -212,7 +212,7 @@ pub async fn save_web_settings(
     set_flash(
         &session,
         "Web settings saved. Restart required for changes to take effect.",
-        "success",
+        FlashType::Success,
     );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=web"))
@@ -237,7 +237,7 @@ pub async fn save_server_settings(
         match form.server_port.trim().parse::<u16>() {
             Ok(p) if p > 0 => Some(p),
             _ => {
-                set_flash(&session, "Invalid server port", "error");
+                set_flash(&session, "Invalid server port", FlashType::Error);
                 return Ok(HttpResponse::SeeOther()
                     .insert_header(("Location", "/quma/settings?tab=server"))
                     .finish());
@@ -254,7 +254,7 @@ pub async fn save_server_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
 
-    set_flash(&session, "Server settings saved", "success");
+    set_flash(&session, "Server settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=server"))
         .finish())
@@ -280,7 +280,7 @@ pub async fn save_queue_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
 
-    set_flash(&session, "Queue settings saved", "success");
+    set_flash(&session, "Queue settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=queue"))
         .finish())
@@ -304,7 +304,7 @@ pub async fn save_forge_settings(
         match form.forge_cache_ttl.trim().parse::<u64>() {
             Ok(t) => Some(t),
             Err(_) => {
-                set_flash(&session, "Invalid cache TTL value", "error");
+                set_flash(&session, "Invalid cache TTL value", FlashType::Error);
                 return Ok(HttpResponse::SeeOther()
                     .insert_header(("Location", "/quma/settings?tab=forge"))
                     .finish());
@@ -329,7 +329,7 @@ pub async fn save_forge_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
 
-    set_flash(&session, "Forge settings saved", "success");
+    set_flash(&session, "Forge settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=forge"))
         .finish())
@@ -349,7 +349,7 @@ pub async fn save_logging_settings(
 
     let valid_levels = ["trace", "debug", "info", "warn", "error"];
     if !valid_levels.contains(&form.log_level.as_str()) {
-        set_flash(&session, "Invalid log level", "error");
+        set_flash(&session, "Invalid log level", FlashType::Error);
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/settings?tab=logging"))
             .finish());
@@ -378,7 +378,7 @@ pub async fn save_logging_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
 
-    set_flash(&session, "Logging settings saved", "success");
+    set_flash(&session, "Logging settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=logging"))
         .finish())
@@ -400,7 +400,7 @@ pub async fn save_clients_settings(
         set_flash(
             &session,
             "Install directory is required when client count > 0",
-            "error",
+            FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/settings?tab=clients"))
@@ -416,7 +416,7 @@ pub async fn save_clients_settings(
                         "Base UDP port ({}) + count ({}) exceeds port range (max would be {})",
                         form.base_udp_port, form.count, max_port
                     ),
-                    "error",
+                    FlashType::Error,
                 );
                 return Ok(HttpResponse::SeeOther()
                     .insert_header(("Location", "/quma/settings?tab=clients"))
@@ -429,7 +429,7 @@ pub async fn save_clients_settings(
                         "Base UDP port ({}) + count ({}) exceeds port range",
                         form.base_udp_port, form.count
                     ),
-                    "error",
+                    FlashType::Error,
                 );
                 return Ok(HttpResponse::SeeOther()
                     .insert_header(("Location", "/quma/settings?tab=clients"))
@@ -469,7 +469,7 @@ pub async fn save_clients_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
 
-    set_flash(&session, "Clients settings saved", "success");
+    set_flash(&session, "Clients settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=clients"))
         .finish())

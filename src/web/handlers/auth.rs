@@ -605,7 +605,11 @@ pub async fn reset_password_submit(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    crate::web::flash::set_flash(&session, "Password updated — please log in.", "success");
+    crate::web::flash::set_flash(
+        &session,
+        "Password updated — please log in.",
+        crate::web::flash::FlashType::Success,
+    );
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/login"))
