@@ -249,7 +249,6 @@ pub fn is_fika_installed(spt_dir: &Path) -> bool {
     spt_dir.join("SPT/user/mods/fika-server").is_dir()
 }
 
-#[allow(dead_code)] // Used in modsync.rs and setup.rs (tasks 2-3)
 pub const NARCONET_FORGE_MOD_ID: i64 = 2441;
 
 pub fn find_narconet_dir(spt_dir: &Path) -> Option<PathBuf> {
@@ -1235,7 +1234,7 @@ enabled = false
     fn modsync_detection() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(!is_modsync_installed(tmp.path()));
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/Corter-ModSync")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/narconet-server")).unwrap();
         assert!(is_modsync_installed(tmp.path()));
     }
 
