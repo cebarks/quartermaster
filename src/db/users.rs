@@ -103,11 +103,47 @@ pub struct ResetToken {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueAction {
+    Install,
+    Update,
+    Remove,
+}
+
+impl QueueAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            QueueAction::Install => "install",
+            QueueAction::Update => "update",
+            QueueAction::Remove => "remove",
+        }
+    }
+}
+
+impl TryFrom<String> for QueueAction {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.as_str() {
+            "install" => Ok(QueueAction::Install),
+            "update" => Ok(QueueAction::Update),
+            "remove" => Ok(QueueAction::Remove),
+            other => Err(format!("unknown queue action: {other}")),
+        }
+    }
+}
+
+impl fmt::Display for QueueAction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // SQL row model
 pub struct PendingOperation {
     pub id: i64,
-    pub action: String,
+    pub action: QueueAction,
     pub forge_mod_id: i64,
     pub forge_version_id: Option<i64>,
     pub mod_name: String,
@@ -366,7 +402,7 @@ impl Database {
 
     pub fn insert_pending_op(
         &self,
-        action: &str,
+        action: QueueAction,
         forge_mod_id: i64,
         forge_version_id: Option<i64>,
         mod_name: &str,
@@ -376,7 +412,7 @@ impl Database {
         self.conn.execute(
             "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by],
+            params![action.as_str(), forge_mod_id, forge_version_id, mod_name, metadata, queued_by],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -436,9 +472,17 @@ fn row_to_invite_code(row: &rusqlite::Row<'_>) -> rusqlite::Result<InviteCode> {
 }
 
 fn row_to_pending_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingOperation> {
+    let action_str: String = row.get(1)?;
+    let action = QueueAction::try_from(action_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        )
+    })?;
     Ok(PendingOperation {
         id: row.get(0)?,
-        action: row.get(1)?,
+        action,
         forge_mod_id: row.get(2)?,
         forge_version_id: row.get(3)?,
         mod_name: row.get(4)?,

@@ -351,9 +351,11 @@ fn expired_invite_rejected() {
 fn pending_operations_crud() {
     let db = test_db();
 
+    use crate::db::users::QueueAction;
+
     let op_id = db
         .insert_pending_op(
-            "install",
+            QueueAction::Install,
             1001,
             Some(2001),
             "Cool Mod",
@@ -363,12 +365,19 @@ fn pending_operations_crud() {
         .unwrap();
     assert!(op_id > 0);
 
-    db.insert_pending_op("update", 1002, Some(2002), "Other Mod", None, None)
-        .unwrap();
+    db.insert_pending_op(
+        QueueAction::Update,
+        1002,
+        Some(2002),
+        "Other Mod",
+        None,
+        None,
+    )
+    .unwrap();
 
     let ops = db.list_pending_ops().unwrap();
     assert_eq!(ops.len(), 2);
-    assert_eq!(ops[0].action, "install");
+    assert_eq!(ops[0].action, QueueAction::Install);
     assert_eq!(ops[0].mod_name, "Cool Mod");
     assert_eq!(ops[0].metadata.as_deref(), Some("{\"source\":\"web\"}"));
     assert_eq!(ops[0].queued_by.as_deref(), Some("admin"));
@@ -385,7 +394,14 @@ fn pending_operations_crud() {
 fn pending_op_with_no_version() {
     let db = test_db();
     let op_id = db
-        .insert_pending_op("remove", 1001, None, "Removed Mod", None, None)
+        .insert_pending_op(
+            crate::db::users::QueueAction::Remove,
+            1001,
+            None,
+            "Removed Mod",
+            None,
+            None,
+        )
         .unwrap();
     let ops = db.list_pending_ops().unwrap();
     assert_eq!(ops.len(), 1);

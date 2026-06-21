@@ -125,11 +125,10 @@ pub async fn apply_queue(
     let mut failures: Vec<String> = Vec::new();
 
     for op in &ops {
-        let result = match op.action.as_str() {
-            "install" => apply_install(op, &state).await,
-            "update" => apply_update(op, &state).await,
-            "remove" => apply_remove(op, &state).await,
-            _ => Err(anyhow::anyhow!("unknown queue action: {}", op.action)),
+        let result = match op.action {
+            crate::db::users::QueueAction::Install => apply_install(op, &state).await,
+            crate::db::users::QueueAction::Update => apply_update(op, &state).await,
+            crate::db::users::QueueAction::Remove => apply_remove(op, &state).await,
         };
 
         match result {

@@ -645,7 +645,7 @@ pub async fn resolve_request(
                         web::block(move || {
                             let db = db.lock();
                             db.insert_pending_op(
-                                "install",
+                                crate::db::users::QueueAction::Install,
                                 forge_mod_id,
                                 Some(version_id),
                                 &mod_name,

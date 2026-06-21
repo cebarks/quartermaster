@@ -14,7 +14,7 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
         .await?
     {
         ctx.db.insert_pending_op(
-            "remove",
+            crate::db::users::QueueAction::Remove,
             installed.forge_mod_id,
             None,
             &installed.name,
