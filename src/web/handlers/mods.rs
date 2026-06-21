@@ -862,6 +862,17 @@ pub async fn install_mod(
                     crate::config::is_modsync_installed(&spt_dir),
                     std::sync::atomic::Ordering::Relaxed,
                 );
+                if mod_id == 236 {
+                    state_clone
+                        .svm_installed
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(ref svm_lock) = state_clone.svm {
+                        if let Some(mgr) = crate::svm::SvmManager::detect(&spt_dir) {
+                            *svm_lock.write() = mgr;
+                        }
+                    }
+                    tracing::info!("SVM installed — config editor reinitialized");
+                }
                 tasks.complete(task_id, "Mod installed successfully".to_string());
             }
             Err(e) => {
@@ -1129,6 +1140,12 @@ pub async fn remove_mod(
         crate::config::is_modsync_installed(&state.spt_dir),
         std::sync::atomic::Ordering::Relaxed,
     );
+    if installed.forge_mod_id == 236 {
+        state
+            .svm_installed
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("SVM removed — config editor disabled");
+    }
     set_flash(&session, "Mod removed", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/mods"))
