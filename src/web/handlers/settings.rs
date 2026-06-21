@@ -306,7 +306,7 @@ pub async fn save_forge_settings(
     }
 
     let ttl: Option<u64> = if form.forge_cache_ttl.trim().is_empty() {
-        None
+        Some(0)
     } else {
         match form.forge_cache_ttl.trim().parse::<u64>() {
             Ok(t) => Some(t),

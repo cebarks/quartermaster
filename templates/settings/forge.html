@@ -16,7 +16,7 @@
         <div class="form-group">
             <label for="forge_cache_ttl">Cache TTL (seconds)</label>
             <input type="text" id="forge_cache_ttl" name="forge_cache_ttl" value="{% if let Some(ttl) = config.forge_cache_ttl %}{{ ttl }}{% endif %}" placeholder="86400">
-            <p class="text-muted text-sm">How long to cache Forge API responses. Leave blank to disable caching. Default: 86400 (24 hours).</p>
+            <p class="text-muted text-sm">How long to cache Forge API responses. Set to 0 to disable caching. Default: 86400 (24 hours).</p>
         </div>
 
         <button type="submit" class="btn">Save Forge Settings</button>

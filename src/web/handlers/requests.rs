@@ -177,7 +177,7 @@ pub async fn requests_tab(
     // unbounded concurrent Forge API requests; remaining entries refresh
     // on subsequent page loads).
     const MAX_BACKGROUND_REFRESHES: usize = 3;
-    if let Some(ttl) = state.config.forge_cache_ttl {
+    if let Some(ttl) = state.config.forge_cache_ttl.filter(|&t| t > 0) {
         let mut refresh_count = 0usize;
         for rv in &requests {
             if refresh_count >= MAX_BACKGROUND_REFRESHES {
