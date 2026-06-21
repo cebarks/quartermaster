@@ -9,7 +9,8 @@ use askama::Template;
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::web::auth::{require_auth, SessionUser};
+use crate::db::users::Role;
+use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::state::AppState;
@@ -28,7 +29,8 @@ pub async fn app_logs_json(
     req: HttpRequest,
     query: Query<LogQuery>,
 ) -> actix_web::Result<HttpResponse> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     let limit = query.limit.unwrap_or(100).min(10000);
     let entries = state.log_broadcast.recent(limit);
     Ok(HttpResponse::Ok().json(entries))
@@ -38,7 +40,8 @@ pub async fn app_logs_stream(
     state: Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     let mut rx = state.log_broadcast.subscribe();
 
     let stream = async_stream::stream! {
@@ -70,7 +73,8 @@ pub async fn server_logs_json(
     req: HttpRequest,
     query: Query<LogQuery>,
 ) -> actix_web::Result<HttpResponse> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     let container = state
         .config
         .server_container
@@ -102,7 +106,8 @@ pub async fn server_logs_stream(
     state: Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     let container = state
         .config
         .server_container
@@ -133,9 +138,12 @@ pub async fn server_logs_stream(
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
 
-        // Spawn separate tasks for stdout and stderr, both feeding into the same channel
+        // Keep a sender clone to detect when the receiver (SSE client) disconnects.
+        // closed() resolves when the rx is dropped, even if readers are blocked on I/O.
+        let disconnect = tx.clone();
+
         let tx_stdout = tx.clone();
-        let tx_stderr = tx.clone();
+        let tx_stderr = tx;
 
         let stdout_handle = tokio::spawn(async move {
             if let Some(stdout) = stdout {
@@ -169,8 +177,17 @@ pub async fn server_logs_stream(
             }
         });
 
-        // Wait for both streams to complete
-        let _ = tokio::join!(stdout_handle, stderr_handle);
+        // Race: either readers finish naturally (process exits) or client disconnects.
+        // Without this, readers blocked on next_line() never notice rx was dropped.
+        let stdout_abort = stdout_handle.abort_handle();
+        let stderr_abort = stderr_handle.abort_handle();
+        tokio::select! {
+            _ = async { let _ = tokio::join!(stdout_handle, stderr_handle); } => {},
+            _ = disconnect.closed() => {
+                stdout_abort.abort();
+                stderr_abort.abort();
+            }
+        }
 
         let _ = child.kill().await;
     });
@@ -203,6 +220,7 @@ pub async fn logs_page(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
