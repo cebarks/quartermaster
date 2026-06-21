@@ -546,6 +546,66 @@ impl Default for Config {
     }
 }
 
+macro_rules! env_override {
+    (str: $field:expr, $var:literal) => {
+        if let Ok(val) = std::env::var($var) {
+            tracing::debug!(var = $var, value = %val, "env var override applied");
+            $field = val;
+        }
+    };
+    (opt_str: $field:expr, $var:literal) => {
+        if let Ok(val) = std::env::var($var) {
+            tracing::debug!(var = $var, value = %val, "env var override applied");
+            $field = Some(val);
+        }
+    };
+    (path: $field:expr, $var:literal) => {
+        if let Ok(val) = std::env::var($var) {
+            tracing::debug!(var = $var, value = %val, "env var override applied");
+            $field = PathBuf::from(val);
+        }
+    };
+    (opt_path: $field:expr, $var:literal) => {
+        if let Ok(val) = std::env::var($var) {
+            tracing::debug!(var = $var, value = %val, "env var override applied");
+            $field = Some(PathBuf::from(val));
+        }
+    };
+    (parse: $field:expr, $var:literal, $ty:ty) => {
+        if let Ok(val) = std::env::var($var) {
+            if let Ok(parsed) = val.parse::<$ty>() {
+                tracing::debug!(var = $var, value = %val, "env var override applied");
+                $field = parsed;
+            }
+        }
+    };
+    (opt_parse: $field:expr, $var:literal, $ty:ty) => {
+        if let Ok(val) = std::env::var($var) {
+            if let Ok(parsed) = val.parse::<$ty>() {
+                tracing::debug!(var = $var, value = %val, "env var override applied");
+                $field = Some(parsed);
+            }
+        }
+    };
+    (bool: $field:expr, $var:literal) => {
+        if let Ok(val) = std::env::var($var) {
+            if val.eq_ignore_ascii_case("true") {
+                tracing::debug!(var = $var, value = %val, "env var override applied");
+                $field = true;
+            } else if val.eq_ignore_ascii_case("false") {
+                tracing::debug!(var = $var, value = %val, "env var override applied");
+                $field = false;
+            }
+        }
+    };
+    (redacted: $field:expr, $var:literal) => {
+        if let Ok(val) = std::env::var($var) {
+            tracing::debug!(var = $var, value = "<redacted>", "env var override applied");
+            $field = Some(val);
+        }
+    };
+}
+
 impl Config {
     /// Load config from a TOML file at `path`.
     pub fn load(path: &Path) -> Result<Self> {
@@ -597,149 +657,30 @@ impl Config {
         Ok(config)
     }
 
-    /// Override config fields from QUMA_* environment variables.
-    ///
-    /// Supported variables:
-    /// - `QUMA_SPT_DIR` -> `spt_dir`
-    /// - `QUMA_FORGE_TOKEN` -> `forge_token`
-    /// - `QUMA_WEB_PORT` -> `web_port`
-    /// - `QUMA_WEB_BIND` -> `web_bind`
-    /// - `QUMA_SERVER_CONTAINER` -> `server_container`
-    /// - `QUMA_SERVER_HOST` -> `server_host`
-    /// - `QUMA_SERVER_PORT` -> `server_port`
-    /// - `QUMA_LOG_LEVEL` -> `logging.level`
-    /// - `QUMA_LOG_FILE_PATH` -> `logging.file.path`
-    /// - `QUMA_LOG_FILE_ENABLED` -> `logging.file.enabled`
-    /// - `QUMA_AUTO_START_SERVER` -> `auto_start_server`
-    /// - `QUMA_SNAPSHOTS_ENABLED` -> `snapshots_enabled`
-    /// - `QUMA_CLIENTS_COUNT` -> `clients.count`
-    /// - `QUMA_CLIENTS_INSTALL_DIR` -> `clients.install_dir`
-    /// - `QUMA_CLIENTS_RESTART_POLICY` -> `clients.restart_policy`
+    /// Override config fields from `QUMA_*` environment variables.
     pub fn apply_env_overrides(&mut self) {
-        if let Ok(val) = std::env::var("QUMA_SPT_DIR") {
-            tracing::debug!(var = "QUMA_SPT_DIR", value = %val, "env var override applied");
-            self.spt_dir = Some(PathBuf::from(val));
-        }
-        if let Ok(val) = std::env::var("QUMA_FORGE_TOKEN") {
-            tracing::debug!(
-                var = "QUMA_FORGE_TOKEN",
-                value = "<redacted>",
-                "env var override applied"
-            );
-            self.forge_token = Some(val);
-        }
-        if let Ok(val) = std::env::var("QUMA_WEB_BIND") {
-            tracing::debug!(var = "QUMA_WEB_BIND", value = %val, "env var override applied");
-            self.web_bind = val;
-        }
-        if let Ok(val) = std::env::var("QUMA_WEB_PORT") {
-            if let Ok(port) = val.parse::<u16>() {
-                tracing::debug!(var = "QUMA_WEB_PORT", value = %val, "env var override applied");
-                self.web_port = port;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_SERVER_CONTAINER") {
-            tracing::debug!(var = "QUMA_SERVER_CONTAINER", value = %val, "env var override applied");
-            self.server_container = Some(val);
-        }
-        if let Ok(val) = std::env::var("QUMA_SERVER_HOST") {
-            tracing::debug!(var = "QUMA_SERVER_HOST", value = %val, "env var override applied");
-            self.server_host = Some(val);
-        }
-        if let Ok(val) = std::env::var("QUMA_SERVER_PORT") {
-            if let Ok(port) = val.parse::<u16>() {
-                tracing::debug!(var = "QUMA_SERVER_PORT", value = %val, "env var override applied");
-                self.server_port = Some(port);
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_UPDATE_CHECK_INTERVAL") {
-            if let Ok(secs) = val.parse::<u64>() {
-                self.update_check_interval = secs;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_FORGE_CACHE_TTL") {
-            if let Ok(secs) = val.parse::<u64>() {
-                tracing::debug!(var = "QUMA_FORGE_CACHE_TTL", value = %val, "env var override applied");
-                self.forge_cache_ttl = Some(secs);
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_AUTO_START_SERVER") {
-            if val.eq_ignore_ascii_case("true") {
-                tracing::debug!(var = "QUMA_AUTO_START_SERVER", value = %val, "env var override applied");
-                self.auto_start_server = true;
-            } else if val.eq_ignore_ascii_case("false") {
-                tracing::debug!(var = "QUMA_AUTO_START_SERVER", value = %val, "env var override applied");
-                self.auto_start_server = false;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_LOG_LEVEL") {
-            tracing::debug!(var = "QUMA_LOG_LEVEL", value = %val, "env var override applied");
-            self.logging.level = val;
-        }
-        if let Ok(val) = std::env::var("QUMA_LOG_FILE_PATH") {
-            tracing::debug!(var = "QUMA_LOG_FILE_PATH", value = %val, "env var override applied");
-            self.logging.file.path = val;
-        }
-        if let Ok(val) = std::env::var("QUMA_LOG_FILE_ENABLED") {
-            if val.eq_ignore_ascii_case("true") {
-                tracing::debug!(var = "QUMA_LOG_FILE_ENABLED", value = %val, "env var override applied");
-                self.logging.file.enabled = true;
-            } else if val.eq_ignore_ascii_case("false") {
-                tracing::debug!(var = "QUMA_LOG_FILE_ENABLED", value = %val, "env var override applied");
-                self.logging.file.enabled = false;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_CLIENTS_COUNT") {
-            if let Ok(count) = val.parse::<u32>() {
-                self.clients
-                    .get_or_insert_with(ClientsConfig::default)
-                    .count = count;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_CLIENTS_INSTALL_DIR") {
-            self.clients
-                .get_or_insert_with(ClientsConfig::default)
-                .install_dir = PathBuf::from(val);
-        }
-        if let Ok(val) = std::env::var("QUMA_CLIENTS_RESTART_POLICY") {
-            if let Ok(policy) = serde_json::from_str::<RestartPolicy>(&format!("\"{val}\"")) {
-                self.clients
-                    .get_or_insert_with(ClientsConfig::default)
-                    .restart_policy = policy;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_TLS_ENABLED") {
-            if val.eq_ignore_ascii_case("true") {
-                self.tls_enabled = true;
-            } else if val.eq_ignore_ascii_case("false") {
-                self.tls_enabled = false;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_TLS_CERT") {
-            self.tls_cert = Some(PathBuf::from(val));
-        }
-        if let Ok(val) = std::env::var("QUMA_TLS_KEY") {
-            self.tls_key = Some(PathBuf::from(val));
-        }
-        if let Ok(val) = std::env::var("QUMA_PROXY_ENABLED") {
-            if val.eq_ignore_ascii_case("true") {
-                self.proxy_enabled = true;
-            } else if val.eq_ignore_ascii_case("false") {
-                self.proxy_enabled = false;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_SNAPSHOTS_ENABLED") {
-            if val.eq_ignore_ascii_case("true") {
-                self.snapshots_enabled = true;
-            } else if val.eq_ignore_ascii_case("false") {
-                self.snapshots_enabled = false;
-            }
-        }
-        if let Ok(val) = std::env::var("QUMA_LEADERBOARD_MIN_RAIDS") {
-            if let Ok(v) = val.parse::<u32>() {
-                self.leaderboard_min_raids = v;
-            }
-        }
+        env_override!(opt_path: self.spt_dir, "QUMA_SPT_DIR");
+        env_override!(redacted: self.forge_token, "QUMA_FORGE_TOKEN");
+        env_override!(str: self.web_bind, "QUMA_WEB_BIND");
+        env_override!(parse: self.web_port, "QUMA_WEB_PORT", u16);
+        env_override!(opt_str: self.server_container, "QUMA_SERVER_CONTAINER");
+        env_override!(opt_str: self.server_host, "QUMA_SERVER_HOST");
+        env_override!(opt_parse: self.server_port, "QUMA_SERVER_PORT", u16);
+        env_override!(parse: self.update_check_interval, "QUMA_UPDATE_CHECK_INTERVAL", u64);
+        env_override!(opt_parse: self.forge_cache_ttl, "QUMA_FORGE_CACHE_TTL", u64);
+        env_override!(bool: self.auto_start_server, "QUMA_AUTO_START_SERVER");
+        env_override!(str: self.logging.level, "QUMA_LOG_LEVEL");
+        env_override!(str: self.logging.file.path, "QUMA_LOG_FILE_PATH");
+        env_override!(bool: self.logging.file.enabled, "QUMA_LOG_FILE_ENABLED");
+        env_override!(parse: self.clients.get_or_insert_with(ClientsConfig::default).count, "QUMA_CLIENTS_COUNT", u32);
+        env_override!(path: self.clients.get_or_insert_with(ClientsConfig::default).install_dir, "QUMA_CLIENTS_INSTALL_DIR");
+        env_override!(parse: self.clients.get_or_insert_with(ClientsConfig::default).restart_policy, "QUMA_CLIENTS_RESTART_POLICY", RestartPolicy);
+        env_override!(bool: self.tls_enabled, "QUMA_TLS_ENABLED");
+        env_override!(opt_path: self.tls_cert, "QUMA_TLS_CERT");
+        env_override!(opt_path: self.tls_key, "QUMA_TLS_KEY");
+        env_override!(bool: self.proxy_enabled, "QUMA_PROXY_ENABLED");
+        env_override!(bool: self.snapshots_enabled, "QUMA_SNAPSHOTS_ENABLED");
+        env_override!(parse: self.leaderboard_min_raids, "QUMA_LEADERBOARD_MIN_RAIDS", u32);
     }
 
     /// If `session_secret` is empty, generate a random 48-character alphanumeric secret.
