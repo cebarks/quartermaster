@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}Dashboard — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("dashboard", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("dashboard", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>Dashboard</h1>
 
@@ -32,14 +32,14 @@
             <span class="text-muted text-sm loading-pulse">Checking...</span>
         </div>
     </a>
-    {% if modsync_installed %}
+    {% if nav.modsync_installed %}
     <div class="stat-card" style="border-left-color: {% if modsync_managed %}var(--success){% else %}var(--warning){% endif %}">
         <div class="stat-label">NarcoNet</div>
         <div class="stat-value text-sm">{% if modsync_managed %}Active{% else %}Not Managed{% endif %}</div>
         <div class="stat-detail">{% if modsync_managed %}config auto-generated{% else %}enable in config{% endif %}</div>
     </div>
     {% endif %}
-    {% if fika_installed %}
+    {% if nav.fika_installed %}
     <a href="/quma/clients" class="stat-card" style="border-left-color: var(--border)">
         <div class="stat-label">Clients</div>
         <div hx-get="/quma/api/dashboard/clients-status" hx-trigger="load, every 5s" hx-swap="innerHTML">

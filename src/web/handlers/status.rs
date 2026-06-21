@@ -8,6 +8,7 @@ use crate::health::{self, IntegrityHealth, ModsHealth, ServerHealth};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -21,12 +22,7 @@ struct StatusPageTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    #[allow(dead_code)]
-    fika_installed: bool,
-    #[allow(dead_code)]
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     transitioning: bool,
 }
 
@@ -113,9 +109,7 @@ pub async fn status_page(
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
         transitioning,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))

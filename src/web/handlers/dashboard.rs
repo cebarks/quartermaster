@@ -11,6 +11,7 @@ use crate::spt::server::SptClient;
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -29,10 +30,7 @@ struct DashboardTemplate {
     tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     modsync_managed: bool,
 }
 
@@ -60,8 +58,8 @@ pub async fn dashboard(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let modsync_installed = state.is_modsync_installed();
-    let svm_installed = state.is_svm_installed();
+    let nav = NavContext::from_state(&state);
+    let modsync_managed = nav.modsync_installed && state.config.modsync.is_some();
     let tmpl = DashboardTemplate {
         user,
         mods,
@@ -71,10 +69,8 @@ pub async fn dashboard(
         tarkov_version: state.spt_info.tarkov_version.clone(),
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed,
-        svm_installed,
-        modsync_managed: modsync_installed && state.config.modsync.is_some(),
+        nav,
+        modsync_managed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

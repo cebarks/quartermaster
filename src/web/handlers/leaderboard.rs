@@ -8,6 +8,7 @@ use crate::web::auth::require_auth;
 use crate::web::csrf;
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -21,10 +22,7 @@ struct LeaderboardPageTemplate {
     user: crate::web::auth::SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     entries: Vec<LeaderboardEntry>,
     min_raids: u32,
 }
@@ -53,9 +51,7 @@ pub async fn leaderboard_page(
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
         entries,
         min_raids,
     };

@@ -7,6 +7,7 @@ use crate::db::users::{InviteCodeWithUsers, Role, User};
 use crate::spt::profiles::{load_all_profile_stats, ProfileStatus, SptProfileStats};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 fn is_invite_expired(expires_at: Option<&str>) -> bool {
@@ -60,12 +61,7 @@ struct AdminPageTemplate {
     users: Vec<(User, ProfileStatus)>,
     current_user_id: i64,
     flash: Option<crate::web::flash::FlashMessage>,
-    #[allow(dead_code)]
-    fika_installed: bool,
-    #[allow(dead_code)]
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
 }
 
 #[derive(Template)]
@@ -200,9 +196,7 @@ pub async fn admin_page(
         users,
         current_user_id,
         flash,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

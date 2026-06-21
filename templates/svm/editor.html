@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}SVM Editor — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("svm", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("svm", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">
     <h1>SVM Configuration — {{ active_preset }}</h1>

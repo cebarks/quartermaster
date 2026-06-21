@@ -7,6 +7,7 @@ use crate::db::users::{PendingOperation, Role};
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[derive(Template)]
@@ -16,12 +17,7 @@ struct QueueTemplate {
     ops: Vec<PendingOperation>,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    #[allow(dead_code)]
-    fika_installed: bool,
-    #[allow(dead_code)]
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
 }
 
 pub async fn queue_page(
@@ -47,9 +43,7 @@ pub async fn queue_page(
         ops,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
