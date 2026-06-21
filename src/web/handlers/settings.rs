@@ -54,7 +54,7 @@ pub async fn settings_page(
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let config = Config::load_with_env(&state.config_path).unwrap_or_default();
+    let config = Config::load(&state.config_path).map_err(WebError::from)?;
 
     let active_tab = query.tab.clone().unwrap_or_else(|| "web".to_string());
 
