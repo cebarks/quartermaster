@@ -255,22 +255,28 @@ pub async fn export_preset(
     require_capability(&user, Role::can_manage_mods)?;
 
     let preset_name = path.into_inner();
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
-    let _svm = svm.read();
+    crate::svm::SvmManager::validate_preset_name(&preset_name)
+        .map_err(|e| WebError::BadRequest(e.to_string()))?;
 
-    // Read the preset file from disk
+    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = svm.read();
+
+    if !svm.list_presets().contains(&preset_name) {
+        return Err(WebError::NotFound.into());
+    }
+
     let preset_path = state
         .spt_dir
-        .join("user/mods/DrakiaXYZ-SVM/Presets")
-        .join(format!("{}.json", preset_name));
+        .join("user/mods/[SVM] ServerValueModifier/Presets")
+        .join(format!("{preset_name}.json"));
     let json_content = std::fs::read_to_string(&preset_path)
-        .map_err(|e| WebError::Internal(anyhow::anyhow!("Failed to read preset file: {}", e)))?;
+        .map_err(|e| WebError::Internal(anyhow::anyhow!("Failed to read preset file: {e}")))?;
 
     Ok(HttpResponse::Ok()
         .content_type("application/json")
         .insert_header((
             "Content-Disposition",
-            format!("attachment; filename=\"{}.json\"", preset_name),
+            format!("attachment; filename=\"{preset_name}.json\""),
         ))
         .body(json_content))
 }
@@ -287,11 +293,13 @@ pub async fn import_preset(
         return Err(WebError::Forbidden.into());
     }
 
+    crate::svm::SvmManager::validate_preset_name(&form.name)
+        .map_err(|e| WebError::BadRequest(e.to_string()))?;
+
     let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
 
-    // Parse JSON to validate it
     let config: crate::svm::config::SvmConfig = serde_json::from_str(&form.json_content)
-        .map_err(|e| WebError::Internal(anyhow::anyhow!("Invalid JSON: {}", e)))?;
+        .map_err(|e| WebError::BadRequest(format!("Invalid JSON: {e}")))?;
 
     {
         let mut svm = svm.write();
@@ -351,7 +359,9 @@ fn section_to_json(config: &crate::svm::SvmConfig, section: &str) -> Result<Stri
         "custom" => serde_json::to_value(&config.custom)?,
         _ => anyhow::bail!("unknown section: {section}"),
     };
-    Ok(serde_json::to_string(&value)?)
+    let json = serde_json::to_string(&value)?;
+    // Escape </script> sequences to prevent XSS when injected into <script> blocks
+    Ok(json.replace("</", "<\\/"))
 }
 
 #[derive(serde::Deserialize)]
