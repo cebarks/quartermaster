@@ -77,10 +77,10 @@ pub async fn start_server(
 
     let db_arc = Arc::new(parking_lot::Mutex::new(db));
 
-    // Regenerate ModSync config on startup to ensure consistency
+    // Regenerate NarcoNet config on startup to ensure consistency
     if modsync_installed && config.modsync.is_some() {
         if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
-            tracing::warn!(error = %e, "failed to regenerate ModSync config on startup");
+            tracing::warn!(error = %e, "failed to regenerate NarcoNet config on startup");
         }
     }
 

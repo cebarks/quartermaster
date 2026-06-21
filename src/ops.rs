@@ -40,7 +40,7 @@ pub fn install_mod_from_archive(
         "mod installed, files recorded"
     );
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(error = %e, "failed to regenerate ModSync config");
+        tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
     }
     Ok(db_id)
 }
@@ -80,7 +80,7 @@ pub fn update_mod_from_archive(
     record_extracted_files(db, mod_db_id, &extracted)?;
     db.update_mod(mod_db_id, version_id, version_str)?;
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(error = %e, "failed to regenerate ModSync config");
+        tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
     }
     Ok(())
 }
@@ -98,7 +98,7 @@ pub fn remove_mod_by_id(
     crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
     db.delete_mod(mod_db_id)?;
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(error = %e, "failed to regenerate ModSync config");
+        tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
     }
     Ok(())
 }

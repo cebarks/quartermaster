@@ -49,7 +49,7 @@ pub enum Command {
         /// Skip Fika installation
         #[arg(long)]
         no_fika: bool,
-        /// Skip ModSync installation
+        /// Skip NarcoNet installation
         #[arg(long)]
         no_modsync: bool,
     },
