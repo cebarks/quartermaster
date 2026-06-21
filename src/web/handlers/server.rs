@@ -5,7 +5,7 @@ use actix_web::{HttpRequest, HttpResponse};
 use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability};
 use crate::web::error::WebError;
-use crate::web::flash::set_flash;
+use crate::web::flash::{set_flash, FlashType};
 use crate::web::sse::ServerEvent;
 use crate::web::state::AppState;
 
@@ -26,7 +26,7 @@ pub async fn start_server(
             set_flash(
                 &session,
                 "No server_container configured. Set it in quartermaster.toml.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/status"))
@@ -40,7 +40,7 @@ pub async fn start_server(
             set_flash(
                 &session,
                 "Podman socket not available. Ensure podman.socket is enabled.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/status"))
@@ -53,13 +53,17 @@ pub async fn start_server(
 
     if let Err(e) = mgr.start(container).await {
         tracing::error!(container, error = %e, "failed to start server");
-        set_flash(&session, &format!("Failed to start server: {e}"), "error");
+        set_flash(
+            &session,
+            &format!("Failed to start server: {e}"),
+            FlashType::Error,
+        );
     } else {
         tracing::info!(container, "server started");
         if let Some(ref svm) = state.svm {
             svm.write().clear_dirty();
         }
-        set_flash(&session, "Server starting", "success");
+        set_flash(&session, "Server starting", FlashType::Success);
     }
 
     state.set_server_transition(None);
@@ -87,7 +91,7 @@ pub async fn stop_server(
             set_flash(
                 &session,
                 "No server_container configured. Set it in quartermaster.toml.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/status"))
@@ -101,7 +105,7 @@ pub async fn stop_server(
             set_flash(
                 &session,
                 "Podman socket not available. Ensure podman.socket is enabled.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/status"))
@@ -114,10 +118,14 @@ pub async fn stop_server(
 
     if let Err(e) = mgr.stop(container).await {
         tracing::error!(container, error = %e, "failed to stop server");
-        set_flash(&session, &format!("Failed to stop server: {e}"), "error");
+        set_flash(
+            &session,
+            &format!("Failed to stop server: {e}"),
+            FlashType::Error,
+        );
     } else {
         tracing::info!(container, "server stopped");
-        set_flash(&session, "Server stopped", "success");
+        set_flash(&session, "Server stopped", FlashType::Success);
     }
 
     state.set_server_transition(None);
@@ -145,7 +153,7 @@ pub async fn restart_server(
             set_flash(
                 &session,
                 "No server_container configured. Set it in quartermaster.toml.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/status"))
@@ -159,7 +167,7 @@ pub async fn restart_server(
             set_flash(
                 &session,
                 "Podman socket not available. Ensure podman.socket is enabled.",
-                "error",
+                FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/status"))
@@ -173,7 +181,11 @@ pub async fn restart_server(
     // Stop first
     if let Err(e) = mgr.stop(container).await {
         tracing::error!(container, error = %e, "failed to stop server for restart");
-        set_flash(&session, &format!("Failed to stop server: {e}"), "error");
+        set_flash(
+            &session,
+            &format!("Failed to stop server: {e}"),
+            FlashType::Error,
+        );
         state.set_server_transition(None);
         let _ = state.events.send(ServerEvent::ServerTransition);
         return Ok(HttpResponse::SeeOther()
@@ -222,14 +234,14 @@ pub async fn restart_server(
         set_flash(
             &session,
             &format!("Server stopped but failed to start: {e}"),
-            "error",
+            FlashType::Error,
         );
     } else {
         tracing::info!(container, "server restarted");
         if let Some(ref svm) = state.svm {
             svm.write().clear_dirty();
         }
-        set_flash(&session, "Server restarted", "success");
+        set_flash(&session, "Server restarted", FlashType::Success);
     }
 
     state.set_server_transition(None);

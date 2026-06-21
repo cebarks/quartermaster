@@ -42,7 +42,6 @@ tokio-util = "0.7"
 
 # Error handling
 anyhow = "1"
-thiserror = "2"
 
 # Crypto & hashing
 sha2 = "0.10"

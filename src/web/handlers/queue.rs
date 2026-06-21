@@ -6,7 +6,7 @@ use askama::Template;
 use crate::db::users::{PendingOperation, Role};
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
-use crate::web::flash::{set_flash, take_flash, FlashMessage};
+use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::state::AppState;
 
 #[derive(Template)]
@@ -77,7 +77,7 @@ pub async fn cancel_op(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    set_flash(&session, "Operation cancelled", "success");
+    set_flash(&session, "Operation cancelled", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/queue"))
         .finish())
@@ -106,7 +106,7 @@ pub async fn apply_queue(
         set_flash(
             &session,
             "Cannot apply queue while server is running. Stop the server first.",
-            "error",
+            FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/queue"))
@@ -165,13 +165,13 @@ pub async fn apply_queue(
     if !failures.is_empty() {
         let names = failures.join(", ");
         let msg = format!("{} operation(s) failed: {names}", failures.len());
-        set_flash(&session, &msg, "error");
+        set_flash(&session, &msg, FlashType::Error);
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/queue"))
             .finish());
     }
 
-    set_flash(&session, "Queue applied successfully", "success");
+    set_flash(&session, "Queue applied successfully", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/queue"))
         .finish())

@@ -97,19 +97,7 @@ pub async fn run(
         return Ok(());
     }
 
-    if force {
-        let running = crate::server_detect::is_server_running(
-            &ctx.config,
-            &ctx.spt_dir,
-            ctx.container_mgr.as_ref(),
-        )
-        .await?;
-        if running {
-            println!(
-                "Warning: applying changes while the server is running may cause instability."
-            );
-        }
-    }
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
 
     install_deps(ctx, &to_install).await?;
     let db_id = install_main_mod(ctx, &forge_mod, &selected_version).await?;
@@ -159,7 +147,7 @@ async fn pick_version(
                 }
             }
         }
-        None => versions.into_iter().last().ok_or_else(|| {
+        None => versions.into_iter().max_by_key(|v| v.id).ok_or_else(|| {
             anyhow::anyhow!(
                 "no versions of {} are compatible with SPT {}",
                 forge_mod.name,
@@ -222,12 +210,14 @@ async fn install_deps(ctx: &CliContext, deps: &[PendingInstall]) -> Result<()> {
         let dep_mod = ctx.forge.get_mod(dep.mod_id, false).await?;
         install_single_mod(
             ctx,
-            dep.mod_id,
-            dep.version_id,
-            download_url,
-            &dep.name,
-            dep_mod.slug.as_deref(),
-            &dep.version,
+            &ModInstallParams {
+                forge_mod_id: dep.mod_id,
+                forge_version_id: dep.version_id,
+                download_url,
+                name: &dep.name,
+                slug: dep_mod.slug.as_deref(),
+                version: &dep.version,
+            },
         )
         .await?;
     }
@@ -249,12 +239,14 @@ async fn install_main_mod(
 
     install_single_mod(
         ctx,
-        forge_mod.id,
-        selected_version.id,
-        download_url,
-        &forge_mod.name,
-        forge_mod.slug.as_deref(),
-        &selected_version.version,
+        &ModInstallParams {
+            forge_mod_id: forge_mod.id,
+            forge_version_id: selected_version.id,
+            download_url,
+            name: &forge_mod.name,
+            slug: forge_mod.slug.as_deref(),
+            version: &selected_version.version,
+        },
     )
     .await
 }
@@ -282,17 +274,27 @@ fn record_dependency_edges(
     Ok(())
 }
 
+/// Metadata needed to install a single mod from Forge.
+pub struct ModInstallParams<'a> {
+    pub forge_mod_id: i64,
+    pub forge_version_id: i64,
+    pub download_url: &'a str,
+    pub name: &'a str,
+    pub slug: Option<&'a str>,
+    pub version: &'a str,
+}
+
 /// Download, extract, and record a single mod in the database.
-pub async fn install_single_mod(
-    ctx: &CliContext,
-    forge_mod_id: i64,
-    forge_version_id: i64,
-    download_url: &str,
-    name: &str,
-    slug: Option<&str>,
-    version: &str,
-) -> Result<i64> {
-    if let Some(existing) = ctx.db.get_mod_by_forge_id(forge_mod_id)? {
+pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>) -> Result<i64> {
+    let ModInstallParams {
+        forge_mod_id,
+        forge_version_id,
+        download_url,
+        name,
+        slug,
+        version,
+    } = params;
+    if let Some(existing) = ctx.db.get_mod_by_forge_id(*forge_mod_id)? {
         println!(
             "  {} already installed (v{}), skipping",
             name, existing.version
@@ -318,10 +320,10 @@ pub async fn install_single_mod(
         &ctx.db,
         &ctx.spt_dir,
         &ctx.config,
-        forge_mod_id,
-        forge_version_id,
+        *forge_mod_id,
+        *forge_version_id,
         name,
-        slug,
+        *slug,
         version,
         &archive_path,
     )?;

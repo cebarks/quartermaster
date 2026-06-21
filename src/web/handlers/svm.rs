@@ -7,7 +7,7 @@ use crate::db::users::Role;
 use crate::svm::metadata::{self, FieldMeta, InputType, SectionMeta, SECTIONS};
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
-use crate::web::flash::{set_flash, take_flash, FlashMessage};
+use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -130,7 +130,7 @@ pub async fn switch_preset(
     set_flash(
         &session,
         &format!("Switched to preset: {}", form.preset),
-        "success",
+        FlashType::Success,
     );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/svm"))
@@ -158,7 +158,7 @@ pub async fn create_preset(
     set_flash(
         &session,
         &format!("Created preset: {}", form.name),
-        "success",
+        FlashType::Success,
     );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/svm"))
@@ -187,7 +187,7 @@ pub async fn duplicate_preset(
     set_flash(
         &session,
         &format!("Duplicated preset '{}' to '{}'", form.src, form.dst),
-        "success",
+        FlashType::Success,
     );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/svm"))
@@ -215,7 +215,7 @@ pub async fn delete_preset(
     set_flash(
         &session,
         &format!("Deleted preset: {}", form.name),
-        "success",
+        FlashType::Success,
     );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/svm"))
@@ -240,7 +240,7 @@ pub async fn reload_from_disk(
         svm.reload_from_disk().map_err(WebError::from)?;
     }
 
-    set_flash(&session, "Reloaded from disk", "success");
+    set_flash(&session, "Reloaded from disk", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/svm"))
         .finish())
@@ -310,7 +310,7 @@ pub async fn import_preset(
     set_flash(
         &session,
         &format!("Imported preset: {}", form.name),
-        "success",
+        FlashType::Success,
     );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/svm"))
@@ -522,7 +522,7 @@ pub async fn save_section(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    set_flash(&session, "SVM config saved", "success");
+    set_flash(&session, "SVM config saved", FlashType::Success);
     Ok(HttpResponse::Ok().json(serde_json::json!({"ok": true})))
 }
 

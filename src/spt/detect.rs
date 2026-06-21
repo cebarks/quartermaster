@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::error::QumaError;
-
 /// Metadata extracted from a validated SPT installation.
 #[derive(Debug, Clone)]
 pub struct SptInfo {
@@ -50,7 +48,7 @@ pub fn validate_spt_dir(path: &Path) -> Result<()> {
     for entry in REQUIRED_PATHS {
         let full = path.join(entry);
         if !full.exists() {
-            return Err(QumaError::InvalidSptDir(format!("missing {entry}")).into());
+            anyhow::bail!("not a valid SPT 4.0+ install: missing {entry}");
         }
     }
     Ok(())
@@ -67,7 +65,9 @@ pub fn read_spt_version(spt_dir: &Path) -> Result<SptInfo> {
         .with_context(|| format!("failed to parse {}", core_path.display()))?;
 
     let tarkov_version = parsed.compatible_tarkov_version.ok_or_else(|| {
-        QumaError::InvalidSptDir("core.json missing compatibleTarkovVersion field".into())
+        anyhow::anyhow!(
+            "not a valid SPT 4.0+ install: core.json missing compatibleTarkovVersion field"
+        )
     })?;
 
     // 2. Read SPT version from SPT.Server.deps.json
@@ -111,7 +111,7 @@ fn read_spt_version_from_deps(spt_dir: &Path) -> Result<String> {
 /// 2. The `QUMA_SPT_DIR` environment variable
 /// 3. Walking up from `cwd` (or the process CWD) looking for the SPT root
 ///
-/// Returns `QumaError::SptDirNotFound` if none of the strategies succeed.
+/// Returns an error if none of the strategies succeed.
 pub fn detect_spt_dir(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<PathBuf> {
     // 1. Explicit path
     if let Some(p) = explicit {
@@ -141,7 +141,7 @@ pub fn detect_spt_dir(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<Pat
         candidate = dir.parent();
     }
 
-    Err(QumaError::SptDirNotFound.into())
+    anyhow::bail!("SPT directory not found — run `quma setup` or pass --spt-dir")
 }
 
 /// Parse `http.json` from the SPT installation for the server's IP and port.
@@ -282,8 +282,10 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             // Empty dir — no SPT markers anywhere up the tree.
             let err = detect_spt_dir(None, Some(tmp.path())).unwrap_err();
-            let quma_err = err.downcast_ref::<QumaError>().unwrap();
-            assert!(matches!(quma_err, QumaError::SptDirNotFound));
+            assert!(
+                err.to_string().contains("SPT directory not found"),
+                "unexpected error: {err}"
+            );
         });
     }
 

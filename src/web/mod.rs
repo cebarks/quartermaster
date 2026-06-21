@@ -49,21 +49,37 @@ async fn serve_asset(path: web::Path<String>) -> impl Responder {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn start_server(
-    config: Config,
-    config_path: std::path::PathBuf,
-    db: Database,
-    forge: ForgeClient,
-    spt_dir: std::path::PathBuf,
-    spt_info: SptInfo,
-    log_broadcast: Arc<LogBroadcast>,
-    container_mgr: Option<Arc<crate::container::ContainerManager>>,
-    client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
-    converging: Arc<std::sync::atomic::AtomicBool>,
-    fika_installed: bool,
-    modsync_installed: bool,
-) -> Result<()> {
+/// All state needed to launch the web server, bundled to avoid a 12-parameter function.
+pub struct ServerContext {
+    pub config: Config,
+    pub config_path: std::path::PathBuf,
+    pub db: Database,
+    pub forge: ForgeClient,
+    pub spt_dir: std::path::PathBuf,
+    pub spt_info: SptInfo,
+    pub log_broadcast: Arc<LogBroadcast>,
+    pub container_mgr: Option<Arc<crate::container::ContainerManager>>,
+    pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
+    pub converging: Arc<std::sync::atomic::AtomicBool>,
+    pub fika_installed: bool,
+    pub modsync_installed: bool,
+}
+
+pub async fn start_server(ctx: ServerContext) -> Result<()> {
+    let ServerContext {
+        config,
+        config_path,
+        db,
+        forge,
+        spt_dir,
+        spt_info,
+        log_broadcast,
+        container_mgr,
+        client_states,
+        converging,
+        fika_installed,
+        modsync_installed,
+    } = ctx;
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
 
     let session_key = Key::derive_from(config.session_secret.as_bytes());

@@ -11,7 +11,7 @@ use crate::db::users::Role;
 use crate::forge::models::DependencyNode;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
-use crate::web::flash::{set_flash, take_flash, FlashMessage};
+use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::handlers::requests::{fika_compat_to_string, parse_forge_url};
 use crate::web::state::AppState;
 
@@ -740,7 +740,7 @@ pub async fn install_mod(
                             "Warning: {} v{} is marked as Fika INCOMPATIBLE. It may cause issues with multiplayer.",
                             mod_info.name, version.version
                         ),
-                        "warning",
+                        FlashType::Warning,
                     );
                 }
                 Some(FikaCompat::Unknown) => {
@@ -750,7 +750,7 @@ pub async fn install_mod(
                             "Note: Fika compatibility for {} v{} is unknown.",
                             mod_info.name, version.version
                         ),
-                        "warning",
+                        FlashType::Warning,
                     );
                 }
                 _ => {}
@@ -787,7 +787,7 @@ pub async fn install_mod(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
-        set_flash(&session, "Mod queued for install", "success");
+        set_flash(&session, "Mod queued for install", FlashType::Success);
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/queue"))
             .finish());
@@ -795,7 +795,11 @@ pub async fn install_mod(
 
     // Prevent duplicate installs
     if state.tasks.has_running_for_mod(mod_id) {
-        set_flash(&session, "This mod is already being installed", "warning");
+        set_flash(
+            &session,
+            "This mod is already being installed",
+            FlashType::Warning,
+        );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods"))
             .finish());
@@ -942,7 +946,7 @@ pub async fn update_mod(
     ))?;
 
     if version.version == installed.version {
-        set_flash(&session, "Already up to date", "warning");
+        set_flash(&session, "Already up to date", FlashType::Warning);
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
             .finish());
@@ -978,7 +982,7 @@ pub async fn update_mod(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
-        set_flash(&session, "Update queued", "success");
+        set_flash(&session, "Update queued", FlashType::Success);
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/queue"))
             .finish());
@@ -986,7 +990,11 @@ pub async fn update_mod(
 
     // Prevent duplicate updates
     if state.tasks.has_running_for_mod(installed.forge_mod_id) {
-        set_flash(&session, "This mod is already being updated", "warning");
+        set_flash(
+            &session,
+            "This mod is already being updated",
+            FlashType::Warning,
+        );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
             .finish());
@@ -1156,7 +1164,7 @@ pub async fn remove_mod(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
-        set_flash(&session, "Mod queued for removal", "success");
+        set_flash(&session, "Mod queued for removal", FlashType::Success);
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/queue"))
             .finish());
@@ -1187,7 +1195,7 @@ pub async fn remove_mod(
             .store(false, std::sync::atomic::Ordering::Relaxed);
         tracing::info!("SVM removed — config editor disabled");
     }
-    set_flash(&session, "Mod removed", "success");
+    set_flash(&session, "Mod removed", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/mods"))
         .finish())
@@ -1235,12 +1243,16 @@ pub async fn toggle_disable(
     .map_err(WebError::from)?;
 
     if was_disabled {
-        set_flash(&session, &format!("{mod_name} has been enabled"), "success");
+        set_flash(
+            &session,
+            &format!("{mod_name} has been enabled"),
+            FlashType::Success,
+        );
     } else {
         set_flash(
             &session,
             &format!("{mod_name} has been disabled"),
-            "success",
+            FlashType::Success,
         );
     }
     Ok(HttpResponse::SeeOther()
@@ -1315,7 +1327,7 @@ pub async fn update_all_mods(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
-        set_flash(&session, "All updates queued", "success");
+        set_flash(&session, "All updates queued", FlashType::Success);
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/queue"))
             .finish());
@@ -1325,7 +1337,7 @@ pub async fn update_all_mods(
         set_flash(
             &session,
             "Please wait for current operations to finish before updating all",
-            "warning",
+            FlashType::Warning,
         );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods"))
