@@ -1030,58 +1030,21 @@ pub async fn update_mod(
             })
             .await??;
 
-            // Step 1: Read old file paths (brief DB lock)
-            let db_read = db.clone();
-            let old_paths = actix_web::web::block(move || {
-                let db = db_read.lock();
-                let files = db.get_files_for_mod(mod_db_id)?;
-                Ok::<_, anyhow::Error>(files.into_iter().map(|f| f.file_path).collect::<Vec<_>>())
-            })
-            .await??;
-
-            // Step 2: Filesystem swap (no DB lock held)
-            let staging_path = staging_dir.path().to_path_buf();
-            let spt_dir_fs = spt_dir.clone();
-            let extracted = actix_web::web::block(move || {
-                crate::spt::mods::delete_mod_files(&spt_dir_fs, &old_paths)?;
-                for file in &extracted {
-                    let src = staging_path.join(&file.path);
-                    let dst = spt_dir_fs.join(&file.path);
-                    if let Some(parent) = dst.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    std::fs::rename(&src, &dst)
-                        .or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-                }
-                Ok::<_, anyhow::Error>(extracted)
-            })
-            .await??;
-
-            // Step 3: DB writes atomically (brief DB lock)
-            let version_id = version.id;
-            let version_str = version.version.clone();
-            let spt_dir2 = spt_dir.clone();
-            let db2 = db.clone();
-            let config2 = config.clone();
-            actix_web::web::block(move || {
-                let db = db.lock();
-                let tx = db.begin_transaction()?;
-                db.delete_files_for_mod(mod_db_id)?;
-                for file in &extracted {
-                    db.insert_file(
-                        mod_db_id,
-                        &file.path,
-                        Some(&file.hash),
-                        Some(file.size as i64),
-                    )?;
-                }
-                db.update_mod(mod_db_id, version_id, &version_str)?;
-                tx.commit()?;
-                Ok::<_, anyhow::Error>(())
-            })
-            .await??;
+            crate::ops::apply_mod_update(
+                db.clone(),
+                spt_dir.clone(),
+                staging_dir.path().to_path_buf(),
+                extracted,
+                mod_db_id,
+                version.id,
+                version.version.clone(),
+            )
+            .await?;
 
             // Regenerate NarcoNet config if enabled
+            let db2 = db.clone();
+            let spt_dir2 = spt_dir.clone();
+            let config2 = config.clone();
             let _ = actix_web::web::block(move || {
                 let db = db2.lock();
                 crate::modsync::regenerate_if_enabled(&spt_dir2, &config2, &db)
@@ -1389,56 +1352,16 @@ pub async fn update_all_mods(
                 })
                 .await??;
 
-                // Step 1: Read old file paths (brief DB lock)
-                let db_read = db.clone();
-                let old_paths = actix_web::web::block(move || {
-                    let db = db_read.lock();
-                    let files = db.get_files_for_mod(mod_db_id)?;
-                    Ok::<_, anyhow::Error>(
-                        files.into_iter().map(|f| f.file_path).collect::<Vec<_>>(),
-                    )
-                })
-                .await??;
-
-                // Step 2: Filesystem swap (no DB lock held)
-                let staging_path = staging_dir.path().to_path_buf();
-                let spt_dir_fs = spt_dir.clone();
-                let extracted = actix_web::web::block(move || {
-                    crate::spt::mods::delete_mod_files(&spt_dir_fs, &old_paths)?;
-                    for file in &extracted {
-                        let src = staging_path.join(&file.path);
-                        let dst = spt_dir_fs.join(&file.path);
-                        if let Some(parent) = dst.parent() {
-                            std::fs::create_dir_all(parent)?;
-                        }
-                        std::fs::rename(&src, &dst)
-                            .or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-                    }
-                    Ok::<_, anyhow::Error>(extracted)
-                })
-                .await??;
-
-                // Step 3: DB writes atomically (brief DB lock)
-                let db = db.clone();
-                let version_id = update.recommended_version.id;
-                let version_str = update.recommended_version.version.clone();
-                actix_web::web::block(move || {
-                    let db = db.lock();
-                    let tx = db.begin_transaction()?;
-                    db.delete_files_for_mod(mod_db_id)?;
-                    for file in &extracted {
-                        db.insert_file(
-                            mod_db_id,
-                            &file.path,
-                            Some(&file.hash),
-                            Some(file.size as i64),
-                        )?;
-                    }
-                    db.update_mod(mod_db_id, version_id, &version_str)?;
-                    tx.commit()?;
-                    Ok::<_, anyhow::Error>(())
-                })
-                .await??;
+                crate::ops::apply_mod_update(
+                    db.clone(),
+                    spt_dir.clone(),
+                    staging_dir.path().to_path_buf(),
+                    extracted,
+                    mod_db_id,
+                    update.recommended_version.id,
+                    update.recommended_version.version.clone(),
+                )
+                .await?;
                 Ok::<_, anyhow::Error>(())
             }
             .await;

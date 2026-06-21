@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
@@ -87,6 +88,64 @@ pub fn update_mod_from_archive(
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
         tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
     }
+    Ok(())
+}
+
+/// Apply a mod update using brief DB locks suitable for the web context.
+///
+/// This is the async counterpart of [`update_mod_from_archive`]: it performs the
+/// same 3-step update (read old paths, filesystem swap, DB write) but splits
+/// each step into a separate [`actix_web::web::block`] call so the DB mutex is
+/// never held across slow filesystem I/O.
+///
+/// `extracted` must be the files already extracted to `staging_path` (e.g. via
+/// [`crate::spt::mods::extract_mod`]).
+pub async fn apply_mod_update(
+    db: Arc<parking_lot::Mutex<Database>>,
+    spt_dir: PathBuf,
+    staging_path: PathBuf,
+    extracted: Vec<ExtractedFile>,
+    mod_db_id: i64,
+    version_id: i64,
+    version_str: String,
+) -> Result<()> {
+    // Step 1: Read old file paths (brief DB lock)
+    let db_read = db.clone();
+    let old_paths = actix_web::web::block(move || {
+        let db = db_read.lock();
+        let files = db.get_files_for_mod(mod_db_id)?;
+        Ok::<_, anyhow::Error>(files.into_iter().map(|f| f.file_path).collect::<Vec<_>>())
+    })
+    .await??;
+
+    // Step 2: Filesystem swap (no DB lock held)
+    let spt_dir_fs = spt_dir.clone();
+    let extracted = actix_web::web::block(move || {
+        crate::spt::mods::delete_mod_files(&spt_dir_fs, &old_paths)?;
+        for file in &extracted {
+            let src = staging_path.join(&file.path);
+            let dst = spt_dir_fs.join(&file.path);
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
+        }
+        Ok::<_, anyhow::Error>(extracted)
+    })
+    .await??;
+
+    // Step 3: DB writes atomically (brief DB lock)
+    actix_web::web::block(move || {
+        let db = db.lock();
+        let tx = db.begin_transaction()?;
+        db.delete_files_for_mod(mod_db_id)?;
+        record_extracted_files(&db, mod_db_id, &extracted)?;
+        db.update_mod(mod_db_id, version_id, &version_str)?;
+        tx.commit()?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+
     Ok(())
 }
 
