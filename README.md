@@ -13,8 +13,11 @@ Built for Linux hosts running SPT in a Podman container.
 - **Multi-user auth** — Invite-based registration, admin/player roles, session cookies
 - **Fika support** — Dedicated headless client management and scaling for Fika multiplayer
 - **HTTPS/WSS proxy** — Transparent reverse proxy to SPT server so clients connect through Quartermaster
-- **ModSync integration** — Auto-manages ModSync `config.jsonc` from installed mod state
-- **Player profiles** — View player profiles with quest, trader, and hideout progress
+- **NarcoNet integration** — Auto-manages NarcoNet `config.yaml` from installed mod state for client mod syncing
+- **Player profiles** — View player profiles with quest, trader, and hideout progress, plus stash viewer
+- **Raid statistics** — Per-raid stats tracking via proxy interception, with leaderboard
+- **Server Value Modifiers (SVM)** — Browse and configure server value modifiers from the web UI
+- **Server settings** — View and manage SPT server configuration
 - **Mod requests** — Players can request mods; admins review and approve with a voting system
 - **Mod enable/disable** — Toggle mods on and off without uninstalling
 - **Container lifecycle** — Start, stop, restart the SPT server container via Podman
@@ -92,6 +95,16 @@ just audit      # cargo audit
 just changelog  # git-cliff changelog generation
 ```
 
+**Local dev environment** (fake SPT dir, no real server needed):
+
+```bash
+just dev-init       # create a stub SPT directory at .dev/
+just dev-serve      # build & run web UI against .dev/
+just dev-cli <ARGS> # run any quma command against .dev/
+just dev-reset-db   # wipe .dev/ database
+just dev-clean      # remove .dev/ entirely
+```
+
 ## Architecture
 
 Single Rust binary — the CLI and actix-web server share the same codebase.
@@ -104,10 +117,11 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 | `src/forge/` | HTTP client for SPT Forge API |
 | `src/spt/` | SPT directory interaction, archive extraction, profiles, game data |
 | `src/client/` | Fika headless client supervisor and convergence |
+| `src/svm/` | Server Value Modifier browsing and configuration |
 | `src/ops.rs` | Core mod operations (install/update/remove) |
 | `src/health.rs` | Health check system |
 | `src/queue.rs` | Change queue for deferred mod operations |
-| `src/modsync.rs` | ModSync config.jsonc auto-management |
+| `src/modsync.rs` | NarcoNet config.yaml auto-management |
 | `src/container.rs` | Podman container management |
 
 ## License
