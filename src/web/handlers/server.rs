@@ -1,13 +1,47 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form};
 use actix_web::{HttpRequest, HttpResponse};
 
+use crate::container::ContainerManager;
 use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, FlashType};
 use crate::web::sse::ServerEvent;
 use crate::web::state::AppState;
+
+/// Validates that both a container name and container manager are configured.
+/// Returns a redirect to `/quma/status` with an appropriate flash error if either is missing.
+fn require_container<'a>(
+    state: &'a AppState,
+    session: &Session,
+) -> Result<(&'a str, &'a Arc<ContainerManager>), HttpResponse> {
+    let name = state.config.server_container.as_deref().ok_or_else(|| {
+        set_flash(
+            session,
+            "No server_container configured. Set it in quartermaster.toml.",
+            FlashType::Error,
+        );
+        HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/status"))
+            .finish()
+    })?;
+
+    let mgr = state.container_mgr.as_ref().ok_or_else(|| {
+        set_flash(
+            session,
+            "Podman socket not available. Ensure podman.socket is enabled.",
+            FlashType::Error,
+        );
+        HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/status"))
+            .finish()
+    })?;
+
+    Ok((name, mgr))
+}
 
 pub async fn start_server(
     state: Data<AppState>,
@@ -20,32 +54,9 @@ pub async fn start_server(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let container = match state.config.server_container.as_deref() {
-        Some(c) => c,
-        None => {
-            set_flash(
-                &session,
-                "No server_container configured. Set it in quartermaster.toml.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/status"))
-                .finish());
-        }
-    };
-
-    let mgr = match state.container_mgr.as_ref() {
-        Some(m) => m,
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/status"))
-                .finish());
-        }
+    let (container, mgr) = match require_container(&state, &session) {
+        Ok(pair) => pair,
+        Err(resp) => return Ok(resp),
     };
 
     state.set_server_transition(Some("starting"));
@@ -85,32 +96,9 @@ pub async fn stop_server(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let container = match state.config.server_container.as_deref() {
-        Some(c) => c,
-        None => {
-            set_flash(
-                &session,
-                "No server_container configured. Set it in quartermaster.toml.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/status"))
-                .finish());
-        }
-    };
-
-    let mgr = match state.container_mgr.as_ref() {
-        Some(m) => m,
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/status"))
-                .finish());
-        }
+    let (container, mgr) = match require_container(&state, &session) {
+        Ok(pair) => pair,
+        Err(resp) => return Ok(resp),
     };
 
     state.set_server_transition(Some("stopping"));
@@ -147,32 +135,9 @@ pub async fn restart_server(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let container = match state.config.server_container.as_deref() {
-        Some(c) => c,
-        None => {
-            set_flash(
-                &session,
-                "No server_container configured. Set it in quartermaster.toml.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/status"))
-                .finish());
-        }
-    };
-
-    let mgr = match state.container_mgr.as_ref() {
-        Some(m) => m,
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/status"))
-                .finish());
-        }
+    let (container, mgr) = match require_container(&state, &session) {
+        Ok(pair) => pair,
+        Err(resp) => return Ok(resp),
     };
 
     state.set_server_transition(Some("restarting"));
