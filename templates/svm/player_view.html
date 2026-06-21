@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Server Config — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("svm", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Server Configuration — {{ active_preset }}</h1>
+
+<div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
+    {% for s in sections %}
+    <a href="/quma/svm/view?section={{ s.key }}"
+       class="btn btn-sm {% if s.key == active_section %}btn-primary{% else %}btn-outline{% endif %}">
+        {{ s.label }}
+    </a>
+    {% endfor %}
+</div>
+
+<div class="card">
+    {% for group in field_groups %}
+        {% if let Some(label) = group.label %}
+        <h3 style="margin-top: 1.5rem; margin-bottom: 0.5rem; font-size: 1.1rem; color: var(--primary)">{{ label }}</h3>
+        {% endif %}
+        {% for field in group.fields %}
+        <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border)">
+            <span title="{{ field.description }}">{{ field.label }}</span>
+            <span id="val-{{ field.path }}" class="text-muted">—</span>
+        </div>
+        {% endfor %}
+    {% endfor %}
+</div>
+
+<script>
+(function() {
+    var config = {{ config_json|safe }};
+    {% for group in field_groups %}
+    {% for field in group.fields %}
+    (function() {
+        var keys = "{{ field.path }}".split('.');
+        var val = config;
+        for (var i = 0; i < keys.length; i++) {
+            if (val == null) return;
+            val = val[keys[i]];
+        }
+        var el = document.getElementById('val-{{ field.path }}');
+        if (el && val !== undefined && val !== null) {
+            if (typeof val === 'boolean') {
+                el.textContent = val ? '✓ Enabled' : '✗ Disabled';
+                el.style.color = val ? 'var(--success)' : 'var(--text-muted)';
+            } else {
+                el.textContent = val;
+            }
+        }
+    })();
+    {% endfor %}
+    {% endfor %}
+})();
+</script>
+{% endblock %}

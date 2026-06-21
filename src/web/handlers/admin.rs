@@ -64,6 +64,8 @@ struct AdminPageTemplate {
     fika_installed: bool,
     #[allow(dead_code)]
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
 }
 
 #[derive(Template)]
@@ -200,6 +202,7 @@ pub async fn admin_page(
         flash,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

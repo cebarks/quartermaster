@@ -25,6 +25,8 @@ struct StatusPageTemplate {
     fika_installed: bool,
     #[allow(dead_code)]
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     transitioning: bool,
 }
 
@@ -113,6 +115,7 @@ pub async fn status_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         transitioning,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))

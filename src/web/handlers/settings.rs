@@ -35,6 +35,8 @@ struct SettingsTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     config: Config,
     active_tab: String,
     console_format: String,
@@ -83,6 +85,7 @@ pub async fn settings_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         config,
         active_tab,
         console_format,

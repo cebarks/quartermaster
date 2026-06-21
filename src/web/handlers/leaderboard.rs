@@ -23,6 +23,8 @@ struct LeaderboardPageTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     entries: Vec<LeaderboardEntry>,
     min_raids: u32,
 }
@@ -53,6 +55,7 @@ pub async fn leaderboard_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         entries,
         min_raids,
     };

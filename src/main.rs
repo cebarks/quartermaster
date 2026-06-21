@@ -13,6 +13,7 @@ mod ops;
 mod queue;
 mod server_detect;
 mod spt;
+mod svm;
 mod tls;
 mod web;
 

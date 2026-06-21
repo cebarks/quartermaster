@@ -109,3 +109,9 @@ impl From<std::io::Error> for WebError {
         WebError::Internal(e.into())
     }
 }
+
+impl From<serde_json::Error> for WebError {
+    fn from(e: serde_json::Error) -> Self {
+        WebError::BadRequest(format!("Invalid JSON: {e}"))
+    }
+}

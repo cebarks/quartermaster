@@ -104,6 +104,8 @@ struct ModListTemplate {
     user: SessionUser,
     infrastructure: Vec<ModListEntry>,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     mods: Vec<ModListEntry>,
     grand_total_size: i64,
     spt_version: String,
@@ -133,6 +135,8 @@ struct ModDetailTemplate {
     fika_installed: bool,
     #[allow(dead_code)]
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     has_client_files: bool,
     sync_enforced: Option<bool>,
     sync_silent: Option<bool>,
@@ -280,11 +284,13 @@ pub async fn list_mods(
 
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
     let modsync_installed = state.is_modsync_installed();
+    let svm_installed = state.is_svm_installed();
 
     let tmpl = ModListTemplate {
         user,
         infrastructure,
         modsync_installed,
+        svm_installed,
         mods,
         grand_total_size,
         spt_version: state.spt_info.spt_version.clone(),
@@ -353,6 +359,7 @@ pub async fn mod_detail(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         has_client_files,
         sync_enforced: overrides.and_then(|o| o.enforced),
         sync_silent: overrides.and_then(|o| o.silent),
@@ -855,6 +862,17 @@ pub async fn install_mod(
                     crate::config::is_modsync_installed(&spt_dir),
                     std::sync::atomic::Ordering::Relaxed,
                 );
+                if mod_id == 236 {
+                    state_clone
+                        .svm_installed
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(ref svm_lock) = state_clone.svm {
+                        if let Some(mgr) = crate::svm::SvmManager::detect(&spt_dir) {
+                            *svm_lock.write() = mgr;
+                        }
+                    }
+                    tracing::info!("SVM installed — config editor reinitialized");
+                }
                 tasks.complete(task_id, "Mod installed successfully".to_string());
             }
             Err(e) => {
@@ -1122,6 +1140,12 @@ pub async fn remove_mod(
         crate::config::is_modsync_installed(&state.spt_dir),
         std::sync::atomic::Ordering::Relaxed,
     );
+    if installed.forge_mod_id == 236 {
+        state
+            .svm_installed
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("SVM removed — config editor disabled");
+    }
     set_flash(&session, "Mod removed", "success");
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/mods"))

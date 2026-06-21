@@ -21,6 +21,8 @@ struct ClientsListTemplate {
     fika_installed: bool,
     #[allow(dead_code)]
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     clients: Vec<ClientState>,
     converging: bool,
     target_count: u32,
@@ -36,6 +38,8 @@ struct ClientDetailTemplate {
     fika_installed: bool,
     #[allow(dead_code)]
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     client: ClientState,
 }
 
@@ -77,6 +81,7 @@ pub async fn client_list(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         clients,
         converging,
         target_count,
@@ -112,6 +117,7 @@ pub async fn client_detail(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         client,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))

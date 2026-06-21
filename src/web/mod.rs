@@ -84,6 +84,13 @@ pub async fn start_server(
         }
     }
 
+    let svm =
+        crate::svm::SvmManager::detect(&spt_dir).map(|mgr| Arc::new(parking_lot::RwLock::new(mgr)));
+    let svm_installed_flag = svm.is_some();
+    if svm_installed_flag {
+        tracing::info!("SVM detected — web config editor enabled");
+    }
+
     let tls_enabled = config.tls_enabled;
     let spt_dir_for_tls = spt_dir.clone();
 
@@ -111,6 +118,8 @@ pub async fn start_server(
         converging,
         fika_installed,
         modsync_installed: std::sync::atomic::AtomicBool::new(modsync_installed),
+        svm,
+        svm_installed: std::sync::atomic::AtomicBool::new(svm_installed_flag),
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
         game_data,
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
@@ -314,6 +323,15 @@ pub async fn start_server(
                                 "/requests/{id}/resolve",
                                 web::post().to(handlers::requests::resolve_request),
                             )
+                            // SVM API routes
+                            .route(
+                                "/svm/edit/{section}",
+                                web::get().to(handlers::svm::section_partial),
+                            )
+                            .route(
+                                "/svm/edit/{section}",
+                                web::post().to(handlers::svm::save_section),
+                            )
                             // Admin API (requires can_manage_users via scoped middleware)
                             .service(
                                 web::scope("/admin")
@@ -356,6 +374,37 @@ pub async fn start_server(
                             .route(
                                 "/modsync/settings",
                                 web::post().to(handlers::modsync::save_settings),
+                            )
+                            .route("/svm", web::get().to(handlers::svm::manager_page))
+                            .route("/svm/view", web::get().to(handlers::svm::player_view))
+                            .route("/svm/edit", web::get().to(handlers::svm::editor_page))
+                            .route(
+                                "/svm/preset/switch",
+                                web::post().to(handlers::svm::switch_preset),
+                            )
+                            .route(
+                                "/svm/preset/create",
+                                web::post().to(handlers::svm::create_preset),
+                            )
+                            .route(
+                                "/svm/preset/duplicate",
+                                web::post().to(handlers::svm::duplicate_preset),
+                            )
+                            .route(
+                                "/svm/preset/delete",
+                                web::post().to(handlers::svm::delete_preset),
+                            )
+                            .route(
+                                "/svm/preset/export/{name}",
+                                web::get().to(handlers::svm::export_preset),
+                            )
+                            .route(
+                                "/svm/preset/import",
+                                web::post().to(handlers::svm::import_preset),
+                            )
+                            .route(
+                                "/svm/reload",
+                                web::post().to(handlers::svm::reload_from_disk),
                             )
                             .route(
                                 "/settings",

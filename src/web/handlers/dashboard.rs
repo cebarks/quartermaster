@@ -31,6 +31,8 @@ struct DashboardTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     modsync_managed: bool,
 }
 
@@ -59,6 +61,7 @@ pub async fn dashboard(
     .map_err(WebError::from)?;
 
     let modsync_installed = state.is_modsync_installed();
+    let svm_installed = state.is_svm_installed();
     let tmpl = DashboardTemplate {
         user,
         mods,
@@ -70,6 +73,7 @@ pub async fn dashboard(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed,
+        svm_installed,
         modsync_managed: modsync_installed && state.config.modsync.is_some(),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))

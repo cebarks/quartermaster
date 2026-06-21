@@ -24,6 +24,8 @@ struct ServerRaidsPageTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     stats: ServerRaidStats,
     active_raids: Vec<(Raid, String)>,
 }
@@ -36,6 +38,8 @@ struct PlayerRaidsPageTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     profile_username: String,
     stats: UserRaidStats,
     raids: Vec<Raid>,
@@ -51,6 +55,8 @@ struct RaidDetailPageTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     raid: Raid,
     kills: Vec<RaidKill>,
     squad: Vec<(Raid, String)>,
@@ -102,6 +108,7 @@ pub async fn server_raids_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         stats,
         active_raids,
     };
@@ -146,6 +153,7 @@ pub async fn player_raids_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         profile_username,
         stats,
         raids,
@@ -196,6 +204,7 @@ pub async fn raid_detail_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         raid,
         kills,
         squad,

@@ -56,6 +56,9 @@ pub async fn start_server(
         set_flash(&session, &format!("Failed to start server: {e}"), "error");
     } else {
         tracing::info!(container, "server started");
+        if let Some(ref svm) = state.svm {
+            svm.write().clear_dirty();
+        }
         set_flash(&session, "Server starting", "success");
     }
 
@@ -218,6 +221,9 @@ pub async fn restart_server(
         );
     } else {
         tracing::info!(container, "server restarted");
+        if let Some(ref svm) = state.svm {
+            svm.write().clear_dirty();
+        }
         set_flash(&session, "Server restarted", "success");
     }
 
