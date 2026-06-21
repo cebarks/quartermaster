@@ -18,6 +18,7 @@
     <a href="/quma/profiles/{{ user.username }}"{% if active == "profile" %} class="active"{% endif %}>{% call icons::user() %}{% endcall %} Profile</a>
     <a href="/quma/logs"{% if active == "logs" %} class="active"{% endif %}>{% call icons::terminal() %}{% endcall %} Logs</a>
     {% if user.role.can_manage_users() %}
+    <a href="/quma/settings"{% if active == "settings" %} class="active"{% endif %}>{% call icons::settings() %}{% endcall %} Settings</a>
     <a href="/quma/admin"{% if active == "admin" %} class="active"{% endif %}>{% call icons::shield() %}{% endcall %} Admin</a>
     {% endif %}
 </div>

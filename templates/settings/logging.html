@@ -1,0 +1,84 @@
+<form method="post" action="/quma/settings/logging">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="card">
+        <h2>Logging</h2>
+
+        <div class="form-group">
+            <label for="log_level">Global Level</label>
+            <select id="log_level" name="log_level">
+                <option value="trace"{% if config.logging.level == "trace" %} selected{% endif %}>trace</option>
+                <option value="debug"{% if config.logging.level == "debug" %} selected{% endif %}>debug</option>
+                <option value="info"{% if config.logging.level == "info" %} selected{% endif %}>info</option>
+                <option value="warn"{% if config.logging.level == "warn" %} selected{% endif %}>warn</option>
+                <option value="error"{% if config.logging.level == "error" %} selected{% endif %}>error</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Console</h2>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="console_enabled" {% if config.logging.console.enabled %}checked{% endif %}> Enabled</label>
+        </div>
+
+        <div class="form-group">
+            <label for="console_format">Format</label>
+            <select id="console_format" name="console_format">
+                <option value="text"{% if console_format == "text" %} selected{% endif %}>text</option>
+                <option value="json"{% if console_format == "json" %} selected{% endif %}>json</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>File</h2>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="file_enabled" {% if config.logging.file.enabled %}checked{% endif %}> Enabled</label>
+        </div>
+
+        <div class="form-group">
+            <label for="file_path">Path</label>
+            <input type="text" id="file_path" name="file_path" value="{{ config.logging.file.path }}" placeholder="quartermaster.log">
+        </div>
+
+        <div class="form-group">
+            <label for="file_format">Format</label>
+            <select id="file_format" name="file_format">
+                <option value="text"{% if file_format == "text" %} selected{% endif %}>text</option>
+                <option value="json"{% if file_format == "json" %} selected{% endif %}>json</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="file_rotation">Rotation</label>
+            <select id="file_rotation" name="file_rotation">
+                <option value="none"{% if file_rotation == "none" %} selected{% endif %}>none</option>
+                <option value="size"{% if file_rotation == "size" %} selected{% endif %}>size</option>
+                <option value="daily"{% if file_rotation == "daily" %} selected{% endif %}>daily</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="file_max_size_mb">Max Size (MB)</label>
+            <input type="number" id="file_max_size_mb" name="file_max_size_mb" value="{{ config.logging.file.max_size_mb }}" min="1">
+        </div>
+
+        <div class="form-group">
+            <label for="file_max_files">Max Files</label>
+            <input type="number" id="file_max_files" name="file_max_files" value="{{ config.logging.file.max_files }}" min="1">
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Web</h2>
+
+        <div class="form-group">
+            <label for="web_buffer_size">Buffer Size</label>
+            <input type="number" id="web_buffer_size" name="web_buffer_size" value="{{ config.logging.web.buffer_size }}" min="1">
+        </div>
+    </div>
+
+    <button type="submit" class="btn">Save Logging Settings</button>
+</form>
