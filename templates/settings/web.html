@@ -1,0 +1,37 @@
+<form method="post" action="/quma/settings/web">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="card">
+        <h2>Web Server</h2>
+        <p class="text-muted text-sm mb-1">Changes to these settings require a restart to take effect.</p>
+
+        <div class="form-group">
+            <label for="web_bind">Bind Address</label>
+            <input type="text" id="web_bind" name="web_bind" value="{{ config.web_bind }}" placeholder="0.0.0.0">
+        </div>
+
+        <div class="form-group">
+            <label for="web_port">Port</label>
+            <input type="number" id="web_port" name="web_port" value="{{ config.web_port }}" min="1" max="65535">
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="tls_enabled" {% if config.tls_enabled %}checked{% endif %}> TLS Enabled</label>
+        </div>
+
+        <div class="form-group">
+            <label for="tls_cert">TLS Certificate Path</label>
+            <input type="text" id="tls_cert" name="tls_cert" value="{% if let Some(p) = &config.tls_cert %}{{ p.display() }}{% endif %}" placeholder="/path/to/cert.pem">
+        </div>
+
+        <div class="form-group">
+            <label for="tls_key">TLS Key Path</label>
+            <input type="text" id="tls_key" name="tls_key" value="{% if let Some(p) = &config.tls_key %}{{ p.display() }}{% endif %}" placeholder="/path/to/key.pem">
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="proxy_enabled" {% if config.proxy_enabled %}checked{% endif %}> Proxy Enabled</label>
+        </div>
+
+        <button type="submit" class="btn">Save Web Settings</button>
+    </div>
+</form>

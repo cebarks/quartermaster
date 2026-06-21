@@ -11,5 +11,6 @@ pub mod queue;
 pub mod raids;
 pub mod requests;
 pub mod server;
+pub mod settings;
 pub mod status;
 pub mod tasks;

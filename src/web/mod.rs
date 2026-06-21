@@ -348,6 +348,34 @@ pub async fn start_server(
                                 "/modsync/settings",
                                 web::post().to(handlers::modsync::save_settings),
                             )
+                            .route(
+                                "/settings",
+                                web::get().to(handlers::settings::settings_page),
+                            )
+                            .route(
+                                "/settings/web",
+                                web::post().to(handlers::settings::save_web_settings),
+                            )
+                            .route(
+                                "/settings/server",
+                                web::post().to(handlers::settings::save_server_settings),
+                            )
+                            .route(
+                                "/settings/queue",
+                                web::post().to(handlers::settings::save_queue_settings),
+                            )
+                            .route(
+                                "/settings/forge",
+                                web::post().to(handlers::settings::save_forge_settings),
+                            )
+                            .route(
+                                "/settings/logging",
+                                web::post().to(handlers::settings::save_logging_settings),
+                            )
+                            .route(
+                                "/settings/clients",
+                                web::post().to(handlers::settings::save_clients_settings),
+                            )
                             .route("/clients", web::get().to(handlers::clients::client_list))
                             .route(
                                 "/clients/{n}",
