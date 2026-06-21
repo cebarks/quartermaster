@@ -46,6 +46,8 @@ struct ProfilePageTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     profile_username: String,
     detail: Option<ProfileDetail>,
     empty_reason: Option<String>,
@@ -173,6 +175,7 @@ pub async fn profile_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         profile_username,
         detail,
         empty_reason,

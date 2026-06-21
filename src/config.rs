@@ -253,6 +253,11 @@ pub fn is_modsync_installed(spt_dir: &Path) -> bool {
     spt_dir.join("SPT/user/mods/Corter-ModSync").is_dir()
 }
 
+#[allow(dead_code)]
+pub fn is_svm_installed(spt_dir: &Path) -> bool {
+    spt_dir.join("user/mods/[SVM] ServerValueModifier").is_dir()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConsoleLogConfig {
     #[serde(default = "default_console_enabled")]

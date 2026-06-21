@@ -32,6 +32,8 @@ struct ModSyncTemplate {
     csrf_token: String,
     fika_installed: bool,
     modsync_installed: bool,
+    #[allow(dead_code)]
+    svm_installed: bool,
     modsync_managed: bool,
     enforced: bool,
     silent: bool,
@@ -106,6 +108,7 @@ pub async fn modsync_page(
         csrf_token,
         fika_installed: state.fika_installed,
         modsync_installed: state.is_modsync_installed(),
+        svm_installed: state.is_svm_installed(),
         modsync_managed: state.is_modsync_installed() && ms_config.is_some(),
         enforced,
         silent,

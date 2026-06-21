@@ -1,5 +1,5 @@
 {% import "partials/icons.html" as icons %}
-{% macro nav(active, user, csrf_token, fika_installed, modsync_installed) %}
+{% macro nav(active, user, csrf_token, fika_installed, modsync_installed, svm_installed) %}
 <div class="links">
     <a href="/quma/"{% if active == "dashboard" %} class="active"{% endif %}>{% call icons::home() %}{% endcall %} Dashboard</a>
     {% if user.role.can_manage_mods() %}
@@ -11,6 +11,9 @@
     <a href="/quma/leaderboard"{% if active == "leaderboard" %} class="active"{% endif %}>{% call icons::trophy() %}{% endcall %} Leaderboard</a>
     {% if modsync_installed %}
     <a href="/quma/modsync"{% if active == "modsync" %} class="active"{% endif %}>{% call icons::refresh() %}{% endcall %} ModSync</a>
+    {% endif %}
+    {% if svm_installed %}
+    <a href="/quma/svm"{% if active == "svm" %} class="active"{% endif %}>{% call icons::settings() %}{% endcall %} Server Config</a>
     {% endif %}
     {% if fika_installed %}
     <a href="/quma/clients"{% if active == "clients" %} class="active"{% endif %}>{% call icons::users() %}{% endcall %} Clients</a>

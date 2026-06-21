@@ -84,6 +84,13 @@ pub async fn start_server(
         }
     }
 
+    let svm =
+        crate::svm::SvmManager::detect(&spt_dir).map(|mgr| Arc::new(parking_lot::RwLock::new(mgr)));
+    let svm_installed_flag = svm.is_some();
+    if svm_installed_flag {
+        tracing::info!("SVM detected — web config editor enabled");
+    }
+
     let tls_enabled = config.tls_enabled;
     let spt_dir_for_tls = spt_dir.clone();
 
@@ -110,6 +117,8 @@ pub async fn start_server(
         converging,
         fika_installed,
         modsync_installed: std::sync::atomic::AtomicBool::new(modsync_installed),
+        svm,
+        svm_installed: std::sync::atomic::AtomicBool::new(svm_installed_flag),
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
         game_data,
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),

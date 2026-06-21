@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}Leaderboard — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("leaderboard", user, csrf_token, fika_installed, modsync_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("leaderboard", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>Leaderboard</h1>
 

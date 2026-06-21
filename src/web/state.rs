@@ -12,6 +12,7 @@ use crate::forge::client::ForgeClient;
 use crate::logging::LogBroadcast;
 use crate::spt::detect::SptInfo;
 use crate::spt::game_data::GameData;
+use crate::svm::SvmManager;
 use crate::web::proxy_metrics::ProxyMetrics;
 use crate::web::sse::ServerEvent;
 use crate::web::tasks::TaskTracker;
@@ -33,6 +34,9 @@ pub struct AppState {
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
     pub modsync_installed: AtomicBool,
+    #[allow(dead_code)]
+    pub svm: Option<Arc<parking_lot::RwLock<SvmManager>>>,
+    pub svm_installed: AtomicBool,
     pub server_transition: Arc<Mutex<Option<String>>>,
     pub game_data: Arc<GameData>,
     pub proxy_metrics: ProxyMetrics,
@@ -50,6 +54,11 @@ impl AppState {
 
     pub fn is_modsync_installed(&self) -> bool {
         self.modsync_installed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn is_svm_installed(&self) -> bool {
+        self.svm_installed
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
