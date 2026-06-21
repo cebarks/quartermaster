@@ -279,7 +279,7 @@ pub async fn list_mods(
         .collect();
 
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
-    let modsync_installed = crate::config::is_modsync_installed(&state.spt_dir);
+    let modsync_installed = state.is_modsync_installed();
 
     let tmpl = ModListTemplate {
         user,

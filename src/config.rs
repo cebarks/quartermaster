@@ -254,23 +254,24 @@ pub const NARCONET_FORGE_MOD_ID: i64 = 2441;
 pub fn find_narconet_dir(spt_dir: &Path) -> Option<PathBuf> {
     let mods_dir = spt_dir.join("SPT/user/mods");
     let entries = std::fs::read_dir(&mods_dir).ok()?;
-    let mut matches: Vec<PathBuf> = entries
+    entries
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().ok().is_some_and(|ft| ft.is_dir()))
         .filter(|e| {
-            e.file_name()
+            let name_matches = e
+                .file_name()
                 .to_str()
-                .is_some_and(|n| n.to_lowercase().contains("narconet"))
+                .is_some_and(|n| n.to_lowercase().contains("narconet"));
+            name_matches && e.path().join("package.json").is_file()
+        })
+        .min_by(|a, b| {
+            a.file_name()
+                .to_str()
+                .unwrap()
+                .to_ascii_lowercase()
+                .cmp(&b.file_name().to_str().unwrap().to_ascii_lowercase())
         })
         .map(|e| e.path())
-        .collect();
-    matches.sort_by(|a, b| {
-        a.file_name()
-            .unwrap()
-            .to_ascii_lowercase()
-            .cmp(&b.file_name().unwrap().to_ascii_lowercase())
-    });
-    matches.into_iter().next()
 }
 
 pub fn is_modsync_installed(spt_dir: &Path) -> bool {
@@ -1114,7 +1115,10 @@ install_dir = "/opt/fika"
     #[test]
     fn narconet_detection_not_installed() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/some-other-mod")).unwrap();
+        let other_mod = tmp.path().join("SPT/user/mods/some-other-mod");
+        std::fs::create_dir_all(&other_mod).unwrap();
+        // Create package.json but directory name doesn't match "narconet"
+        std::fs::write(other_mod.join("package.json"), "{}").unwrap();
         assert!(!is_modsync_installed(tmp.path()));
         assert!(find_narconet_dir(tmp.path()).is_none());
     }
@@ -1122,7 +1126,9 @@ install_dir = "/opt/fika"
     #[test]
     fn narconet_detection_installed() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/narconet-server")).unwrap();
+        let narconet_dir = tmp.path().join("SPT/user/mods/narconet-server");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
         assert!(is_modsync_installed(tmp.path()));
         assert_eq!(
             find_narconet_dir(tmp.path()).unwrap(),
@@ -1133,7 +1139,9 @@ install_dir = "/opt/fika"
     #[test]
     fn narconet_detection_case_insensitive() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/MadManBeavis-NarcoNet")).unwrap();
+        let narconet_dir = tmp.path().join("SPT/user/mods/MadManBeavis-NarcoNet");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
         assert!(is_modsync_installed(tmp.path()));
         assert!(find_narconet_dir(tmp.path()).is_some());
     }
@@ -1141,8 +1149,12 @@ install_dir = "/opt/fika"
     #[test]
     fn narconet_detection_multiple_picks_first_alphabetically() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/narconet-server")).unwrap();
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/NarcoNet-Debug")).unwrap();
+        let narconet_server = tmp.path().join("SPT/user/mods/narconet-server");
+        let narconet_debug = tmp.path().join("SPT/user/mods/NarcoNet-Debug");
+        std::fs::create_dir_all(&narconet_server).unwrap();
+        std::fs::create_dir_all(&narconet_debug).unwrap();
+        std::fs::write(narconet_server.join("package.json"), "{}").unwrap();
+        std::fs::write(narconet_debug.join("package.json"), "{}").unwrap();
         let found = find_narconet_dir(tmp.path()).unwrap();
         // "NarcoNet-Debug" sorts before "narconet-server" case-insensitively
         assert!(found
@@ -1234,7 +1246,9 @@ enabled = false
     fn modsync_detection() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(!is_modsync_installed(tmp.path()));
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/narconet-server")).unwrap();
+        let narconet_dir = tmp.path().join("SPT/user/mods/narconet-server");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
         assert!(is_modsync_installed(tmp.path()));
     }
 

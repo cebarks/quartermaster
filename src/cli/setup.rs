@@ -184,6 +184,7 @@ async fn install_narconet_from_forge(
         .context("failed to download NarcoNet")?;
 
     println!("Extracting...");
+    // TODO(debt): consider extracting shared install logic with install_single_mod
     let db_id = crate::ops::install_mod_from_archive(
         db,
         spt_dir,

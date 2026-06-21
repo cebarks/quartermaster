@@ -31,7 +31,7 @@ pub fn modsync_config_path(spt_dir: &Path) -> Option<PathBuf> {
 }
 
 fn prepend_parent_if_needed(path: &str) -> String {
-    if path.starts_with("BepInEx/") {
+    if path.starts_with("BepInEx/") || path == "BepInEx" {
         format!("../{path}")
     } else {
         path.to_string()
@@ -229,6 +229,16 @@ mod tests {
         )
         .unwrap();
         mod_id
+    }
+
+    #[test]
+    fn prepend_parent_handles_bare_bepinex() {
+        assert_eq!(prepend_parent_if_needed("BepInEx"), "../BepInEx");
+        assert_eq!(
+            prepend_parent_if_needed("BepInEx/plugins"),
+            "../BepInEx/plugins"
+        );
+        assert_eq!(prepend_parent_if_needed("user/mods"), "user/mods");
     }
 
     #[test]
@@ -469,6 +479,15 @@ mod tests {
         // Should be valid YAML
         let parsed: serde_json::Value = serde_saphyr::from_str(&content).unwrap();
         assert!(parsed["syncPaths"].is_array());
+
+        // Verify field values
+        let sync_path = &parsed["syncPaths"][0];
+        assert_eq!(
+            sync_path["path"].as_str().unwrap(),
+            "../BepInEx/plugins/Test"
+        );
+        assert_eq!(sync_path["name"].as_str().unwrap(), "Test");
+        assert_eq!(sync_path["enabled"].as_bool().unwrap(), true);
     }
 
     #[test]
@@ -495,7 +514,9 @@ mod tests {
     #[test]
     fn regenerate_if_enabled_writes_when_configured_and_installed() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/narconet-server")).unwrap();
+        let narconet_dir = tmp.path().join("SPT/user/mods/narconet-server");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
 
         let db = Database::open_in_memory().unwrap();
         setup_db_with_client_mod(&db);
@@ -515,7 +536,9 @@ mod tests {
     fn full_lifecycle_install_update_remove() {
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path();
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/narconet-server")).unwrap();
+        let narconet_dir = spt_dir.join("SPT/user/mods/narconet-server");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
 
         let db = Database::open_in_memory().unwrap();
         let mut config = Config::default();
@@ -567,7 +590,9 @@ mod tests {
     fn full_lifecycle_mixed_mods() {
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path();
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/narconet-server")).unwrap();
+        let narconet_dir = spt_dir.join("SPT/user/mods/narconet-server");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
 
         let db = Database::open_in_memory().unwrap();
         let mut config = Config::default();
