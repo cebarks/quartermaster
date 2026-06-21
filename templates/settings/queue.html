@@ -1,0 +1,25 @@
+<form method="post" action="/quma/settings/queue">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="card">
+        <h2>Queue &amp; Operations</h2>
+        <p class="text-muted text-sm mb-1">Configure how mod operations are queued when the server is running.</p>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="queue_changes" {% if config.queue_changes %}checked{% endif %}> Queue Changes When Server Running</label>
+            <p class="text-muted text-sm">If enabled, mod install/update/remove operations are queued instead of applied immediately when the SPT server is running. Changes are applied when the server stops.</p>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="auto_drain_on_lifecycle" {% if config.auto_drain_on_lifecycle %}checked{% endif %}> Auto-drain Queue on Server Lifecycle</label>
+            <p class="text-muted text-sm">If enabled, queued operations automatically apply when the server starts or stops.</p>
+        </div>
+
+        <div class="form-group">
+            <label for="update_check_interval">Update Check Interval (seconds)</label>
+            <input type="number" id="update_check_interval" name="update_check_interval" value="{{ config.update_check_interval }}" min="0">
+            <p class="text-muted text-sm">How often to check for mod updates on Forge. Set to 0 to disable.</p>
+        </div>
+
+        <button type="submit" class="btn">Save Queue Settings</button>
+    </div>
+</form>

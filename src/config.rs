@@ -53,12 +53,54 @@ pub enum LogFormat {
     Json,
 }
 
+impl std::fmt::Display for LogFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogFormat::Text => write!(f, "text"),
+            LogFormat::Json => write!(f, "json"),
+        }
+    }
+}
+
+impl std::str::FromStr for LogFormat {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "text" => Ok(LogFormat::Text),
+            "json" => Ok(LogFormat::Json),
+            _ => bail!("unknown log format: {s}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RotationPolicy {
     None,
     Size,
     Daily,
+}
+
+impl std::fmt::Display for RotationPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RotationPolicy::None => write!(f, "none"),
+            RotationPolicy::Size => write!(f, "size"),
+            RotationPolicy::Daily => write!(f, "daily"),
+        }
+    }
+}
+
+impl std::str::FromStr for RotationPolicy {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "none" => Ok(RotationPolicy::None),
+            "size" => Ok(RotationPolicy::Size),
+            "daily" => Ok(RotationPolicy::Daily),
+            _ => bail!("unknown rotation policy: {s}"),
+        }
+    }
 }
 
 fn default_log_level() -> String {
@@ -102,6 +144,26 @@ fn default_buffer_size() -> usize {
 pub enum RestartPolicy {
     Auto,
     Manual,
+}
+
+impl std::fmt::Display for RestartPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RestartPolicy::Auto => write!(f, "auto"),
+            RestartPolicy::Manual => write!(f, "manual"),
+        }
+    }
+}
+
+impl std::str::FromStr for RestartPolicy {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "auto" => Ok(RestartPolicy::Auto),
+            "manual" => Ok(RestartPolicy::Manual),
+            _ => bail!("unknown restart policy: {s}"),
+        }
+    }
 }
 
 fn default_restart_policy() -> RestartPolicy {
@@ -229,14 +291,23 @@ impl ClientsConfig {
                 self.install_dir.display()
             );
         }
-        let max_port = self.base_udp_port as u32 + self.count - 1;
-        if max_port > 65535 {
-            bail!(
-                "clients.base_udp_port ({}) + count ({}) exceeds port range (max port would be {})",
-                self.base_udp_port,
-                self.count,
-                max_port
-            );
+        match (self.base_udp_port as u32).checked_add(self.count - 1) {
+            Some(max_port) if max_port > 65535 => {
+                bail!(
+                    "clients.base_udp_port ({}) + count ({}) exceeds port range (max port would be {})",
+                    self.base_udp_port,
+                    self.count,
+                    max_port
+                );
+            }
+            None => {
+                bail!(
+                    "clients.base_udp_port ({}) + count ({}) exceeds port range",
+                    self.base_udp_port,
+                    self.count
+                );
+            }
+            _ => {}
         }
         if config.server_container.is_none() {
             bail!("server_container must be configured for dedicated client management — convergence needs to restart the server");

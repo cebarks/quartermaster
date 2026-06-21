@@ -23,6 +23,7 @@ pub struct AppState {
     pub forge: ForgeClient,
     pub config: Config,
     pub config_path: PathBuf,
+    pub config_lock: parking_lot::Mutex<()>,
     pub spt_dir: PathBuf,
     pub spt_info: SptInfo,
     pub tasks: TaskTracker,

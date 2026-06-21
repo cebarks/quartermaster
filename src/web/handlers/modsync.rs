@@ -3,6 +3,7 @@ use actix_web::web::{self, Data, Form};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
+use crate::config::Config;
 use crate::db::mods::InstalledMod;
 use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
@@ -159,9 +160,10 @@ pub async fn save_settings(
         .filter(|l| !l.is_empty())
         .collect();
 
+    let _guard = state.config_lock.lock();
+    let mut new_config = Config::load(&state.config_path).map_err(WebError::from)?;
     // Preserve existing overrides
-    let existing_overrides = state
-        .config
+    let existing_overrides = new_config
         .modsync
         .as_ref()
         .map(|ms| ms.overrides.clone())
@@ -177,11 +179,11 @@ pub async fn save_settings(
     };
 
     // Update config and save
-    let mut new_config = state.config.clone();
     new_config.modsync = Some(ms_config);
     new_config
         .save(&state.config_path)
         .map_err(WebError::from)?;
+    drop(_guard);
 
     // Regenerate NarcoNet config.yaml
     if state.is_modsync_installed() {
