@@ -157,19 +157,19 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     let forge = ForgeClient::new(config.forge_token.clone())?;
 
-    crate::web::start_server(
+    crate::web::start_server(crate::web::ServerContext {
         config,
         config_path,
         db,
         forge,
         spt_dir,
         spt_info,
-        Arc::clone(&log_broadcast),
+        log_broadcast: Arc::clone(&log_broadcast),
         container_mgr,
         client_states,
         converging,
         fika_installed,
         modsync_installed,
-    )
+    })
     .await
 }
