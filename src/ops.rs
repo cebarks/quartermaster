@@ -19,30 +19,43 @@ fn record_extracted_files(db: &Database, mod_db_id: i64, files: &[ExtractedFile]
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn install_mod_from_archive(
-    db: &Database,
-    spt_dir: &Path,
-    config: &crate::config::Config,
-    forge_mod_id: i64,
-    version_id: i64,
-    name: &str,
-    slug: Option<&str>,
-    version: &str,
-    archive_path: &Path,
-) -> Result<i64> {
-    tracing::info!(name, forge_mod_id, version, "installing mod from archive");
-    let extracted = crate::spt::mods::extract_mod(archive_path, spt_dir)?;
-    let tx = db.begin_transaction()?;
-    let db_id = db.insert_mod(forge_mod_id, version_id, name, slug, version)?;
-    record_extracted_files(db, db_id, &extracted)?;
+/// Parameters for installing a mod from a downloaded archive.
+pub struct InstallRequest<'a> {
+    pub db: &'a Database,
+    pub spt_dir: &'a Path,
+    pub config: &'a crate::config::Config,
+    pub forge_mod_id: i64,
+    pub version_id: i64,
+    pub name: &'a str,
+    pub slug: Option<&'a str>,
+    pub version: &'a str,
+    pub archive_path: &'a Path,
+}
+
+pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
+    tracing::info!(
+        req.name,
+        req.forge_mod_id,
+        req.version,
+        "installing mod from archive"
+    );
+    let extracted = crate::spt::mods::extract_mod(req.archive_path, req.spt_dir)?;
+    let tx = req.db.begin_transaction()?;
+    let db_id = req.db.insert_mod(
+        req.forge_mod_id,
+        req.version_id,
+        req.name,
+        req.slug,
+        req.version,
+    )?;
+    record_extracted_files(req.db, db_id, &extracted)?;
     tx.commit()?;
     tracing::debug!(
         db_id,
         file_count = extracted.len(),
         "mod installed, files recorded"
     );
-    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
+    if let Err(e) = crate::modsync::regenerate_if_enabled(req.spt_dir, req.config, req.db) {
         tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
     }
     Ok(db_id)
@@ -238,13 +251,15 @@ fn scan_runtime_recursive(
                 let content = std::fs::read(&path).unwrap_or_default();
                 let hash = crate::spt::mods::compute_hash_public(&content);
                 let size = content.len() as i64;
-                let _ = db.insert_file_with_source(
+                if let Err(e) = db.insert_file_with_source(
                     mod_db_id,
                     &rel_str,
                     Some(&hash),
                     Some(size),
                     "runtime",
-                );
+                ) {
+                    tracing::warn!(path = %path.display(), error = %e, "failed to record runtime file");
+                }
             }
         }
     }
@@ -491,17 +506,17 @@ mod tests {
             ("SPT/user/mods/TestMod/src/mod.ts", b"export class Mod {}"),
         ]);
 
-        let db_id = install_mod_from_archive(
-            &db,
-            spt_dir.path(),
-            &Config::default(),
-            100,
-            200,
-            "TestMod",
-            Some("test-mod"),
-            "1.0.0",
-            zip.path(),
-        )
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: Some("test-mod"),
+            version: "1.0.0",
+            archive_path: zip.path(),
+        })
         .unwrap();
 
         let installed = db.get_mod(db_id).unwrap().unwrap();
@@ -528,17 +543,17 @@ mod tests {
 
         // Install v1
         let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
-        let db_id = install_mod_from_archive(
-            &db,
-            spt_dir.path(),
-            &Config::default(),
-            100,
-            200,
-            "TestMod",
-            None,
-            "1.0.0",
-            zip_v1.path(),
-        )
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip_v1.path(),
+        })
         .unwrap();
 
         // Update to v2
@@ -575,17 +590,17 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
-        let db_id = install_mod_from_archive(
-            &db,
-            spt_dir.path(),
-            &Config::default(),
-            100,
-            200,
-            "TestMod",
-            None,
-            "1.0.0",
-            zip.path(),
-        )
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip.path(),
+        })
         .unwrap();
 
         assert!(spt_dir
@@ -637,17 +652,17 @@ mod tests {
             ("SPT/user/mods/TestMod/src/mod.ts", b"export class Mod {}"),
         ]);
 
-        let db_id = install_mod_from_archive(
-            &db,
-            spt_dir.path(),
-            &Config::default(),
-            100,
-            200,
-            "TestMod",
-            None,
-            "1.0.0",
-            zip.path(),
-        )
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip.path(),
+        })
         .unwrap();
 
         // Verify mod is installed and enabled
@@ -709,17 +724,17 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[("BepInEx/plugins/loose.dll", b"dll content")]);
 
-        let db_id = install_mod_from_archive(
-            &db,
-            spt_dir.path(),
-            &Config::default(),
-            100,
-            200,
-            "LooseMod",
-            None,
-            "1.0.0",
-            zip.path(),
-        )
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "LooseMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip.path(),
+        })
         .unwrap();
 
         assert!(spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
@@ -750,17 +765,17 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
 
-        let db_id = install_mod_from_archive(
-            &db,
-            spt_dir.path(),
-            &Config::default(),
-            100,
-            200,
-            "TestMod",
-            None,
-            "1.0.0",
-            zip.path(),
-        )
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip.path(),
+        })
         .unwrap();
 
         disable_mod(&db, spt_dir.path(), db_id).unwrap();

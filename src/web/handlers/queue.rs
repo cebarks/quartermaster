@@ -221,17 +221,17 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
         if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
             return Ok(());
         }
-        crate::ops::install_mod_from_archive(
-            &db,
-            &spt_dir,
-            &config,
+        crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+            db: &db,
+            spt_dir: &spt_dir,
+            config: &config,
             forge_mod_id,
             version_id,
-            &mod_name,
-            None,
-            &version_str,
-            &archive_path,
-        )?;
+            name: &mod_name,
+            slug: None,
+            version: &version_str,
+            archive_path: &archive_path,
+        })?;
         Ok::<_, anyhow::Error>(())
     })
     .await??;

@@ -185,17 +185,17 @@ async fn install_narconet_from_forge(
 
     println!("Extracting...");
     // TODO(debt): consider extracting shared install logic with install_single_mod
-    let db_id = crate::ops::install_mod_from_archive(
+    let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
         db,
         spt_dir,
         config,
-        NARCONET_FORGE_MOD_ID,
+        forge_mod_id: NARCONET_FORGE_MOD_ID,
         version_id,
-        &forge_mod.name,
-        forge_mod.slug.as_deref(),
-        version_str,
-        &archive_path,
-    )?;
+        name: &forge_mod.name,
+        slug: forge_mod.slug.as_deref(),
+        version: version_str,
+        archive_path: &archive_path,
+    })?;
 
     let file_count = db.get_files_for_mod(db_id)?.len();
     println!("NarcoNet v{version_str} installed ({file_count} files).");
