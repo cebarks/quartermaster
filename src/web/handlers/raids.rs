@@ -55,6 +55,7 @@ struct RaidDetailPageTemplate {
     kills: Vec<RaidKill>,
     squad: Vec<(Raid, String)>,
     raid_username: String,
+    snapshot_sizes: Vec<(String, i64)>,
 }
 
 #[derive(Template)]
@@ -168,7 +169,7 @@ pub async fn raid_detail_page(
 
     let db = state.db.clone();
 
-    let (raid, kills, squad, raid_username) = web::block(move || {
+    let (raid, kills, squad, raid_username, snapshot_sizes) = web::block(move || {
         let db = db.lock();
         let (raid, kills) = db
             .get_raid_with_kills(raid_id)?
@@ -184,7 +185,9 @@ pub async fn raid_detail_page(
             Vec::new()
         };
 
-        Ok::<_, anyhow::Error>((raid, kills, squad, raid_user.username))
+        let snapshot_sizes = db.get_raid_snapshot_sizes(raid_id)?;
+
+        Ok::<_, anyhow::Error>((raid, kills, squad, raid_user.username, snapshot_sizes))
     })
     .await
     .map_err(WebError::from)?
@@ -200,6 +203,7 @@ pub async fn raid_detail_page(
         kills,
         squad,
         raid_username,
+        snapshot_sizes,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
