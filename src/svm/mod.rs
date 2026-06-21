@@ -283,7 +283,8 @@ impl SvmManager {
 
         // Update internal state
         self.config = config.clone();
-        self.raw_json = merged;
+        self.raw_json = merged.clone();
+        self.unknown_fields = Self::collect_unknown_keys(&merged, &config_json, "");
         self.dirty = true;
 
         Ok(())
@@ -340,6 +341,11 @@ impl SvmManager {
     /// Duplicate a preset.
     pub fn duplicate_preset(&mut self, source: &str, dest: &str) -> Result<()> {
         Self::validate_preset_name(dest)?;
+
+        // Check source exists
+        if !self.available_presets.contains(&source.to_string()) {
+            bail!("Source preset '{}' does not exist", source);
+        }
 
         // Check destination doesn't exist
         if self.available_presets.contains(&dest.to_string()) {
@@ -552,5 +558,17 @@ mod tests {
         .unwrap();
         let mgr = SvmManager::detect(&spt_dir).expect("should create default and detect");
         assert_eq!(mgr.active_preset_name(), "Default");
+    }
+
+    #[test]
+    fn duplicate_preset() {
+        let tmp = TempDir::new().unwrap();
+        let spt_dir = setup_svm_dir(&tmp);
+        let mut mgr = SvmManager::detect(&spt_dir).unwrap();
+        mgr.duplicate_preset("Default", "Copy").unwrap();
+        assert_eq!(mgr.list_presets().len(), 2);
+        assert!(mgr.list_presets().contains(&"Copy".to_string()));
+        // Duplicating from non-existent source fails
+        assert!(mgr.duplicate_preset("NonExistent", "Another").is_err());
     }
 }
