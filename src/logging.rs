@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -51,7 +53,7 @@ impl LogBroadcast {
 
     pub fn send(&self, entry: LogEntry) {
         {
-            let mut buf = self.buffer.write().unwrap();
+            let mut buf = self.buffer.write();
             if buf.len() >= self.buffer_size {
                 buf.pop_front();
             }
@@ -65,7 +67,7 @@ impl LogBroadcast {
     }
 
     pub fn recent(&self, limit: usize) -> Vec<LogEntry> {
-        let buf = self.buffer.read().unwrap();
+        let buf = self.buffer.read();
         let skip = buf.len().saturating_sub(limit);
         buf.iter().skip(skip).cloned().collect()
     }

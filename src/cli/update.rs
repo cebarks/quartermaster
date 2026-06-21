@@ -70,7 +70,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
                 .find(|m| m.forge_mod_id == update.current_version.mod_id);
             if let Some(m) = installed {
                 ctx.db.insert_pending_op(
-                    "update",
+                    crate::db::users::QueueAction::Update,
                     m.forge_mod_id,
                     Some(update.recommended_version.id),
                     &m.name,

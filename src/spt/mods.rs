@@ -152,6 +152,14 @@ pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
     Ok(common_prefix.unwrap_or_default())
 }
 
+// TODO(security): extraction has no resource limits — a crafted archive can OOM the server.
+// Stream entries to disk through a Sha256+BufWriter instead of buffering in Vec, and enforce:
+//   - 1 GB max per entry (bail on oversized decompressed entry)
+//   - 4 GB max total extracted size
+//   - 20,000 max entry count
+// The 7z path also trusts entry.size() for Vec::with_capacity — clamp before allocating.
+// Also apply streaming hash to compute_file_hash() below (currently reads entire file into memory).
+
 /// Extract a mod archive into `spt_root`, stripping any wrapper directory prefix.
 ///
 /// Returns a list of extracted files with their relative paths, SHA256 hashes, and sizes.

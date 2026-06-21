@@ -190,11 +190,16 @@ pub async fn restart_server(
         .map_err(WebError::from)?;
 
         for op in &ops {
-            let result = match op.action.as_str() {
-                "install" => super::queue::apply_install(op, &state).await,
-                "update" => super::queue::apply_update(op, &state).await,
-                "remove" => super::queue::apply_remove(op, &state).await,
-                _ => Ok(()),
+            let result = match op.action {
+                crate::db::users::QueueAction::Install => {
+                    super::queue::apply_install(op, &state).await
+                }
+                crate::db::users::QueueAction::Update => {
+                    super::queue::apply_update(op, &state).await
+                }
+                crate::db::users::QueueAction::Remove => {
+                    super::queue::apply_remove(op, &state).await
+                }
             };
             if result.is_ok() {
                 let db = state.db.clone();

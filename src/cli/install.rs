@@ -84,7 +84,7 @@ pub async fn run(
         .await?
     {
         ctx.db.insert_pending_op(
-            "install",
+            crate::db::users::QueueAction::Install,
             forge_mod.id,
             Some(selected_version.id),
             &forge_mod.name,

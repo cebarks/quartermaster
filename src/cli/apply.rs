@@ -11,8 +11,8 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
 
     for op in &pending {
         println!("  Applying: {} {}...", op.action, op.mod_name);
-        match op.action.as_str() {
-            "install" => {
+        match op.action {
+            crate::db::users::QueueAction::Install => {
                 if let Some(version_id) = op.forge_version_id {
                     if let Err(e) =
                         crate::cli::install::install_with_deps(ctx, op.forge_mod_id, version_id)
@@ -34,7 +34,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                     continue;
                 }
             }
-            "remove" => {
+            crate::db::users::QueueAction::Remove => {
                 if let Some(installed) = ctx.db.get_mod_by_forge_id(op.forge_mod_id)? {
                     // Check reverse dependencies like interactive remove does
                     let reverse_deps =
@@ -69,7 +69,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                     continue;
                 }
             }
-            "update" => {
+            crate::db::users::QueueAction::Update => {
                 if let (Some(installed), Some(version_id)) = (
                     ctx.db.get_mod_by_forge_id(op.forge_mod_id)?,
                     op.forge_version_id,
@@ -93,11 +93,6 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                     ctx.db.delete_pending_op(op.id)?;
                     continue;
                 }
-            }
-            other => {
-                println!("    Skipped — unknown action: {other}");
-                ctx.db.delete_pending_op(op.id)?;
-                continue;
             }
         }
 

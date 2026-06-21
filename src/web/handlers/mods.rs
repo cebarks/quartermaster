@@ -756,7 +756,14 @@ pub async fn install_mod(
         let version_id = version.id;
         web::block(move || {
             let db = db.lock();
-            db.insert_pending_op("install", mod_id, Some(version_id), &mod_name, None, None)
+            db.insert_pending_op(
+                crate::db::users::QueueAction::Install,
+                mod_id,
+                Some(version_id),
+                &mod_name,
+                None,
+                None,
+            )
         })
         .await
         .map_err(WebError::from)?
@@ -928,7 +935,7 @@ pub async fn update_mod(
         web::block(move || {
             let db = db.lock();
             db.insert_pending_op(
-                "update",
+                crate::db::users::QueueAction::Update,
                 forge_mod_id,
                 Some(version_id),
                 &mod_name,
@@ -1091,7 +1098,14 @@ pub async fn remove_mod(
         let forge_mod_id = installed.forge_mod_id;
         web::block(move || {
             let db = db.lock();
-            db.insert_pending_op("remove", forge_mod_id, None, &mod_name, None, None)
+            db.insert_pending_op(
+                crate::db::users::QueueAction::Remove,
+                forge_mod_id,
+                None,
+                &mod_name,
+                None,
+                None,
+            )
         })
         .await
         .map_err(WebError::from)?
@@ -1236,7 +1250,7 @@ pub async fn update_all_mods(
             let db = db.lock();
             for update in &results.updates {
                 db.insert_pending_op(
-                    "update",
+                    crate::db::users::QueueAction::Update,
                     update.current_version.mod_id,
                     Some(update.recommended_version.id),
                     &update.current_version.name,

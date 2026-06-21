@@ -38,9 +38,9 @@
             {% for op in &ops %}
             <tr>
                 <td>
-                    {% if op.action == "install" %}<span class="badge badge-success">install</span>
-                    {% else if op.action == "update" %}<span class="badge badge-warning">update</span>
-                    {% else if op.action == "remove" %}<span class="badge badge-danger">remove</span>
+                    {% if op.action.as_str() == "install" %}<span class="badge badge-success">install</span>
+                    {% else if op.action.as_str() == "update" %}<span class="badge badge-warning">update</span>
+                    {% else if op.action.as_str() == "remove" %}<span class="badge badge-danger">remove</span>
                     {% else %}<span class="badge badge-muted">{{ op.action }}</span>
                     {% endif %}
                 </td>
