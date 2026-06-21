@@ -32,8 +32,10 @@ pub fn install_mod_from_archive(
 ) -> Result<i64> {
     tracing::info!(name, forge_mod_id, version, "installing mod from archive");
     let extracted = crate::spt::mods::extract_mod(archive_path, spt_dir)?;
+    let tx = db.begin_transaction()?;
     let db_id = db.insert_mod(forge_mod_id, version_id, name, slug, version)?;
     record_extracted_files(db, db_id, &extracted)?;
+    tx.commit()?;
     tracing::debug!(
         db_id,
         file_count = extracted.len(),
@@ -66,6 +68,8 @@ pub fn update_mod_from_archive(
         "replacing mod files"
     );
     crate::spt::mods::delete_mod_files(spt_dir, &old_paths)?;
+
+    let tx = db.begin_transaction()?;
     db.delete_files_for_mod(mod_db_id)?;
 
     for file in &extracted {
@@ -79,6 +83,7 @@ pub fn update_mod_from_archive(
 
     record_extracted_files(db, mod_db_id, &extracted)?;
     db.update_mod(mod_db_id, version_id, version_str)?;
+    tx.commit()?;
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
         tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
     }
@@ -96,7 +101,9 @@ pub fn remove_mod_by_id(
     let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = paths.len(), "deleting mod files");
     crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
+    let tx = db.begin_transaction()?;
     db.delete_mod(mod_db_id)?;
+    tx.commit()?;
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
         tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
     }
@@ -261,6 +268,7 @@ pub fn disable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> 
     }
 
     // Update file paths in the database
+    let tx = db.begin_transaction()?;
     for file in &files {
         let new_path = if let Some(matching_dir) = top_dirs
             .iter()
@@ -277,6 +285,7 @@ pub fn disable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> 
     }
 
     db.set_mod_disabled(mod_db_id, true)?;
+    tx.commit()?;
     tracing::info!(mod_db_id, name = %mod_info.name, "mod disabled");
     Ok(())
 }
@@ -328,6 +337,7 @@ pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
     }
 
     // Update file paths in the database (strip .disabled from paths)
+    let tx = db.begin_transaction()?;
     for file in &files {
         let new_path = if let Some(matching_dir) = top_dirs
             .iter()
@@ -352,6 +362,7 @@ pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
     }
 
     db.set_mod_disabled(mod_db_id, false)?;
+    tx.commit()?;
     tracing::info!(mod_db_id, name = %mod_info.name, "mod enabled");
     Ok(())
 }
