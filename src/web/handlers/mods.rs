@@ -850,7 +850,7 @@ pub async fn install_mod(
             Ok(()) => {
                 tracing::info!(mod_id, "mod installed successfully");
                 update_cache.invalidate();
-                // Re-check NarcoNet detection (installing ModSync itself changes this)
+                // Re-check NarcoNet detection (installing NarcoNet itself changes this)
                 state_clone.modsync_installed.store(
                     crate::config::is_modsync_installed(&spt_dir),
                     std::sync::atomic::Ordering::Relaxed,
