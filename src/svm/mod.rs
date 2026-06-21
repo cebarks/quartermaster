@@ -1,4 +1,5 @@
 pub mod config;
+pub mod metadata;
 
 use std::path::{Path, PathBuf};
 
