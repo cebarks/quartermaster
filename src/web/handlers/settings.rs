@@ -66,35 +66,14 @@ pub async fn settings_page(
         .to_string();
 
     // Format enum values for template
-    let console_format = match config.logging.console.format {
-        LogFormat::Text => "text",
-        LogFormat::Json => "json",
-    }
-    .to_string();
-
-    let file_format = match config.logging.file.format {
-        LogFormat::Text => "text",
-        LogFormat::Json => "json",
-    }
-    .to_string();
-
-    let file_rotation = match config.logging.file.rotation {
-        RotationPolicy::None => "none",
-        RotationPolicy::Size => "size",
-        RotationPolicy::Daily => "daily",
-    }
-    .to_string();
-
-    let restart_policy = match config
+    let console_format = config.logging.console.format.to_string();
+    let file_format = config.logging.file.format.to_string();
+    let file_rotation = config.logging.file.rotation.to_string();
+    let restart_policy = config
         .clients
         .as_ref()
-        .map(|c| &c.restart_policy)
-        .unwrap_or(&RestartPolicy::Auto)
-    {
-        RestartPolicy::Auto => "auto",
-        RestartPolicy::Manual => "manual",
-    }
-    .to_string();
+        .map(|c| c.restart_policy.to_string())
+        .unwrap_or_else(|| RestartPolicy::Auto.to_string());
 
     let has_forge_token = config.forge_token.is_some();
 
@@ -373,34 +352,19 @@ pub async fn save_logging_settings(
             .finish());
     }
 
-    let parse_format = |s: &str| -> LogFormat {
-        match s {
-            "json" => LogFormat::Json,
-            _ => LogFormat::Text,
-        }
-    };
-
-    let parse_rotation = |s: &str| -> RotationPolicy {
-        match s {
-            "size" => RotationPolicy::Size,
-            "daily" => RotationPolicy::Daily,
-            _ => RotationPolicy::None,
-        }
-    };
-
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     config.logging = LoggingConfig {
         level: form.log_level.trim().to_string(),
         console: ConsoleLogConfig {
             enabled: form.console_enabled.is_some(),
-            format: parse_format(&form.console_format),
+            format: form.console_format.parse().unwrap_or(LogFormat::Text),
         },
         file: FileLogConfig {
             enabled: form.file_enabled.is_some(),
             path: form.file_path.trim().to_string(),
-            format: parse_format(&form.file_format),
-            rotation: parse_rotation(&form.file_rotation),
+            format: form.file_format.parse().unwrap_or(LogFormat::Json),
+            rotation: form.file_rotation.parse().unwrap_or(RotationPolicy::None),
             max_size_mb: form.file_max_size_mb,
             max_files: form.file_max_files,
         },
@@ -472,10 +436,7 @@ pub async fn save_clients_settings(
         }
     }
 
-    let restart_policy = match form.restart_policy.as_str() {
-        "manual" => RestartPolicy::Manual,
-        _ => RestartPolicy::Auto,
-    };
+    let restart_policy: RestartPolicy = form.restart_policy.parse().unwrap_or(RestartPolicy::Auto);
 
     let isolated: Vec<String> = form
         .isolated_paths

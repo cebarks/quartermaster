@@ -53,12 +53,54 @@ pub enum LogFormat {
     Json,
 }
 
+impl std::fmt::Display for LogFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogFormat::Text => write!(f, "text"),
+            LogFormat::Json => write!(f, "json"),
+        }
+    }
+}
+
+impl std::str::FromStr for LogFormat {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "text" => Ok(LogFormat::Text),
+            "json" => Ok(LogFormat::Json),
+            _ => bail!("unknown log format: {s}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RotationPolicy {
     None,
     Size,
     Daily,
+}
+
+impl std::fmt::Display for RotationPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RotationPolicy::None => write!(f, "none"),
+            RotationPolicy::Size => write!(f, "size"),
+            RotationPolicy::Daily => write!(f, "daily"),
+        }
+    }
+}
+
+impl std::str::FromStr for RotationPolicy {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "none" => Ok(RotationPolicy::None),
+            "size" => Ok(RotationPolicy::Size),
+            "daily" => Ok(RotationPolicy::Daily),
+            _ => bail!("unknown rotation policy: {s}"),
+        }
+    }
 }
 
 fn default_log_level() -> String {
@@ -102,6 +144,26 @@ fn default_buffer_size() -> usize {
 pub enum RestartPolicy {
     Auto,
     Manual,
+}
+
+impl std::fmt::Display for RestartPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RestartPolicy::Auto => write!(f, "auto"),
+            RestartPolicy::Manual => write!(f, "manual"),
+        }
+    }
+}
+
+impl std::str::FromStr for RestartPolicy {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "auto" => Ok(RestartPolicy::Auto),
+            "manual" => Ok(RestartPolicy::Manual),
+            _ => bail!("unknown restart policy: {s}"),
+        }
+    }
 }
 
 fn default_restart_policy() -> RestartPolicy {
