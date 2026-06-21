@@ -358,10 +358,15 @@ fn validate_dest_under_root(dest: &Path, spt_root: &Path, raw_name: &str) -> Res
 }
 
 /// Compute the SHA256 hash of a file on disk, returned as a lowercase hex string.
+/// Streams through a BufReader to avoid loading the entire file into memory.
 pub fn compute_file_hash(path: &Path) -> Result<String> {
-    let data = fs::read(path)
+    let file = fs::File::open(path)
+        .with_context(|| format!("failed to open file for hashing: {}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut reader, &mut hasher)
         .with_context(|| format!("failed to read file for hashing: {}", path.display()))?;
-    Ok(compute_hash(&data))
+    Ok(hex_encode(&hasher.finalize()))
 }
 
 /// Delete mod files from `spt_root` and clean up empty parent directories.
