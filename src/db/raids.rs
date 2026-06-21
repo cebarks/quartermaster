@@ -1754,4 +1754,43 @@ mod tests {
         let sizes = db.get_raid_snapshot_sizes(raid_id).unwrap();
         assert!(sizes.is_empty());
     }
+
+    #[test]
+    fn raid_start_can_store_before_snapshot() {
+        let db = Database::open_in_memory().unwrap();
+        let user_id = db
+            .insert_user(
+                "snap_start",
+                Some("profile-start"),
+                Some("hash"),
+                Role::Player,
+            )
+            .unwrap();
+
+        let raid_id = db
+            .insert_raid(
+                user_id,
+                "profile-start",
+                None,
+                "Pmc",
+                None,
+                "Customs",
+                None,
+                "2024-01-01T12:00:00Z",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Simulate what handle_raid_start will do: read profile, compress, store
+        let profile_json = br#"{"characters":{"pmc":{"Info":{"Level":10}}}}"#;
+        let compressed = compress_snapshot(profile_json).unwrap();
+        db.insert_raid_snapshot(raid_id, "before", &compressed)
+            .unwrap();
+
+        let stored = db.get_raid_snapshot(raid_id, "before").unwrap().unwrap();
+        let decompressed = decompress_snapshot(&stored).unwrap();
+        assert_eq!(decompressed, profile_json);
+    }
 }

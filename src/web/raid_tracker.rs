@@ -5,7 +5,7 @@ use actix_web::web::Bytes;
 use actix_web::HttpRequest;
 use serde::{Deserialize, Serialize};
 
-use crate::db::raids::NewRaidKill;
+use crate::db::raids::{compress_snapshot, NewRaidKill};
 use crate::db::Database;
 use crate::web::sse::ServerEvent;
 
@@ -75,17 +75,18 @@ pub fn extract_session_id(req: &HttpRequest) -> Option<String> {
 
 /// Read on-disk profile JSON and extract XP/level/victim count from the appropriate character (PMC or Scav).
 /// Returns `None` if file doesn't exist or can't be parsed.
+/// Also returns the raw file bytes for snapshot storage.
 pub fn snapshot_profile(
     spt_dir: &Path,
     profile_id: &str,
     is_scav: bool,
-) -> Option<ProfileSnapshot> {
+) -> Option<(ProfileSnapshot, Vec<u8>)> {
     let path = spt_dir
         .join("SPT/user/profiles")
         .join(format!("{profile_id}.json"));
 
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let contents = std::fs::read(&path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_slice(&contents).ok()?;
 
     let character_key = if is_scav { "savage" } else { "pmc" };
     let character = parsed
@@ -124,12 +125,15 @@ pub fn snapshot_profile(
             .map(|s| s.to_string())
     };
 
-    Some(ProfileSnapshot {
-        xp,
-        level,
-        victim_count: victims,
-        faction,
-    })
+    Some((
+        ProfileSnapshot {
+            xp,
+            level,
+            victim_count: victims,
+            faction,
+        },
+        contents,
+    ))
 }
 
 // ── Event Handlers ────────────────────────────────────────────────
@@ -149,6 +153,22 @@ pub fn handle_raid_start(
             return;
         }
     };
+
+    // Determine if this is a scav raid
+    let is_scav = start_req.player_side.as_deref() == Some("Savage");
+
+    // Snapshot the profile and compress BEFORE acquiring the lock
+    let (snapshot, profile_bytes) = match snapshot_profile(&spt_dir, &spt_profile_id, is_scav) {
+        Some(pair) => pair,
+        None => {
+            tracing::warn!(profile_id = %spt_profile_id, is_scav, "failed to snapshot profile for raid start");
+            return;
+        }
+    };
+
+    let compressed_snapshot = compress_snapshot(&profile_bytes).ok();
+
+    let started_at = chrono::Utc::now().to_rfc3339();
 
     let db_lock = db.lock();
 
@@ -170,20 +190,6 @@ pub fn handle_raid_start(
         tracing::warn!(error = %e, profile_id = %spt_profile_id, "failed to close orphaned raids");
     }
 
-    // Determine if this is a scav raid
-    let is_scav = start_req.player_side.as_deref() == Some("Savage");
-
-    // Snapshot the profile to get baseline stats
-    let snapshot = match snapshot_profile(&spt_dir, &spt_profile_id, is_scav) {
-        Some(s) => s,
-        None => {
-            tracing::warn!(profile_id = %spt_profile_id, is_scav, "failed to snapshot profile for raid start");
-            return;
-        }
-    };
-
-    let started_at = chrono::Utc::now().to_rfc3339();
-
     // Insert raid row
     let raid_id = match db_lock.insert_raid(
         user.id,
@@ -204,6 +210,13 @@ pub fn handle_raid_start(
             return;
         }
     };
+
+    // Store compressed "before" profile snapshot (best-effort, not transactional with raid insert)
+    if let Some(ref compressed) = compressed_snapshot {
+        if let Err(e) = db_lock.insert_raid_snapshot(raid_id, "before", compressed) {
+            tracing::warn!(error = %e, raid_id, "failed to store before profile snapshot");
+        }
+    }
 
     drop(db_lock);
 
