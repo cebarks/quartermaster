@@ -57,7 +57,13 @@ pub async fn settings_page(
 
     let config = Config::load(&state.config_path).map_err(WebError::from)?;
 
-    let active_tab = query.tab.clone().unwrap_or_else(|| "web".to_string());
+    const VALID_TABS: &[&str] = &["web", "server", "queue", "forge", "logging", "clients"];
+    let active_tab = query
+        .tab
+        .as_deref()
+        .filter(|t| VALID_TABS.contains(t))
+        .unwrap_or("web")
+        .to_string();
 
     // Format enum values for template
     let console_format = match config.logging.console.format {
