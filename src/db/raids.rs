@@ -103,7 +103,6 @@ pub struct LeaderboardEntry {
     pub favorite_extract: Option<String>,
 }
 
-#[allow(dead_code)] // Used by Tasks 3-4 (raid event handlers)
 pub fn compress_snapshot(json: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(json)?;
