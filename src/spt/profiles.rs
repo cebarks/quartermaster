@@ -108,6 +108,13 @@ pub struct ProfileDetail {
     pub stash_value: Option<i64>,
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct StashItem {
+    pub tpl: String,
+    pub count: i64,
+}
+
 #[derive(Deserialize)]
 struct ProfileJson {
     info: ProfileInfo,
@@ -477,6 +484,67 @@ pub fn load_profile_detail(
         hideout,
         stash_value,
     }))
+}
+
+#[allow(dead_code)]
+pub fn load_stash_items(spt_dir: &Path, profile_id: &str) -> Result<Option<Vec<StashItem>>> {
+    let path = spt_dir
+        .join("SPT/user/profiles")
+        .join(format!("{profile_id}.json"));
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read profile {}", path.display()))?;
+    let parsed: FullProfileJson = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse profile {}", path.display()))?;
+
+    let pmc = match parsed.characters.and_then(|c| c.pmc) {
+        Some(pmc) => pmc,
+        None => return Ok(None),
+    };
+
+    let inventory = match pmc.inventory {
+        Some(inv) => inv,
+        None => return Ok(None),
+    };
+
+    let stash_id = match &inventory.stash {
+        Some(id) => id,
+        None => return Ok(None),
+    };
+
+    let items = match &inventory.items {
+        Some(items) => items,
+        None => return Ok(Some(Vec::new())),
+    };
+
+    // Build parent→children map, same traversal as calculate_stash_value
+    let mut children: HashMap<&str, Vec<&InventoryItem>> = HashMap::new();
+    for item in items {
+        if let Some(ref pid) = item.parent_id {
+            children.entry(pid.as_str()).or_default().push(item);
+        }
+    }
+
+    // Walk from stash root, collecting all descendants
+    let mut result = Vec::new();
+    let mut stack = vec![stash_id.as_str()];
+    while let Some(parent) = stack.pop() {
+        if let Some(kids) = children.get(parent) {
+            for item in kids {
+                let count = item
+                    .upd
+                    .as_ref()
+                    .and_then(|u| u.stack_objects_count)
+                    .unwrap_or(1);
+                result.push(StashItem {
+                    tpl: item.tpl.clone(),
+                    count,
+                });
+                stack.push(&item.id);
+            }
+        }
+    }
+
+    Ok(Some(result))
 }
 
 #[cfg(test)]
@@ -977,5 +1045,103 @@ mod tests {
             items: Some(vec![]),
         };
         assert_eq!(calculate_stash_value(&inventory, &prices), 0);
+    }
+
+    fn create_profile_with_inventory(dir: &Path, aid: &str) {
+        let profiles_dir = dir.join("SPT/user/profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        let content = serde_json::json!({
+            "info": {"id": aid, "username": "StashPlayer"},
+            "characters": {
+                "pmc": {
+                    "Info": {"Nickname": "StashPlayer", "Level": 10, "Side": "Bear"},
+                    "Inventory": {
+                        "stash": "stash_root_id",
+                        "items": [
+                            {"_id": "stash_root_id", "_tpl": "stash_container", "slotId": "hideout"},
+                            {"_id": "item1", "_tpl": "ammo_545", "parentId": "stash_root_id", "slotId": "hideout"},
+                            {"_id": "item2", "_tpl": "ammo_545", "parentId": "stash_root_id", "slotId": "hideout",
+                             "upd": {"StackObjectsCount": 30}},
+                            {"_id": "bp1", "_tpl": "backpack_berkut", "parentId": "stash_root_id", "slotId": "hideout"},
+                            {"_id": "nested1", "_tpl": "med_ifak", "parentId": "bp1", "slotId": "main"},
+                            {"_id": "equip1", "_tpl": "weapon_m4", "parentId": "profile_root", "slotId": "FirstPrimaryWeapon"}
+                        ]
+                    }
+                }
+            }
+        });
+        std::fs::write(
+            profiles_dir.join(format!("{aid}.json")),
+            serde_json::to_string(&content).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn load_stash_items_basic() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_profile_with_inventory(tmp.path(), "stash1");
+        let items = load_stash_items(tmp.path(), "stash1").unwrap().unwrap();
+        // Should have: 2x ammo_545, 1x backpack_berkut, 1x med_ifak
+        // Should NOT have: weapon_m4 (equipped), stash_container (the root)
+        assert_eq!(items.len(), 4);
+        let ammo_count: i64 = items
+            .iter()
+            .filter(|i| i.tpl == "ammo_545")
+            .map(|i| i.count)
+            .sum();
+        assert_eq!(ammo_count, 31); // 1 (default) + 30 (stacked)
+        assert!(items
+            .iter()
+            .any(|i| i.tpl == "backpack_berkut" && i.count == 1));
+        assert!(items.iter().any(|i| i.tpl == "med_ifak" && i.count == 1));
+        assert!(!items.iter().any(|i| i.tpl == "weapon_m4"));
+        assert!(!items.iter().any(|i| i.tpl == "stash_container"));
+    }
+
+    #[test]
+    fn load_stash_items_empty_stash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profiles_dir = tmp.path().join("SPT/user/profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        let content = serde_json::json!({
+            "info": {"id": "empty1", "username": "EmptyPlayer"},
+            "characters": {
+                "pmc": {
+                    "Info": {"Nickname": "EmptyPlayer", "Level": 1, "Side": "Usec"},
+                    "Inventory": {
+                        "stash": "stash_root_id",
+                        "items": [
+                            {"_id": "stash_root_id", "_tpl": "stash_container", "slotId": "hideout"}
+                        ]
+                    }
+                }
+            }
+        });
+        std::fs::write(
+            profiles_dir.join("empty1.json"),
+            serde_json::to_string(&content).unwrap(),
+        )
+        .unwrap();
+        let items = load_stash_items(tmp.path(), "empty1").unwrap().unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn load_stash_items_fresh_profile_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profiles_dir = tmp.path().join("SPT/user/profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        let content = serde_json::json!({
+            "info": {"id": "fresh1", "username": "Fresh"},
+            "characters": {"pmc": {}}
+        });
+        std::fs::write(
+            profiles_dir.join("fresh1.json"),
+            serde_json::to_string(&content).unwrap(),
+        )
+        .unwrap();
+        let result = load_stash_items(tmp.path(), "fresh1").unwrap();
+        assert!(result.is_none());
     }
 }
