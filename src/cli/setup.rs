@@ -18,49 +18,82 @@ use crate::web::auth::hash_password;
 use super::common::find_unmanaged_mod_dirs;
 use super::Cli;
 
-pub async fn run(path: Option<PathBuf>, no_fika: bool, no_modsync: bool, cli: &Cli) -> Result<()> {
+const DEV_CONTAINER_NAME: &str = "spt-server-dev";
+
+pub struct SetupArgs {
+    pub path: Option<PathBuf>,
+    pub no_fika: bool,
+    pub no_modsync: bool,
+    pub admin_password: Option<String>,
+    pub forge_token: Option<String>,
+    pub no_forge_token: bool,
+    pub dev: bool,
+}
+
+pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
     println!("=== Quartermaster Setup ===\n");
 
     // --- Collect input ---
-    let data_dir = resolve_data_dir(path)?;
-    let install_fika = if no_fika { false } else { prompt_fika()? };
-    let install_modsync = if no_modsync { false } else { prompt_modsync()? };
-    let admin_password = prompt_admin_password()?;
-    let forge_token = prompt_forge_token()?;
+    let data_dir = resolve_data_dir(args.path)?;
+    let install_fika = if args.no_fika { false } else { prompt_fika()? };
+    let install_modsync = if args.no_modsync {
+        false
+    } else {
+        prompt_modsync()?
+    };
+    let admin_password = match args.admin_password {
+        Some(pw) => {
+            if pw.len() < 8 {
+                bail!("--admin-password must be at least 8 characters");
+            }
+            pw
+        }
+        None => prompt_admin_password()?,
+    };
+    let forge_token = if args.no_forge_token {
+        None
+    } else {
+        match args.forge_token {
+            Some(token) => Some(token),
+            None => prompt_forge_token()?,
+        }
+    };
+
+    let container_name = if args.dev {
+        DEV_CONTAINER_NAME
+    } else {
+        DEFAULT_CONTAINER_NAME
+    };
+
+    let params = ResolvedSetup {
+        data_dir,
+        install_fika,
+        install_modsync,
+        admin_password,
+        forge_token,
+        container_name,
+    };
 
     // --- Detect path ---
     let mgr = ContainerManager::new().context(
         "No container runtime found. Install Podman or Docker and ensure the socket is enabled.",
     )?;
 
-    let dir_state = classify_directory(&data_dir)?;
+    let dir_state = classify_directory(&params.data_dir)?;
 
     match dir_state {
-        DirState::Empty => {
-            bootstrap(
-                &mgr,
-                &data_dir,
-                install_fika,
-                install_modsync,
-                &admin_password,
-                forge_token,
-                cli,
-            )
-            .await
-        }
-        DirState::ExistingSpt => {
-            wrap_existing(
-                &mgr,
-                &data_dir,
-                install_fika,
-                install_modsync,
-                &admin_password,
-                forge_token,
-                cli,
-            )
-            .await
-        }
+        DirState::Empty => bootstrap(&mgr, params, cli).await,
+        DirState::ExistingSpt => wrap_existing(&mgr, params, cli).await,
     }
+}
+
+struct ResolvedSetup {
+    data_dir: PathBuf,
+    install_fika: bool,
+    install_modsync: bool,
+    admin_password: String,
+    forge_token: Option<String>,
+    container_name: &'static str,
 }
 
 #[derive(Debug)]
@@ -99,25 +132,28 @@ fn classify_directory(path: &Path) -> Result<DirState> {
 }
 
 fn resolve_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(p) = explicit {
-        return Ok(p);
-    }
-
-    let default = dirs::home_dir()
-        .map(|h| h.join("spt-server"))
-        .unwrap_or_else(|| PathBuf::from("./spt-server"));
-
-    print!("Where should server data live? [{}]: ", default.display());
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim();
-
-    if trimmed.is_empty() {
-        Ok(default)
+    let path = if let Some(p) = explicit {
+        p
     } else {
-        Ok(PathBuf::from(trimmed))
-    }
+        let default = dirs::home_dir()
+            .map(|h| h.join("spt-server"))
+            .unwrap_or_else(|| PathBuf::from("./spt-server"));
+
+        print!("Where should server data live? [{}]: ", default.display());
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+
+        if trimmed.is_empty() {
+            default
+        } else {
+            PathBuf::from(trimmed)
+        }
+    };
+
+    std::path::absolute(&path)
+        .with_context(|| format!("failed to resolve absolute path for {}", path.display()))
 }
 
 fn prompt_fika() -> Result<bool> {
@@ -240,11 +276,15 @@ fn prompt_forge_token() -> Result<Option<String>> {
     }
 }
 
-fn create_container_opts(data_dir: &Path, install_fika: bool) -> CreateContainerOpts {
+fn create_container_opts(
+    data_dir: &Path,
+    install_fika: bool,
+    container_name: &str,
+) -> CreateContainerOpts {
     let fika_mode = if install_fika { "install" } else { "disabled" };
 
     CreateContainerOpts {
-        name: DEFAULT_CONTAINER_NAME.to_string(),
+        name: container_name.to_string(),
         image: SPT_SERVER_IMAGE.to_string(),
         env: vec![
             ("LISTEN_ALL_NETWORKS".to_string(), "true".to_string()),
@@ -277,18 +317,21 @@ fn create_container_opts(data_dir: &Path, install_fika: bool) -> CreateContainer
     }
 }
 
-async fn check_container_name_available(mgr: &ContainerManager) -> Result<()> {
-    match mgr.inspect(DEFAULT_CONTAINER_NAME).await {
+async fn check_container_name_available(
+    mgr: &ContainerManager,
+    container_name: &str,
+) -> Result<()> {
+    match mgr.inspect(container_name).await {
         Ok(_) => bail!(
             "Container '{}' already exists. Remove it with \
              `podman rm {0}` or `docker rm {0}` and re-run setup.",
-            DEFAULT_CONTAINER_NAME
+            container_name
         ),
         Err(_) => Ok(()),
     }
 }
 
-async fn wait_for_server(config: &Config, spt_dir: &Path) -> Result<()> {
+async fn wait_for_server(config: &Config, spt_dir: &Path, container_name: &str) -> Result<()> {
     let (host, port) = crate::server_detect::resolve_server_addr(config, spt_dir);
     let spt_client = crate::spt::server::SptClient::new(&host, port)?;
 
@@ -301,7 +344,7 @@ async fn wait_for_server(config: &Config, spt_dir: &Path) -> Result<()> {
             bail!(
                 "Server did not respond within 180s. Check container logs with \
                  `podman logs {}` or `docker logs {0}`.",
-                DEFAULT_CONTAINER_NAME
+                container_name
             );
         }
 
@@ -323,6 +366,7 @@ async fn wait_for_server(config: &Config, spt_dir: &Path) -> Result<()> {
 fn create_config(
     data_dir: &Path,
     forge_token: Option<String>,
+    container_name: &str,
     cli: &Cli,
 ) -> Result<(Config, PathBuf)> {
     let config_path = Config::resolve_path(cli.config.as_deref(), Some(data_dir));
@@ -332,7 +376,7 @@ fn create_config(
         Config::default()
     };
     config.spt_dir = Some(data_dir.to_path_buf());
-    config.server_container = Some(DEFAULT_CONTAINER_NAME.to_string());
+    config.server_container = Some(container_name.to_string());
     config.server_host = Some("0.0.0.0".to_string());
     config.server_port = Some(DEFAULT_SPT_PORT);
     config.forge_token = forge_token;
@@ -410,24 +454,16 @@ fn print_summary(
 
 // --- Path A: Bootstrap ---
 
-async fn bootstrap(
-    mgr: &ContainerManager,
-    data_dir: &Path,
-    install_fika: bool,
-    install_modsync: bool,
-    admin_password: &str,
-    forge_token: Option<String>,
-    cli: &Cli,
-) -> Result<()> {
+async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Result<()> {
     println!("\nNo existing SPT installation found. Bootstrapping from scratch...\n");
 
     // 1. Create data directory
-    std::fs::create_dir_all(data_dir)
-        .with_context(|| format!("failed to create directory {}", data_dir.display()))?;
-    println!("Created {}", data_dir.display());
+    std::fs::create_dir_all(&p.data_dir)
+        .with_context(|| format!("failed to create directory {}", p.data_dir.display()))?;
+    println!("Created {}", p.data_dir.display());
 
     // 2. Check container name available
-    check_container_name_available(mgr).await?;
+    check_container_name_available(mgr, p.container_name).await?;
 
     // 3. Pull image
     println!("Pulling {}...", SPT_SERVER_IMAGE);
@@ -435,40 +471,40 @@ async fn bootstrap(
     println!("Image pulled.");
 
     // 4. Create container
-    let opts = create_container_opts(data_dir, install_fika);
+    let opts = create_container_opts(&p.data_dir, p.install_fika, p.container_name);
     mgr.create_container(opts).await?;
-    println!("Container '{}' created.", DEFAULT_CONTAINER_NAME);
+    println!("Container '{}' created.", p.container_name);
 
     // 5. First boot
     println!("\nStarting first boot...");
-    mgr.start(DEFAULT_CONTAINER_NAME).await?;
+    mgr.start(p.container_name).await?;
 
     // 6. Create config (needed for wait_for_server to resolve address)
-    let forge_token_set = forge_token.is_some();
-    let (config, _config_path) = create_config(data_dir, forge_token, cli)?;
+    let forge_token_set = p.forge_token.is_some();
+    let (config, _config_path) = create_config(&p.data_dir, p.forge_token, p.container_name, cli)?;
 
     // 7. Wait for server
-    wait_for_server(&config, data_dir).await?;
+    wait_for_server(&config, &p.data_dir, p.container_name).await?;
 
     // 8. Stop server
     println!("\nStopping server after first boot...");
-    mgr.stop(DEFAULT_CONTAINER_NAME).await?;
+    mgr.stop(p.container_name).await?;
     println!("Server stopped.");
 
     // 9. Create DB and admin
-    let db = create_db_and_admin(data_dir, admin_password)?;
+    let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
 
     // 10. Install NarcoNet
-    if install_modsync {
-        install_narconet_from_forge(data_dir, &db, &config, config.forge_token.clone()).await?;
+    if p.install_modsync {
+        install_narconet_from_forge(&p.data_dir, &db, &config, config.forge_token.clone()).await?;
     }
 
     // 11. Summary
     print_summary(
         &config,
-        data_dir,
-        install_fika,
-        install_modsync,
+        &p.data_dir,
+        p.install_fika,
+        p.install_modsync,
         forge_token_set,
     );
 
@@ -477,35 +513,29 @@ async fn bootstrap(
 
 // --- Path B: Wrap Existing ---
 
-async fn wrap_existing(
-    mgr: &ContainerManager,
-    data_dir: &Path,
-    install_fika: bool,
-    install_modsync: bool,
-    admin_password: &str,
-    forge_token: Option<String>,
-    cli: &Cli,
-) -> Result<()> {
-    let spt_info = read_spt_version(data_dir)?;
+async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Result<()> {
+    let spt_info = read_spt_version(&p.data_dir)?;
     println!(
         "\nExisting SPT {} (EFT {}) detected.\n",
         spt_info.spt_version, spt_info.tarkov_version
     );
 
     // 1. Detect or create container
-    let container_name = detect_or_create_container(mgr, data_dir, install_fika).await?;
+    let resolved_container =
+        detect_or_create_container(mgr, &p.data_dir, p.install_fika, p.container_name).await?;
 
     // 2. Create config
-    let forge_token_set = forge_token.is_some();
-    let (mut config, config_path) = create_config(data_dir, forge_token, cli)?;
-    config.server_container = Some(container_name);
+    let forge_token_set = p.forge_token.is_some();
+    let (mut config, config_path) =
+        create_config(&p.data_dir, p.forge_token, p.container_name, cli)?;
+    config.server_container = Some(resolved_container);
     config.save(&config_path)?;
 
     // 3. Create DB and admin
-    let db = create_db_and_admin(data_dir, admin_password)?;
+    let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
 
     // 4. Scan unmanaged mods
-    let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(data_dir, &db)?;
+    let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(&p.data_dir, &db)?;
     if unmanaged_dirs.is_empty() {
         println!("No unmanaged mod files found.");
     } else {
@@ -526,16 +556,16 @@ async fn wrap_existing(
     }
 
     // 5. Install NarcoNet
-    if install_modsync {
-        install_narconet_from_forge(data_dir, &db, &config, config.forge_token.clone()).await?;
+    if p.install_modsync {
+        install_narconet_from_forge(&p.data_dir, &db, &config, config.forge_token.clone()).await?;
     }
 
     // 6. Summary
     print_summary(
         &config,
-        data_dir,
-        install_fika,
-        install_modsync,
+        &p.data_dir,
+        p.install_fika,
+        p.install_modsync,
         forge_token_set,
     );
 
@@ -546,6 +576,7 @@ async fn detect_or_create_container(
     mgr: &ContainerManager,
     data_dir: &Path,
     install_fika: bool,
+    container_name: &str,
 ) -> Result<String> {
     let detected = mgr.detect_spt_containers(data_dir).await?;
 
@@ -562,16 +593,16 @@ async fn detect_or_create_container(
 
     // No container found — create one
     println!("No existing container found. Creating one...");
-    check_container_name_available(mgr).await?;
+    check_container_name_available(mgr, container_name).await?;
 
     println!("Pulling {}...", SPT_SERVER_IMAGE);
     mgr.pull_image(SPT_SERVER_IMAGE).await?;
 
-    let opts = create_container_opts(data_dir, install_fika);
+    let opts = create_container_opts(data_dir, install_fika, container_name);
     mgr.create_container(opts).await?;
-    println!("Container '{}' created.", DEFAULT_CONTAINER_NAME);
+    println!("Container '{}' created.", container_name);
 
-    Ok(DEFAULT_CONTAINER_NAME.to_string())
+    Ok(container_name.to_string())
 }
 
 #[cfg(test)]
@@ -640,7 +671,7 @@ mod tests {
     #[test]
     fn create_container_opts_fika_enabled() {
         let dir = PathBuf::from("/data/spt");
-        let opts = create_container_opts(&dir, true);
+        let opts = create_container_opts(&dir, true, DEFAULT_CONTAINER_NAME);
         assert!(opts
             .env
             .iter()
@@ -652,10 +683,17 @@ mod tests {
     #[test]
     fn create_container_opts_fika_disabled() {
         let dir = PathBuf::from("/data/spt");
-        let opts = create_container_opts(&dir, false);
+        let opts = create_container_opts(&dir, false, DEFAULT_CONTAINER_NAME);
         assert!(opts
             .env
             .iter()
             .any(|(k, v)| k == "FIKA_MODE" && v == "disabled"));
+    }
+
+    #[test]
+    fn create_container_opts_dev_name() {
+        let dir = PathBuf::from("/data/spt");
+        let opts = create_container_opts(&dir, false, DEV_CONTAINER_NAME);
+        assert_eq!(opts.name, "spt-server-dev");
     }
 }
