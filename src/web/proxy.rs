@@ -246,6 +246,9 @@ fn handle_player_registration(
 ) {
     // SPT's registration endpoint returns an empty 200. To find the new profile,
     // scan the profiles directory for any profile IDs not already in quma's DB.
+    //
+    // Phase 1: Read all profile data from disk (no DB lock held).
+    // Phase 2: Acquire the lock once and perform all DB lookups/inserts.
     let profiles_dir = spt_dir.join("SPT/user/profiles");
     let entries = match std::fs::read_dir(&profiles_dir) {
         Ok(e) => e,
@@ -255,6 +258,8 @@ fn handle_player_registration(
         }
     };
 
+    // Phase 1: filesystem I/O — collect profile data without holding the DB lock.
+    let mut profiles: Vec<(String, String)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         let profile_id = match path.file_stem().and_then(|s| s.to_str()) {
@@ -274,11 +279,20 @@ fn handle_player_registration(
         let username = profile_json
             .pointer("/info/username")
             .and_then(|v| v.as_str())
-            .unwrap_or(&profile_id);
+            .unwrap_or(&profile_id)
+            .to_string();
 
-        let db = db.lock();
+        profiles.push((profile_id, username));
+    }
 
-        match db.get_user_by_spt_profile_id(&profile_id) {
+    if profiles.is_empty() {
+        return;
+    }
+
+    // Phase 2: acquire DB lock once for all lookups and inserts.
+    let db = db.lock();
+    for (profile_id, username) in &profiles {
+        match db.get_user_by_spt_profile_id(profile_id) {
             Ok(Some(_)) => continue,
             Ok(None) => {}
             Err(e) => {
@@ -289,7 +303,7 @@ fn handle_player_registration(
 
         match db.insert_user(
             username,
-            Some(&profile_id),
+            Some(profile_id),
             None,
             crate::db::users::Role::Player,
         ) {
