@@ -7,10 +7,13 @@
         <div class="form-group">
             <label for="forge_token">Forge API Token</label>
             <div style="display: flex; gap: 0.5rem;">
-                <input type="password" id="forge_token" name="forge_token" value="{% if let Some(t) = &config.forge_token %}{{ t }}{% endif %}" placeholder="Optional: tok_xxx" style="flex: 1;">
+                <input type="password" id="forge_token" name="forge_token" value="" placeholder="{% if has_forge_token %}Enter new token to replace existing{% else %}Optional: tok_xxx{% endif %}" style="flex: 1;">
                 <button type="button" class="btn" onclick="var i=document.getElementById('forge_token');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
             </div>
-            <p class="text-muted text-sm">Optional API token for authenticated Forge API requests. Leave blank for anonymous access.</p>
+            {% if has_forge_token %}
+            <label><input type="checkbox" name="clear_forge_token"> Clear existing token</label>
+            {% endif %}
+            <p class="text-muted text-sm">Optional API token for authenticated Forge API requests.{% if has_forge_token %} A token is currently configured. Leave blank to keep it, or enter a new value to replace it.{% endif %}</p>
         </div>
 
         <div class="form-group">

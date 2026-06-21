@@ -41,6 +41,7 @@ struct SettingsTemplate {
     file_format: String,
     file_rotation: String,
     restart_policy: String,
+    has_forge_token: bool,
 }
 
 pub async fn settings_page(
@@ -89,6 +90,8 @@ pub async fn settings_page(
     }
     .to_string();
 
+    let has_forge_token = config.forge_token.is_some();
+
     let tmpl = SettingsTemplate {
         user,
         flash,
@@ -101,6 +104,7 @@ pub async fn settings_page(
         file_format,
         file_rotation,
         restart_policy,
+        has_forge_token,
     };
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
@@ -140,6 +144,7 @@ pub struct ForgeSettingsForm {
     csrf_token: String,
     forge_token: String,
     forge_cache_ttl: String,
+    clear_forge_token: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -321,7 +326,17 @@ pub async fn save_forge_settings(
 
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
-    config.forge_token = non_empty_opt(&form.forge_token);
+
+    if form.clear_forge_token.is_some() {
+        config.forge_token = None;
+    } else {
+        let token_input = form.forge_token.trim();
+        if !token_input.is_empty() {
+            config.forge_token = Some(token_input.to_string());
+        }
+        // else: leave config.forge_token as-is (unchanged from disk)
+    }
+
     config.forge_cache_ttl = ttl;
 
     config.save(&state.config_path).map_err(WebError::from)?;
