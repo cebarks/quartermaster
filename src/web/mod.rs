@@ -99,6 +99,7 @@ pub async fn start_server(
         forge,
         config: config.clone(),
         config_path,
+        config_lock: parking_lot::Mutex::new(()),
         spt_dir,
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(events_tx.clone()),

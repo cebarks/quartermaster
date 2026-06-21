@@ -197,7 +197,8 @@ pub async fn save_web_settings(
             .finish());
     }
 
-    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    let _guard = state.config_lock.lock();
+    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     config.web_bind = form.web_bind.trim().to_string();
     config.web_port = form.web_port;
     config.tls_enabled = tls_on;
@@ -251,7 +252,8 @@ pub async fn save_server_settings(
         }
     };
 
-    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    let _guard = state.config_lock.lock();
+    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     config.server_container = non_empty_opt(&form.server_container);
     config.server_host = non_empty_opt(&form.server_host);
     config.server_port = port;
@@ -277,7 +279,8 @@ pub async fn save_queue_settings(
         return Err(WebError::Forbidden.into());
     }
 
-    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    let _guard = state.config_lock.lock();
+    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     config.queue_changes = form.queue_changes.is_some();
     config.auto_drain_on_lifecycle = form.auto_drain_on_lifecycle.is_some();
     config.update_check_interval = form.update_check_interval;
@@ -316,7 +319,8 @@ pub async fn save_forge_settings(
         }
     };
 
-    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    let _guard = state.config_lock.lock();
+    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     config.forge_token = non_empty_opt(&form.forge_token);
     config.forge_cache_ttl = ttl;
 
@@ -363,7 +367,8 @@ pub async fn save_logging_settings(
         }
     };
 
-    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    let _guard = state.config_lock.lock();
+    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     config.logging = LoggingConfig {
         level: form.log_level.trim().to_string(),
         console: ConsoleLogConfig {
@@ -452,7 +457,8 @@ pub async fn save_clients_settings(
         isolated_paths: isolated,
     };
 
-    let mut config = Config::load(&state.config_path).unwrap_or_default();
+    let _guard = state.config_lock.lock();
+    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     config.clients = if form.count == 0 && form.install_dir.trim().is_empty() {
         None
     } else {
