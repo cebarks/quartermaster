@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::config::{find_narconet_dir, Config, ModSyncConfig, NARCONET_FORGE_MOD_ID};
 use crate::db::Database;
 
-/// A single syncPath entry in ModSync's config.jsonc.
+/// A single syncPath entry in NarcoNet's config.yaml.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SyncPathEntry {
@@ -18,7 +18,7 @@ struct SyncPathEntry {
     restart_required: bool,
 }
 
-/// The full ModSync config.jsonc structure.
+/// The full NarcoNet config.yaml structure.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ModSyncOutputConfig {
