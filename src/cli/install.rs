@@ -316,17 +316,17 @@ pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>)
     }
 
     println!("  Extracting...");
-    let db_id = crate::ops::install_mod_from_archive(
-        &ctx.db,
-        &ctx.spt_dir,
-        &ctx.config,
-        *forge_mod_id,
-        *forge_version_id,
+    let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+        db: &ctx.db,
+        spt_dir: &ctx.spt_dir,
+        config: &ctx.config,
+        forge_mod_id: *forge_mod_id,
+        version_id: *forge_version_id,
         name,
-        *slug,
+        slug: *slug,
         version,
-        &archive_path,
-    )?;
+        archive_path: &archive_path,
+    })?;
 
     let file_count = ctx.db.get_files_for_mod(db_id)?.len();
     println!("  Extracted {} files", file_count);
