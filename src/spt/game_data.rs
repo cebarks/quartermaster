@@ -324,7 +324,6 @@ impl GameData {
         self.hideout_areas.get(&area_type)
     }
 
-    #[allow(dead_code)]
     pub fn item_price(&self, tpl: &str) -> Option<i64> {
         self.prices.get(tpl).copied()
     }
@@ -333,7 +332,6 @@ impl GameData {
         &self.prices
     }
 
-    #[allow(dead_code)]
     pub fn item_name<'a>(&'a self, tpl: &'a str) -> &'a str {
         self.item_locales
             .get(tpl)
@@ -341,7 +339,6 @@ impl GameData {
             .unwrap_or(tpl)
     }
 
-    #[allow(dead_code)]
     pub fn item_short_name<'a>(&'a self, tpl: &'a str) -> &'a str {
         self.item_locales
             .get(tpl)
@@ -349,7 +346,6 @@ impl GameData {
             .unwrap_or(tpl)
     }
 
-    #[allow(dead_code)]
     pub fn item_category(&self, tpl: &str) -> &str {
         self.item_categories
             .get(tpl)

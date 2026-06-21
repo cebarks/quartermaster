@@ -94,6 +94,14 @@ struct HideoutPartialTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "profiles/partials/stash_visibility.html")]
+struct StashVisibilityTemplate {
+    csrf_token: String,
+    profile_username: String,
+    stash_public: bool,
+}
+
+#[derive(Template)]
 #[template(path = "profiles/partials/stash.html")]
 struct StashPartialTemplate {
     categories: Vec<StashCategoryDisplay>,
@@ -598,14 +606,10 @@ pub async fn toggle_stash_visibility(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    // Return updated toggle button with new CSRF token
-    let label = if new_value {
-        "Make stash private"
-    } else {
-        "Make stash public"
+    let tmpl = StashVisibilityTemplate {
+        csrf_token,
+        profile_username,
+        stash_public: new_value,
     };
-    let button_html = format!(
-        r##"<input type="hidden" name="csrf_token" value="{csrf_token}"><button class="btn btn-sm btn-outline" hx-post="/quma/api/profiles/{profile_username}/stash/visibility" hx-target="#stash-visibility" hx-swap="innerHTML" hx-include="[name='csrf_token']">{label}</button>"##,
-    );
-    Ok(Html::new(button_html))
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

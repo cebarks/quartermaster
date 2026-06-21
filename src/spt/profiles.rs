@@ -486,7 +486,6 @@ pub fn load_profile_detail(
     }))
 }
 
-#[allow(dead_code)]
 pub fn load_stash_items(spt_dir: &Path, profile_id: &str) -> Result<Option<Vec<StashItem>>> {
     let path = spt_dir
         .join("SPT/user/profiles")
