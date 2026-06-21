@@ -199,6 +199,24 @@ pub fn find_unmanaged_mod_dirs(
     Ok((dirs, total))
 }
 
+/// Warn the user if `--force` is being used while the server is running.
+pub async fn warn_if_forcing_while_running(force: bool, ctx: &CliContext) -> Result<()> {
+    if force {
+        let running = crate::server_detect::is_server_running(
+            &ctx.config,
+            &ctx.spt_dir,
+            ctx.container_mgr.as_ref(),
+        )
+        .await?;
+        if running {
+            println!(
+                "Warning: applying changes while the server is running may cause instability."
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Prompt the user for yes/no confirmation. Returns true if confirmed.
 pub fn confirm(prompt: &str) -> Result<bool> {
     print!("{} [y/N]: ", prompt);

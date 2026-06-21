@@ -86,19 +86,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result
         return Ok(());
     }
 
-    if force {
-        let running = crate::server_detect::is_server_running(
-            &ctx.config,
-            &ctx.spt_dir,
-            ctx.container_mgr.as_ref(),
-        )
-        .await?;
-        if running {
-            println!(
-                "Warning: applying changes while the server is running may cause instability."
-            );
-        }
-    }
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
 
     let mut updated_count = 0;
     for update in &results.updates {

@@ -97,19 +97,7 @@ pub async fn run(
         return Ok(());
     }
 
-    if force {
-        let running = crate::server_detect::is_server_running(
-            &ctx.config,
-            &ctx.spt_dir,
-            ctx.container_mgr.as_ref(),
-        )
-        .await?;
-        if running {
-            println!(
-                "Warning: applying changes while the server is running may cause instability."
-            );
-        }
-    }
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
 
     install_deps(ctx, &to_install).await?;
     let db_id = install_main_mod(ctx, &forge_mod, &selected_version).await?;
