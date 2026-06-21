@@ -79,7 +79,13 @@ pub async fn manager_page(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+
+    // Non-admins get redirected to the read-only view
+    if !user.role.can_manage_mods() {
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/svm/view"))
+            .finish());
+    }
 
     let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
     let svm = svm.read();
@@ -510,13 +516,56 @@ pub async fn save_section(
     Ok(HttpResponse::Ok().json(serde_json::json!({"ok": true})))
 }
 
-// ─── Stubs for Task 8 ────────────────────────────────────────────────────────
+// ─── Player View (Task 8) ────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+#[derive(Template)]
+#[template(path = "svm/player_view.html")]
+struct SvmPlayerViewTemplate {
+    user: SessionUser,
+    flash: Option<FlashMessage>,
+    csrf_token: String,
+    fika_installed: bool,
+    modsync_installed: bool,
+    svm_installed: bool,
+    active_preset: String,
+    sections: &'static [SectionMeta],
+    active_section: String,
+    field_groups: Vec<FieldGroup>,
+    config_json: String,
+}
+
 pub async fn player_view(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    query: web::Query<EditorQuery>,
 ) -> actix_web::Result<HttpResponse> {
-    todo!("Task 8: player view")
+    let user = require_auth(&req)?;
+    // No capability check — any authenticated user can view
+
+    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = svm.read();
+
+    let active_section = query.section.as_deref().unwrap_or("raids");
+    let fields = metadata::fields_for_section(active_section).ok_or(WebError::NotFound)?;
+    let field_groups = group_fields(fields);
+    let config_json = section_to_json(svm.config(), active_section).map_err(WebError::from)?;
+
+    let tmpl = SvmPlayerViewTemplate {
+        user,
+        flash: take_flash(&session),
+        csrf_token: crate::web::csrf::get_or_create_token(&session),
+        fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
+        svm_installed: true,
+        active_preset: svm.active_preset_name().to_string(),
+        sections: SECTIONS,
+        active_section: active_section.to_string(),
+        field_groups,
+        config_json,
+    };
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(tmpl.render().map_err(WebError::from)?))
 }

@@ -367,6 +367,7 @@ pub async fn start_server(
                                 web::post().to(handlers::modsync::save_settings),
                             )
                             .route("/svm", web::get().to(handlers::svm::manager_page))
+                            .route("/svm/view", web::get().to(handlers::svm::player_view))
                             .route("/svm/edit", web::get().to(handlers::svm::editor_page))
                             .route(
                                 "/svm/preset/switch",
