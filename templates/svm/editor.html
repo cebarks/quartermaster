@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}SVM Editor — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("svm", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">
+    <h1>SVM Configuration — {{ active_preset }}</h1>
+    <a href="/quma/svm" class="btn btn-outline">Back to Presets</a>
+</div>
+
+{% if is_dirty %}
+<div class="toast toast-warning" style="margin-bottom: 1rem">
+    SVM changes pending — restart required
+</div>
+{% endif %}
+
+<div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
+    {% for s in sections %}
+    <a href="/quma/svm/edit?section={{ s.key }}"
+       class="btn btn-sm {% if s.key == active_section %}btn-primary{% else %}btn-outline{% endif %}"
+       hx-get="/quma/api/svm/edit/{{ s.key }}"
+       hx-target="#section-content"
+       hx-swap="innerHTML"
+       hx-push-url="/quma/svm/edit?section={{ s.key }}">
+        {{ s.label }}
+    </a>
+    {% endfor %}
+</div>
+
+<div id="section-content">
+    {% include "svm/partials/section.html" %}
+</div>
+{% endblock %}

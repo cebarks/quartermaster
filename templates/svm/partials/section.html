@@ -1,0 +1,68 @@
+<script src="/quma/assets/svm-form.js"></script>
+<form id="svm-section-form" data-svm-form action="/quma/api/svm/edit/{{ section_key }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="card">
+        {% for group in field_groups %}
+            {% if let Some(label) = group.label %}
+            <fieldset style="margin-top: 1rem; border: 1px solid var(--border); padding: 1rem; border-radius: 4px">
+            <legend><strong>{{ label }}</strong></legend>
+            {% endif %}
+
+            {% for field in group.fields %}
+            <div class="form-group" style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border)">
+                <label title="{{ field.description }}">
+                    {{ field.label }}
+                </label>
+                {% match field.input_type %}
+                    {% when InputType::Toggle %}
+                        <input type="checkbox" name="{{ field.path }}" data-svm-field>
+                    {% when InputType::Integer { min, max } %}
+                        <input type="number" name="{{ field.path }}" data-svm-field
+                            {% if let Some(mn) = min %} min="{{ mn }}"{% endif %}
+                            {% if let Some(mx) = max %} max="{{ mx }}"{% endif %}
+                            step="1" style="width: 8rem">
+                    {% when InputType::Float { min, max, step } %}
+                        <input type="number" name="{{ field.path }}" data-svm-field
+                            {% if let Some(mn) = min %} min="{{ mn }}"{% endif %}
+                            {% if let Some(mx) = max %} max="{{ mx }}"{% endif %}
+                            step="{{ step.unwrap_or(0.01) }}" style="width: 8rem">
+                    {% when InputType::Text %}
+                        <input type="text" name="{{ field.path }}" data-svm-field style="width: 16rem">
+                    {% when InputType::Textarea %}
+                        <textarea name="{{ field.path }}" data-svm-field rows="4" style="width: 100%"></textarea>
+                {% endmatch %}
+            </div>
+            {% endfor %}
+
+            {% if group.label.is_some() %}
+            </fieldset>
+            {% endif %}
+        {% endfor %}
+
+        <div style="margin-top: 1rem; text-align: right">
+            <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+    </div>
+</form>
+
+<script>
+(function() {
+    var config = {{ config_json|safe }};
+    var form = document.getElementById('svm-section-form');
+    form.querySelectorAll('[data-svm-field]').forEach(function(el) {
+        var keys = el.name.split('.');
+        var val = config;
+        for (var i = 0; i < keys.length; i++) {
+            if (val == null) break;
+            val = val[keys[i]];
+        }
+        if (val === undefined || val === null) return;
+        if (el.type === 'checkbox') {
+            el.checked = !!val;
+        } else {
+            el.value = val;
+        }
+    });
+})();
+</script>

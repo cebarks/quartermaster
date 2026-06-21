@@ -1,9 +1,10 @@
 use actix_session::Session;
-use actix_web::web::{self, Data, Form};
+use actix_web::web::{self, Data, Form, Json};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::db::users::Role;
+use crate::svm::metadata::{self, FieldMeta, InputType, SectionMeta, SECTIONS};
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage};
@@ -302,36 +303,211 @@ pub async fn import_preset(
         .finish())
 }
 
-// ─── Stubs for Task 7 ────────────────────────────────────────────────────────
+// ─── Config Editor (Task 7) ──────────────────────────────────────────────────
 
-#[allow(dead_code)]
+/// A group of fields sharing the same subgroup label, pre-grouped in the handler
+/// so the template doesn't need mutable state tracking.
+pub struct FieldGroup {
+    pub label: Option<&'static str>,
+    pub fields: Vec<&'static FieldMeta>,
+}
+
+fn group_fields(fields: &'static [FieldMeta]) -> Vec<FieldGroup> {
+    let mut groups: Vec<FieldGroup> = Vec::new();
+    for field in fields {
+        let label = field.subgroup;
+        match groups.last_mut() {
+            Some(g) if g.label == label => g.fields.push(field),
+            _ => groups.push(FieldGroup {
+                label,
+                fields: vec![field],
+            }),
+        }
+    }
+    groups
+}
+
+fn section_to_json(config: &crate::svm::SvmConfig, section: &str) -> Result<String, anyhow::Error> {
+    let value = match section {
+        "items" => serde_json::to_value(&config.items)?,
+        "hideout" => serde_json::to_value(&config.hideout)?,
+        "traders" => serde_json::to_value(&config.traders)?,
+        "loot" => serde_json::to_value(&config.loot)?,
+        "player" => serde_json::to_value(&config.player)?,
+        "raids" => serde_json::to_value(&config.raids)?,
+        "fleamarket" => serde_json::to_value(&config.fleamarket)?,
+        "services" => serde_json::to_value(&config.services)?,
+        "quests" => serde_json::to_value(&config.quests)?,
+        "csm" => serde_json::to_value(&config.csm)?,
+        "scav" => serde_json::to_value(&config.scav)?,
+        "bots" => serde_json::to_value(&config.bots)?,
+        "pmc" => serde_json::to_value(&config.pmc)?,
+        "custom" => serde_json::to_value(&config.custom)?,
+        _ => anyhow::bail!("unknown section: {section}"),
+    };
+    Ok(serde_json::to_string(&value)?)
+}
+
+#[derive(serde::Deserialize)]
+pub struct EditorQuery {
+    section: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "svm/editor.html")]
+struct SvmEditorTemplate {
+    user: SessionUser,
+    flash: Option<FlashMessage>,
+    csrf_token: String,
+    fika_installed: bool,
+    modsync_installed: bool,
+    svm_installed: bool,
+    active_preset: String,
+    is_dirty: bool,
+    sections: &'static [SectionMeta],
+    active_section: String,
+    section_key: String,
+    field_groups: Vec<FieldGroup>,
+    config_json: String,
+}
+
 pub async fn editor_page(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    query: web::Query<EditorQuery>,
 ) -> actix_web::Result<HttpResponse> {
-    todo!("Task 7: editor page")
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
+
+    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = svm.read();
+
+    let active_section = query.section.as_deref().unwrap_or("raids");
+    let fields = metadata::fields_for_section(active_section).ok_or(WebError::NotFound)?;
+    let field_groups = group_fields(fields);
+
+    let config_json = section_to_json(svm.config(), active_section).map_err(WebError::from)?;
+
+    let tmpl = SvmEditorTemplate {
+        user,
+        flash: take_flash(&session),
+        csrf_token: crate::web::csrf::get_or_create_token(&session),
+        fika_installed: state.fika_installed,
+        modsync_installed: state.is_modsync_installed(),
+        svm_installed: true,
+        active_preset: svm.active_preset_name().to_string(),
+        is_dirty: svm.is_dirty(),
+        sections: SECTIONS,
+        active_section: active_section.to_string(),
+        section_key: active_section.to_string(),
+        field_groups,
+        config_json,
+    };
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(tmpl.render().map_err(WebError::from)?))
 }
 
-#[allow(dead_code)]
+#[derive(Template)]
+#[template(path = "svm/partials/section.html")]
+struct SvmSectionPartialTemplate {
+    csrf_token: String,
+    section_key: String,
+    field_groups: Vec<FieldGroup>,
+    config_json: String,
+}
+
 pub async fn section_partial(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
-    _path: web::Path<String>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: web::Path<String>,
 ) -> actix_web::Result<HttpResponse> {
-    todo!("Task 7: section partial")
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
+
+    let section = path.into_inner();
+    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = svm.read();
+
+    let fields = metadata::fields_for_section(&section).ok_or(WebError::NotFound)?;
+    let config_json = section_to_json(svm.config(), &section).map_err(WebError::from)?;
+
+    let tmpl = SvmSectionPartialTemplate {
+        csrf_token: crate::web::csrf::get_or_create_token(&session),
+        section_key: section,
+        field_groups: group_fields(fields),
+        config_json,
+    };
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(tmpl.render().map_err(WebError::from)?))
 }
 
-#[allow(dead_code)]
 pub async fn save_section(
-    _state: Data<AppState>,
-    _req: HttpRequest,
-    _session: Session,
-    _path: web::Path<String>,
-    _form: web::Form<std::collections::HashMap<String, String>>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: web::Path<String>,
+    body: Json<serde_json::Value>,
 ) -> actix_web::Result<HttpResponse> {
-    todo!("Task 7: save section")
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
+
+    let csrf = body
+        .get("csrf_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !crate::web::csrf::validate_token(&session, csrf) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let section = path.into_inner();
+    let svm_lock = state.svm.as_ref().ok_or(WebError::NotFound)?.clone();
+
+    // Clone current config + parse section update (no lock held during deser)
+    let mut config = {
+        let svm = svm_lock.read();
+        svm.config().clone()
+    };
+
+    let mut section_data = body.into_inner();
+    section_data.as_object_mut().map(|o| o.remove("csrf_token"));
+
+    // Deserialize into the appropriate section struct
+    match section.as_str() {
+        "items" => config.items = serde_json::from_value(section_data)?,
+        "hideout" => config.hideout = serde_json::from_value(section_data)?,
+        "traders" => config.traders = serde_json::from_value(section_data)?,
+        "loot" => config.loot = serde_json::from_value(section_data)?,
+        "player" => config.player = serde_json::from_value(section_data)?,
+        "raids" => config.raids = serde_json::from_value(section_data)?,
+        "fleamarket" => config.fleamarket = serde_json::from_value(section_data)?,
+        "services" => config.services = serde_json::from_value(section_data)?,
+        "quests" => config.quests = serde_json::from_value(section_data)?,
+        "csm" => config.csm = serde_json::from_value(section_data)?,
+        "scav" => config.scav = serde_json::from_value(section_data)?,
+        "bots" => config.bots = serde_json::from_value(section_data)?,
+        "pmc" => config.pmc = serde_json::from_value(section_data)?,
+        "custom" => config.custom = serde_json::from_value(section_data)?,
+        _ => return Err(WebError::NotFound.into()),
+    }
+
+    // File I/O inside web::block to avoid blocking the async runtime
+    web::block(move || {
+        let mut svm = svm_lock.write();
+        let preset = svm.active_preset_name().to_string();
+        svm.save_preset(&preset, &config)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    set_flash(&session, "SVM config saved", "success");
+    Ok(HttpResponse::Ok().json(serde_json::json!({"ok": true})))
 }
 
 // ─── Stubs for Task 8 ────────────────────────────────────────────────────────
