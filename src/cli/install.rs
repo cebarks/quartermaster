@@ -147,7 +147,7 @@ async fn pick_version(
                 }
             }
         }
-        None => versions.into_iter().last().ok_or_else(|| {
+        None => versions.into_iter().max_by_key(|v| v.id).ok_or_else(|| {
             anyhow::anyhow!(
                 "no versions of {} are compatible with SPT {}",
                 forge_mod.name,
