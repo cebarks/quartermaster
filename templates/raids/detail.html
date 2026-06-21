@@ -41,6 +41,13 @@
                     {% if let Some(exit_name) = raid.exit_name %}
                     <tr><td><strong>Exit</strong></td><td>{{ exit_name }}</td></tr>
                     {% endif %}
+                    {% if !snapshot_sizes.is_empty() %}
+                    <tr><td><strong>Snapshots</strong></td><td>
+                        {% for (snap_type, size) in &snapshot_sizes %}
+                            {{ snap_type }}: {{ size|format_size_i64 }}{% if !loop.last %}, {% endif %}
+                        {% endfor %}
+                    </td></tr>
+                    {% endif %}
                 </tbody>
             </table>
         </div>

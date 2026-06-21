@@ -3499,6 +3499,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "flate2",
  "futures-util",
  "indicatif",
  "json_comments",
