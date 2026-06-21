@@ -1,0 +1,26 @@
+<table>
+    <thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for preset in presets %}
+    <tr>
+        <td>{{ preset }}</td>
+        <td>{% if preset == active_preset %}<span class="badge badge-success">Active</span>{% endif %}</td>
+        <td>
+            {% if preset != active_preset %}
+            <form method="post" action="/quma/svm/preset/switch" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="preset" value="{{ preset }}">
+                <button type="submit" class="btn btn-sm btn-outline">Activate</button>
+            </form>
+            <form method="post" action="/quma/svm/preset/delete" style="display:inline" onsubmit="return confirm('Delete preset {{ preset }}?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="name" value="{{ preset }}">
+                <button type="submit" class="btn btn-sm btn-outline" style="color: var(--error)">Delete</button>
+            </form>
+            {% endif %}
+            <a href="/quma/svm/preset/export/{{ preset }}" class="btn btn-sm btn-outline">Export</a>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>

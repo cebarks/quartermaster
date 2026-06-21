@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}SVM Presets — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("svm", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Server Value Modifier</h1>
+
+{% if is_dirty %}
+<div class="toast toast-warning" style="margin-bottom: 1rem">
+    SVM changes pending — restart required
+</div>
+{% endif %}
+
+{% if unknown_field_count > 0 %}
+<div class="toast toast-warning" style="margin-bottom: 1rem">
+    This preset contains {{ unknown_field_count }} field(s) not supported by this version of Quartermaster. They are preserved but cannot be edited.
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom: 1.5rem">
+    <h2>Active Preset: <strong>{{ active_preset }}</strong></h2>
+    <a href="/quma/svm/edit" class="btn btn-primary">Edit Configuration</a>
+</div>
+
+<div class="card">
+    <h2>Presets</h2>
+    <div id="preset-list">
+        {% include "svm/partials/preset_list.html" %}
+    </div>
+</div>
+
+<div class="card" style="margin-top: 1.5rem">
+    <h3>Create New Preset</h3>
+    <form method="post" action="/quma/svm/preset/create">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div style="display: flex; gap: 0.5rem; align-items: center">
+            <input type="text" name="name" placeholder="Preset name" required maxlength="64" pattern="[a-zA-Z0-9 _-]+">
+            <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+    </form>
+</div>
+
+<div class="card" style="margin-top: 1rem">
+    <h3>Import Preset</h3>
+    <form method="post" action="/quma/svm/preset/import">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div style="display: flex; flex-direction: column; gap: 0.5rem">
+            <input type="text" name="name" placeholder="Preset name" required maxlength="64" pattern="[a-zA-Z0-9 _-]+">
+            <textarea name="json_content" placeholder="Paste preset JSON here..." required rows="10" style="font-family: monospace; font-size: 0.9em"></textarea>
+            <button type="submit" class="btn btn-primary">Import</button>
+        </div>
+    </form>
+</div>
+
+<div class="card" style="margin-top: 1rem">
+    <form method="post" action="/quma/svm/reload">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-outline">Reload from Disk</button>
+    </form>
+</div>
+{% endblock %}

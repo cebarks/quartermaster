@@ -314,6 +314,15 @@ pub async fn start_server(
                                 "/requests/{id}/resolve",
                                 web::post().to(handlers::requests::resolve_request),
                             )
+                            // SVM API routes
+                            .route(
+                                "/svm/edit/{section}",
+                                web::get().to(handlers::svm::section_partial),
+                            )
+                            .route(
+                                "/svm/edit/{section}",
+                                web::post().to(handlers::svm::save_section),
+                            )
                             // Admin API (requires can_manage_users via scoped middleware)
                             .service(
                                 web::scope("/admin")
@@ -356,6 +365,36 @@ pub async fn start_server(
                             .route(
                                 "/modsync/settings",
                                 web::post().to(handlers::modsync::save_settings),
+                            )
+                            .route("/svm", web::get().to(handlers::svm::manager_page))
+                            .route("/svm/edit", web::get().to(handlers::svm::editor_page))
+                            .route(
+                                "/svm/preset/switch",
+                                web::post().to(handlers::svm::switch_preset),
+                            )
+                            .route(
+                                "/svm/preset/create",
+                                web::post().to(handlers::svm::create_preset),
+                            )
+                            .route(
+                                "/svm/preset/duplicate",
+                                web::post().to(handlers::svm::duplicate_preset),
+                            )
+                            .route(
+                                "/svm/preset/delete",
+                                web::post().to(handlers::svm::delete_preset),
+                            )
+                            .route(
+                                "/svm/preset/export/{name}",
+                                web::get().to(handlers::svm::export_preset),
+                            )
+                            .route(
+                                "/svm/preset/import",
+                                web::post().to(handlers::svm::import_preset),
+                            )
+                            .route(
+                                "/svm/reload",
+                                web::post().to(handlers::svm::reload_from_disk),
                             )
                             .route("/clients", web::get().to(handlers::clients::client_list))
                             .route(
