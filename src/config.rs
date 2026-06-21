@@ -42,6 +42,10 @@ fn default_proxy_enabled() -> bool {
     true
 }
 
+fn default_snapshots_enabled() -> bool {
+    true
+}
+
 fn default_leaderboard_min_raids() -> u32 {
     5
 }
@@ -501,6 +505,9 @@ pub struct Config {
     #[serde(default = "default_proxy_enabled")]
     pub proxy_enabled: bool,
 
+    #[serde(default = "default_snapshots_enabled")]
+    pub snapshots_enabled: bool,
+
     #[serde(default = "default_leaderboard_min_raids")]
     pub leaderboard_min_raids: u32,
 }
@@ -528,6 +535,7 @@ impl Default for Config {
             tls_cert: None,
             tls_key: None,
             proxy_enabled: true,
+            snapshots_enabled: true,
             leaderboard_min_raids: 5,
         }
     }
@@ -598,6 +606,7 @@ impl Config {
     /// - `QUMA_LOG_FILE_PATH` -> `logging.file.path`
     /// - `QUMA_LOG_FILE_ENABLED` -> `logging.file.enabled`
     /// - `QUMA_AUTO_START_SERVER` -> `auto_start_server`
+    /// - `QUMA_SNAPSHOTS_ENABLED` -> `snapshots_enabled`
     /// - `QUMA_CLIENTS_COUNT` -> `clients.count`
     /// - `QUMA_CLIENTS_INSTALL_DIR` -> `clients.install_dir`
     /// - `QUMA_CLIENTS_RESTART_POLICY` -> `clients.restart_policy`
@@ -712,6 +721,13 @@ impl Config {
                 self.proxy_enabled = true;
             } else if val.eq_ignore_ascii_case("false") {
                 self.proxy_enabled = false;
+            }
+        }
+        if let Ok(val) = std::env::var("QUMA_SNAPSHOTS_ENABLED") {
+            if val.eq_ignore_ascii_case("true") {
+                self.snapshots_enabled = true;
+            } else if val.eq_ignore_ascii_case("false") {
+                self.snapshots_enabled = false;
             }
         }
         if let Ok(val) = std::env::var("QUMA_LEADERBOARD_MIN_RAIDS") {

@@ -145,6 +145,7 @@ pub fn handle_raid_start(
     spt_dir: PathBuf,
     db: Arc<parking_lot::Mutex<Database>>,
     events: tokio::sync::broadcast::Sender<ServerEvent>,
+    snapshots_enabled: bool,
 ) {
     let start_req: RaidStartRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
@@ -166,7 +167,11 @@ pub fn handle_raid_start(
         }
     };
 
-    let compressed_snapshot = compress_snapshot(&profile_bytes).ok();
+    let compressed_snapshot = if snapshots_enabled {
+        compress_snapshot(&profile_bytes).ok()
+    } else {
+        None
+    };
 
     let started_at = chrono::Utc::now().to_rfc3339();
 
@@ -239,6 +244,7 @@ pub fn handle_raid_end(
     _spt_dir: PathBuf,
     db: Arc<parking_lot::Mutex<Database>>,
     events: tokio::sync::broadcast::Sender<ServerEvent>,
+    snapshots_enabled: bool,
 ) {
     let end_req: RaidEndRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
@@ -314,10 +320,12 @@ pub fn handle_raid_end(
     }
 
     // Store compressed "after" profile snapshot (best-effort, outside the raid transaction)
-    if let Ok(json_bytes) = serde_json::to_vec(&end_req.results.profile) {
-        if let Ok(compressed) = compress_snapshot(&json_bytes) {
-            if let Err(e) = db_lock.insert_raid_snapshot(open_raid.id, "after", &compressed) {
-                tracing::warn!(error = %e, raid_id = open_raid.id, "failed to store after profile snapshot");
+    if snapshots_enabled {
+        if let Ok(json_bytes) = serde_json::to_vec(&end_req.results.profile) {
+            if let Ok(compressed) = compress_snapshot(&json_bytes) {
+                if let Err(e) = db_lock.insert_raid_snapshot(open_raid.id, "after", &compressed) {
+                    tracing::warn!(error = %e, raid_id = open_raid.id, "failed to store after profile snapshot");
+                }
             }
         }
     }

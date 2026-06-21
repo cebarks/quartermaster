@@ -132,16 +132,27 @@ pub async fn proxy_handler(
                         let spt_dir = state.spt_dir.clone();
                         let db = state.db.clone();
                         let events = state.events.clone();
+                        let snapshots_enabled = state.config.snapshots_enabled;
                         if is_raid_start {
                             tokio::task::spawn_blocking(move || {
                                 crate::web::raid_tracker::handle_raid_start(
-                                    body_clone, profile_id, spt_dir, db, events,
+                                    body_clone,
+                                    profile_id,
+                                    spt_dir,
+                                    db,
+                                    events,
+                                    snapshots_enabled,
                                 );
                             });
                         } else {
                             tokio::task::spawn_blocking(move || {
                                 crate::web::raid_tracker::handle_raid_end(
-                                    body_clone, profile_id, spt_dir, db, events,
+                                    body_clone,
+                                    profile_id,
+                                    spt_dir,
+                                    db,
+                                    events,
+                                    snapshots_enabled,
                                 );
                             });
                         }
