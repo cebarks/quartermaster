@@ -1,5 +1,10 @@
 use rusqlite::{params, OptionalExtension};
 
+use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
+use std::io::{Read, Write};
+
 use super::Database;
 
 #[derive(Debug, Clone)]
@@ -96,6 +101,21 @@ pub struct LeaderboardEntry {
     pub favorite_weapon: Option<String>,
     pub favorite_map: Option<String>,
     pub favorite_extract: Option<String>,
+}
+
+#[allow(dead_code)] // Used by Tasks 3-4 (raid event handlers)
+pub fn compress_snapshot(json: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(json)?;
+    encoder.finish()
+}
+
+#[allow(dead_code)] // Used by Task 5 (raid detail handler)
+pub fn decompress_snapshot(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    let mut decoder = ZlibDecoder::new(data);
+    let mut buf = Vec::new();
+    decoder.read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 impl Database {
@@ -636,6 +656,44 @@ impl Database {
                 row_to_raid,
             )
             .optional()
+    }
+
+    #[allow(dead_code)] // Used by raid event handlers
+    pub fn insert_raid_snapshot(
+        &self,
+        raid_id: i64,
+        snapshot_type: &str,
+        data: &[u8],
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO raid_snapshots (raid_id, snapshot_type, data) VALUES (?1, ?2, ?3)",
+            params![raid_id, snapshot_type, data],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(dead_code)] // Used by raid detail handler
+    pub fn get_raid_snapshot(
+        &self,
+        raid_id: i64,
+        snapshot_type: &str,
+    ) -> rusqlite::Result<Option<Vec<u8>>> {
+        self.conn
+            .query_row(
+                "SELECT data FROM raid_snapshots WHERE raid_id = ?1 AND snapshot_type = ?2",
+                params![raid_id, snapshot_type],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    #[allow(dead_code)] // Used by raid detail handler
+    pub fn get_raid_snapshot_sizes(&self, raid_id: i64) -> rusqlite::Result<Vec<(String, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT snapshot_type, length(data) FROM raid_snapshots WHERE raid_id = ?1 ORDER BY snapshot_type",
+        )?;
+        let rows = stmt.query_map(params![raid_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 }
 
@@ -1501,5 +1559,199 @@ mod tests {
         assert_eq!(e.favorite_weapon.as_deref(), Some("AK-74"));
         assert_eq!(e.favorite_map.as_deref(), Some("Customs"));
         assert_eq!(e.favorite_extract.as_deref(), Some("Gate 3"));
+    }
+
+    #[test]
+    fn insert_and_get_snapshot() {
+        let db = Database::open_in_memory().unwrap();
+        let user_id = db
+            .insert_user(
+                "snap_user",
+                Some("profile-snap"),
+                Some("hash"),
+                Role::Player,
+            )
+            .unwrap();
+
+        let raid_id = db
+            .insert_raid(
+                user_id,
+                "profile-snap",
+                None,
+                "Pmc",
+                None,
+                "Customs",
+                None,
+                "2024-01-01T12:00:00Z",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let profile_json = br#"{"Info":{"Level":10,"Experience":5000}}"#;
+        let compressed = compress_snapshot(profile_json).unwrap();
+
+        let snapshot_id = db
+            .insert_raid_snapshot(raid_id, "before", &compressed)
+            .unwrap();
+        assert!(snapshot_id > 0);
+
+        let retrieved = db.get_raid_snapshot(raid_id, "before").unwrap();
+        assert!(retrieved.is_some());
+        let decompressed = decompress_snapshot(&retrieved.unwrap()).unwrap();
+        assert_eq!(decompressed, profile_json);
+    }
+
+    #[test]
+    fn snapshot_missing_returns_none() {
+        let db = Database::open_in_memory().unwrap();
+        let user_id = db
+            .insert_user(
+                "snap_miss",
+                Some("profile-miss"),
+                Some("hash"),
+                Role::Player,
+            )
+            .unwrap();
+
+        let raid_id = db
+            .insert_raid(
+                user_id,
+                "profile-miss",
+                None,
+                "Pmc",
+                None,
+                "Factory",
+                None,
+                "2024-01-01T12:00:00Z",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let result = db.get_raid_snapshot(raid_id, "before").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn snapshot_cascade_deletes_with_raid() {
+        let db = Database::open_in_memory().unwrap();
+        let user_id = db
+            .insert_user(
+                "snap_cascade",
+                Some("profile-casc"),
+                Some("hash"),
+                Role::Player,
+            )
+            .unwrap();
+
+        let raid_id = db
+            .insert_raid(
+                user_id,
+                "profile-casc",
+                None,
+                "Pmc",
+                None,
+                "Woods",
+                None,
+                "2024-01-01T12:00:00Z",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let compressed = compress_snapshot(b"{}").unwrap();
+        db.insert_raid_snapshot(raid_id, "before", &compressed)
+            .unwrap();
+        db.insert_raid_snapshot(raid_id, "after", &compressed)
+            .unwrap();
+
+        // Delete the user — cascades to raids, which cascades to snapshots
+        db.conn()
+            .execute("DELETE FROM users WHERE id = ?1", params![user_id])
+            .unwrap();
+
+        let before = db.get_raid_snapshot(raid_id, "before").unwrap();
+        assert!(before.is_none());
+    }
+
+    #[test]
+    fn snapshot_unique_constraint() {
+        let db = Database::open_in_memory().unwrap();
+        let user_id = db
+            .insert_user("snap_dup", Some("profile-dup"), Some("hash"), Role::Player)
+            .unwrap();
+
+        let raid_id = db
+            .insert_raid(
+                user_id,
+                "profile-dup",
+                None,
+                "Pmc",
+                None,
+                "Reserve",
+                None,
+                "2024-01-01T12:00:00Z",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let compressed = compress_snapshot(b"{}").unwrap();
+        db.insert_raid_snapshot(raid_id, "before", &compressed)
+            .unwrap();
+
+        // Second insert with same (raid_id, snapshot_type) should fail
+        let result = db.insert_raid_snapshot(raid_id, "before", &compressed);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decompress_corrupt_data_returns_err() {
+        let result = decompress_snapshot(b"this is not valid zlib data");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compress_empty_input() {
+        let compressed = compress_snapshot(b"").unwrap();
+        let decompressed = decompress_snapshot(&compressed).unwrap();
+        assert!(decompressed.is_empty());
+    }
+
+    #[test]
+    fn snapshot_sizes_empty_when_none() {
+        let db = Database::open_in_memory().unwrap();
+        let user_id = db
+            .insert_user(
+                "snap_empty",
+                Some("profile-empty"),
+                Some("hash"),
+                Role::Player,
+            )
+            .unwrap();
+
+        let raid_id = db
+            .insert_raid(
+                user_id,
+                "profile-empty",
+                None,
+                "Pmc",
+                None,
+                "Customs",
+                None,
+                "2024-01-01T12:00:00Z",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let sizes = db.get_raid_snapshot_sizes(raid_id).unwrap();
+        assert!(sizes.is_empty());
     }
 }
