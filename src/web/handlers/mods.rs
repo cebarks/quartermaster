@@ -822,6 +822,7 @@ pub async fn install_mod(
             let config2 = config.clone();
             let db_id = actix_web::web::block(move || {
                 let db = db.lock();
+                let tx = db.begin_transaction()?;
                 let db_id = db.insert_mod(
                     mod_id,
                     version_id,
@@ -832,6 +833,7 @@ pub async fn install_mod(
                 for file in &extracted {
                     db.insert_file(db_id, &file.path, Some(&file.hash), Some(file.size as i64))?;
                 }
+                tx.commit()?;
                 Ok::<_, anyhow::Error>(db_id)
             })
             .await??;
@@ -1014,6 +1016,8 @@ pub async fn update_mod(
                 let old_files = db.get_files_for_mod(mod_db_id)?;
                 let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
                 crate::spt::mods::delete_mod_files(&spt_dir, &old_paths)?;
+
+                let tx = db.begin_transaction()?;
                 db.delete_files_for_mod(mod_db_id)?;
 
                 for file in &extracted {
@@ -1035,6 +1039,7 @@ pub async fn update_mod(
                     )?;
                 }
                 db.update_mod(mod_db_id, version_id, &version_str)?;
+                tx.commit()?;
                 Ok::<_, anyhow::Error>(())
             })
             .await??;
@@ -1203,7 +1208,7 @@ pub async fn toggle_disable(
         );
     }
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/mods/{mod_db_id}")))
+        .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
         .finish())
 }
 
@@ -1349,6 +1354,8 @@ pub async fn update_all_mods(
                     let old_paths: Vec<String> =
                         old_files.into_iter().map(|f| f.file_path).collect();
                     crate::spt::mods::delete_mod_files(&spt_dir, &old_paths)?;
+
+                    let tx = db.begin_transaction()?;
                     db.delete_files_for_mod(mod_db_id)?;
 
                     for file in &extracted {
@@ -1370,6 +1377,7 @@ pub async fn update_all_mods(
                         )?;
                     }
                     db.update_mod(mod_db_id, version_id, &version_str)?;
+                    tx.commit()?;
                     Ok::<_, anyhow::Error>(())
                 })
                 .await??;

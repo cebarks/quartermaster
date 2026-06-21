@@ -189,9 +189,9 @@ impl Database {
         if kills.is_empty() {
             return Ok(());
         }
-        self.conn.execute_batch("BEGIN")?;
+        let tx = self.begin_transaction()?;
         for kill in kills {
-            if let Err(e) = self.conn.execute(
+            self.conn.execute(
                 "INSERT INTO raid_kills (raid_id, victim_name, victim_side, victim_role, weapon, distance, body_part, kill_time)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
@@ -204,12 +204,9 @@ impl Database {
                     kill.body_part,
                     kill.kill_time
                 ],
-            ) {
-                let _ = self.conn.execute_batch("ROLLBACK");
-                return Err(e);
-            }
+            )?;
         }
-        self.conn.execute_batch("COMMIT")
+        tx.commit()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -226,8 +223,8 @@ impl Database {
         level_after: Option<i64>,
         kills: &[NewRaidKill],
     ) -> rusqlite::Result<()> {
-        self.conn.execute_batch("BEGIN")?;
-        if let Err(e) = self.finish_raid(
+        let tx = self.begin_transaction()?;
+        self.finish_raid(
             raid_id,
             ended_at,
             play_time_seconds,
@@ -237,34 +234,24 @@ impl Database {
             killer_aid,
             xp_after,
             level_after,
-        ) {
-            let _ = self.conn.execute_batch("ROLLBACK");
-            return Err(e);
+        )?;
+        for kill in kills {
+            self.conn.execute(
+                "INSERT INTO raid_kills (raid_id, victim_name, victim_side, victim_role, weapon, distance, body_part, kill_time)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    raid_id,
+                    kill.victim_name,
+                    kill.victim_side,
+                    kill.victim_role,
+                    kill.weapon,
+                    kill.distance,
+                    kill.body_part,
+                    kill.kill_time
+                ],
+            )?;
         }
-        if !kills.is_empty() {
-            // insert_raid_kills manages its own transaction when called standalone,
-            // but here we're already inside one, so insert directly
-            for kill in kills {
-                if let Err(e) = self.conn.execute(
-                    "INSERT INTO raid_kills (raid_id, victim_name, victim_side, victim_role, weapon, distance, body_part, kill_time)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![
-                        raid_id,
-                        kill.victim_name,
-                        kill.victim_side,
-                        kill.victim_role,
-                        kill.weapon,
-                        kill.distance,
-                        kill.body_part,
-                        kill.kill_time
-                    ],
-                ) {
-                    let _ = self.conn.execute_batch("ROLLBACK");
-                    return Err(e);
-                }
-            }
-        }
-        self.conn.execute_batch("COMMIT")
+        tx.commit()
     }
 
     #[allow(dead_code)] // Used by Task 3 (web UI)

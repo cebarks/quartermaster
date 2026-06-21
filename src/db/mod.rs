@@ -25,6 +25,10 @@ impl Database {
         Self::configure_and_migrate(conn)
     }
 
+    pub fn begin_transaction(&self) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+        self.conn.unchecked_transaction()
+    }
+
     #[cfg(test)]
     pub fn conn(&self) -> &Connection {
         &self.conn

@@ -336,12 +336,14 @@ fn validate_dest_under_root(dest: &Path, spt_root: &Path, raw_name: &str) -> Res
         .parent()
         .ok_or_else(|| anyhow::anyhow!("archive entry has no parent directory: {raw_name}"))?;
 
+    // create_dir_all is needed so canonicalize can resolve the path
     fs::create_dir_all(parent).ok();
 
-    if let Ok(canonical_dest) = parent.canonicalize() {
-        if !canonical_dest.starts_with(&canonical_root) {
-            anyhow::bail!("archive entry escapes SPT root: {raw_name}");
-        }
+    let canonical_dest = parent
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize destination for: {raw_name}"))?;
+    if !canonical_dest.starts_with(&canonical_root) {
+        anyhow::bail!("archive entry escapes SPT root: {raw_name}");
     }
 
     Ok(())
