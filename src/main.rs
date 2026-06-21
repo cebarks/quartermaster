@@ -60,9 +60,25 @@ async fn main() -> Result<()> {
             path,
             no_fika,
             no_modsync,
+            admin_password,
+            forge_token,
+            no_forge_token,
+            dev,
         } => {
             init_early_logging(&cli, &reload_handles);
-            cli::setup::run(path.clone(), *no_fika, *no_modsync, &cli).await
+            cli::setup::run(
+                cli::setup::SetupArgs {
+                    path: path.clone(),
+                    no_fika: *no_fika,
+                    no_modsync: *no_modsync,
+                    admin_password: admin_password.clone(),
+                    forge_token: forge_token.clone(),
+                    no_forge_token: *no_forge_token,
+                    dev: *dev,
+                },
+                &cli,
+            )
+            .await
         }
         Command::Generate { target } => {
             init_early_logging(&cli, &reload_handles);
