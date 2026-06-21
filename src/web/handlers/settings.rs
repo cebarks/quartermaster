@@ -419,19 +419,36 @@ pub async fn save_clients_settings(
             .finish());
     }
 
-    let max_port = form.base_udp_port as u32 + form.count.saturating_sub(1);
-    if form.count > 0 && max_port > 65535 {
-        set_flash(
-            &session,
-            &format!(
-                "Base UDP port ({}) + count ({}) exceeds port range (max would be {})",
-                form.base_udp_port, form.count, max_port
-            ),
-            "error",
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/settings?tab=clients"))
-            .finish());
+    if form.count > 0 {
+        match (form.base_udp_port as u32).checked_add(form.count - 1) {
+            Some(max_port) if max_port > 65535 => {
+                set_flash(
+                    &session,
+                    &format!(
+                        "Base UDP port ({}) + count ({}) exceeds port range (max would be {})",
+                        form.base_udp_port, form.count, max_port
+                    ),
+                    "error",
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/settings?tab=clients"))
+                    .finish());
+            }
+            None => {
+                set_flash(
+                    &session,
+                    &format!(
+                        "Base UDP port ({}) + count ({}) exceeds port range",
+                        form.base_udp_port, form.count
+                    ),
+                    "error",
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/settings?tab=clients"))
+                    .finish());
+            }
+            _ => {}
+        }
     }
 
     let restart_policy = match form.restart_policy.as_str() {

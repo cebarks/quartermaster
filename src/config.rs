@@ -229,14 +229,23 @@ impl ClientsConfig {
                 self.install_dir.display()
             );
         }
-        let max_port = self.base_udp_port as u32 + self.count - 1;
-        if max_port > 65535 {
-            bail!(
-                "clients.base_udp_port ({}) + count ({}) exceeds port range (max port would be {})",
-                self.base_udp_port,
-                self.count,
-                max_port
-            );
+        match (self.base_udp_port as u32).checked_add(self.count - 1) {
+            Some(max_port) if max_port > 65535 => {
+                bail!(
+                    "clients.base_udp_port ({}) + count ({}) exceeds port range (max port would be {})",
+                    self.base_udp_port,
+                    self.count,
+                    max_port
+                );
+            }
+            None => {
+                bail!(
+                    "clients.base_udp_port ({}) + count ({}) exceeds port range",
+                    self.base_udp_port,
+                    self.count
+                );
+            }
+            _ => {}
         }
         if config.server_container.is_none() {
             bail!("server_container must be configured for dedicated client management — convergence needs to restart the server");
