@@ -313,6 +313,15 @@ pub fn handle_raid_end(
         return;
     }
 
+    // Store compressed "after" profile snapshot (best-effort, outside the raid transaction)
+    if let Ok(json_bytes) = serde_json::to_vec(&end_req.results.profile) {
+        if let Ok(compressed) = compress_snapshot(&json_bytes) {
+            if let Err(e) = db_lock.insert_raid_snapshot(open_raid.id, "after", &compressed) {
+                tracing::warn!(error = %e, raid_id = open_raid.id, "failed to store after profile snapshot");
+            }
+        }
+    }
+
     drop(db_lock);
 
     tracing::info!(

@@ -1793,4 +1793,41 @@ mod tests {
         let decompressed = decompress_snapshot(&stored).unwrap();
         assert_eq!(decompressed, profile_json);
     }
+
+    #[test]
+    fn raid_end_can_store_after_snapshot() {
+        let db = Database::open_in_memory().unwrap();
+        let user_id = db
+            .insert_user("snap_end", Some("profile-end"), Some("hash"), Role::Player)
+            .unwrap();
+
+        let raid_id = db
+            .insert_raid(
+                user_id,
+                "profile-end",
+                None,
+                "Pmc",
+                None,
+                "Customs",
+                None,
+                "2024-01-01T12:00:00Z",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Simulate what handle_raid_end will do: serialize profile Value, compress, store
+        let profile: serde_json::Value =
+            serde_json::from_str(r#"{"Info":{"Level":11,"Experience":6000}}"#).unwrap();
+        let json_bytes = serde_json::to_vec(&profile).unwrap();
+        let compressed = compress_snapshot(&json_bytes).unwrap();
+        db.insert_raid_snapshot(raid_id, "after", &compressed)
+            .unwrap();
+
+        let stored = db.get_raid_snapshot(raid_id, "after").unwrap().unwrap();
+        let decompressed = decompress_snapshot(&stored).unwrap();
+        let roundtripped: serde_json::Value = serde_json::from_slice(&decompressed).unwrap();
+        assert_eq!(roundtripped["Info"]["Level"], 11);
+    }
 }
