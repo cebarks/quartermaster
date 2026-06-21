@@ -456,11 +456,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 "/clients/{n}",
                                 web::get().to(handlers::clients::client_detail),
                             )
-                            .route("/raids", web::get().to(handlers::raids::server_raids_page))
-                            .route(
-                                "/leaderboard",
-                                web::get().to(handlers::leaderboard::leaderboard_page),
-                            )
+                            .route("/stats", web::get().to(handlers::raids::stats_page))
                             .route(
                                 "/raids/{raid_id}",
                                 web::get().to(handlers::raids::raid_detail_page),

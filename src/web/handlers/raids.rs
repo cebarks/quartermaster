@@ -4,7 +4,7 @@ use actix_web::HttpRequest;
 use askama::Template;
 use serde::Deserialize;
 
-use crate::db::raids::{Raid, RaidKill, ServerRaidStats, UserRaidStats};
+use crate::db::raids::{LeaderboardEntry, Raid, RaidKill, ServerRaidStats, UserRaidStats};
 use crate::web::auth::require_auth;
 use crate::web::csrf;
 use crate::web::error::WebError;
@@ -18,14 +18,16 @@ mod filters {
 }
 
 #[derive(Template)]
-#[template(path = "raids/server.html")]
-struct ServerRaidsPageTemplate {
+#[template(path = "stats.html")]
+struct StatsPageTemplate {
     user: crate::web::auth::SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
-    stats: ServerRaidStats,
+    raid_stats: ServerRaidStats,
     active_raids: Vec<(Raid, String)>,
+    leaderboard_entries: Vec<LeaderboardEntry>,
+    min_raids: u32,
 }
 
 #[derive(Template)]
@@ -74,7 +76,7 @@ pub struct RaidsQuery {
     offset: Option<i64>,
 }
 
-pub async fn server_raids_page(
+pub async fn stats_page(
     state: Data<AppState>,
     req: HttpRequest,
     session: Session,
@@ -82,26 +84,30 @@ pub async fn server_raids_page(
     let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = csrf::get_or_create_token(&session);
+    let nav = NavContext::from_state(&state);
+    let min_raids = state.config.leaderboard_min_raids;
 
     let db = state.db.clone();
-
-    let (stats, active_raids) = web::block(move || {
+    let (stats, active_raids, leaderboard_entries) = web::block(move || {
         let db = db.lock();
         let stats = db.get_server_raid_stats()?;
-        let active = db.get_active_raids()?;
-        Ok::<_, anyhow::Error>((stats, active))
+        let active_raids = db.get_active_raids()?;
+        let leaderboard_entries = db.get_leaderboard(min_raids)?;
+        Ok::<_, rusqlite::Error>((stats, active_raids, leaderboard_entries))
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = ServerRaidsPageTemplate {
+    let tmpl = StatsPageTemplate {
         user,
         flash,
         csrf_token,
-        nav: NavContext::from_state(&state),
-        stats,
+        nav,
+        raid_stats: stats,
         active_raids,
+        leaderboard_entries,
+        min_raids,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
