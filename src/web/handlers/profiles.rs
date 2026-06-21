@@ -9,6 +9,7 @@ use crate::web::auth::require_auth;
 use crate::web::csrf;
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 use std::collections::HashMap;
 
@@ -59,10 +60,7 @@ struct ProfilePageTemplate {
     user: crate::web::auth::SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     profile_username: String,
     detail: Option<ProfileDetail>,
     empty_reason: Option<String>,
@@ -212,9 +210,7 @@ pub async fn profile_page(
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
         profile_username,
         detail,
         empty_reason,

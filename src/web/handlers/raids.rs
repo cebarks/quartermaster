@@ -9,6 +9,7 @@ use crate::web::auth::require_auth;
 use crate::web::csrf;
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -22,10 +23,7 @@ struct ServerRaidsPageTemplate {
     user: crate::web::auth::SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     stats: ServerRaidStats,
     active_raids: Vec<(Raid, String)>,
 }
@@ -36,10 +34,7 @@ struct PlayerRaidsPageTemplate {
     user: crate::web::auth::SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     profile_username: String,
     stats: UserRaidStats,
     raids: Vec<Raid>,
@@ -53,10 +48,7 @@ struct RaidDetailPageTemplate {
     user: crate::web::auth::SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     raid: Raid,
     kills: Vec<RaidKill>,
     squad: Vec<(Raid, String)>,
@@ -107,9 +99,7 @@ pub async fn server_raids_page(
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
         stats,
         active_raids,
     };
@@ -152,9 +142,7 @@ pub async fn player_raids_page(
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
         profile_username,
         stats,
         raids,
@@ -205,9 +193,7 @@ pub async fn raid_detail_page(
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
         raid,
         kills,
         squad,

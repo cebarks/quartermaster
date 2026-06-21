@@ -9,6 +9,7 @@ use crate::db::users::Role;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -31,10 +32,7 @@ struct ModSyncTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     modsync_managed: bool,
     enforced: bool,
     silent: bool,
@@ -103,14 +101,14 @@ pub async fn modsync_page(
             (true, false, true, String::new(), String::new())
         };
 
+    let nav = NavContext::from_state(&state);
+    let modsync_managed = nav.modsync_installed && ms_config.is_some();
     let tmpl = ModSyncTemplate {
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
-        modsync_managed: state.is_modsync_installed() && ms_config.is_some(),
+        nav,
+        modsync_managed,
         enforced,
         silent,
         restart_required,

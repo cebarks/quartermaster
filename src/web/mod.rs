@@ -3,6 +3,7 @@ pub mod csrf;
 pub mod error;
 pub mod flash;
 pub mod handlers;
+pub mod nav;
 pub mod proxy;
 pub mod proxy_metrics;
 pub mod proxy_ws;

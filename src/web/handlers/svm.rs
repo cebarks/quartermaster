@@ -8,6 +8,7 @@ use crate::svm::metadata::{self, FieldMeta, InputType, SectionMeta, SECTIONS};
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -23,9 +24,7 @@ struct SvmManagerTemplate<'a> {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    svm_installed: bool,
+    nav: NavContext,
     active_preset: &'a str,
     presets: Vec<String>,
     is_dirty: bool,
@@ -94,9 +93,7 @@ pub async fn manager_page(
         user,
         flash: take_flash(&session),
         csrf_token: crate::web::csrf::get_or_create_token(&session),
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: true,
+        nav: NavContext::from_state(&state),
         active_preset: svm.active_preset_name(),
         presets: svm.list_presets().to_vec(),
         is_dirty: svm.is_dirty(),
@@ -375,9 +372,7 @@ struct SvmEditorTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    svm_installed: bool,
+    nav: NavContext,
     active_preset: String,
     is_dirty: bool,
     sections: &'static [SectionMeta],
@@ -409,9 +404,7 @@ pub async fn editor_page(
         user,
         flash: take_flash(&session),
         csrf_token: crate::web::csrf::get_or_create_token(&session),
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: true,
+        nav: NavContext::from_state(&state),
         active_preset: svm.active_preset_name().to_string(),
         is_dirty: svm.is_dirty(),
         sections: SECTIONS,
@@ -534,9 +527,7 @@ struct SvmPlayerViewTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    fika_installed: bool,
-    modsync_installed: bool,
-    svm_installed: bool,
+    nav: NavContext,
     active_preset: String,
     sections: &'static [SectionMeta],
     active_section: String,
@@ -565,9 +556,7 @@ pub async fn player_view(
         user,
         flash: take_flash(&session),
         csrf_token: crate::web::csrf::get_or_create_token(&session),
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: true,
+        nav: NavContext::from_state(&state),
         active_preset: svm.active_preset_name().to_string(),
         sections: SECTIONS,
         active_section: active_section.to_string(),

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}NarcoNet — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("modsync", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("modsync", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>NarcoNet Settings</h1>
 
-{% if !modsync_installed %}
+{% if !nav.modsync_installed %}
 <div class="card" style="border-left: 3px solid var(--warning)">
     <p><strong>NarcoNet is not installed.</strong> Install it from Forge to enable mod synchronization.</p>
 </div>

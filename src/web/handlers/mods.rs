@@ -13,6 +13,7 @@ use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::handlers::requests::{fika_compat_to_string, parse_forge_url};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[allow(unused_imports)] // Used by Askama template macro expansion
@@ -103,17 +104,13 @@ struct DepEntry {
 struct ModListTemplate {
     user: SessionUser,
     infrastructure: Vec<ModListEntry>,
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     mods: Vec<ModListEntry>,
     grand_total_size: i64,
     spt_version: String,
     tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    #[allow(dead_code)]
-    fika_installed: bool,
     filter_q: String,
     filter_status: String,
     sort_column: String,
@@ -131,12 +128,7 @@ struct ModDetailTemplate {
     dependencies: Vec<DepEntry>,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    #[allow(dead_code)]
-    fika_installed: bool,
-    #[allow(dead_code)]
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     has_client_files: bool,
     sync_enforced: Option<bool>,
     sync_silent: Option<bool>,
@@ -283,21 +275,17 @@ pub async fn list_mods(
         .collect();
 
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
-    let modsync_installed = state.is_modsync_installed();
-    let svm_installed = state.is_svm_installed();
 
     let tmpl = ModListTemplate {
         user,
         infrastructure,
-        modsync_installed,
-        svm_installed,
+        nav: NavContext::from_state(&state),
         mods,
         grand_total_size,
         spt_version: state.spt_info.spt_version.clone(),
         tarkov_version: state.spt_info.tarkov_version.clone(),
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
         filter_q,
         filter_status,
         sort_column: sc,
@@ -349,6 +337,8 @@ pub async fn mod_detail(
         .as_ref()
         .and_then(|ms| ms.overrides.get(&forge_id_str));
 
+    let nav = NavContext::from_state(&state);
+    let modsync_managed = nav.modsync_installed && state.config.modsync.is_some();
     let tmpl = ModDetailTemplate {
         user,
         mod_info,
@@ -357,15 +347,13 @@ pub async fn mod_detail(
         dependencies,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav,
         has_client_files,
         sync_enforced: overrides.and_then(|o| o.enforced),
         sync_silent: overrides.and_then(|o| o.silent),
         sync_restart_required: overrides.and_then(|o| o.restart_required),
         sync_enabled: overrides.and_then(|o| o.enabled),
-        modsync_managed: state.is_modsync_installed() && state.config.modsync.is_some(),
+        modsync_managed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

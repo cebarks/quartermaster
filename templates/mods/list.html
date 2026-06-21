@@ -2,7 +2,7 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% block title %}Mods — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("mods", user, csrf_token, fika_installed, modsync_installed, svm_installed) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <div hx-get="/quma/api/tasks/status" hx-trigger="load" hx-swap="outerHTML" id="task-status"></div>
 
@@ -42,7 +42,7 @@
         </span>
         <a href="https://forge.sp-tarkov.com" class="btn btn-sm btn-outline" target="_blank" rel="noopener">SPT Forge ↗</a>
     </div>
-    {% if !infrastructure.is_empty() || modsync_installed %}
+    {% if !infrastructure.is_empty() || nav.modsync_installed %}
     <hr style="margin: 0.5rem 0">
     <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center">
         {% for m in &infrastructure %}
@@ -57,7 +57,7 @@
             {% endif %}
         </div>
         {% endfor %}
-        {% if modsync_installed %}
+        {% if nav.modsync_installed %}
         <div style="display: flex; align-items: center; gap: 0.5rem">
             <strong>NarcoNet</strong>
             <span class="text-muted text-sm">installed</span>

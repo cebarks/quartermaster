@@ -1,5 +1,5 @@
 {% import "partials/icons.html" as icons %}
-{% macro nav(active, user, csrf_token, fika_installed, modsync_installed, svm_installed) %}
+{% macro nav(active, user, csrf_token, nav) %}
 <div class="links">
     <a href="/quma/"{% if active == "dashboard" %} class="active"{% endif %}>{% call icons::home() %}{% endcall %} Dashboard</a>
     {% if user.role.can_manage_mods() %}
@@ -9,13 +9,13 @@
     <a href="/quma/status"{% if active == "status" %} class="active"{% endif %}>{% call icons::activity() %}{% endcall %} Status</a>
     <a href="/quma/raids"{% if active == "raids" %} class="active"{% endif %}>{% call icons::crosshair() %}{% endcall %} Raids</a>
     <a href="/quma/leaderboard"{% if active == "leaderboard" %} class="active"{% endif %}>{% call icons::trophy() %}{% endcall %} Leaderboard</a>
-    {% if modsync_installed %}
+    {% if nav.modsync_installed %}
     <a href="/quma/modsync"{% if active == "modsync" %} class="active"{% endif %}>{% call icons::refresh() %}{% endcall %} NarcoNet</a>
     {% endif %}
-    {% if svm_installed %}
+    {% if nav.svm_installed %}
     <a href="/quma/svm"{% if active == "svm" %} class="active"{% endif %}>{% call icons::settings() %}{% endcall %} Server Config</a>
     {% endif %}
-    {% if fika_installed %}
+    {% if nav.fika_installed %}
     <a href="/quma/clients"{% if active == "clients" %} class="active"{% endif %}>{% call icons::users() %}{% endcall %} Clients</a>
     {% endif %}
     <a href="/quma/profiles/{{ user.username }}"{% if active == "profile" %} class="active"{% endif %}>{% call icons::user() %}{% endcall %} Profile</a>

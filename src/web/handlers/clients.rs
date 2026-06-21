@@ -9,6 +9,7 @@ use crate::spt::headless::EHeadlessStatus;
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 #[derive(Template)]
@@ -17,12 +18,7 @@ struct ClientsListTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    #[allow(dead_code)]
-    fika_installed: bool,
-    #[allow(dead_code)]
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     clients: Vec<ClientState>,
     converging: bool,
     target_count: u32,
@@ -34,12 +30,7 @@ struct ClientDetailTemplate {
     user: SessionUser,
     flash: Option<FlashMessage>,
     csrf_token: String,
-    #[allow(dead_code)]
-    fika_installed: bool,
-    #[allow(dead_code)]
-    modsync_installed: bool,
-    #[allow(dead_code)]
-    svm_installed: bool,
+    nav: NavContext,
     client: ClientState,
 }
 
@@ -79,9 +70,7 @@ pub async fn client_list(
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
         clients,
         converging,
         target_count,
@@ -115,9 +104,7 @@ pub async fn client_detail(
         user,
         flash,
         csrf_token,
-        fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
-        svm_installed: state.is_svm_installed(),
+        nav: NavContext::from_state(&state),
         client,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
