@@ -1,0 +1,73 @@
+{% if !can_view %}
+<div class="empty-state"><p>This player's stash is private.</p></div>
+{% else if categories.is_empty() && search_filter.is_empty() && category_filter.is_empty() %}
+<div class="empty-state"><p>No stash data available.</p></div>
+{% else %}
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap">
+    <span><strong>{{ total_items }}</strong> items · {{ total_value|format_roubles_i64 }}</span>
+    {% if is_own_profile %}
+    <span id="stash-visibility">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if stash_public %}
+        <button class="btn btn-sm btn-outline"
+                hx-post="/quma/api/profiles/{{ profile_username }}/stash/visibility"
+                hx-target="#stash-visibility"
+                hx-swap="innerHTML"
+                hx-include="[name='csrf_token']">Make stash private</button>
+        {% else %}
+        <button class="btn btn-sm btn-outline"
+                hx-post="/quma/api/profiles/{{ profile_username }}/stash/visibility"
+                hx-target="#stash-visibility"
+                hx-swap="innerHTML"
+                hx-include="[name='csrf_token']">Make stash public</button>
+        {% endif %}
+    </span>
+    {% endif %}
+</div>
+
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+    <select hx-get="/quma/api/profiles/{{ profile_username }}/stash"
+            hx-target="#tab-content"
+            hx-swap="innerHTML"
+            hx-include="[name='search']"
+            hx-trigger="change"
+            name="category">
+        <option value=""{% if category_filter.is_empty() %} selected{% endif %}>All Categories</option>
+        {% for cat in all_categories %}
+        <option value="{{ cat }}"{% if category_filter == *cat %} selected{% endif %}>{{ cat }}</option>
+        {% endfor %}
+    </select>
+    <input type="text" name="search" value="{{ search_filter }}" placeholder="Search items..."
+           hx-get="/quma/api/profiles/{{ profile_username }}/stash"
+           hx-target="#tab-content"
+           hx-swap="innerHTML"
+           hx-include="[name='category']"
+           hx-trigger="input changed delay:300ms">
+</div>
+
+{% for cat in categories %}
+<details open style="margin-bottom:0.75rem">
+    <summary style="cursor:pointer;font-weight:600;padding:0.5rem 0">
+        {{ cat.name }} <span class="text-muted text-sm">({{ cat.item_count }} items · {{ cat.total_value|format_roubles_i64 }})</span>
+    </summary>
+    <table>
+        <thead>
+            <tr><th>Item</th><th style="text-align:right">Count</th><th style="text-align:right">Value</th></tr>
+        </thead>
+        <tbody>
+            {% for item in cat.items %}
+            <tr>
+                <td title="{{ item.name }}">{{ item.short_name }}</td>
+                <td style="text-align:right">{% if item.count > 1 %}{{ item.count }}{% else %}1{% endif %}</td>
+                <td style="text-align:right">{{ item.total_value|format_roubles_i64 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</details>
+{% endfor %}
+
+{% if categories.is_empty() %}
+<div class="empty-state"><p>No items match your filters.</p></div>
+{% endif %}
+{% endif %}
