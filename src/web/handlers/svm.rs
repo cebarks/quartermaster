@@ -262,10 +262,7 @@ pub async fn export_preset(
         return Err(WebError::NotFound.into());
     }
 
-    let preset_path = state
-        .spt_dir
-        .join("user/mods/[SVM] ServerValueModifier/Presets")
-        .join(format!("{preset_name}.json"));
+    let preset_path = svm.preset_path(&preset_name);
     let json_content = std::fs::read_to_string(&preset_path)
         .map_err(|e| WebError::Internal(anyhow::anyhow!("Failed to read preset file: {e}")))?;
 

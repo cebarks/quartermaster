@@ -370,9 +370,32 @@ pub fn is_modsync_installed(spt_dir: &Path) -> bool {
     find_narconet_dir(spt_dir).is_some()
 }
 
+pub fn find_svm_dir(spt_dir: &Path) -> Option<PathBuf> {
+    let mods_dir = spt_dir.join("SPT/user/mods");
+    let entries = std::fs::read_dir(&mods_dir).ok()?;
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().ok().is_some_and(|ft| ft.is_dir()))
+        .filter(|e| {
+            let name_matches = e
+                .file_name()
+                .to_str()
+                .is_some_and(|n| n.to_lowercase().contains("svm"));
+            name_matches && e.path().join("Loader/loader.json").is_file()
+        })
+        .min_by(|a, b| {
+            a.file_name()
+                .to_str()
+                .unwrap()
+                .to_ascii_lowercase()
+                .cmp(&b.file_name().to_str().unwrap().to_ascii_lowercase())
+        })
+        .map(|e| e.path())
+}
+
 #[allow(dead_code)]
 pub fn is_svm_installed(spt_dir: &Path) -> bool {
-    spt_dir.join("user/mods/[SVM] ServerValueModifier").is_dir()
+    find_svm_dir(spt_dir).is_some()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1252,6 +1275,43 @@ install_dir = "/opt/fika"
             .unwrap()
             .to_lowercase()
             .starts_with("narconet"),);
+    }
+
+    #[test]
+    fn svm_detection_not_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/some-other-mod")).unwrap();
+        assert!(find_svm_dir(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn svm_detection_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svm_dir = tmp.path().join("SPT/user/mods/[SVM] Server Value Modifier");
+        std::fs::create_dir_all(svm_dir.join("Loader")).unwrap();
+        std::fs::write(svm_dir.join("Loader/loader.json"), "{}").unwrap();
+        assert_eq!(
+            find_svm_dir(tmp.path()).unwrap(),
+            tmp.path().join("SPT/user/mods/[SVM] Server Value Modifier")
+        );
+    }
+
+    #[test]
+    fn svm_detection_case_insensitive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svm_dir = tmp.path().join("SPT/user/mods/[svm] servervaluemodifier");
+        std::fs::create_dir_all(svm_dir.join("Loader")).unwrap();
+        std::fs::write(svm_dir.join("Loader/loader.json"), "{}").unwrap();
+        assert!(find_svm_dir(tmp.path()).is_some());
+    }
+
+    #[test]
+    fn svm_detection_requires_loader_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svm_dir = tmp.path().join("SPT/user/mods/[SVM] Server Value Modifier");
+        std::fs::create_dir_all(&svm_dir).unwrap();
+        // No Loader/loader.json
+        assert!(find_svm_dir(tmp.path()).is_none());
     }
 
     #[test]
