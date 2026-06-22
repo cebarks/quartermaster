@@ -521,6 +521,14 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 "/headless/scale",
                                 web::post().to(handlers::clients::client_scale),
                             )
+                            .route(
+                                "/headless/create",
+                                web::post().to(handlers::clients::client_create),
+                            )
+                            .route(
+                                "/headless/{n}/delete",
+                                web::post().to(handlers::clients::client_delete),
+                            )
                             // Redirect old /clients URLs to /headless
                             .route(
                                 "/clients",
