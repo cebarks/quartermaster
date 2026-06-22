@@ -38,7 +38,7 @@
                         onclick="navigator.clipboard.writeText('{{ iv.code }}').then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000); })">Copy</button>
                 {% endif %}
             </td>
-            <td>{{ iv.created_by_username.as_deref().unwrap_or("—") }}</td>
+            <td>{% if let Some(u) = iv.created_by_username.as_deref() %}<a href="/quma/profiles/{{ u }}">{{ u }}</a>{% else %}—{% endif %}</td>
             <td class="text-muted text-sm">{{ iv.created_at }}</td>
             <td class="text-muted text-sm">{{ iv.expires_at.as_deref().unwrap_or("Never") }}</td>
             <td>
@@ -50,7 +50,7 @@
                 <span class="badge badge-success">Available</span>
                 {% endif %}
             </td>
-            <td>{{ iv.used_by_username.as_deref().unwrap_or("") }}</td>
+            <td>{% if let Some(u) = iv.used_by_username.as_deref() %}<a href="/quma/profiles/{{ u }}">{{ u }}</a>{% endif %}</td>
         </tr>
         {% endfor %}
     </tbody>

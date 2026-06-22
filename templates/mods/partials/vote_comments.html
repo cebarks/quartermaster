@@ -4,7 +4,7 @@
 <div style="margin-top:0.5rem;padding-left:1rem;border-left:2px solid var(--border)">
     {% for c in &comments %}
     <div class="text-sm" style="margin-bottom:0.5rem">
-        <span style="font-weight:600">{{ c.username }}</span>
+        <a href="/quma/profiles/{{ c.username }}" style="font-weight:600">{{ c.username }}</a>
         {% if c.upvote %}
         <span class="badge badge-success" style="font-size:0.7rem">▲</span>
         {% else %}
