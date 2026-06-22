@@ -25,6 +25,10 @@
             <div class="stat-value">{{ detail.stats.raid_count.unwrap_or(0) }}</div>
         </div>
         <div class="stat-card">
+            <div class="stat-label">Deaths</div>
+            <div class="stat-value">{{ detail.stats.deaths.unwrap_or(0) }}</div>
+        </div>
+        <div class="stat-card">
             <div class="stat-label">Survival Rate</div>
             <div class="stat-value">{% if let Some(sr) = detail.stats.survival_rate %}{{ sr|fmt("{:.1}%") }}{% else %}—{% endif %}</div>
         </div>
