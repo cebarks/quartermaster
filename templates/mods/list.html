@@ -100,10 +100,8 @@
             <option value="enabled"{% if filter_status == "enabled" %} selected{% endif %}>Enabled</option>
             <option value="disabled"{% if filter_status == "disabled" %} selected{% endif %}>Disabled</option>
         </select>
-        <span id="sort-oob-wrapper" style="display:contents">
         <input type="hidden" name="sort" id="sort-input" value="{{ sort_column }}">
         <input type="hidden" name="dir" id="dir-input" value="{{ sort_dir }}">
-        </span>
     </div>
     <table id="mod-list-table"
            hx-get="/quma/api/mods/list"
