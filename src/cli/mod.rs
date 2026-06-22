@@ -4,9 +4,9 @@ use clap::{Parser, Subcommand};
 
 pub mod apply;
 pub mod check;
-pub mod client;
 pub mod common;
 pub mod generate;
+pub mod headless;
 pub mod install;
 pub mod invite;
 pub mod list;
@@ -118,10 +118,10 @@ pub enum Command {
         action: ServerAction,
     },
 
-    /// Manage Fika dedicated headless clients
-    Client {
+    /// Manage Fika headless clients
+    Headless {
         #[command(subcommand)]
-        action: client::ClientAction,
+        action: headless::HeadlessAction,
     },
 
     /// Start the Quartermaster web UI

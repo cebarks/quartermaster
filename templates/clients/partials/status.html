@@ -1,7 +1,7 @@
 {% if clients.is_empty() %}
 <div class="empty-state">
-    <p>No Fika clients configured.</p>
-    <p class="mt-1 text-muted text-sm">Configure clients in <code>quartermaster.toml</code> under <code>[clients]</code>.</p>
+    <p>No headless clients configured.</p>
+    <p class="mt-1 text-muted text-sm">Configure headless clients in <code>quartermaster.toml</code> under <code>[headless]</code>.</p>
 </div>
 {% else %}
 <table>
@@ -20,7 +20,7 @@
     <tbody>
         {% for client in clients %}
         <tr>
-            <td><a href="/quma/clients/{{ client.index }}">Client {{ client.index }}</a></td>
+            <td><a href="/quma/headless/{{ client.index }}">Client {{ client.index }}</a></td>
             <td>
                 {% match client.container_status %}
                 {% when crate::client::ContainerStatus::Running %}

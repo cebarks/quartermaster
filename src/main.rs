@@ -121,9 +121,9 @@ async fn main() -> Result<()> {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::server::run(action, &ctx).await
         }
-        Command::Client { action } => {
+        Command::Headless { action } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::client::run(action, &ctx).await
+            cli::headless::run(action, &ctx).await
         }
         Command::Invite { expires } => {
             let ctx = init_context(&cli, &reload_handles)?;

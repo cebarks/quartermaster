@@ -243,10 +243,14 @@ pub struct ModSyncOverride {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ClientsConfig {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HeadlessClientDef {
     #[serde(default)]
-    pub count: u32,
+    pub extra_isolated_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HeadlessConfig {
     #[serde(default)]
     pub install_dir: PathBuf,
     #[serde(default = "default_restart_policy")]
@@ -261,12 +265,13 @@ pub struct ClientsConfig {
     pub image: String,
     #[serde(default = "default_isolated_paths")]
     pub isolated_paths: Vec<String>,
+    #[serde(default)]
+    pub clients: Vec<HeadlessClientDef>,
 }
 
-impl Default for ClientsConfig {
+impl Default for HeadlessConfig {
     fn default() -> Self {
         Self {
-            count: 0,
             install_dir: PathBuf::new(),
             restart_policy: RestartPolicy::Auto,
             max_restart_attempts: 5,
@@ -274,13 +279,26 @@ impl Default for ClientsConfig {
             base_udp_port: 25565,
             image: default_headless_image(),
             isolated_paths: default_isolated_paths(),
+            clients: Vec::new(),
         }
     }
 }
 
-impl ClientsConfig {
+impl HeadlessConfig {
+    pub fn client_count(&self) -> u32 {
+        self.clients.len() as u32
+    }
+
+    pub fn effective_isolated_paths(&self, index: usize) -> Vec<String> {
+        let mut paths = self.isolated_paths.clone();
+        if let Some(client) = self.clients.get(index) {
+            paths.extend(client.extra_isolated_paths.clone());
+        }
+        paths
+    }
+
     pub fn validate(&self, config: &Config, spt_dir: &Path) -> Result<()> {
-        if self.count == 0 {
+        if self.clients.is_empty() {
             return Ok(());
         }
         if !is_fika_installed(spt_dir) {
@@ -291,30 +309,29 @@ impl ClientsConfig {
         }
         if self.install_dir.as_os_str().is_empty() || !self.install_dir.exists() {
             bail!(
-                "clients.install_dir '{}' does not exist",
+                "headless.install_dir '{}' does not exist",
                 self.install_dir.display()
             );
         }
-        match (self.base_udp_port as u32).checked_add(self.count - 1) {
+        let count = self.client_count();
+        match (self.base_udp_port as u32).checked_add(count - 1) {
             Some(max_port) if max_port > 65535 => {
                 bail!(
-                    "clients.base_udp_port ({}) + count ({}) exceeds port range (max port would be {})",
-                    self.base_udp_port,
-                    self.count,
-                    max_port
+                    "headless.base_udp_port ({}) + client count ({}) exceeds port range (max port would be {})",
+                    self.base_udp_port, count, max_port
                 );
             }
             None => {
                 bail!(
-                    "clients.base_udp_port ({}) + count ({}) exceeds port range",
+                    "headless.base_udp_port ({}) + client count ({}) exceeds port range",
                     self.base_udp_port,
-                    self.count
+                    count
                 );
             }
             _ => {}
         }
         if config.server_container.is_none() {
-            bail!("server_container must be configured for dedicated client management — convergence needs to restart the server");
+            bail!("server_container must be configured for headless client management");
         }
         Ok(())
     }
@@ -488,7 +505,7 @@ pub struct Config {
 
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub clients: Option<ClientsConfig>,
+    pub headless: Option<HeadlessConfig>,
 
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -533,7 +550,7 @@ impl Default for Config {
             web_port: 9190,
             update_check_interval: 300,
             forge_cache_ttl: Some(86400),
-            clients: None,
+            headless: None,
             modsync: None,
             logging: LoggingConfig::default(),
             tls_enabled: true,
@@ -672,9 +689,8 @@ impl Config {
         env_override!(str: self.logging.level, "QUMA_LOG_LEVEL");
         env_override!(str: self.logging.file.path, "QUMA_LOG_FILE_PATH");
         env_override!(bool: self.logging.file.enabled, "QUMA_LOG_FILE_ENABLED");
-        env_override!(parse: self.clients.get_or_insert_with(ClientsConfig::default).count, "QUMA_CLIENTS_COUNT", u32);
-        env_override!(path: self.clients.get_or_insert_with(ClientsConfig::default).install_dir, "QUMA_CLIENTS_INSTALL_DIR");
-        env_override!(parse: self.clients.get_or_insert_with(ClientsConfig::default).restart_policy, "QUMA_CLIENTS_RESTART_POLICY", RestartPolicy);
+        env_override!(parse: self.headless.get_or_insert_with(HeadlessConfig::default).restart_policy, "QUMA_HEADLESS_RESTART_POLICY", RestartPolicy);
+        env_override!(path: self.headless.get_or_insert_with(HeadlessConfig::default).install_dir, "QUMA_HEADLESS_INSTALL_DIR");
         env_override!(bool: self.tls_enabled, "QUMA_TLS_ENABLED");
         env_override!(opt_path: self.tls_cert, "QUMA_TLS_CERT");
         env_override!(opt_path: self.tls_key, "QUMA_TLS_KEY");
@@ -1019,16 +1035,9 @@ buffer_size = 5000
     }
 
     #[test]
-    fn clients_config_defaults() {
-        let config: Config = toml::from_str("").expect("empty config");
-        assert!(config.clients.is_none());
-    }
-
-    #[test]
-    fn clients_config_full_deserialization() {
+    fn headless_config_full_deserialization() {
         let toml_str = r#"
-[clients]
-count = 3
+[headless]
 install_dir = "/opt/fika-client"
 restart_policy = "auto"
 max_restart_attempts = 10
@@ -1036,99 +1045,145 @@ restart_backoff_cap = 600
 base_udp_port = 25565
 image = "ghcr.io/zhliau/fika-headless-docker:v2.1.0"
 isolated_paths = ["BepInEx/config", "BepInEx/cache"]
+
+[[headless.clients]]
+
+[[headless.clients]]
+extra_isolated_paths = ["BepInEx/plugins/testing"]
 "#;
         let config: Config = toml::from_str(toml_str).expect("should parse");
-        let clients = config.clients.unwrap();
-        assert_eq!(clients.count, 3);
-        assert_eq!(clients.install_dir, PathBuf::from("/opt/fika-client"));
-        assert_eq!(clients.restart_policy, RestartPolicy::Auto);
-        assert_eq!(clients.max_restart_attempts, 10);
-        assert_eq!(clients.restart_backoff_cap, 600);
-        assert_eq!(clients.base_udp_port, 25565);
-        assert_eq!(clients.image, "ghcr.io/zhliau/fika-headless-docker:v2.1.0");
+        let headless = config.headless.unwrap();
+        assert_eq!(headless.install_dir, PathBuf::from("/opt/fika-client"));
+        assert_eq!(headless.restart_policy, RestartPolicy::Auto);
+        assert_eq!(headless.max_restart_attempts, 10);
+        assert_eq!(headless.restart_backoff_cap, 600);
+        assert_eq!(headless.base_udp_port, 25565);
+        assert_eq!(headless.image, "ghcr.io/zhliau/fika-headless-docker:v2.1.0");
         assert_eq!(
-            clients.isolated_paths,
+            headless.isolated_paths,
             vec!["BepInEx/config", "BepInEx/cache"]
+        );
+        assert_eq!(headless.clients.len(), 2);
+        assert!(headless.clients[0].extra_isolated_paths.is_empty());
+        assert_eq!(
+            headless.clients[1].extra_isolated_paths,
+            vec!["BepInEx/plugins/testing"]
         );
     }
 
     #[test]
-    fn clients_config_minimal_with_defaults() {
+    fn headless_config_minimal_with_defaults() {
         let toml_str = r#"
-[clients]
-count = 2
+[headless]
 install_dir = "/opt/fika"
+
+[[headless.clients]]
 "#;
         let config: Config = toml::from_str(toml_str).expect("should parse");
-        let clients = config.clients.unwrap();
-        assert_eq!(clients.count, 2);
-        assert_eq!(clients.restart_policy, RestartPolicy::Auto);
-        assert_eq!(clients.max_restart_attempts, 5);
-        assert_eq!(clients.restart_backoff_cap, 300);
-        assert_eq!(clients.base_udp_port, 25565);
-        assert_eq!(clients.image, "ghcr.io/zhliau/fika-headless-docker:latest");
-        assert_eq!(clients.isolated_paths, vec!["BepInEx/config".to_string()]);
+        let headless = config.headless.unwrap();
+        assert_eq!(headless.client_count(), 1);
+        assert_eq!(headless.restart_policy, RestartPolicy::Auto);
+        assert_eq!(headless.max_restart_attempts, 5);
+        assert_eq!(headless.restart_backoff_cap, 300);
+        assert_eq!(headless.base_udp_port, 25565);
+        assert_eq!(headless.image, "ghcr.io/zhliau/fika-headless-docker:latest");
+        assert_eq!(headless.isolated_paths, vec!["BepInEx/config".to_string()]);
     }
 
     #[test]
-    fn clients_config_validation_port_overflow() {
-        let clients = ClientsConfig {
-            count: 3,
-            install_dir: PathBuf::from("/tmp/fake"),
-            restart_policy: RestartPolicy::Auto,
-            max_restart_attempts: 5,
-            restart_backoff_cap: 300,
+    fn headless_config_no_clients_defined() {
+        let toml_str = r#"
+[headless]
+install_dir = "/opt/fika"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        let headless = config.headless.unwrap();
+        assert_eq!(headless.client_count(), 0);
+        assert!(headless.clients.is_empty());
+    }
+
+    #[test]
+    fn headless_effective_isolated_paths_merges() {
+        let headless = HeadlessConfig {
+            isolated_paths: vec!["BepInEx/config".to_string()],
+            clients: vec![
+                HeadlessClientDef {
+                    extra_isolated_paths: vec![],
+                },
+                HeadlessClientDef {
+                    extra_isolated_paths: vec!["BepInEx/cache".to_string()],
+                },
+            ],
+            ..HeadlessConfig::default()
+        };
+        assert_eq!(
+            headless.effective_isolated_paths(0),
+            vec!["BepInEx/config".to_string()]
+        );
+        assert_eq!(
+            headless.effective_isolated_paths(1),
+            vec!["BepInEx/config".to_string(), "BepInEx/cache".to_string()]
+        );
+    }
+
+    #[test]
+    fn headless_config_validation_port_overflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/fika-server")).unwrap();
+        // Create install_dir so validation reaches the port check
+        let install_dir = tmp.path().join("fika-install");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        let headless = HeadlessConfig {
+            install_dir,
             base_udp_port: 65534,
-            image: "test".to_string(),
-            isolated_paths: vec![],
+            clients: vec![
+                HeadlessClientDef::default(),
+                HeadlessClientDef::default(),
+                HeadlessClientDef::default(),
+            ],
+            ..HeadlessConfig::default()
         };
         let config = Config {
             server_container: Some("spt".to_string()),
             ..Config::default()
         };
-        let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path();
-        // Create fika-server dir so fika detection passes
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/fika-server")).unwrap();
-        // Create install_dir
-        std::fs::create_dir_all(&clients.install_dir).ok();
-
-        let result = clients.validate(&config, spt_dir);
+        let result = headless.validate(&config, spt_dir);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("port"));
     }
 
     #[test]
-    fn clients_config_validation_no_fika() {
-        let clients = ClientsConfig {
-            count: 1,
+    fn headless_config_validation_no_fika() {
+        let headless = HeadlessConfig {
             install_dir: PathBuf::from("/tmp"),
-            restart_policy: RestartPolicy::Auto,
-            max_restart_attempts: 5,
-            restart_backoff_cap: 300,
-            base_udp_port: 25565,
-            image: "test".to_string(),
-            isolated_paths: vec![],
+            clients: vec![HeadlessClientDef::default()],
+            ..HeadlessConfig::default()
         };
         let config = Config {
             server_container: Some("spt".to_string()),
             ..Config::default()
         };
         let tmp = tempfile::tempdir().unwrap();
-        // No fika-server dir
-        let result = clients.validate(&config, tmp.path());
+        let result = headless.validate(&config, tmp.path());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Fika"));
     }
 
     #[test]
-    fn clients_config_env_override_count() {
-        temp_env::with_vars([("QUMA_CLIENTS_COUNT", Some("5"))], || {
-            let mut config = Config::default();
-            config.clients = Some(ClientsConfig::default());
-            config.apply_env_overrides();
-            assert_eq!(config.clients.unwrap().count, 5);
-        });
+    fn headless_config_defaults() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert!(config.headless.is_none());
+    }
+
+    #[test]
+    fn headless_config_skip_serializing_when_none() {
+        let config = Config::default();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(
+            !serialized.contains("[headless]"),
+            "None headless should not be serialized"
+        );
     }
 
     #[test]

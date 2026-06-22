@@ -1,16 +1,11 @@
-<form method="post" action="/quma/settings/clients">
+<form method="post" action="/quma/settings/headless">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="card">
-        <h2>Fika Clients</h2>
-
-        <div class="form-group">
-            <label for="clients_count">Count</label>
-            <input type="number" id="clients_count" name="count" value="{% if let Some(c) = &config.clients %}{{ c.count }}{% else %}0{% endif %}" min="0">
-        </div>
+        <h2>Headless Clients</h2>
 
         <div class="form-group">
             <label for="clients_install_dir">Install Directory</label>
-            <input type="text" id="clients_install_dir" name="install_dir" value="{% if let Some(c) = &config.clients %}{{ c.install_dir.display() }}{% endif %}" placeholder="/path/to/fika-client">
+            <input type="text" id="clients_install_dir" name="install_dir" value="{% if let Some(c) = &config.headless %}{{ c.install_dir.display() }}{% endif %}" placeholder="/path/to/fika-client">
         </div>
 
         <div class="form-group">
@@ -23,29 +18,29 @@
 
         <div class="form-group">
             <label for="clients_max_restart_attempts">Max Restart Attempts</label>
-            <input type="number" id="clients_max_restart_attempts" name="max_restart_attempts" value="{% if let Some(c) = &config.clients %}{{ c.max_restart_attempts }}{% else %}5{% endif %}" min="0">
+            <input type="number" id="clients_max_restart_attempts" name="max_restart_attempts" value="{% if let Some(c) = &config.headless %}{{ c.max_restart_attempts }}{% else %}5{% endif %}" min="0">
         </div>
 
         <div class="form-group">
             <label for="clients_restart_backoff_cap">Restart Backoff Cap (seconds)</label>
-            <input type="number" id="clients_restart_backoff_cap" name="restart_backoff_cap" value="{% if let Some(c) = &config.clients %}{{ c.restart_backoff_cap }}{% else %}300{% endif %}" min="0">
+            <input type="number" id="clients_restart_backoff_cap" name="restart_backoff_cap" value="{% if let Some(c) = &config.headless %}{{ c.restart_backoff_cap }}{% else %}300{% endif %}" min="0">
         </div>
 
         <div class="form-group">
             <label for="clients_base_udp_port">Base UDP Port</label>
-            <input type="number" id="clients_base_udp_port" name="base_udp_port" value="{% if let Some(c) = &config.clients %}{{ c.base_udp_port }}{% else %}25565{% endif %}" min="1" max="65535">
+            <input type="number" id="clients_base_udp_port" name="base_udp_port" value="{% if let Some(c) = &config.headless %}{{ c.base_udp_port }}{% else %}25565{% endif %}" min="1" max="65535">
         </div>
 
         <div class="form-group">
             <label for="clients_image">Container Image</label>
-            <input type="text" id="clients_image" name="image" value="{% if let Some(c) = &config.clients %}{{ c.image }}{% else %}ghcr.io/zhliau/fika-headless-docker:latest{% endif %}">
+            <input type="text" id="clients_image" name="image" value="{% if let Some(c) = &config.headless %}{{ c.image }}{% else %}ghcr.io/zhliau/fika-headless-docker:latest{% endif %}">
         </div>
 
         <div class="form-group">
             <label for="clients_isolated_paths">Isolated Paths (one per line)</label>
-            <textarea id="clients_isolated_paths" name="isolated_paths" rows="3" class="form-control" placeholder="BepInEx/config">{% if let Some(c) = &config.clients %}{{ c.isolated_paths.join("\n") }}{% else %}BepInEx/config{% endif %}</textarea>
+            <textarea id="clients_isolated_paths" name="isolated_paths" rows="3" class="form-control" placeholder="BepInEx/config">{% if let Some(c) = &config.headless %}{{ c.isolated_paths.join("\n") }}{% else %}BepInEx/config{% endif %}</textarea>
         </div>
 
-        <button type="submit" class="btn">Save Clients Settings</button>
+        <button type="submit" class="btn">Save Headless Settings</button>
     </div>
 </form>

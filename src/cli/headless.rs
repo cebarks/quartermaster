@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use crate::client::converge::client_container_name;
-use crate::config::{is_fika_installed, ClientsConfig, Config};
+use crate::config::{is_fika_installed, Config, HeadlessClientDef, HeadlessConfig};
 use crate::container::ContainerManager;
 use crate::server_detect;
 use crate::spt::headless::EHeadlessStatus;
@@ -14,11 +14,25 @@ use crate::spt::server::SptClient;
 use super::common::{confirm, CliContext};
 
 #[derive(Subcommand)]
-pub enum ClientAction {
-    /// Show dedicated client status
+pub enum HeadlessAction {
+    /// Show headless client status
     Status {
         /// Client number for detailed view
         client: Option<u32>,
+    },
+    /// Create a new headless client
+    Create {
+        /// Extra isolated paths for this client (additive to global)
+        #[arg(long)]
+        extra_isolated_paths: Vec<String>,
+    },
+    /// Delete a specific headless client
+    Delete {
+        /// Client number
+        client: u32,
+        /// Force delete even if client is in a raid
+        #[arg(long)]
+        force: bool,
     },
     /// Stream container logs for a client
     Logs {
@@ -28,30 +42,29 @@ pub enum ClientAction {
         #[arg(long, short)]
         follow: bool,
     },
-    /// Stop a dedicated client
+    /// Stop a headless client
     Stop {
         /// Client number
         client: u32,
     },
-    /// Start a dedicated client
+    /// Start a headless client
     Start {
         /// Client number
         client: u32,
     },
-    /// Restart a dedicated client
+    /// Restart a headless client
     Restart {
         /// Client number
         client: u32,
     },
-    /// Set the desired number of dedicated clients and converge
+    /// Set the desired number of headless clients
     Scale {
         /// Desired number of clients
         count: u32,
     },
 }
 
-pub async fn run(action: &ClientAction, ctx: &CliContext) -> Result<()> {
-    // All commands check Fika detection first
+pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
     if !is_fika_installed(&ctx.spt_dir) {
         bail!(
             "Fika server mod is not installed.\n\
@@ -61,22 +74,26 @@ pub async fn run(action: &ClientAction, ctx: &CliContext) -> Result<()> {
     }
 
     match action {
-        ClientAction::Status { client } => status(ctx, *client).await,
-        ClientAction::Logs { client, follow } => logs(ctx, *client, *follow).await,
-        ClientAction::Stop { client } => stop(ctx, *client).await,
-        ClientAction::Start { client } => start(ctx, *client).await,
-        ClientAction::Restart { client } => restart(ctx, *client).await,
-        ClientAction::Scale { count } => scale(ctx, *count).await,
+        HeadlessAction::Status { client } => status(ctx, *client).await,
+        HeadlessAction::Create {
+            extra_isolated_paths,
+        } => create(ctx, extra_isolated_paths).await,
+        HeadlessAction::Delete { client, force } => delete(ctx, *client, *force).await,
+        HeadlessAction::Logs { client, follow } => logs(ctx, *client, *follow).await,
+        HeadlessAction::Stop { client } => stop(ctx, *client).await,
+        HeadlessAction::Start { client } => start(ctx, *client).await,
+        HeadlessAction::Restart { client } => restart(ctx, *client).await,
+        HeadlessAction::Scale { count } => scale(ctx, *count).await,
     }
 }
 
 async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
-    let clients_config = require_clients_config(&ctx.config)?;
+    let headless_config = require_headless_config(&ctx.config)?;
     let container_mgr = require_container_manager(ctx)?;
 
     // Get live data from containers (including PROFILE_ID for Fika correlation)
     let mut states: Vec<(u32, String, &str, Option<String>)> = Vec::new();
-    for index in 1..=clients_config.count {
+    for index in 1..=headless_config.client_count() {
         let name = client_container_name(index);
 
         let (container_status, profile_id) = match container_mgr.inspect(&name).await {
@@ -207,17 +224,144 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
                     // It will be None if no headless profile was available at creation
                     // time (the SPT server needs to run with Fika to generate them)
                     // or if the container is stopped.
+                    let client_count = headless_config.client_count();
                     println!(
                         "\nFika Status: awaiting profile assignment. \
                          Restart the SPT server to generate headless profiles, \
-                         then run `quma client scale {}` to re-provision.",
-                        clients_config.count
+                         then run `quma headless scale {}` to re-provision.",
+                        client_count
                     );
                 }
             }
         }
     }
 
+    Ok(())
+}
+
+async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()> {
+    let _headless_config = require_headless_config(&ctx.config)?;
+    let container_mgr = require_container_manager(ctx)?;
+
+    let config_path = Config::resolve_path(None, Some(&ctx.spt_dir));
+    let mut config = Config::load_with_env(&config_path)?;
+
+    let new_def = HeadlessClientDef {
+        extra_isolated_paths: extra_isolated_paths.to_vec(),
+    };
+
+    let headless = config.headless.get_or_insert_with(HeadlessConfig::default);
+    headless.clients.push(new_def);
+    let index = headless.client_count();
+    let total = index; // capture before dropping borrow
+
+    config.save(&config_path)?;
+    println!("Created headless client {} (total: {})", index, total);
+
+    let (server_host, server_port) =
+        crate::server_detect::resolve_server_addr(&config, &ctx.spt_dir);
+    let spt_client = SptClient::new(&server_host, server_port)?;
+    let converging = Arc::new(AtomicBool::new(false));
+
+    crate::client::converge::converge(
+        container_mgr,
+        config.headless.as_ref().unwrap(),
+        &config,
+        &ctx.spt_dir,
+        &spt_client,
+        converging,
+    )
+    .await?;
+
+    println!("Client {} created and started.", index);
+    Ok(())
+}
+
+async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
+    let headless_config = require_headless_config(&ctx.config)?;
+    let container_mgr = require_container_manager(ctx)?;
+
+    let index = client as usize;
+    if index == 0 || index > headless_config.clients.len() {
+        bail!(
+            "Client {} does not exist (valid range: 1-{})",
+            client,
+            headless_config.client_count()
+        );
+    }
+
+    if !force {
+        let (server_host, server_port) =
+            crate::server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+        let spt_client = SptClient::new(&server_host, server_port)?;
+        if let Ok(resp) = spt_client.headless_clients().await {
+            let container_name = crate::client::converge::client_container_name(client);
+            if let Ok(info) = container_mgr.inspect(&container_name).await {
+                if let Some(pid) = info.config.and_then(|c| c.env).and_then(|env| {
+                    env.iter()
+                        .find(|e| e.starts_with("PROFILE_ID="))
+                        .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                        .map(String::from)
+                }) {
+                    if let Some(client_info) = resp.headlesses.get(&pid) {
+                        if client_info.state == EHeadlessStatus::InRaid
+                            && !client_info.players.is_empty()
+                        {
+                            bail!(
+                                "Client {} is in a raid with {} player(s). Use --force to override.",
+                                client,
+                                client_info.players.len()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Stop and remove container
+    let container_name = crate::client::converge::client_container_name(client);
+    if container_mgr
+        .is_running(&container_name)
+        .await
+        .unwrap_or(false)
+    {
+        println!("Stopping {}...", container_name);
+        container_mgr.stop(&container_name).await?;
+    }
+    if container_mgr.inspect(&container_name).await.is_ok() {
+        container_mgr.remove_container(&container_name).await?;
+    }
+
+    // Remove from config
+    let config_path = Config::resolve_path(None, Some(&ctx.spt_dir));
+    let mut config = Config::load_with_env(&config_path)?;
+    if let Some(ref mut headless) = config.headless {
+        headless.clients.remove(index - 1);
+    }
+    config.save(&config_path)?;
+
+    // Update fika.jsonc
+    let fika_config_path = ctx
+        .spt_dir
+        .join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
+    let new_count = config
+        .headless
+        .as_ref()
+        .map(|h| h.client_count())
+        .unwrap_or(0);
+    crate::client::converge::edit_headless_amount(&fika_config_path, new_count)?;
+
+    // Clean up overlay directory
+    let overlay_dir = ctx.spt_dir.join("clients").join(client.to_string());
+    if overlay_dir.exists() {
+        std::fs::remove_dir_all(&overlay_dir).ok();
+    }
+
+    println!(
+        "Deleted client {}. {} client(s) remaining.",
+        client, new_count
+    );
     Ok(())
 }
 
@@ -307,7 +451,11 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     let config_path = Config::resolve_path(None, Some(&ctx.spt_dir));
     let mut config = Config::load_with_env(&config_path)?;
 
-    let old_count = config.clients.as_ref().map(|c| c.count).unwrap_or(0);
+    let old_count = config
+        .headless
+        .as_ref()
+        .map(|h| h.client_count())
+        .unwrap_or(0);
 
     if count == old_count {
         println!("Already at {} clients.", count);
@@ -321,36 +469,51 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
         let spt_client = SptClient::new(&server_host, server_port)?;
 
         if let Ok(resp) = spt_client.headless_clients().await {
-            for _index in (count + 1)..=old_count {
-                // Check if any headless client is in raid with players
-                for (session_id, info) in &resp.headlesses {
-                    if info.state == EHeadlessStatus::InRaid && !info.players.is_empty() {
-                        let player_count = info.players.len();
-                        let prompt = format!(
-                            "Client in session {} is currently in a raid with {} player(s). Scale down anyway?",
-                            session_id, player_count
-                        );
-                        if !confirm(&prompt)? {
-                            println!("Scale operation cancelled.");
-                            return Ok(());
+            for index in (count + 1)..=old_count {
+                let container_name = crate::client::converge::client_container_name(index);
+                if let Ok(info) = container_mgr.inspect(&container_name).await {
+                    if let Some(pid) = info.config.and_then(|c| c.env).and_then(|env| {
+                        env.iter()
+                            .find(|e| e.starts_with("PROFILE_ID="))
+                            .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                            .map(String::from)
+                    }) {
+                        if let Some(client_info) = resp.headlesses.get(&pid) {
+                            if client_info.state == EHeadlessStatus::InRaid
+                                && !client_info.players.is_empty()
+                            {
+                                let prompt = format!(
+                                    "Client {} is in a raid with {} player(s). Scale down anyway?",
+                                    index,
+                                    client_info.players.len()
+                                );
+                                if !confirm(&prompt)? {
+                                    println!("Scale operation cancelled.");
+                                    return Ok(());
+                                }
+                                break;
+                            }
                         }
-                        break;
                     }
                 }
             }
         }
     }
 
-    // Update config
-    if let Some(ref mut clients) = config.clients {
-        clients.count = count;
+    // Update config: add or remove HeadlessClientDef entries
+    let headless = config.headless.get_or_insert_with(HeadlessConfig::default);
+    if count > old_count {
+        // Scale up: push new default entries
+        for _ in old_count..count {
+            headless.clients.push(HeadlessClientDef::default());
+        }
     } else {
-        // Should not happen if require_clients_config passed, but handle it
-        bail!("clients config not found");
+        // Scale down: truncate the vec
+        headless.clients.truncate(count as usize);
     }
 
     config.save(&config_path)?;
-    println!("Updated config: clients.count = {}", count);
+    println!("Updated config: {} headless client(s)", count);
 
     // Run convergence
     let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
@@ -360,7 +523,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     println!("Converging to {} client(s)...", count);
     crate::client::converge::converge(
         container_mgr,
-        config.clients.as_ref().unwrap(),
+        config.headless.as_ref().unwrap(),
         &config,
         &ctx.spt_dir,
         &spt_client,
@@ -372,11 +535,11 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     Ok(())
 }
 
-fn require_clients_config(config: &Config) -> Result<&ClientsConfig> {
-    config.clients.as_ref().ok_or_else(|| {
+fn require_headless_config(config: &Config) -> Result<&HeadlessConfig> {
+    config.headless.as_ref().ok_or_else(|| {
         anyhow!(
-            "dedicated clients not configured.\n\
-             Run `quma setup` to configure Fika dedicated clients."
+            "headless clients not configured.\n\
+             Add a [headless] section to quartermaster.toml or run `quma setup`."
         )
     })
 }

@@ -1,6 +1,5 @@
-use crate::config::{ClientsConfig, Config};
+use crate::config::{Config, HeadlessConfig};
 use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
-use crate::spt::headless::EHeadlessStatus;
 use crate::spt::profiles;
 use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
@@ -148,7 +147,7 @@ async fn select_profiles_for_assignment(
             "Only {} of {} profiles available for assignment. \
              Remaining containers will be created without PROFILE_ID. \
              Headless profiles are generated when the SPT server starts with Fika — \
-             restart the server to create them, then run `quma client scale` again.",
+             restart the server to create them, then run `quma headless create` again.",
             assigned_count, needed
         );
     }
@@ -298,7 +297,7 @@ pub fn find_name_conflicts(
 /// operations and signals to the supervisor that state is in flux.
 pub async fn converge(
     container_mgr: &ContainerManager,
-    clients_config: &ClientsConfig,
+    headless_config: &HeadlessConfig,
     config: &Config,
     spt_dir: &Path,
     spt_client: &SptClient,
@@ -317,7 +316,7 @@ pub async fn converge(
         c.store(false, Ordering::Release);
     });
 
-    let desired_count = clients_config.count;
+    let desired_count = headless_config.client_count();
     info!("Starting convergence: desired count = {desired_count}");
 
     // Detect currently managed containers
@@ -351,9 +350,9 @@ pub async fn converge(
 
     // Scale up or down
     if current_count < desired_count {
-        scale_up(
+        ensure_clients(
             container_mgr,
-            clients_config,
+            headless_config,
             config,
             spt_dir,
             spt_client,
@@ -362,28 +361,20 @@ pub async fn converge(
         )
         .await?;
     } else if current_count > desired_count {
-        scale_down(
-            container_mgr,
-            clients_config,
-            config,
-            spt_dir,
-            spt_client,
-            current_count,
-            desired_count,
-            false, // force = false (CLI will call confirm(), web will pass force param)
-        )
-        .await?;
+        remove_excess_clients(container_mgr, config, spt_dir, current_count, desired_count).await?;
     } else {
         info!("Already at desired count ({desired_count}), checking for overlay updates");
     }
 
-    // Update overlays for all existing clients (in case isolated_paths changed)
-    for i in 1..=desired_count {
+    // Update overlays for all defined clients (using effective paths)
+    for (i, _client_def) in headless_config.clients.iter().enumerate() {
+        let index = (i + 1) as u32;
+        let effective_paths = headless_config.effective_isolated_paths(i);
         setup_client_overlay(
             spt_dir,
-            i,
-            &clients_config.install_dir,
-            &clients_config.isolated_paths,
+            index,
+            &headless_config.install_dir,
+            &effective_paths,
         )?;
     }
 
@@ -409,17 +400,17 @@ async fn await_server_ready(spt_client: &SptClient, timeout_secs: u64) -> bool {
     }
 }
 
-/// Scale up from current_count to desired_count.
-async fn scale_up(
+/// Ensure containers exist from current_count up to desired_count.
+async fn ensure_clients(
     container_mgr: &ContainerManager,
-    clients_config: &ClientsConfig,
+    headless_config: &HeadlessConfig,
     config: &Config,
     spt_dir: &Path,
     spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
 ) -> Result<()> {
-    info!("Scaling up from {current_count} to {desired_count}");
+    info!("Ensuring clients: {current_count} → {desired_count}");
 
     // 1. Edit fika.jsonc to set amount
     let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
@@ -429,7 +420,7 @@ async fn scale_up(
     let container = config
         .server_container
         .as_deref()
-        .expect("server_container validated by ClientsConfig::validate");
+        .expect("server_container validated by HeadlessConfig::validate");
 
     info!("Stopping SPT server");
     container_mgr
@@ -467,13 +458,16 @@ async fn scale_up(
     // 4. Create containers for new clients
     for (offset, profile_id) in profile_assignments.into_iter().enumerate() {
         let i = current_count + 1 + offset as u32;
+        let client_index = (i - 1) as usize;
+        let effective_paths = headless_config.effective_isolated_paths(client_index);
         create_client_container(
             container_mgr,
-            clients_config,
+            headless_config,
             config,
             spt_dir,
             i,
             profile_id,
+            &effective_paths,
         )
         .await?;
     }
@@ -481,63 +475,18 @@ async fn scale_up(
     Ok(())
 }
 
-/// Scale down from current_count to desired_count.
-#[allow(clippy::too_many_arguments)]
-async fn scale_down(
+/// Remove containers above desired_count.
+///
+/// In-raid checks are now handled by the CLI `headless delete` command before calling
+/// converge, so this function simply stops and removes excess containers.
+async fn remove_excess_clients(
     container_mgr: &ContainerManager,
-    _clients_config: &ClientsConfig,
     config: &Config,
     spt_dir: &Path,
-    spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
-    force: bool,
 ) -> Result<()> {
-    info!("Scaling down from {current_count} to {desired_count}");
-
-    // Check for in-raid clients and abort if force=false
-    if !force {
-        // Collect PROFILE_IDs from containers being removed
-        let mut profile_ids_being_removed: Vec<(u32, String)> = Vec::new();
-        for i in (desired_count + 1)..=current_count {
-            let name = client_container_name(i);
-            if let Ok(info) = container_mgr.inspect(&name).await {
-                if let Some(pid) = info.config.and_then(|c| c.env).and_then(|env| {
-                    env.iter()
-                        .find(|e| e.starts_with("PROFILE_ID="))
-                        .and_then(|e| e.strip_prefix("PROFILE_ID="))
-                        .map(String::from)
-                }) {
-                    profile_ids_being_removed.push((i, pid));
-                }
-            }
-        }
-
-        if !profile_ids_being_removed.is_empty() {
-            if let Ok(resp) = spt_client.headless_clients().await {
-                let mut in_raid_clients: Vec<String> = Vec::new();
-                for (index, profile_id) in &profile_ids_being_removed {
-                    if let Some(info) = resp.headlesses.get(profile_id) {
-                        if info.state == EHeadlessStatus::InRaid && !info.players.is_empty() {
-                            in_raid_clients.push(format!(
-                                "Client {} (session {}, {} player(s))",
-                                index,
-                                profile_id,
-                                info.players.len()
-                            ));
-                        }
-                    }
-                }
-
-                if !in_raid_clients.is_empty() {
-                    bail!(
-                        "Cannot scale down: client(s) in raid: {}. Use --force to override.",
-                        in_raid_clients.join(", ")
-                    );
-                }
-            }
-        }
-    }
+    info!("Removing excess clients: {current_count} → {desired_count}");
 
     // 1. Remove containers for clients above desired_count
     for i in (desired_count + 1)..=current_count {
@@ -560,7 +509,7 @@ async fn scale_down(
     let container = config
         .server_container
         .as_deref()
-        .expect("server_container validated by ClientsConfig::validate");
+        .expect("server_container validated by HeadlessConfig::validate");
 
     info!("Restarting SPT server to deregister removed headless clients");
     container_mgr
@@ -580,13 +529,17 @@ async fn scale_down(
 /// If `profile_id` is `Some`, the container gets a `PROFILE_ID` env var that allows
 /// the CLI status command and supervisor to correlate this container with the Fika
 /// headless API (which keys its response by profile/session ID).
+///
+/// `effective_paths` is the merged list of global `isolated_paths` + per-client
+/// `extra_isolated_paths`, computed by the caller via `HeadlessConfig::effective_isolated_paths`.
 async fn create_client_container(
     container_mgr: &ContainerManager,
-    clients_config: &ClientsConfig,
+    headless_config: &HeadlessConfig,
     config: &Config,
     spt_dir: &Path,
     index: u32,
     profile_id: Option<String>,
+    effective_paths: &[String],
 ) -> Result<()> {
     let name = client_container_name(index);
     let overlay_dir = spt_dir.join("clients").join(index.to_string());
@@ -595,15 +548,15 @@ async fn create_client_container(
     setup_client_overlay(
         spt_dir,
         index,
-        &clients_config.install_dir,
-        &clients_config.isolated_paths,
+        &headless_config.install_dir,
+        effective_paths,
     )?;
 
     // Build volume mounts
     let mut volumes = vec![
         // SPT install directory (read-only)
         VolumeMount {
-            host_path: clients_config.install_dir.clone(),
+            host_path: headless_config.install_dir.clone(),
             container_path: "/opt/tarkov".to_string(),
             read_only: true,
             selinux: SelinuxLabel::Shared,
@@ -611,7 +564,7 @@ async fn create_client_container(
     ];
 
     // Add overlay as read-write mount for isolated paths
-    if !clients_config.isolated_paths.is_empty() {
+    if !effective_paths.is_empty() {
         volumes.push(VolumeMount {
             host_path: overlay_dir,
             container_path: "/opt/tarkov-overlay".to_string(),
@@ -625,7 +578,7 @@ async fn create_client_container(
         ("HEADLESS_INDEX".to_string(), index.to_string()),
         (
             "UDP_PORT".to_string(),
-            client_port(clients_config.base_udp_port, index).to_string(),
+            client_port(headless_config.base_udp_port, index).to_string(),
         ),
     ];
 
@@ -658,7 +611,7 @@ async fn create_client_container(
     // Create the container
     let opts = CreateContainerOpts {
         name: name.clone(),
-        image: clients_config.image.clone(),
+        image: headless_config.image.clone(),
         env,
         volumes,
         ports: vec![],

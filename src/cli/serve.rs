@@ -84,13 +84,13 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     let modsync_installed = crate::config::is_modsync_installed(&spt_dir);
     let converging = Arc::new(AtomicBool::new(false));
 
-    // Initialize client supervisor if Fika is installed and clients configured
-    let client_states = if let Some(ref clients_config) = config.clients {
-        if fika_installed && clients_config.count > 0 {
+    // Initialize client supervisor if Fika is installed and headless clients configured
+    let client_states = if let Some(ref headless_config) = config.headless {
+        if fika_installed && headless_config.client_count() > 0 {
             if let Some(ref container_mgr_arc) = container_mgr {
-                // Validate client config
-                if let Err(e) = clients_config.validate(&config, &spt_dir) {
-                    tracing::error!(error = %e, "Invalid client configuration — supervisor not started");
+                // Validate headless config
+                if let Err(e) = headless_config.validate(&config, &spt_dir) {
+                    tracing::error!(error = %e, "Invalid headless configuration — supervisor not started");
                     None
                 } else {
                     // Resolve SPT server address
@@ -105,12 +105,12 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
                     // Run initial convergence
                     tracing::info!(
-                        "Running initial convergence for {} client(s)",
-                        clients_config.count
+                        "Running initial convergence for {} headless client(s)",
+                        headless_config.client_count()
                     );
                     let converge_result = crate::client::converge::converge(
                         container_mgr_arc,
-                        clients_config,
+                        headless_config,
                         &config,
                         &spt_dir,
                         &spt_client,
@@ -127,7 +127,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         let supervisor = crate::client::supervisor::ClientSupervisor::new(
                             container_mgr_arc.as_ref().clone(),
                             spt_client,
-                            clients_config.clone(),
+                            headless_config.clone(),
                             Arc::clone(&converging),
                             cancel_token,
                         );
@@ -136,15 +136,15 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         supervisor.run();
 
                         tracing::info!(
-                            "ClientSupervisor started for {} client(s)",
-                            clients_config.count
+                            "ClientSupervisor started for {} headless client(s)",
+                            headless_config.client_count()
                         );
                         Some(states)
                     }
                 }
             } else {
                 tracing::warn!(
-                    "Fika clients configured but Podman unavailable — supervisor not started"
+                    "Headless clients configured but Podman unavailable — supervisor not started"
                 );
                 None
             }
