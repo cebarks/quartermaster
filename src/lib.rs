@@ -1,5 +1,3 @@
-// Library interface for integration tests
-
 pub mod cli;
 pub mod client;
 pub mod config;

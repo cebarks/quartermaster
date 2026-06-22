@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use actix_web::cookie::Key;
-use actix_web::dev::Service;
-use actix_web::dev::ServiceResponse;
+use actix_web::dev::{Service, ServiceResponse};
 use actix_web::test::{self, TestRequest};
-use actix_web::{web, App, ResponseError};
+use actix_web::{middleware, web, App};
 use parking_lot::Mutex;
 use tempfile::TempDir;
 
@@ -204,6 +203,10 @@ impl TestApp {
         test::init_service(
             App::new()
                 .app_data(app_state)
+                .app_data(web::PayloadConfig::new(64 * 1024 * 1024))
+                .wrap(middleware::NormalizePath::new(
+                    middleware::TrailingSlash::MergeOnly,
+                ))
                 .configure(|cfg| configure_app(cfg, session_key, false, false)),
         )
         .await
@@ -291,7 +294,6 @@ impl TestApp {
         );
 
         let resp = self.post_form("/quma/login", &form_body).await;
-        self.save_cookies(&resp);
 
         // Expect redirect on success (303 to /quma/)
         assert!(

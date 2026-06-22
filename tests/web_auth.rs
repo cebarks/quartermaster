@@ -1,10 +1,9 @@
-#[path = "web_helpers.rs"]
-mod web_helpers;
+mod common;
 
 use actix_web::http::StatusCode;
 use actix_web::test;
+use common::{extract_csrf_token, TestAppBuilder};
 use spt_quartermaster::db::users::Role;
-use web_helpers::{extract_csrf_token, TestAppBuilder};
 
 // ── Login tests ───────────────────────────────────────────────────────
 
