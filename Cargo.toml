@@ -113,6 +113,7 @@ assert_cmd = "2"
 predicates = "3"
 temp-env = "0.3"
 wiremock = "0.6"
+urlencoding = "2"
 
 [profile.release]
 strip = true
