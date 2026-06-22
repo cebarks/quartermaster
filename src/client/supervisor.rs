@@ -9,7 +9,7 @@ use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 
 use crate::client::{ClientHealth, ClientState, ContainerStatus};
-use crate::config::{ClientsConfig, RestartPolicy};
+use crate::config::{HeadlessConfig, RestartPolicy};
 use crate::container::ContainerManager;
 use crate::spt::headless::{EHeadlessStatus, GetHeadlessesResponse};
 use crate::spt::server::SptClient;
@@ -17,7 +17,7 @@ use crate::spt::server::SptClient;
 pub struct ClientSupervisor {
     container_mgr: ContainerManager,
     spt_client: SptClient,
-    clients_config: ClientsConfig,
+    headless_config: HeadlessConfig,
     converging: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     state: Arc<RwLock<Vec<ClientState>>>,
@@ -28,7 +28,7 @@ impl ClientSupervisor {
     pub fn new(
         container_mgr: ContainerManager,
         spt_client: SptClient,
-        clients_config: ClientsConfig,
+        headless_config: HeadlessConfig,
         converging: Arc<AtomicBool>,
         cancel_token: CancellationToken,
     ) -> Self {
@@ -36,7 +36,7 @@ impl ClientSupervisor {
         Self {
             container_mgr,
             spt_client,
-            clients_config,
+            headless_config,
             converging,
             cancel_token,
             state,
@@ -102,7 +102,7 @@ impl ClientSupervisor {
 
         // Update each client's state
         let mut states = Vec::new();
-        for i in 1..=self.clients_config.count {
+        for i in 1..=self.headless_config.client_count() {
             let state = self.check_client(i, server_up, headlesses.as_ref()).await?;
             states.push(state);
         }
@@ -130,7 +130,7 @@ impl ClientSupervisor {
         }
 
         // Handle auto-restart for clients that need it
-        if self.clients_config.restart_policy == RestartPolicy::Auto && server_up {
+        if self.headless_config.restart_policy == RestartPolicy::Auto && server_up {
             for state in &states {
                 if self.should_restart(state) {
                     // Mark as restarting before spawning
@@ -146,7 +146,7 @@ impl ClientSupervisor {
                     let container_name = state.container_name.clone();
                     let index = state.index;
                     let failures = state.consecutive_failures;
-                    let backoff_cap = self.clients_config.restart_backoff_cap;
+                    let backoff_cap = self.headless_config.restart_backoff_cap;
 
                     tokio::spawn(async move {
                         restart_client_task(
@@ -251,7 +251,7 @@ impl ClientSupervisor {
         }
 
         // Check if given up
-        if state.consecutive_failures > self.clients_config.max_restart_attempts {
+        if state.consecutive_failures > self.headless_config.max_restart_attempts {
             state.health = ClientHealth::GivenUp;
         }
 
@@ -271,7 +271,7 @@ impl ClientSupervisor {
 
         // Restart if down or degraded and under attempt limit
         (state.health == ClientHealth::Down || state.health == ClientHealth::Degraded)
-            && state.consecutive_failures <= self.clients_config.max_restart_attempts
+            && state.consecutive_failures <= self.headless_config.max_restart_attempts
     }
 }
 
