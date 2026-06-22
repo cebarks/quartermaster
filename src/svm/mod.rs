@@ -9,8 +9,6 @@ use serde_json::Value;
 pub use config::SvmConfig;
 
 #[allow(dead_code)] // Used in later tasks
-const SVM_MOD_DIR: &str = "[SVM] ServerValueModifier";
-#[allow(dead_code)] // Used in later tasks
 const SVM_FORGE_ID: i64 = 236;
 #[allow(dead_code)] // Used in later tasks
 const LOADER_FILE: &str = "Loader/loader.json";
@@ -33,10 +31,7 @@ impl SvmManager {
     /// Detect SVM installation and initialize manager.
     /// Returns None if SVM is not installed or detection fails.
     pub fn detect(spt_dir: &Path) -> Option<Self> {
-        let svm_dir = spt_dir.join("user/mods").join(SVM_MOD_DIR);
-        if !svm_dir.exists() {
-            return None;
-        }
+        let svm_dir = crate::config::find_svm_dir(spt_dir)?;
 
         let loader_path = svm_dir.join(LOADER_FILE);
         if !loader_path.exists() {
@@ -425,6 +420,10 @@ impl SvmManager {
     pub fn unknown_fields(&self) -> &[String] {
         &self.unknown_fields
     }
+
+    pub fn preset_path(&self, name: &str) -> PathBuf {
+        self.svm_dir.join(PRESETS_DIR).join(format!("{name}.json"))
+    }
 }
 
 #[cfg(test)]
@@ -435,7 +434,7 @@ mod tests {
 
     fn setup_svm_dir(tmp: &TempDir) -> PathBuf {
         let spt_dir = tmp.path().to_path_buf();
-        let svm_dir = spt_dir.join("user/mods/[SVM] ServerValueModifier");
+        let svm_dir = spt_dir.join("SPT/user/mods/[SVM] Server Value Modifier");
         fs::create_dir_all(svm_dir.join("Loader")).unwrap();
         fs::create_dir_all(svm_dir.join("Presets")).unwrap();
         let loader = serde_json::json!({"CurrentlySelectedPreset": "Default"});
@@ -487,7 +486,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let spt_dir = setup_svm_dir(&tmp);
         // Add unknown field to preset
-        let preset_path = spt_dir.join("user/mods/[SVM] ServerValueModifier/Presets/Default.json");
+        let preset_path =
+            spt_dir.join("SPT/user/mods/[SVM] Server Value Modifier/Presets/Default.json");
         let mut raw: Value =
             serde_json::from_str(&fs::read_to_string(&preset_path).unwrap()).unwrap();
         raw.as_object_mut()
@@ -548,7 +548,7 @@ mod tests {
     fn detect_creates_default_when_no_presets() {
         let tmp = TempDir::new().unwrap();
         let spt_dir = tmp.path().to_path_buf();
-        let svm_dir = spt_dir.join("user/mods/[SVM] ServerValueModifier");
+        let svm_dir = spt_dir.join("SPT/user/mods/[SVM] Server Value Modifier");
         fs::create_dir_all(svm_dir.join("Loader")).unwrap();
         fs::create_dir_all(svm_dir.join("Presets")).unwrap();
         // loader.json with null preset
@@ -571,5 +571,24 @@ mod tests {
         assert!(mgr.list_presets().contains(&"Copy".to_string()));
         // Duplicating from non-existent source fails
         assert!(mgr.duplicate_preset("NonExistent", "Another").is_err());
+    }
+
+    #[test]
+    fn detect_case_insensitive_dir_name() {
+        let tmp = TempDir::new().unwrap();
+        let spt_dir = tmp.path().to_path_buf();
+        let svm_dir = spt_dir.join("SPT/user/mods/[svm] server value modifier");
+        fs::create_dir_all(svm_dir.join("Loader")).unwrap();
+        fs::create_dir_all(svm_dir.join("Presets")).unwrap();
+        let loader = serde_json::json!({"CurrentlySelectedPreset": "Default"});
+        fs::write(svm_dir.join("Loader/loader.json"), loader.to_string()).unwrap();
+        let config = SvmConfig::default();
+        fs::write(
+            svm_dir.join("Presets/Default.json"),
+            serde_json::to_string_pretty(&config).unwrap(),
+        )
+        .unwrap();
+        let mgr = SvmManager::detect(&spt_dir).expect("should detect SVM case-insensitively");
+        assert_eq!(mgr.active_preset_name(), "Default");
     }
 }
