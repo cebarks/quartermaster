@@ -777,7 +777,7 @@ pub async fn install_mod(
 
         set_flash(&session, "Mod queued for install", FlashType::Success);
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/queue"))
+            .insert_header(("Location", "/quma/mods"))
             .finish());
     }
 
@@ -972,7 +972,7 @@ pub async fn update_mod(
 
         set_flash(&session, "Update queued", FlashType::Success);
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/queue"))
+            .insert_header(("Location", "/quma/mods"))
             .finish());
     }
 
@@ -1117,7 +1117,7 @@ pub async fn remove_mod(
 
         set_flash(&session, "Mod queued for removal", FlashType::Success);
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/queue"))
+            .insert_header(("Location", "/quma/mods"))
             .finish());
     }
 
@@ -1280,7 +1280,7 @@ pub async fn update_all_mods(
 
         set_flash(&session, "All updates queued", FlashType::Success);
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/queue"))
+            .insert_header(("Location", "/quma/mods"))
             .finish());
     }
 

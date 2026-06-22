@@ -13,6 +13,11 @@
 <div class="tab-bar">
     <button class="tab active" id="tab-installed"
             onclick="window.location.href='/quma/mods'; return false;">Installed</button>
+    <button class="tab" id="tab-queue"
+            hx-get="/quma/api/queue/content"
+            hx-target="#mods-tab-content"
+            hx-swap="innerHTML"
+            onclick="setModTab(this, 'queue')">Queue</button>
     <button class="tab" id="tab-requests"
             hx-get="/quma/api/mods/requests"
             hx-target="#mods-tab-content"
@@ -154,7 +159,10 @@ function setModTab(el, tab) {
     location.hash = tab;
 }
 document.addEventListener('DOMContentLoaded', function() {
-    if (location.hash === '#requests') {
+    if (location.hash === '#queue') {
+        var btn = document.getElementById('tab-queue');
+        if (btn) { btn.click(); }
+    } else if (location.hash === '#requests') {
         var btn = document.getElementById('tab-requests');
         if (btn) { btn.click(); }
     }
