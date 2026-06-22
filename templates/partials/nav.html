@@ -5,26 +5,34 @@
     {% if user.role.can_manage_mods() %}
     <a href="/quma/mods"{% if active == "mods" %} class="active"{% endif %}>{% call icons::package() %}{% endcall %} Mods</a>
     {% endif %}
-    <a href="/quma/queue"{% if active == "queue" %} class="active"{% endif %}>{% call icons::list() %}{% endcall %} Queue</a>
     <a href="/quma/status"{% if active == "status" %} class="active"{% endif %}>{% call icons::activity() %}{% endcall %} Status</a>
-    <a href="/quma/raids"{% if active == "raids" %} class="active"{% endif %}>{% call icons::crosshair() %}{% endcall %} Raids</a>
-    <a href="/quma/leaderboard"{% if active == "leaderboard" %} class="active"{% endif %}>{% call icons::trophy() %}{% endcall %} Leaderboard</a>
+    <a href="/quma/stats"{% if active == "stats" %} class="active"{% endif %}>{% call icons::crosshair() %}{% endcall %} Stats</a>
     {% if nav.modsync_installed %}
     <a href="/quma/modsync"{% if active == "modsync" %} class="active"{% endif %}>{% call icons::refresh() %}{% endcall %} NarcoNet</a>
     {% endif %}
     {% if nav.svm_installed %}
     <a href="/quma/svm"{% if active == "svm" %} class="active"{% endif %}>{% call icons::settings() %}{% endcall %} Server Config</a>
     {% endif %}
-    {% if nav.fika_installed %}
-    <a href="/quma/clients"{% if active == "clients" %} class="active"{% endif %}>{% call icons::users() %}{% endcall %} Clients</a>
-    {% endif %}
     <a href="/quma/profiles/{{ user.username }}"{% if active == "profile" %} class="active"{% endif %}>{% call icons::user() %}{% endcall %} Profile</a>
     {% if user.role.can_control_server() %}
-    <a href="/quma/logs"{% if active == "logs" %} class="active"{% endif %}>{% call icons::terminal() %}{% endcall %} Logs</a>
-    {% endif %}
-    {% if user.role.can_manage_users() %}
-    <a href="/quma/settings"{% if active == "settings" %} class="active"{% endif %}>{% call icons::settings() %}{% endcall %} Settings</a>
-    <a href="/quma/admin"{% if active == "admin" %} class="active"{% endif %}>{% call icons::shield() %}{% endcall %} Admin</a>
+    <div class="nav-dropdown" id="admin-dropdown">
+        <button class="nav-dropdown-toggle{% if active == "logs" || active == "settings" || active == "admin" || active == "clients" %} active{% endif %}"
+                onclick="event.stopPropagation(); document.getElementById('admin-dropdown').classList.toggle('open')">
+            {% call icons::shield() %}{% endcall %} Admin ▾
+        </button>
+        <div class="nav-dropdown-menu">
+            {% if user.role.can_manage_users() %}
+            <a href="/quma/admin"{% if active == "admin" %} class="active"{% endif %}>Users & Invites</a>
+            {% endif %}
+            <a href="/quma/logs"{% if active == "logs" %} class="active"{% endif %}>Logs</a>
+            {% if user.role.can_manage_users() %}
+            <a href="/quma/settings"{% if active == "settings" %} class="active"{% endif %}>Settings</a>
+            {% endif %}
+            {% if user.role.can_manage_users() && nav.fika_installed %}
+            <a href="/quma/clients"{% if active == "clients" %} class="active"{% endif %}>Clients</a>
+            {% endif %}
+        </div>
+    </div>
     {% endif %}
 </div>
 <div class="user-info">
@@ -34,4 +42,9 @@
         <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">{% call icons::log_out() %}{% endcall %} Logout</button>
     </form>
 </div>
+<script>
+document.addEventListener('click', function() {
+    document.getElementById('admin-dropdown')?.classList.remove('open');
+});
+</script>
 {% endmacro %}
