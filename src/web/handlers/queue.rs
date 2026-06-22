@@ -66,7 +66,7 @@ pub async fn cancel_op(
 
     set_flash(&session, "Operation cancelled", FlashType::Success);
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/mods"))
+        .insert_header(("Location", "/quma/mods#queue"))
         .finish())
 }
 
@@ -96,7 +96,7 @@ pub async fn apply_queue(
             FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods"))
+            .insert_header(("Location", "/quma/mods#queue"))
             .finish());
     }
 
@@ -154,13 +154,13 @@ pub async fn apply_queue(
         let msg = format!("{} operation(s) failed: {names}", failures.len());
         set_flash(&session, &msg, FlashType::Error);
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods"))
+            .insert_header(("Location", "/quma/mods#queue"))
             .finish());
     }
 
     set_flash(&session, "Queue applied successfully", FlashType::Success);
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/mods"))
+        .insert_header(("Location", "/quma/mods#queue"))
         .finish())
 }
 
