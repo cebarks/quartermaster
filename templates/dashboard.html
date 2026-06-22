@@ -39,9 +39,9 @@
     </div>
     {% endif %}
     {% if nav.fika_installed %}
-    <a href="/quma/clients" class="stat-card" style="border-left-color: var(--border)">
-        <div class="stat-label">Clients</div>
-        <div hx-get="/quma/api/dashboard/clients-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    <a href="/quma/headless" class="stat-card" style="border-left-color: var(--border)">
+        <div class="stat-label">Headless Clients</div>
+        <div hx-get="/quma/api/dashboard/headless-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
             <span class="text-muted text-sm loading-pulse">Checking...</span>
         </div>
     </a>

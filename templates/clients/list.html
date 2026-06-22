@@ -1,18 +1,22 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
-{% block title %}Fika Clients — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("clients", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block title %}Headless Clients — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("headless", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
-    <h1>Fika Clients</h1>
+    <h1>Headless Clients</h1>
     {% if user.role.can_control_server() %}
     <div class="flex gap-1">
-        <form method="post" action="/quma/clients/scale" style="display:inline">
+        <form method="post" action="/quma/headless/scale" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="number" name="count" min="0" max="10" value="{{ target_count }}" style="width: 4rem; margin-right: 0.5rem">
             <input type="hidden" name="force" value="false">
             <button type="submit" class="btn btn-sm btn-primary">Scale</button>
+        </form>
+        <form method="post" action="/quma/headless/create" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-success">+ Add Client</button>
         </form>
     </div>
     {% endif %}
@@ -27,11 +31,11 @@
 </div>
 {% endif %}
 
-<div hx-get="/quma/api/clients/status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+<div hx-get="/quma/api/headless/status" hx-trigger="load, every 5s" hx-swap="innerHTML">
     {% if clients.is_empty() %}
     <div class="empty-state">
-        <p>No Fika clients configured.</p>
-        <p class="mt-1 text-muted text-sm">Configure clients in <code>quartermaster.toml</code> under <code>[clients]</code>.</p>
+        <p>No headless clients configured.</p>
+        <p class="mt-1 text-muted text-sm">Configure headless clients in <code>quartermaster.toml</code> under <code>[headless]</code>.</p>
     </div>
     {% else %}
     <table>
@@ -50,7 +54,7 @@
         <tbody>
             {% for client in clients %}
             <tr>
-                <td><a href="/quma/clients/{{ client.index }}">Client {{ client.index }}</a></td>
+                <td><a href="/quma/headless/{{ client.index }}">Client {{ client.index }}</a></td>
                 <td>
                     {% match client.container_status %}
                     {% when crate::client::ContainerStatus::Running %}
