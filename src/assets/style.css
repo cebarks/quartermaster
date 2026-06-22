@@ -320,9 +320,12 @@ main > h1 { border-bottom: 1px solid var(--border); }
 .reset-link-display { display: flex; gap: 0.25rem; align-items: center; }
 .reset-link-display input { font-family: monospace; font-size: 0.85rem; }
 
-.form-group { margin-bottom: 1rem; }
+.form-group { margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
+.form-group:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 .form-group label { display: block; margin-bottom: 0.25rem; font-weight: 500; }
-.form-group input { width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
+.form-group label:has(input[type="checkbox"]) { display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+.form-group input:not([type="checkbox"]) { width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
+.form-group select { padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
 
 .current-user td { opacity: 0.7; }
 
