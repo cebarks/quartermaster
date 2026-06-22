@@ -663,7 +663,10 @@ pub async fn install_mod(
     let mod_ref = form.mod_ref.trim();
 
     if mod_ref.is_empty() {
-        return Err(WebError::BadRequest("Mod reference is required".to_string()).into());
+        set_flash(&session, "Mod reference is required", FlashType::Error);
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/mods"))
+            .finish());
     }
 
     let mod_id: i64 = match mod_ref.parse() {
@@ -671,34 +674,70 @@ pub async fn install_mod(
         Err(_) => match state.forge.search_mods(mod_ref).await {
             Ok(results) if results.len() == 1 => results[0].id,
             Ok(results) if results.is_empty() => {
-                return Err(
-                    WebError::BadRequest(format!("No mods found matching '{mod_ref}'")).into(),
+                set_flash(
+                    &session,
+                    &format!("No mods found matching '{mod_ref}'"),
+                    FlashType::Error,
                 );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/mods"))
+                    .finish());
             }
             Ok(_) => {
-                return Err(WebError::BadRequest(format!(
-                    "Multiple mods match '{mod_ref}' — use a Forge mod ID instead"
-                ))
-                .into());
+                set_flash(
+                    &session,
+                    &format!("Multiple mods match '{mod_ref}' — use a Forge mod ID instead"),
+                    FlashType::Error,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/mods"))
+                    .finish());
             }
             Err(_) => {
-                return Err(WebError::BadRequest(
-                    "Failed to search mods. Please try again.".to_string(),
-                )
-                .into());
+                set_flash(
+                    &session,
+                    "Failed to search mods. Please try again.",
+                    FlashType::Error,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/mods"))
+                    .finish());
             }
         },
     };
 
-    let versions = state
+    let versions = match state
         .forge
         .get_versions(mod_id, Some(&state.spt_info.spt_version))
         .await
-        .map_err(WebError::from)?;
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(mod_id, error = %e, "failed to fetch versions");
+            set_flash(
+                &session,
+                "Could not fetch mod versions. Please try again.",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
 
-    let version = versions.last().ok_or(WebError::BadRequest(
-        "No compatible version found for current SPT version".to_string(),
-    ))?;
+    let version = match versions.last() {
+        Some(v) => v,
+        None => {
+            set_flash(
+                &session,
+                "No compatible version found for current SPT version",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
 
     let mod_info = state
         .forge
