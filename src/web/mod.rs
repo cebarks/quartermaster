@@ -450,8 +450,8 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 web::post().to(handlers::settings::save_logging_settings),
                             )
                             .route(
-                                "/settings/clients",
-                                web::post().to(handlers::settings::save_clients_settings),
+                                "/settings/headless",
+                                web::post().to(handlers::settings::save_headless_settings),
                             )
                             .route("/clients", web::get().to(handlers::clients::client_list))
                             .route(

@@ -4,7 +4,7 @@ use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::config::{
-    ClientsConfig, Config, ConsoleLogConfig, FileLogConfig, LogFormat, LoggingConfig,
+    Config, ConsoleLogConfig, FileLogConfig, HeadlessConfig, LogFormat, LoggingConfig,
     RestartPolicy, RotationPolicy, WebLogConfig,
 };
 use crate::db::users::Role;
@@ -57,7 +57,7 @@ pub async fn settings_page(
 
     let config = Config::load(&state.config_path).map_err(WebError::from)?;
 
-    const VALID_TABS: &[&str] = &["web", "server", "queue", "forge", "logging", "clients"];
+    const VALID_TABS: &[&str] = &["web", "server", "queue", "forge", "logging", "headless"];
     let active_tab = query
         .tab
         .as_deref()
@@ -70,7 +70,7 @@ pub async fn settings_page(
     let file_format = config.logging.file.format.to_string();
     let file_rotation = config.logging.file.rotation.to_string();
     let restart_policy = config
-        .clients
+        .headless
         .as_ref()
         .map(|c| c.restart_policy.to_string())
         .unwrap_or_else(|| RestartPolicy::Auto.to_string());
@@ -147,9 +147,8 @@ pub struct LoggingSettingsForm {
 }
 
 #[derive(serde::Deserialize)]
-pub struct ClientsSettingsForm {
+pub struct HeadlessSettingsForm {
     csrf_token: String,
-    count: u32,
     install_dir: String,
     restart_policy: String,
     max_restart_attempts: u32,
@@ -380,59 +379,16 @@ pub async fn save_logging_settings(
         .finish())
 }
 
-pub async fn save_clients_settings(
+pub async fn save_headless_settings(
     state: Data<AppState>,
     req: HttpRequest,
     session: Session,
-    form: Form<ClientsSettingsForm>,
+    form: Form<HeadlessSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
     require_capability(&user, Role::can_manage_users)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
-    }
-
-    if form.count > 0 && form.install_dir.trim().is_empty() {
-        set_flash(
-            &session,
-            "Install directory is required when client count > 0",
-            FlashType::Error,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/settings?tab=clients"))
-            .finish());
-    }
-
-    if form.count > 0 {
-        match (form.base_udp_port as u32).checked_add(form.count - 1) {
-            Some(max_port) if max_port > 65535 => {
-                set_flash(
-                    &session,
-                    &format!(
-                        "Base UDP port ({}) + count ({}) exceeds port range (max would be {})",
-                        form.base_udp_port, form.count, max_port
-                    ),
-                    FlashType::Error,
-                );
-                return Ok(HttpResponse::SeeOther()
-                    .insert_header(("Location", "/quma/settings?tab=clients"))
-                    .finish());
-            }
-            None => {
-                set_flash(
-                    &session,
-                    &format!(
-                        "Base UDP port ({}) + count ({}) exceeds port range",
-                        form.base_udp_port, form.count
-                    ),
-                    FlashType::Error,
-                );
-                return Ok(HttpResponse::SeeOther()
-                    .insert_header(("Location", "/quma/settings?tab=clients"))
-                    .finish());
-            }
-            _ => {}
-        }
     }
 
     let restart_policy: RestartPolicy = form.restart_policy.parse().unwrap_or(RestartPolicy::Auto);
@@ -444,8 +400,7 @@ pub async fn save_clients_settings(
         .filter(|l| !l.is_empty())
         .collect();
 
-    let clients = ClientsConfig {
-        count: form.count,
+    let headless = HeadlessConfig {
         install_dir: std::path::PathBuf::from(form.install_dir.trim()),
         restart_policy,
         max_restart_attempts: form.max_restart_attempts,
@@ -453,20 +408,29 @@ pub async fn save_clients_settings(
         base_udp_port: form.base_udp_port,
         image: form.image.trim().to_string(),
         isolated_paths: isolated,
+        clients: Vec::new(), // clients managed via create/delete, not settings
     };
 
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
-    config.clients = if form.count == 0 && form.install_dir.trim().is_empty() {
+    // Preserve existing client defs when saving global defaults
+    let existing_clients = config
+        .headless
+        .as_ref()
+        .map(|h| h.clients.clone())
+        .unwrap_or_default();
+    let mut final_config = headless;
+    final_config.clients = existing_clients;
+    config.headless = if form.install_dir.trim().is_empty() {
         None
     } else {
-        Some(clients)
+        Some(final_config)
     };
 
     config.save(&state.config_path).map_err(WebError::from)?;
 
-    set_flash(&session, "Clients settings saved", FlashType::Success);
+    set_flash(&session, "Headless settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/settings?tab=clients"))
+        .insert_header(("Location", "/quma/settings?tab=headless"))
         .finish())
 }
