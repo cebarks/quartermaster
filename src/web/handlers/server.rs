@@ -13,7 +13,7 @@ use crate::web::sse::ServerEvent;
 use crate::web::state::AppState;
 
 /// Validates that both a container name and container manager are configured.
-/// Returns a redirect to `/quma/status` with an appropriate flash error if either is missing.
+/// Returns a redirect to `/quma/` with an appropriate flash error if either is missing.
 fn require_container<'a>(
     state: &'a AppState,
     session: &Session,
@@ -25,7 +25,7 @@ fn require_container<'a>(
             FlashType::Error,
         );
         HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/status"))
+            .insert_header(("Location", "/quma/"))
             .finish()
     })?;
 
@@ -36,7 +36,7 @@ fn require_container<'a>(
             FlashType::Error,
         );
         HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/status"))
+            .insert_header(("Location", "/quma/"))
             .finish()
     })?;
 
@@ -81,7 +81,7 @@ pub async fn start_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/status"))
+        .insert_header(("Location", "/quma/"))
         .finish())
 }
 
@@ -120,7 +120,7 @@ pub async fn stop_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/status"))
+        .insert_header(("Location", "/quma/"))
         .finish())
 }
 
@@ -154,7 +154,7 @@ pub async fn restart_server(
         state.set_server_transition(None);
         let _ = state.events.send(ServerEvent::ServerTransition);
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/status"))
+            .insert_header(("Location", "/quma/"))
             .finish());
     }
 
@@ -213,6 +213,6 @@ pub async fn restart_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/status"))
+        .insert_header(("Location", "/quma/"))
         .finish())
 }

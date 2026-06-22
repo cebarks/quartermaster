@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bollard::models::{
-    ContainerBlkioStatEntry, ContainerCreateBody, ContainerInspectResponse, HealthConfig,
-    HostConfig, PortBinding,
+    ContainerCreateBody, ContainerInspectResponse, HealthConfig, HostConfig, PortBinding,
 };
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
@@ -127,13 +126,7 @@ fn filter_started_at(started_at: Option<String>) -> Option<String> {
 #[derive(Debug, Clone)]
 pub struct ContainerStats {
     pub cpu_percent: f64,
-    pub mem_usage: u64,
-    pub mem_limit: u64,
     pub mem_percent: f64,
-    pub net_rx: u64,
-    pub net_tx: u64,
-    pub disk_read: u64,
-    pub disk_write: u64,
 }
 
 fn compute_cpu_percent(container_delta: u64, system_delta: u64, num_cpus: u32) -> f64 {
@@ -142,20 +135,6 @@ fn compute_cpu_percent(container_delta: u64, system_delta: u64, num_cpus: u32) -
     }
     // Normalize to 0-100% regardless of core count (matches docker stats / htop convention)
     (container_delta as f64 / system_delta as f64) * 100.0
-}
-
-fn extract_blkio_bytes(entries: &[ContainerBlkioStatEntry]) -> (u64, u64) {
-    let mut read = 0u64;
-    let mut write = 0u64;
-    for entry in entries {
-        let op = entry.op.as_deref().unwrap_or("");
-        if op.eq_ignore_ascii_case("read") {
-            read += entry.value.unwrap_or(0);
-        } else if op.eq_ignore_ascii_case("write") {
-            write += entry.value.unwrap_or(0);
-        }
-    }
-    (read, write)
 }
 
 impl ContainerManager {
@@ -423,43 +402,23 @@ impl ContainerManager {
             _ => 0.0,
         };
 
-        let (mem_usage, mem_limit) = stat
+        let mem_percent = stat
             .memory_stats
             .as_ref()
-            .map(|m| (m.usage.unwrap_or(0), m.limit.unwrap_or(0)))
-            .unwrap_or((0, 0));
-        let mem_percent = if mem_limit > 0 {
-            (mem_usage as f64 / mem_limit as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        let (net_rx, net_tx) = stat
-            .networks
-            .as_ref()
-            .map(|nets| {
-                nets.values().fold((0u64, 0u64), |(rx, tx), n| {
-                    (rx + n.rx_bytes.unwrap_or(0), tx + n.tx_bytes.unwrap_or(0))
-                })
+            .map(|m| {
+                let usage = m.usage.unwrap_or(0);
+                let limit = m.limit.unwrap_or(0);
+                if limit > 0 {
+                    (usage as f64 / limit as f64) * 100.0
+                } else {
+                    0.0
+                }
             })
-            .unwrap_or((0, 0));
-
-        let (disk_read, disk_write) = stat
-            .blkio_stats
-            .as_ref()
-            .and_then(|b| b.io_service_bytes_recursive.as_ref())
-            .map(|entries| extract_blkio_bytes(entries))
-            .unwrap_or((0, 0));
+            .unwrap_or(0.0);
 
         Ok(ContainerStats {
             cpu_percent,
-            mem_usage,
-            mem_limit,
             mem_percent,
-            net_rx,
-            net_tx,
-            disk_read,
-            disk_write,
         })
     }
 }
@@ -547,40 +506,5 @@ mod tests {
     fn cpu_percent_zero_cpus() {
         let pct = compute_cpu_percent(100, 200, 0);
         assert_eq!(pct, 0.0);
-    }
-
-    #[test]
-    fn extract_blkio_bytes_basic() {
-        use bollard::models::ContainerBlkioStatEntry;
-        let entries = vec![
-            ContainerBlkioStatEntry {
-                major: Some(8),
-                minor: Some(0),
-                op: Some("read".to_string()),
-                value: Some(1000),
-            },
-            ContainerBlkioStatEntry {
-                major: Some(8),
-                minor: Some(0),
-                op: Some("write".to_string()),
-                value: Some(2000),
-            },
-            ContainerBlkioStatEntry {
-                major: Some(8),
-                minor: Some(0),
-                op: Some("read".to_string()),
-                value: Some(500),
-            },
-        ];
-        let (read, write) = extract_blkio_bytes(&entries);
-        assert_eq!(read, 1500);
-        assert_eq!(write, 2000);
-    }
-
-    #[test]
-    fn extract_blkio_bytes_empty() {
-        let (read, write) = extract_blkio_bytes(&[]);
-        assert_eq!(read, 0);
-        assert_eq!(write, 0);
     }
 }

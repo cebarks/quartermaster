@@ -9,6 +9,7 @@ use crate::db::mods::{
 };
 use crate::db::users::Role;
 use crate::forge::models::DependencyNode;
+use crate::health::{self, IntegrityHealth};
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
@@ -1436,5 +1437,31 @@ pub async fn list_body_partial(
         sort_column: sc,
         sort_dir: sd,
     };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+#[derive(Template)]
+#[template(path = "partials/status_integrity.html")]
+struct IntegrityTemplate {
+    report: IntegrityHealth,
+}
+
+pub async fn integrity_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+    require_auth(&req)?;
+    let db = state.db.clone();
+    let tracked_files = web::block(move || {
+        let db = db.lock();
+        db.get_all_tracked_files()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let spt_dir = state.spt_dir.clone();
+    let report = web::block(move || health::check_integrity_from(&tracked_files, &spt_dir))
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+    let tmpl = IntegrityTemplate { report };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

@@ -1,9 +1,14 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
 {% block title %}Dashboard — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("dashboard", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>Dashboard</h1>
+
+{% if let Some(flash) = flash %}
+<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
+{% endif %}
 
 <div class="card" style="padding: 0.75rem 1.25rem">
     <div class="flex-between">
@@ -15,23 +20,17 @@
     </div>
 </div>
 
+<div hx-get="/quma/api/dashboard/server" hx-trigger="load, every 3s, sse:serverStateChanged" hx-swap="innerHTML">
+    <div class="hero-card"><div class="hero-status"><span class="text-muted loading-pulse">Loading server status...</span></div></div>
+</div>
+
 <div class="stat-card-grid">
-    <a href="/quma/mods" class="stat-card" style="border-left-color: var(--success)">
-        <div class="stat-label">Mods</div>
-        <div class="stat-value">{{ mods.len() }}</div>
-        <div class="stat-detail">installed</div>
-    </a>
-    <a href="/quma/mods#queue" class="stat-card" style="border-left-color: {% if pending_count > 0 %}var(--warning){% else %}var(--success){% endif %}">
-        <div class="stat-label">Queue</div>
-        <div class="stat-value">{{ pending_count }}</div>
-        <div class="stat-detail">{% if pending_count > 0 %}pending{% else %}all clear{% endif %}</div>
-    </a>
-    <a href="/quma/status" class="stat-card" style="border-left-color: var(--border)">
-        <div class="stat-label">Server</div>
-        <div hx-get="/quma/api/dashboard/server-status" hx-trigger="load, sse:serverStateChanged" hx-swap="innerHTML">
-            <span class="text-muted text-sm loading-pulse">Checking...</span>
+    <div hx-get="/quma/api/dashboard/mods" hx-trigger="load, every 60s" hx-swap="innerHTML">
+        <div class="stat-card" style="border-left-color: var(--border)">
+            <div class="stat-label">Mods</div>
+            <div class="stat-value"><span class="loading-pulse">...</span></div>
         </div>
-    </a>
+    </div>
     {% if nav.modsync_installed %}
     <div class="stat-card" style="border-left-color: {% if modsync_managed %}var(--success){% else %}var(--warning){% endif %}">
         <div class="stat-label">NarcoNet</div>
@@ -47,61 +46,11 @@
         </div>
     </a>
     {% endif %}
-</div>
-
-<div class="card">
-    <div class="flex-between mb-1">
-        <h2>Installed Mods ({{ mods.len() }})</h2>
-        <span hx-get="/quma/api/mods/check-updates" hx-trigger="load, every 60s" hx-swap="innerHTML">
-            <span class="text-muted text-sm">Checking for updates...</span>
-        </span>
+    <div hx-get="/quma/api/dashboard/container" hx-trigger="load, every 5s" hx-swap="innerHTML">
+        <div class="stat-card" style="border-left-color: var(--border)">
+            <div class="stat-label">Container</div>
+            <div class="stat-value"><span class="loading-pulse">...</span></div>
+        </div>
     </div>
-    {% if mods.is_empty() %}
-    <div class="empty-state">
-        <p>No mods installed.</p>
-        {% if user.role.can_manage_mods() %}<p class="mt-1"><a href="/quma/mods">Go to Mods</a> to install your first mod.</p>{% endif %}
-    </div>
-    {% else %}
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Version</th>
-                <th>Installed</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for m in mods %}
-            <tr>
-                <td><a href="/quma/mods/{{ m.id }}">{{ m.name }}</a></td>
-                <td>{{ m.version }}</td>
-                <td class="text-muted text-sm">{{ m.installed_at }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
 </div>
-
-{% if pending_count > 0 %}
-<div class="card">
-    <h2>Pending Operations</h2>
-    <p>{{ pending_count }} operation(s) queued. <a href="/quma/mods#queue">View queue</a></p>
-</div>
-{% endif %}
-
-{% if !unmanaged_dirs.is_empty() %}
-<div class="card">
-    <h2>Unmanaged Mods</h2>
-    <p class="text-muted text-sm mb-1">These mod directories are not tracked by Quartermaster. Use <code>quma track</code> to manage them.</p>
-    <table>
-        <thead><tr><th>Directory</th><th>Files</th></tr></thead>
-        <tbody>
-            {% for (dir, count) in &unmanaged_dirs %}
-            <tr><td>{{ dir }}</td><td>{{ count }}</td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endif %}
 {% endblock %}

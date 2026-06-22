@@ -150,6 +150,10 @@
     </form>
 </div>
 {% endif %}
+
+<div hx-get="/quma/api/mods/integrity" hx-trigger="load, every 120s" hx-swap="innerHTML">
+    <div class="card"><h2>Integrity</h2><p class="text-muted loading-pulse">Checking...</p></div>
+</div>
 </div>
 
 <script>

@@ -1,5 +1,5 @@
-<div class="card" style="border-left: 3px solid {% if report.updates_available > 0 %}var(--warning){% else %}var(--success){% endif %}">
-    <h2>Mods</h2>
+<a href="/quma/mods" class="card stat-card-wide" style="border-left: 3px solid {% if report.updates_available > 0 || !report.incompatible_mods.is_empty() || !report.load_failures.is_empty() %}var(--warning){% else %}var(--success){% endif %}; text-decoration: none; color: inherit;">
+    <h3>Mods</h3>
     <table>
         <tr><th style="width:140px">Installed</th><td><strong>{{ report.installed_count }}</strong></td></tr>
         {% if let Some(loaded) = report.loaded_count %}
@@ -33,5 +33,12 @@
             {% endfor %}
         </td></tr>
         {% endif %}
+        <tr><th>Queue</th><td>
+            {% if pending_count > 0 %}
+            <span class="badge badge-warning">{{ pending_count }} pending</span>
+            {% else %}
+            <span class="text-muted">Empty</span>
+            {% endif %}
+        </td></tr>
     </table>
-</div>
+</a>

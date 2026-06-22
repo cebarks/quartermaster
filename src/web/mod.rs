@@ -223,33 +223,32 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 "/mods/dep-tree",
                                 web::get().to(handlers::mods::dep_tree_partial),
                             )
+                            // Dashboard partials
                             .route(
-                                "/status/server",
-                                web::get().to(handlers::status::server_partial),
+                                "/dashboard/server",
+                                web::get().to(handlers::dashboard::server_partial),
                             )
                             .route(
-                                "/status/mods",
-                                web::get().to(handlers::status::mods_partial),
+                                "/dashboard/mods",
+                                web::get().to(handlers::dashboard::mods_partial),
                             )
                             .route(
-                                "/status/integrity",
-                                web::get().to(handlers::status::integrity_partial),
-                            )
-                            .route(
-                                "/status/proxy",
-                                web::get().to(handlers::status::proxy_metrics_partial),
-                            )
-                            .route(
-                                "/status/container-stats",
-                                web::get().to(handlers::status::container_stats_partial),
-                            )
-                            .route(
-                                "/dashboard/server-status",
-                                web::get().to(handlers::dashboard::server_status_partial),
+                                "/dashboard/container",
+                                web::get().to(handlers::dashboard::container_partial),
                             )
                             .route(
                                 "/dashboard/clients-status",
                                 web::get().to(handlers::clients::dashboard_clients_status_partial),
+                            )
+                            // Metrics partials
+                            .route(
+                                "/metrics/proxy",
+                                web::get().to(handlers::metrics::proxy_metrics_partial),
+                            )
+                            // Mods integrity partial
+                            .route(
+                                "/mods/integrity",
+                                web::get().to(handlers::mods::integrity_partial),
                             )
                             .route(
                                 "/clients/status",
@@ -386,8 +385,8 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                             .wrap(from_fn(auth::auth_middleware))
                             .route("/", web::get().to(handlers::dashboard::dashboard))
                             .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
-                            .route("/status", web::get().to(handlers::status::status_page))
                             .route("/logs", web::get().to(handlers::logs::logs_page))
+                            .route("/metrics", web::get().to(handlers::metrics::metrics_page))
                             .route("/admin", web::get().to(handlers::admin::admin_page))
                             .route("/mods", web::get().to(handlers::mods::list_mods))
                             .route("/modsync", web::get().to(handlers::modsync::modsync_page))
