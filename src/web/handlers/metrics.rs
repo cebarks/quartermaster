@@ -53,7 +53,8 @@ pub async fn proxy_metrics_partial(
     state: Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_control_server)?;
     let template = ProxyMetricsTemplate {
         proxy: state.proxy_metrics.snapshot(),
     };
