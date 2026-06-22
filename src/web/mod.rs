@@ -385,6 +385,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                             .route("/metrics", web::get().to(handlers::metrics::metrics_page))
                             .route("/admin", web::get().to(handlers::admin::admin_page))
                             .route("/mods", web::get().to(handlers::mods::list_mods))
+                            .route("/files", web::get().to(handlers::mods::file_tracking_page))
                             .route("/modsync", web::get().to(handlers::modsync::modsync_page))
                             .route(
                                 "/modsync/settings",

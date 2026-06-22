@@ -98,6 +98,8 @@ table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 th, td { padding: 0.65rem 0.75rem; text-align: left; border-bottom: 1px solid rgba(42,42,74,0.6); }
 th { color: var(--text-muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
 tr:hover { background: rgba(255,255,255,0.05); }
+#mod-list-table td a { color: var(--text); }
+#mod-list-table td a:hover { color: var(--accent-hover); }
 
 /* Forms — scoped to .card to avoid breaking inline table forms */
 .card > form, .auth-card form {
@@ -140,7 +142,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
     color: var(--text-muted);
 }
 .btn-outline:hover { border-color: var(--text); color: var(--text); }
-.btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
 
 /* Badges */
 .badge {

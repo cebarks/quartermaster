@@ -19,6 +19,8 @@
         <span class="badge badge-success">Fika ✓</span>
         {% elif m.fika_compatible == "incompatible" %}
         <span class="badge badge-danger">Fika ✗</span>
+        {% elif m.fika_compatible == "unknown" %}
+        <span class="badge badge-muted">Fika ?</span>
         {% endif %}
         <span hx-get="/quma/api/mods/{{ m.id }}/compat-check"
               hx-trigger="load"

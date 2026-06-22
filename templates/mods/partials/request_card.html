@@ -6,7 +6,7 @@
     <div class="flex-between">
         <div>
             {% if let Some(slug) = r.request.mod_slug.as_deref() %}
-            <a href="https://forge.sp-tarkov.com/mods/{{ r.request.forge_mod_id }}-{{ slug }}" target="_blank" rel="noopener">
+            <a href="https://forge.sp-tarkov.com/mod/{{ r.request.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener">
                 <strong>{{ r.request.mod_name }}</strong> ↗
             </a>
             {% else %}
@@ -16,6 +16,8 @@
             <span class="badge badge-success" style="margin-left:0.5rem">Fika ✓</span>
             {% elif r.request.fika_compatible == "incompatible" %}
             <span class="badge badge-danger" style="margin-left:0.5rem">Fika ✗</span>
+            {% elif r.request.fika_compatible == "unknown" %}
+            <span class="badge badge-muted" style="margin-left:0.5rem">Fika ?</span>
             {% endif %}
         </div>
         <div>

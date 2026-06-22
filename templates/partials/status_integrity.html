@@ -2,6 +2,7 @@
     <h2>Integrity</h2>
     {% if report.missing_files.is_empty() && report.modified_files.is_empty() && report.untracked_dirs.is_empty() %}
     <p class="text-muted">{{ report.tracked_files }} tracked files — all present, hashes match.</p>
+    <p class="text-sm mt-1"><a href="/quma/files">View details →</a></p>
     {% else %}
     <table>
         <tr><th style="width:140px">Tracked</th><td>{{ report.tracked_files }} files</td></tr>
@@ -15,5 +16,6 @@
         <tr><th>Untracked</th><td class="text-muted">{{ report.untracked_dirs.len() }} director{% if report.untracked_dirs.len() != 1 %}ies{% else %}y{% endif %}</td></tr>
         {% endif %}
     </table>
+    <p class="text-sm mt-1"><a href="/quma/files">View details →</a></p>
     {% endif %}
 </div>

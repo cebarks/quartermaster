@@ -100,6 +100,17 @@ pub async fn apply_queue(
             .finish());
     }
 
+    if state.tasks.has_active() {
+        set_flash(
+            &session,
+            "Queue is already being applied. Please wait.",
+            FlashType::Warning,
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/mods#queue"))
+            .finish());
+    }
+
     let db = state.db.clone();
     let ops = web::block(move || {
         let db = db.lock();
@@ -109,56 +120,92 @@ pub async fn apply_queue(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let mut failures: Vec<String> = Vec::new();
+    let task_id = state
+        .tasks
+        .start("Applying queue", &format!("{} operations", ops.len()), 0);
+    let tasks = state.tasks.clone();
+    let state_clone = state.clone();
 
-    for op in &ops {
-        let result = match op.action {
-            crate::db::users::QueueAction::Install => apply_install(op, &state).await,
-            crate::db::users::QueueAction::Update => apply_update(op, &state).await,
-            crate::db::users::QueueAction::Remove => apply_remove(op, &state).await,
-        };
+    tokio::spawn(async move {
+        let mut failures: Vec<String> = Vec::new();
+        let total = ops.len();
 
-        match result {
-            Ok(()) => {
-                let db = state.db.clone();
-                let op_id = op.id;
-                web::block(move || {
-                    let db = db.lock();
-                    db.delete_pending_op(op_id)
-                })
-                .await
-                .map_err(WebError::from)?
-                .map_err(WebError::from)?;
-            }
-            Err(e) => {
-                tracing::error!(action = %op.action, mod_name = %op.mod_name, error = %e, "queue apply failed");
-                failures.push(op.mod_name.clone());
+        for (i, op) in ops.iter().enumerate() {
+            tasks.update_message(
+                task_id,
+                format!("Queue: {} {}/{} ({})", op.action, i + 1, total, op.mod_name),
+            );
+
+            let result = match op.action {
+                crate::db::users::QueueAction::Install => apply_install(op, &state_clone).await,
+                crate::db::users::QueueAction::Update => apply_update(op, &state_clone).await,
+                crate::db::users::QueueAction::Remove => apply_remove(op, &state_clone).await,
+            };
+
+            match result {
+                Ok(()) => {
+                    let db = state_clone.db.clone();
+                    let op_id = op.id;
+                    if let Err(e) = web::block(move || {
+                        let db = db.lock();
+                        db.delete_pending_op(op_id)
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .and_then(|r| r.map_err(|e| anyhow::anyhow!("{e}")))
+                    {
+                        tracing::error!(
+                            mod_name = %op.mod_name,
+                            error = %e,
+                            "failed to delete pending op after successful apply"
+                        );
+                        failures.push(format!(
+                            "{}: completed but queue entry not removed: {}",
+                            op.mod_name, e
+                        ));
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        action = %op.action,
+                        mod_name = %op.mod_name,
+                        error = %e,
+                        "queue apply failed"
+                    );
+                    failures.push(format!("{}: {}", op.mod_name, e));
+                }
             }
         }
-    }
 
-    // Regenerate NarcoNet config after all queue operations
-    {
-        let db = state.db.clone();
-        let spt_dir = state.spt_dir.clone();
-        let config = state.config.clone();
-        let _ = web::block(move || {
-            let db = db.lock();
-            crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
-        })
-        .await;
-    }
+        // Regenerate NarcoNet config after all operations
+        {
+            let db = state_clone.db.clone();
+            let spt_dir = state_clone.spt_dir.clone();
+            let config = state_clone.config.clone();
+            let _ = web::block(move || {
+                let db = db.lock();
+                crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
+            })
+            .await;
+        }
 
-    if !failures.is_empty() {
-        let names = failures.join(", ");
-        let msg = format!("{} operation(s) failed: {names}", failures.len());
-        set_flash(&session, &msg, FlashType::Error);
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods#queue"))
-            .finish());
-    }
+        if failures.is_empty() {
+            tasks.complete(
+                task_id,
+                format!("Queue applied: {} operation(s) completed", total),
+            );
+        } else {
+            let msg = format!(
+                "Queue: {} succeeded, {} failed — {}",
+                total - failures.len(),
+                failures.len(),
+                failures.join("; "),
+            );
+            tasks.fail(task_id, msg);
+        }
+    });
 
-    set_flash(&session, "Queue applied successfully", FlashType::Success);
+    set_flash(&session, "Queue is being applied...", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/mods#queue"))
         .finish())
