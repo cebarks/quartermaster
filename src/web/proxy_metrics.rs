@@ -69,6 +69,12 @@ pub struct MetricsSnapshot {
 }
 
 #[allow(dead_code)] // Used by Tasks 5-7 (proxy handlers, status page)
+impl Default for ProxyMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProxyMetrics {
     pub fn new() -> Self {
         Self {
