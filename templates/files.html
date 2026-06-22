@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}File Tracking — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("files", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>File Tracking</h1>
+
+<div class="card">
+    <h2>Summary</h2>
+    <table>
+        <tr><th style="width:160px">Tracked Files</th><td>{{ report.tracked_files }}</td></tr>
+        <tr><th>Missing Files</th><td>{% if report.missing_files.is_empty() %}<span class="text-muted">None</span>{% else %}<span class="badge badge-danger">{{ report.missing_files.len() }}</span>{% endif %}</td></tr>
+        <tr><th>Modified Files</th><td>{% if report.modified_files.is_empty() %}<span class="text-muted">None</span>{% else %}<span class="badge badge-warning">{{ report.modified_files.len() }}</span>{% endif %}</td></tr>
+        <tr><th>Untracked Dirs</th><td>{% if report.untracked_dirs.is_empty() %}<span class="text-muted">None</span>{% else %}<span class="text-muted">{{ report.untracked_dirs.len() }}</span>{% endif %}</td></tr>
+    </table>
+</div>
+
+{% if !report.missing_files.is_empty() %}
+<div class="card" style="border-left: 3px solid var(--danger)">
+    <h2>Missing Files ({{ report.missing_files.len() }})</h2>
+    <p class="text-muted text-sm mb-1">Files recorded in the database but not found on disk.</p>
+    <table>
+        <thead><tr><th>Path</th></tr></thead>
+        <tbody>
+            {% for f in &report.missing_files %}
+            <tr><td class="text-sm">{{ f }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if !report.modified_files.is_empty() %}
+<div class="card" style="border-left: 3px solid var(--warning)">
+    <h2>Modified Files ({{ report.modified_files.len() }})</h2>
+    <p class="text-muted text-sm mb-1">Files whose SHA256 hash differs from the recorded value.</p>
+    <table>
+        <thead><tr><th>Path</th></tr></thead>
+        <tbody>
+            {% for f in &report.modified_files %}
+            <tr><td class="text-sm">{{ f }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if !report.untracked_dirs.is_empty() %}
+<div class="card" style="border-left: 3px solid var(--text-muted)">
+    <h2>Untracked Directories ({{ report.untracked_dirs.len() }})</h2>
+    <p class="text-muted text-sm mb-1">Directories containing files not tracked by any installed mod.</p>
+    <table>
+        <thead><tr><th>Directory</th><th>Files</th></tr></thead>
+        <tbody>
+            {% for d in &report.untracked_dirs %}
+            <tr>
+                <td class="text-sm">{{ d.path }}</td>
+                <td class="text-muted text-sm">{{ d.file_count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

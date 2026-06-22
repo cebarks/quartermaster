@@ -1504,3 +1504,47 @@ pub async fn integrity_partial(state: Data<AppState>, req: HttpRequest) -> actix
     let tmpl = IntegrityTemplate { report };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
+
+#[derive(Template)]
+#[template(path = "files.html")]
+struct FileTrackingTemplate {
+    user: SessionUser,
+    nav: NavContext,
+    flash: Option<FlashMessage>,
+    csrf_token: String,
+    report: IntegrityHealth,
+}
+
+pub async fn file_tracking_page(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    let flash = take_flash(&session);
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let db = state.db.clone();
+    let tracked_files = web::block(move || {
+        let db = db.lock();
+        db.get_all_tracked_files()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let spt_dir = state.spt_dir.clone();
+    let report = web::block(move || health::check_integrity_from(&tracked_files, &spt_dir))
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+    let tmpl = FileTrackingTemplate {
+        user,
+        nav: NavContext::from_state(&state),
+        flash,
+        csrf_token,
+        report,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
