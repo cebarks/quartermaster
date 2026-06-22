@@ -1,10 +1,9 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use actix_web::cookie::Key;
-use actix_web::dev::{Service, ServiceRequest, ServiceResponse};
+use actix_web::dev::ServiceResponse;
 use actix_web::test::{self, TestRequest};
-use actix_web::{web, App, Error};
+use actix_web::{web, App};
 use parking_lot::Mutex;
 use tempfile::TempDir;
 
@@ -191,7 +190,7 @@ pub struct TestApp {
 }
 
 impl TestApp {
-    /// Make a GET request with current cookies.
+    /// Make a GET request with current cookies. Automatically saves response cookies.
     pub async fn get(&mut self, path: &str) -> ServiceResponse {
         let app_state = self.app_state.clone();
         let session_key = self.session_key.clone();
@@ -204,15 +203,17 @@ impl TestApp {
         .await;
 
         let mut req = TestRequest::get().uri(path);
-        for cookie in &self.cookies {
-            req = req.insert_header(("cookie", cookie.as_str()));
+        if !self.cookies.is_empty() {
+            req = req.insert_header(("cookie", self.cookies.join("; ")));
         }
 
-        let req = req.to_request();
-        test::call_service(&service, req).await
+        let resp = test::call_service(&service, req.to_request()).await;
+        self.collect_cookies(&resp);
+        resp
     }
 
     /// Make a POST request with form-encoded body and current cookies.
+    /// Automatically saves response cookies.
     pub async fn post_form(&mut self, path: &str, body: &str) -> ServiceResponse {
         let app_state = self.app_state.clone();
         let session_key = self.session_key.clone();
@@ -227,24 +228,32 @@ impl TestApp {
         let mut req = TestRequest::post()
             .uri(path)
             .insert_header(("content-type", "application/x-www-form-urlencoded"));
-        for cookie in &self.cookies {
-            req = req.insert_header(("cookie", cookie.as_str()));
+        if !self.cookies.is_empty() {
+            req = req.insert_header(("cookie", self.cookies.join("; ")));
         }
 
-        let req = req.set_payload(body.to_string()).to_request();
-        test::call_service(&service, req).await
+        let resp =
+            test::call_service(&service, req.set_payload(body.to_string()).to_request()).await;
+        self.collect_cookies(&resp);
+        resp
     }
 
-    /// Extract and save cookies from a response.
-    pub fn save_cookies(&mut self, resp: &ServiceResponse) {
+    /// Extract and save cookies from a response, replacing existing cookies with the same name.
+    fn collect_cookies(&mut self, resp: &ServiceResponse) {
         for header in resp.headers().get_all("set-cookie") {
             if let Ok(value) = header.to_str() {
-                // Extract the cookie name=value; ignore attributes like Path, HttpOnly, etc.
                 if let Some(cookie_part) = value.split(';').next() {
+                    let name = cookie_part.split('=').next().unwrap_or("");
+                    self.cookies.retain(|c| !c.starts_with(&format!("{name}=")));
                     self.cookies.push(cookie_part.to_string());
                 }
             }
         }
+    }
+
+    /// Extract and save cookies from a response (public, for manual use).
+    pub fn save_cookies(&mut self, resp: &ServiceResponse) {
+        self.collect_cookies(resp);
     }
 
     /// Login as a user: GET login page, extract CSRF token, POST credentials, save cookies.
