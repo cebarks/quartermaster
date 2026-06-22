@@ -78,7 +78,7 @@
     </td>
 </tr>
 </tbody>
-<template>
-<input type="hidden" name="sort" value="{{ sort_column }}" id="sort-input" hx-swap-oob="true">
-<input type="hidden" name="dir" value="{{ sort_dir }}" id="dir-input" hx-swap-oob="true">
-</template>
+<span id="sort-oob-wrapper" hx-swap-oob="true" style="display:contents">
+<input type="hidden" name="sort" id="sort-input" value="{{ sort_column }}">
+<input type="hidden" name="dir" id="dir-input" value="{{ sort_dir }}">
+</span>
