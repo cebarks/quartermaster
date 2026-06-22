@@ -176,19 +176,35 @@ impl ForgeClient {
         Ok(body.data)
     }
 
+    fn is_forge_url(&self, url: &str) -> bool {
+        let origin = |s: &str| {
+            let u = reqwest::Url::parse(s).ok()?;
+            Some((u.scheme().to_string(), u.host_str()?.to_string(), u.port()))
+        };
+        match (origin(url), origin(&self.base_url)) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        }
+    }
+
     /// Download a file from `url` and write it to `dest`.
     pub async fn download_file(&self, url: &str, dest: &Path) -> Result<()> {
         use futures_util::StreamExt;
 
-        let resp = self
-            .client
-            .get(url)
-            .timeout(std::time::Duration::from_secs(600))
-            .send()
-            .await
-            .context("download_file request failed")?
-            .error_for_status()
-            .context("download_file returned error status")?;
+        let timeout = std::time::Duration::from_secs(600);
+        let resp = if self.is_forge_url(url) {
+            self.client.get(url).timeout(timeout).send().await
+        } else {
+            // External host (GitLab, GitHub, etc.) — don't send Forge auth token
+            reqwest::Client::new()
+                .get(url)
+                .timeout(timeout)
+                .send()
+                .await
+        }
+        .context("download_file request failed")?
+        .error_for_status()
+        .context("download_file returned error status")?;
 
         let mut stream = resp.bytes_stream();
         let mut file = tokio::fs::File::create(dest)
@@ -613,6 +629,37 @@ mod tests {
         let dest = dir.path().join("downloaded.zip");
 
         let url = format!("{}/files/test.zip", server.uri());
+        client.download_file(&url, &dest).await.unwrap();
+
+        let written = std::fs::read(&dest).unwrap();
+        assert_eq!(written, file_content);
+    }
+
+    #[tokio::test]
+    async fn download_file_external_url_omits_auth() {
+        let forge_server = MockServer::start().await;
+        let external_server = MockServer::start().await;
+        let file_content = b"external file content";
+
+        Mock::given(method("GET"))
+            .and(path("/files/mod.zip"))
+            .and(wiremock::matchers::header_exists("Authorization"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&external_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/files/mod.zip"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(file_content.to_vec()))
+            .mount(&external_server)
+            .await;
+
+        let client =
+            ForgeClient::with_base_url(forge_server.uri(), Some("secret-token".into())).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("mod.zip");
+
+        let url = format!("{}/files/mod.zip", external_server.uri());
         client.download_file(&url, &dest).await.unwrap();
 
         let written = std::fs::read(&dest).unwrap();
