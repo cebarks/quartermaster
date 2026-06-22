@@ -710,10 +710,9 @@ pub async fn client_delete(
     if let Some(states) = &state.client_states {
         let clients = states.read().await;
         if let Some(client) = clients.iter().find(|c| c.index == index) {
-            if matches!(
-                client.fika_status,
-                Some(EHeadlessStatus::InRaid | EHeadlessStatus::Ready)
-            ) {
+            if matches!(client.fika_status, Some(EHeadlessStatus::InRaid))
+                && !client.players.is_empty()
+            {
                 set_flash(
                     &session,
                     &format!("Client {index} is in raid. Wait for it to finish or stop it first."),
