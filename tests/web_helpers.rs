@@ -87,13 +87,9 @@ impl TestAppBuilder {
                 .expect("failed to insert user");
         }
 
-        // Seed mods
+        // Seed mods using the DB API
         for (forge_id, name, version) in &self.mods {
-            db.conn()
-                .execute(
-                    "INSERT INTO mods (forge_id, name, version, mod_type, file_hash, installed_at) VALUES (?, ?, ?, 'server', 'fakehash', datetime('now'))",
-                    rusqlite::params![forge_id, name, version],
-                )
+            db.insert_mod(*forge_id, 1, name, None, version)
                 .expect("failed to insert mod");
         }
 
