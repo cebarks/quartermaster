@@ -4,8 +4,7 @@
     <a href="/quma/"{% if active == "dashboard" %} class="active"{% endif %}>{% call icons::home() %}{% endcall %} Dashboard</a>
     {% if user.role.can_manage_mods() %}
     <a href="/quma/mods"{% if active == "mods" %} class="active"{% endif %}>{% call icons::package() %}{% endcall %} Mods</a>
-    {% endif %}
-    <a href="/quma/status"{% if active == "status" %} class="active"{% endif %}>{% call icons::activity() %}{% endcall %} Status</a>
+    {% endif %}</a>
     <a href="/quma/stats"{% if active == "stats" %} class="active"{% endif %}>{% call icons::crosshair() %}{% endcall %} Stats</a>
     {% if nav.modsync_installed %}
     <a href="/quma/modsync"{% if active == "modsync" %} class="active"{% endif %}>{% call icons::refresh() %}{% endcall %} NarcoNet</a>
@@ -25,6 +24,7 @@
             <a href="/quma/admin"{% if active == "admin" %} class="active"{% endif %}>Users & Invites</a>
             {% endif %}
             <a href="/quma/logs"{% if active == "logs" %} class="active"{% endif %}>Logs</a>
+            <a href="/quma/metrics"{% if active == "metrics" %} class="active"{% endif %}>Metrics</a>
             {% if user.role.can_manage_users() %}
             <a href="/quma/settings"{% if active == "settings" %} class="active"{% endif %}>Settings</a>
             {% endif %}

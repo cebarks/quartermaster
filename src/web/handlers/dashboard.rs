@@ -27,7 +27,6 @@ struct DashboardTemplate {
     csrf_token: String,
     nav: NavContext,
     modsync_managed: bool,
-    transitioning: bool,
 }
 
 pub async fn dashboard(
@@ -38,7 +37,6 @@ pub async fn dashboard(
     let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
-    let transitioning = state.get_server_transition().is_some();
 
     let nav = NavContext::from_state(&state);
     let modsync_managed = nav.modsync_installed && state.config.modsync.is_some();
@@ -50,7 +48,6 @@ pub async fn dashboard(
         csrf_token,
         nav,
         modsync_managed,
-        transitioning,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
