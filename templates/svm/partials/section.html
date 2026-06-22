@@ -10,10 +10,14 @@
             {% endif %}
 
             {% for field in group.fields %}
-            <div class="form-group" style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border)">
-                <label title="{{ field.description }}">
-                    {{ field.label }}
-                </label>
+            <div class="form-group" style="display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: start; padding: 0.5rem 0; border-bottom: 1px solid var(--border)">
+                <div>
+                    <label style="white-space: normal">{{ field.label }}</label>
+                    {% if !field.description.is_empty() %}
+                    <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem; line-height: 1.3">{{ field.description }}</div>
+                    {% endif %}
+                </div>
+                <div style="padding-top: 0.15rem">
                 {% match field.input_type %}
                     {% when InputType::Toggle %}
                         <input type="checkbox" name="{{ field.path }}" data-svm-field>
@@ -32,6 +36,7 @@
                     {% when InputType::Textarea %}
                         <textarea name="{{ field.path }}" data-svm-field rows="4" style="width: 100%"></textarea>
                 {% endmatch %}
+                </div>
             </div>
             {% endfor %}
 

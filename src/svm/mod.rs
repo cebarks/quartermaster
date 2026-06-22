@@ -50,7 +50,7 @@ impl SvmManager {
 
         // If preset is null/missing/empty, create Default preset
         let presets_dir = svm_dir.join(PRESETS_DIR);
-        if active_preset.is_empty() {
+        if active_preset.is_empty() || active_preset == "null" {
             active_preset = "Default".to_string();
             let default_config = SvmConfig::default();
             let default_path = presets_dir.join("Default.json");

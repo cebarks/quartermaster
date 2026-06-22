@@ -178,14 +178,14 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "EquipRigsWithArmors",
             label: "Equip Rigs With Armors",
-            description: "Allow rigs to be equipped with armors",
+            description: "Allows equipping armored rigs such as AVS or Tac-Tec with armors such as the Trooper or Slick",
             input_type: InputType::Toggle,
             subgroup: None,
         },
         FieldMeta {
             path: "RemoveSecureContainerFilters",
             label: "Remove Secure Container Filters",
-            description: "Remove item restrictions from secure containers",
+            description: "Allows putting any items into any secure container CAUTION: If you plan on putting in items that can't be discarded in raid, it is highly recommended to enable the \"Remove 'Can't be dropped in Raid' tag\" option - otherwise, those items will be deleted on death, even if insured or on softcore.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -235,7 +235,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ExamineTime",
             label: "Examine Time Multiplier",
-            description: "Multiplier for item examination time",
+            description: "Affects how quickly unexamined items are inspected. Does not impact general search speed.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -268,7 +268,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ItemPriceMult",
             label: "Item Price Multiplier",
-            description: "Multiplier for item prices",
+            description: "Multiplies the base price for the item. Affects buying/selling on the flea market and sales to traders.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -326,7 +326,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "AmmoLoadSpeed",
             label: "Ammo Load Speed Multiplier",
-            description: "Multiplier for magazine loading speed",
+            description: "Multiplies the required time to load or unload a round into or out of a magazine. The smaller the value, the faster the process.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -384,7 +384,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RemoveBackpacksRestrictions",
             label: "Remove Backpack Restrictions",
-            description: "Remove backpack item restrictions",
+            description: "Allows you to put any item into any backpack. CAUTION: If you plan on putting in items that can't be discarded in raid, it is highly recommended to enable the \"Remove 'Can't be dropped in Raid' tag\" option - otherwise, those items will be deleted on death, even if insured or on softcore.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -405,21 +405,21 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "NoGearPenalty",
             label: "No Gear Penalty",
-            description: "Disable movement penalties from gear weight",
+            description: "Removes gear penalties like slower movement, reduced weapon ergonomics, and turning speed.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
         FieldMeta {
             path: "RaidDrop",
             label: "Raid Drop",
-            description: "Enable raid-specific drops",
+            description: "Enables dropping any item during a raid.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
         FieldMeta {
             path: "AmmoStacks.MarksmanRound",
             label: "Marksman Round Stack",
-            description: "Stack size for marksman rifle ammo",
+            description: "Sets the maximum ammunition stack size per cell for these calibers: 6.8x51, 7.62x51, 7.62x54R",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: None,
@@ -429,7 +429,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "AmmoStacks.RifleRound",
             label: "Rifle Round Stack",
-            description: "Stack size for rifle ammo",
+            description: "Sets the maximum ammunition stack size per cell for these calibers: 5.45x39, 5.56x45, .300, .366, 7.62x39, 9x39",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: None,
@@ -439,7 +439,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "AmmoStacks.ShotgunRound",
             label: "Shotgun Round Stack",
-            description: "Stack size for shotgun ammo",
+            description: "Sets the maximum ammunition stack size per cell for these calibers: 12x70, 20x70, 23x75",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: None,
@@ -449,7 +449,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "AmmoStacks.PistolRound",
             label: "Pistol Round Stack",
-            description: "Stack size for pistol ammo",
+            description: "Sets the maximum ammunition stack size per cell for these calibers: 9x18, 9x19, 9x21, 7.62x25, .357(9x33), .45ACP(11.43x23ACP), 46x30, 5.7x28",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: None,
@@ -459,7 +459,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "AmmoStacks.LargeCaliberRound",
             label: "Large Caliber Round Stack",
-            description: "Stack size for large caliber ammo",
+            description: "Sets the maximum ammunition stack size per cell for these calibers: .50Cal, 12.7x55, .338LM",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: None,
@@ -476,7 +476,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Keys.AvoidSingleKeyCards",
             label: "Avoid Single Key Cards",
-            description: "Prevent single-use keycards",
+            description: "Avoid single-use keycards such as blue marked one, Labrys and Labs access keycard",
             input_type: InputType::Toggle,
             subgroup: Some("Keys"),
         },
@@ -504,14 +504,14 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Keys.AvoidResidential",
             label: "Avoid Residential",
-            description: "Prevent residential keys from breaking",
+            description: "TerraGroup Labs residential unit keycard, which has two uses by default.",
             input_type: InputType::Toggle,
             subgroup: Some("Keys"),
         },
         FieldMeta {
             path: "Keys.AvoidOddKeys",
             label: "Avoid Odd Keys",
-            description: "Prevent odd keys from breaking",
+            description: "Excludes keys with non-standard use counts (e.g., 2, 5, 10, 20), such as Ref's Hideout keys, the Factory Exit key, certain Streets keys (e.g., Chek 15), the Cargo key, etc. Does not affect Marked Room keys.",
             input_type: InputType::Toggle,
             subgroup: Some("Keys"),
         },
@@ -624,7 +624,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "NoFuelMult",
             label: "No Fuel Multiplier",
-            description: "Multiplier for production without fuel",
+            description: "Multiplies the constant 0.07 by the entered value. Greater values result in faster production times without fuel.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -635,7 +635,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ScavCasePrice",
             label: "Scav Case Price Multiplier",
-            description: "Multiplier for scav case prices",
+            description: "Modifies the price for each Scav Case offer. The smaller the value, the less you pay. Affects only currency-based offers.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -646,7 +646,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ScavCaseTime",
             label: "Scav Case Time Multiplier",
-            description: "Multiplier for scav case time",
+            description: "Modifies the time required to complete each Scav Case cycle. Smaller values result in faster Scav Case return times.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -657,7 +657,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "HideoutConstMult",
             label: "Hideout Construction Multiplier",
-            description: "Multiplier for hideout construction time",
+            description: "Modifies the time required to construct something in the hideout. Smaller values result in faster construction times.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -668,7 +668,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "HideoutProdMult",
             label: "Hideout Production Multiplier",
-            description: "Multiplier for hideout production time",
+            description: "Modifies the time required to produce something in the hideout. Smaller values result in faster production times.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -689,7 +689,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "GPUBoostRate",
             label: "GPU Boost Rate",
-            description: "GPU bitcoin boost multiplier",
+            description: "Multiplies the constant 0.041225 by the entered value. The greater the value, the more each GPU matters. To negate this constant entirely (and thus dramatically increase GPU efficiency), set the value below to 24,26.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -700,7 +700,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "AirFilterRate",
             label: "Air Filter Rate Multiplier",
-            description: "Multiplier for air filter effectiveness",
+            description: "Multiplies the constant 0.0047222222222222 by the entered value. By default it takes ~211 seconds to spend 1 unit of the air filter. Smaller values result in increased consumption times.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -732,7 +732,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "FuelConsumptionRate",
             label: "Fuel Consumption Rate",
-            description: "Multiplier for fuel consumption",
+            description: "Multiplies the constant 0.00131944444444 by the entered value. It takes 758 seconds to spend 1 unit of fuel. Smaller values result in longer-lasting fuel.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -771,14 +771,14 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RemoveSkillRequirements",
             label: "Remove Skill Requirements",
-            description: "Remove skill requirements for hideout",
+            description: "Removes PMC Skill levels as a requirement for construction.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
         FieldMeta {
             path: "RemoveTraderLevelRequirements",
             label: "Remove Trader Level Requirements",
-            description: "Remove trader level requirements for hideout",
+            description: "Removes trader reputation levels as a requirement for construction.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -806,7 +806,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "PrestigeAreas",
             label: "Prestige Areas",
-            description: "Reset hideout areas on prestige",
+            description: "By default prestige require you to have: Intellegence center Lvl 2 Security Lvl 3 Rest Space Lvl 3 This feature removes this requirement",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -1165,14 +1165,14 @@ pub fn traders_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RemoveTimeCondition",
             label: "Remove Time Condition",
-            description: "Remove time conditions from trader offers",
+            description: "Remember quests that show up only after 24 real-life hours have passed? Enable this to remove that time restriction.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
         FieldMeta {
             path: "AllQuestsAvailable",
             label: "All Quests Available",
-            description: "Make all quests available immediately",
+            description: "Technically safe to use, but once you accept any unlocked quest, it becomes permanently bound to your profile. This cannot be undone.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -1223,14 +1223,14 @@ pub fn traders_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RandomizeAssort",
             label: "Randomize Assortment",
-            description: "Randomize trader assortments",
+            description: "Alters available stock size randomly up to 1440",
             input_type: InputType::Toggle,
             subgroup: None,
         },
         FieldMeta {
             path: "UnlockQuestAssort",
             label: "Unlock Quest Assortment",
-            description: "Unlock quest-locked trader items",
+            description: "This feature can throw a warning and may not take an effect on a custom trader mod.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -1251,7 +1251,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "FIRTrade",
             label: "FIR Trade",
-            description: "Enable found-in-raid requirement for trading",
+            description: "Everything you purchase from traders will come with the `Found in Raid` tag.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -1620,7 +1620,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Locations.AllContainers",
             label: "All Containers",
-            description: "Apply container multipliers to all maps",
+            description: "Forces every chance-based container to spawn on the map. Not at all balanced and will increase the load on your PC.",
             input_type: InputType::Toggle,
             subgroup: Some("Locations"),
         },
@@ -2874,7 +2874,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "NoRunThrough",
             label: "No Run Through",
-            description: "Disable run-through status",
+            description: "Removes XP requirement for the 'Survived' tag. Effectively disables 'Run Through'.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -2891,14 +2891,14 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "SafeExit",
             label: "Safe Exit",
-            description: "Always extract safely regardless of status",
+            description: "Allows you to leave via menu to save gear/loot. You will, however, be counted as 'Run Through' - stripping your loot from being FiR. Conflicts with the 'Softcore' option.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
         FieldMeta {
             path: "SaveGearAfterDeath",
             label: "Save Gear After Death",
-            description: "Keep gear after dying in raid",
+            description: "Dying, leaving via menu or getting lost will be counted as 'Run Through'. Saves your things, but removes the 'Found in Raid' tag from items. Conflicts with the 'Safe Exit' option.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -3254,7 +3254,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Exfils.ArmorExtract",
             label: "Armor Extract",
-            description: "Remove armor requirement for armor extracts",
+            description: "Removes the 'no armor' requirement for certain extraction points. Such exits are: Lighthouse: Mountain Pass Reserve: Cliff Descent",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
@@ -3312,7 +3312,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Exfils.NoBackpack",
             label: "No Backpack",
-            description: "Remove backpack requirement for no-backpack extracts",
+            description: "Removes the 'no backpack' requirement for certain extraction points. Such exits are: Interchange: Hole in the Fence Reserve: Sewer Manhole The Laboratory: Ventilation Shaft",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
@@ -3376,21 +3376,21 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Exfils.ExtendedExtracts",
             label: "Extended Extracts",
-            description: "Enable extended extract points",
+            description: "Allows you to use extraction points on the same side you deployed from.",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
         FieldMeta {
             path: "Exfils.ChanceExtracts",
             label: "Chance Extracts",
-            description: "Make chance extracts always available",
+            description: "Chance-based exits will always be available. Such exits are: Streets: Courtyard, Primorsky Ave Taxi V-Ex Interchange: Power Station V-Ex Customs: Dorms V-Ex, Old Gas Station Woods: RUAF Gate, ZB-014, ZB-016 Shoreline: Pier Boat Laboratory: Parking Gate, Hangar Gate",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
         FieldMeta {
             path: "Exfils.GearExtract",
             label: "Gear Extract",
-            description: "Remove gear requirements for gear extracts",
+            description: "Removes the 'Red Rebel Ice Pick' and 'Paracord' requirements for extraction points. Such exits are: Lighthouse: Mountain Pass Reserve: Cliff Descent",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
@@ -3469,7 +3469,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RaidEvents.HealthResortIncludeGuards",
             label: "Health Resort Include Guards",
-            description: "Include boss guards in Health Resort event",
+            description: "Not recommended! This is more of a stress test than a feature. You will have more than 30 AI in a single area. Enable at your own peril.",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
@@ -3516,7 +3516,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RaidEvents.Christmas",
             label: "Christmas",
-            description: "Enable Christmas event",
+            description: "Christmas event - enables event exclusive lights in hideout, gives you a christmas gift, allows for Santa Claus to spawn, and adds event loot to AI.",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
@@ -3530,21 +3530,21 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RaidEvents.Halloween",
             label: "Halloween",
-            description: "Enable Halloween event",
+            description: "Halloween event - enables event exclusive lights in the hideout, alters Zryachiy behavior/spawns, adds event loot to AI, as well as the ritual mechanic.",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
         FieldMeta {
             path: "RaidEvents.DisableZombies",
             label: "Disable Zombies",
-            description: "Disable zombie spawns",
+            description: "Disable zombies when Halloween is enabled, as they are on by default. Will not work if Halloween is disabled.",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
         FieldMeta {
             path: "RaidEvents.DisableHalloweenAIFriendly",
             label: "Disable Halloween AI Friendly",
-            description: "Make Halloween AI hostile",
+            description: "By default, when zombies are enabled, SCAVs won't attack you, and PMCs may also hold fire. This option disables that behavior, causing AI to act as normal. CAUTION: This will override AI PMC fields related to hostility.",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
@@ -3572,7 +3572,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RaidEvents.AITypeOverride",
             label: "AI Type Override",
-            description: "Override AI type",
+            description: "Will override all initial SCAV spawns into selected type of AI",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
@@ -3743,7 +3743,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "DisableBSGList",
             label: "Disable BSG List",
-            description: "Disable BSG blacklist for flea market",
+            description: "CAUTION: Will not affect their (possibly) broken prices. Some items might be too cheap.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -4207,7 +4207,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "InsuranceInterval",
             label: "Insurance Interval (seconds)",
-            description: "Time interval between insurance returns",
+            description: "How often the server checks for available insurance returns (in seconds). Setting this value too low may cause strain on the server - hurting performance.",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: None,
@@ -4217,7 +4217,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "InsuranceTimeOverride",
             label: "Insurance Time Override (hours)",
-            description: "Override insurance return time",
+            description: "Overrides the timer for every trader capable of insurance. Insurance returns are still is affected by the interval above.",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: None,
@@ -4436,7 +4436,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ClothesAnySide",
             label: "Clothes Any Side",
-            description: "Allow any faction clothing",
+            description: "Allows you to purchase both USEC and BEAR apparel.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -4450,7 +4450,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ClothesFree",
             label: "Clothes Free",
-            description: "Make all clothing free",
+            description: "Removes cash requirements for purchasing apparel.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -4600,7 +4600,7 @@ pub fn quests_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "DailyQuests.Types",
             label: "Daily - Quest Types",
-            description: "Number of quest types for dailies",
+            description: "Daily missions are split into 3 types: Extermination, Completion, and Exploration. Extermination – Kill PMCs, Scavs, or Bosses. May require specific body parts or certain ranges (close or long). Completion - Fetch items with the 'found in raid' tag. Exploration - Exfiltrate from specific a location with the 'Survived' tag. May require a specific exit.",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: Some(10),
@@ -4650,7 +4650,7 @@ pub fn quests_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "WeeklyQuests.Types",
             label: "Weekly - Quest Types",
-            description: "Number of quest types for weeklies",
+            description: "Daily missions are split into 3 types: Extermination, Completion, and Exploration. Extermination – Kill PMCs, Scavs, or Bosses. May require specific body parts or certain ranges (close or long). Completion - Fetch items with the 'found in raid' tag. Exploration - Exfiltrate from specific a location with the 'Survived' tag. May require a specific exit.",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: Some(10),
@@ -4700,7 +4700,7 @@ pub fn quests_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ScavQuests.Types",
             label: "Scav - Quest Types",
-            description: "Number of quest types for scav quests",
+            description: "Daily missions are split into 3 types: Extermination, Completion, and Exploration. Extermination – Kill PMCs, Scavs, or Bosses. May require specific body parts or certain ranges (close or long). Completion - Fetch items with the 'found in raid' tag. Exploration - Exfiltrate from specific a location with the 'Survived' tag. May require a specific exit.",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: Some(10),
@@ -5845,7 +5845,7 @@ pub fn scav_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ScavTimer",
             label: "Scav Timer (seconds)",
-            description: "Cooldown time between scav runs",
+            description: "CAUTION: Changing this will not affect the existing timer!",
             input_type: InputType::Integer {
                 min: Some(0),
                 max: None,
@@ -6359,7 +6359,7 @@ pub fn bots_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "AIChance.ForcePartisan",
             label: "Force Partisan",
-            description: "Force partisan spawn",
+            description: "By default, Partisan has a specific trigger event that possibly affects his spawn. This option removes it, making Partisan spawn like any other boss.",
             input_type: InputType::Toggle,
             subgroup: Some("AiChance"),
         },
@@ -6727,7 +6727,8 @@ pub fn pmc_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "PMCRatio",
             label: "PMC Ratio",
-            description: "Percentage of PMCs vs scavs",
+            description:
+                "Ratio (in %) for a spawned PMC to be USEC or BEAR. 100 = USEC only, 0 = BEAR only.",
             input_type: InputType::Integer {
                 min: Some(0),
                 max: Some(100),
