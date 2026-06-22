@@ -21,8 +21,7 @@ impl ForgeClient {
         Self::build(DEFAULT_BASE_URL.to_string(), token)
     }
 
-    /// Create a client with a custom base URL (for tests against a mock server).
-    #[cfg(test)]
+    #[allow(dead_code)] // used by integration tests
     pub fn with_base_url(base_url: String, token: Option<String>) -> Result<Self> {
         Self::build(base_url, token)
     }

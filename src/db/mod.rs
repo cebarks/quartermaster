@@ -19,7 +19,7 @@ impl Database {
         Self::configure_and_migrate(conn)
     }
 
-    #[cfg(test)]
+    #[allow(dead_code)] // used by integration tests
     pub fn open_in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         Self::configure_and_migrate(conn)
@@ -29,7 +29,7 @@ impl Database {
         self.conn.unchecked_transaction()
     }
 
-    #[cfg(test)]
+    #[allow(dead_code)] // used by integration tests
     pub fn conn(&self) -> &Connection {
         &self.conn
     }
