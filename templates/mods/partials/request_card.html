@@ -35,7 +35,7 @@
     <p class="text-sm mt-1" style="font-style:italic;color:var(--text-muted)">"{{ reason }}"</p>
     {% endif %}
     <div class="flex-between mt-1">
-        <span class="text-muted text-sm">by {{ r.requester_username }} · {{ r.request.created_at }}</span>
+        <span class="text-muted text-sm">by <a href="/quma/profiles/{{ r.requester_username }}">{{ r.requester_username }}</a> · {{ r.request.created_at }}</span>
         <div class="vote-buttons flex gap-1" style="align-items:center;flex-wrap:wrap">
             {% if r.request.status == "pending" %}
             <form hx-post="/quma/api/requests/{{ r.request.id }}/vote" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML" style="display:inline">

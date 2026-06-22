@@ -12,7 +12,7 @@
     <tbody>
         {% for (u, profile) in users %}
         <tr{% if u.id == current_user_id %} class="current-user"{% endif %}>
-            <td><strong>{{ u.username }}</strong></td>
+            <td><strong><a href="/quma/profiles/{{ u.username }}">{{ u.username }}</a></strong></td>
             <td>
                 {% if u.id != current_user_id %}
                 <form style="display:inline">

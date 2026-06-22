@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
+{% block title %}Stats — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("stats", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Stats</h1>
+
+<div class="tab-bar">
+    <button class="tab active" onclick="switchStatsTab('raids', this)">Raids</button>
+    <button class="tab" onclick="switchStatsTab('leaderboard', this)">Leaderboard</button>
+</div>
+
+<div id="stats-tab-content">
+    <div class="stats-tab" id="tab-raids">
+        <div class="stat-card-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Raids</div>
+                <div class="stat-value">{{ raid_stats.total_raids }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Survival Rate</div>
+                <div class="stat-value">{{ raid_stats.overall_survival_rate|fmt_pct }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Active Players</div>
+                <div class="stat-value">{{ raid_stats.unique_players }}</div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:1.5rem">
+            <h2>Active Raids</h2>
+            <div id="active-raids" hx-get="/quma/api/raids/active" hx-trigger="sse:raidStarted, sse:raidEnded" hx-swap="innerHTML">
+                {% if active_raids.is_empty() %}
+                <p class="text-muted text-sm">No active raids.</p>
+                {% else %}
+                <table>
+                    <thead>
+                        <tr><th>Player</th><th>Map</th><th>Side</th><th>Time In Raid</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for (raid, username) in active_raids %}
+                        <tr>
+                            <td><a href="/quma/profiles/{{ username }}">{{ username }}</a></td>
+                            <td>{{ raid.map }}</td>
+                            <td>{{ raid.player_side }}</td>
+                            <td class="text-sm">{{ raid.started_at|format_uptime }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem">
+            <div class="card">
+                <h2>Map Popularity</h2>
+                {% if raid_stats.map_counts.is_empty() %}
+                <p class="text-muted text-sm">No raid data yet.</p>
+                {% else %}
+                <table>
+                    <thead>
+                        <tr><th>Map</th><th>Raids</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for (map, count) in raid_stats.map_counts %}
+                        <tr>
+                            <td>{{ map }}</td>
+                            <td>{{ count }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+
+            <div class="card">
+                <h2>Top Killers</h2>
+                {% if raid_stats.top_killers.is_empty() %}
+                <p class="text-muted text-sm">No kills recorded yet.</p>
+                {% else %}
+                <table>
+                    <thead>
+                        <tr><th>Player</th><th>Kills</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for (username, kills) in raid_stats.top_killers %}
+                        <tr>
+                            <td><a href="/quma/profiles/{{ username }}">{{ username }}</a></td>
+                            <td>{{ kills }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Recent Raids</h2>
+            <div id="recent-raids" hx-get="/quma/api/raids/recent" hx-trigger="sse:raidEnded" hx-swap="innerHTML">
+                {% if raid_stats.recent_raids.is_empty() %}
+                <p class="text-muted text-sm">No completed raids yet.</p>
+                {% else %}
+                <table>
+                    <thead>
+                        <tr><th>Player</th><th>Map</th><th>Side</th><th>Duration</th><th>Outcome</th><th>Ended</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for (raid, username) in raid_stats.recent_raids %}
+                        <tr onclick="window.location='/quma/raids/{{ raid.id }}'" style="cursor:pointer">
+                            <td><a href="/quma/profiles/{{ username }}">{{ username }}</a></td>
+                            <td>{{ raid.map }}</td>
+                            <td>{{ raid.player_side }}</td>
+                            <td>{% if let Some(duration) = raid.play_time_seconds %}{{ (duration / 60)|fmt("{}") }}m{% else %}—{% endif %}</td>
+                            <td>
+                                {% if let Some(status) = raid.exit_status %}
+                                    {% if status == "Survived" %}
+                                        <span class="badge badge-success">{{ status }}</span>
+                                    {% else if status == "Killed" %}
+                                        <span class="badge badge-danger">{{ status }}</span>
+                                    {% else if status == "Runner" || status == "MissingInAction" %}
+                                        <span class="badge badge-warning">{{ status }}</span>
+                                    {% else %}
+                                        <span class="badge badge-muted">{{ status }}</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="badge badge-muted">Unknown</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-sm text-muted">{% if let Some(ended) = raid.ended_at %}{{ ended|fmt("{:.16}") }}{% else %}—{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="stats-tab" id="tab-leaderboard" style="display:none">
+        {% if leaderboard_entries.is_empty() %}
+        <div class="card">
+            <p class="text-muted">No players with {{ min_raids }}+ completed raids yet.</p>
+        </div>
+        {% else %}
+        <p class="text-muted text-sm" style="margin-bottom:1rem">Players with {{ min_raids }}+ completed raids</p>
+        <div class="card" style="padding:0;overflow-x:auto">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Player</th>
+                        <th>Raids</th>
+                        <th>Kills</th>
+                        <th>Deaths</th>
+                        <th>K/D</th>
+                        <th>Survival</th>
+                        <th>HS</th>
+                        <th>HS%</th>
+                        <th>Longest Kill</th>
+                        <th>Fav Weapon</th>
+                        <th>Fav Map</th>
+                        <th>Fav Extract</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in leaderboard_entries %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td><a href="/quma/profiles/{{ entry.username }}">{{ entry.username }}</a></td>
+                        <td>{{ entry.total_raids }}</td>
+                        <td>{{ entry.total_kills }}</td>
+                        <td>{{ entry.total_deaths }}</td>
+                        <td>{{ entry.kd_ratio|fmt("{:.1}") }}</td>
+                        <td>{{ entry.survival_rate|fmt_pct }}</td>
+                        <td>{{ entry.headshot_count }}</td>
+                        <td>{{ entry.headshot_ratio|fmt_pct }}</td>
+                        <td>{% if entry.longest_kill > 0.0 %}{{ entry.longest_kill|fmt("{:.0}") }}m{% else %}—{% endif %}</td>
+                        <td>{% if let Some(w) = entry.favorite_weapon %}{{ w }}{% else %}—{% endif %}</td>
+                        <td>{% if let Some(m) = entry.favorite_map %}{{ m }}{% else %}—{% endif %}</td>
+                        <td>{% if let Some(e) = entry.favorite_extract %}{{ e }}{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function switchStatsTab(name, el) {
+    document.querySelectorAll('.stats-tab').forEach(t => t.style.display = 'none');
+    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
+    var tab = document.getElementById('tab-' + name);
+    if (tab) tab.style.display = '';
+    el.classList.add('active');
+    history.replaceState(null, '', '/quma/stats?tab=' + name);
+}
+document.addEventListener('DOMContentLoaded', function() {
+    var params = new URLSearchParams(window.location.search);
+    var tab = params.get('tab');
+    if (tab === 'leaderboard') {
+        var btns = document.querySelectorAll('.tab-bar .tab');
+        if (btns[1]) btns[1].click();
+    }
+});
+</script>
+{% endblock %}

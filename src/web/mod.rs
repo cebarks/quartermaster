@@ -325,6 +325,10 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 web::get().to(handlers::requests::requests_tab),
                             )
                             .route(
+                                "/queue/content",
+                                web::get().to(handlers::queue::queue_content_partial),
+                            )
+                            .route(
                                 "/requests",
                                 web::post().to(handlers::requests::create_request),
                             )
@@ -383,7 +387,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                             .route("/", web::get().to(handlers::dashboard::dashboard))
                             .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
                             .route("/status", web::get().to(handlers::status::status_page))
-                            .route("/queue", web::get().to(handlers::queue::queue_page))
                             .route("/logs", web::get().to(handlers::logs::logs_page))
                             .route("/admin", web::get().to(handlers::admin::admin_page))
                             .route("/mods", web::get().to(handlers::mods::list_mods))
@@ -456,11 +459,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 "/clients/{n}",
                                 web::get().to(handlers::clients::client_detail),
                             )
-                            .route("/raids", web::get().to(handlers::raids::server_raids_page))
-                            .route(
-                                "/leaderboard",
-                                web::get().to(handlers::leaderboard::leaderboard_page),
-                            )
+                            .route("/stats", web::get().to(handlers::raids::stats_page))
                             .route(
                                 "/raids/{raid_id}",
                                 web::get().to(handlers::raids::raid_detail_page),

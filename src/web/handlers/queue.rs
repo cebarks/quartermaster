@@ -6,30 +6,25 @@ use askama::Template;
 use crate::db::users::{PendingOperation, Role};
 use crate::web::auth::{require_auth, require_capability, SessionUser};
 use crate::web::error::WebError;
-use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
-use crate::web::nav::NavContext;
+use crate::web::flash::{set_flash, FlashType};
 use crate::web::state::AppState;
 
 #[derive(Template)]
-#[template(path = "queue.html")]
-struct QueueTemplate {
+#[template(path = "partials/queue_content.html")]
+struct QueueContentPartialTemplate {
     user: SessionUser,
     ops: Vec<PendingOperation>,
-    flash: Option<FlashMessage>,
     csrf_token: String,
-    nav: NavContext,
 }
 
-pub async fn queue_page(
+pub async fn queue_content_partial(
     state: Data<AppState>,
     req: HttpRequest,
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let db = state.db.clone();
-
     let ops = web::block(move || {
         let db = db.lock();
         db.list_pending_ops()
@@ -38,12 +33,10 @@ pub async fn queue_page(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = QueueTemplate {
+    let tmpl = QueueContentPartialTemplate {
         user,
         ops,
-        flash,
         csrf_token,
-        nav: NavContext::from_state(&state),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -73,7 +66,7 @@ pub async fn cancel_op(
 
     set_flash(&session, "Operation cancelled", FlashType::Success);
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/queue"))
+        .insert_header(("Location", "/quma/mods#queue"))
         .finish())
 }
 
@@ -103,7 +96,7 @@ pub async fn apply_queue(
             FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/queue"))
+            .insert_header(("Location", "/quma/mods#queue"))
             .finish());
     }
 
@@ -161,13 +154,13 @@ pub async fn apply_queue(
         let msg = format!("{} operation(s) failed: {names}", failures.len());
         set_flash(&session, &msg, FlashType::Error);
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/queue"))
+            .insert_header(("Location", "/quma/mods#queue"))
             .finish());
     }
 
     set_flash(&session, "Queue applied successfully", FlashType::Success);
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/queue"))
+        .insert_header(("Location", "/quma/mods#queue"))
         .finish())
 }
 

@@ -11,4 +11,5 @@ quartermaster.toml
 spt-server/
 .dev/
 .dev-server/
+.venv
 .venv/

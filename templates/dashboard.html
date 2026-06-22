@@ -21,7 +21,7 @@
         <div class="stat-value">{{ mods.len() }}</div>
         <div class="stat-detail">installed</div>
     </a>
-    <a href="/quma/queue" class="stat-card" style="border-left-color: {% if pending_count > 0 %}var(--warning){% else %}var(--success){% endif %}">
+    <a href="/quma/mods#queue" class="stat-card" style="border-left-color: {% if pending_count > 0 %}var(--warning){% else %}var(--success){% endif %}">
         <div class="stat-label">Queue</div>
         <div class="stat-value">{{ pending_count }}</div>
         <div class="stat-detail">{% if pending_count > 0 %}pending{% else %}all clear{% endif %}</div>
@@ -86,7 +86,7 @@
 {% if pending_count > 0 %}
 <div class="card">
     <h2>Pending Operations</h2>
-    <p>{{ pending_count }} operation(s) queued. <a href="/quma/queue">View queue</a></p>
+    <p>{{ pending_count }} operation(s) queued. <a href="/quma/mods#queue">View queue</a></p>
 </div>
 {% endif %}
 

@@ -1,11 +1,7 @@
-{% extends "base.html" %}
-{% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
-{% block title %}Queue — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("queue", user, csrf_token, nav) %}{% endcall %}{% endblock %}
-{% block content %}
+
 <div class="flex-between">
-    <h1>Pending Operations</h1>
+    <h2>Pending Operations</h2>
     {% if user.role.can_manage_queue() && !ops.is_empty() %}
     <form method="post" action="/quma/queue/apply"
           onsubmit="return confirm('Apply all pending operations?')">
@@ -46,7 +42,13 @@
                 </td>
                 <td>{{ op.mod_name }}</td>
                 <td class="text-muted text-sm">{{ op.queued_at }}</td>
-                <td class="text-muted text-sm">{{ op.queued_by.as_deref().unwrap_or("-") }}</td>
+                <td class="text-muted text-sm">
+                    {% if let Some(by) = op.queued_by.as_deref() %}
+                    <a href="/quma/profiles/{{ by }}">{{ by }}</a>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
                 {% if user.role.can_manage_queue() %}
                 <td>
                     <form method="post" action="/quma/queue/{{ op.id }}/cancel" style="display:inline"
@@ -62,4 +64,3 @@
     </table>
 </div>
 {% endif %}
-{% endblock %}
