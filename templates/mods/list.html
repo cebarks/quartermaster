@@ -237,6 +237,8 @@ document.addEventListener('DOMContentLoaded', function() {
             badgesEl.innerHTML += '<span class="badge badge-success">Fika ✓</span>';
         } else if (fika === 'incompatible') {
             badgesEl.innerHTML += '<span class="badge badge-danger">Fika ✗</span>';
+        } else if (fika === 'unknown') {
+            badgesEl.innerHTML += '<span class="badge badge-muted">Fika ?</span>';
         }
 
         var compatBadge = item.querySelector('[hx-get*="compat-check"]');

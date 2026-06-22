@@ -16,6 +16,8 @@
             <span class="badge badge-success" style="margin-left:0.5rem">Fika ✓</span>
             {% elif r.request.fika_compatible == "incompatible" %}
             <span class="badge badge-danger" style="margin-left:0.5rem">Fika ✗</span>
+            {% elif r.request.fika_compatible == "unknown" %}
+            <span class="badge badge-muted" style="margin-left:0.5rem">Fika ?</span>
             {% endif %}
         </div>
         <div>
