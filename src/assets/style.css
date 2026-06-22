@@ -142,7 +142,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
     color: var(--text-muted);
 }
 .btn-outline:hover { border-color: var(--text); color: var(--text); }
-.btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
 
 /* Badges */
 .badge {
