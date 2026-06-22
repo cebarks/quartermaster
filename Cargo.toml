@@ -114,6 +114,7 @@ predicates = "3"
 temp-env = "0.3"
 wiremock = "0.6"
 urlencoding = "2"
+actix-http = "3"
 
 [profile.release]
 strip = true

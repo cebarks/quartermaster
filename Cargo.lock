@@ -3478,6 +3478,7 @@ name = "spt-quartermaster"
 version = "0.1.0"
 dependencies = [
  "actix-governor",
+ "actix-http",
  "actix-session",
  "actix-web",
  "actix-web-lab",

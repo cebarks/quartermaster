@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use actix_web::cookie::Key;
+use actix_web::dev::Service;
 use actix_web::dev::ServiceResponse;
 use actix_web::test::{self, TestRequest};
-use actix_web::{web, App};
+use actix_web::{web, App, ResponseError};
 use parking_lot::Mutex;
 use tempfile::TempDir;
 
@@ -111,6 +112,14 @@ impl TestAppBuilder {
             ..Config::default()
         };
 
+        // Write config file so handlers that reload config from disk can find it
+        let config_path = spt_dir.join("quartermaster.toml");
+        std::fs::write(
+            &config_path,
+            toml::to_string(&config).expect("failed to serialize config"),
+        )
+        .expect("failed to write config file");
+
         let session_key = Key::derive_from(config.session_secret.as_bytes());
 
         let (events_tx, _) =
@@ -129,7 +138,7 @@ impl TestAppBuilder {
             db: db_arc.clone(),
             forge,
             config: config.clone(),
-            config_path: spt_dir.join("quartermaster.toml"),
+            config_path,
             config_lock: parking_lot::Mutex::new(()),
             spt_dir: spt_dir.clone(),
             spt_info: SptInfo {
@@ -186,52 +195,56 @@ pub struct TestApp {
 }
 
 impl TestApp {
-    /// Make a GET request with current cookies. Automatically saves response cookies.
-    pub async fn get(&mut self, path: &str) -> ServiceResponse {
+    async fn make_service(
+        &self,
+    ) -> impl Service<actix_http::Request, Response = ServiceResponse, Error = actix_web::Error>
+    {
         let app_state = self.app_state.clone();
         let session_key = self.session_key.clone();
-
-        let service = test::init_service(
+        test::init_service(
             App::new()
                 .app_data(app_state)
                 .configure(|cfg| configure_app(cfg, session_key, false, false)),
         )
-        .await;
+        .await
+    }
 
-        let mut req = TestRequest::get().uri(path);
-        if !self.cookies.is_empty() {
-            req = req.insert_header(("cookie", self.cookies.join("; ")));
-        }
-
-        let resp = test::call_service(&service, req.to_request()).await;
+    /// Send a request, handling middleware errors by converting them to error responses.
+    async fn send(&mut self, req: actix_http::Request) -> ServiceResponse {
+        let service = self.make_service().await;
+        let resp = match service.call(req).await {
+            Ok(resp) => resp,
+            Err(err) => {
+                let response = err.error_response();
+                ServiceResponse::new(
+                    actix_web::test::TestRequest::default().to_http_request(),
+                    response,
+                )
+            }
+        };
         self.collect_cookies(&resp);
         resp
     }
 
+    /// Make a GET request with current cookies. Automatically saves response cookies.
+    pub async fn get(&mut self, path: &str) -> ServiceResponse {
+        let mut req = TestRequest::get().uri(path);
+        if !self.cookies.is_empty() {
+            req = req.insert_header(("cookie", self.cookies.join("; ")));
+        }
+        self.send(req.to_request()).await
+    }
+
     /// Make a POST request with form-encoded body and current cookies.
-    /// Automatically saves response cookies.
     pub async fn post_form(&mut self, path: &str, body: &str) -> ServiceResponse {
-        let app_state = self.app_state.clone();
-        let session_key = self.session_key.clone();
-
-        let service = test::init_service(
-            App::new()
-                .app_data(app_state)
-                .configure(|cfg| configure_app(cfg, session_key, false, false)),
-        )
-        .await;
-
         let mut req = TestRequest::post()
             .uri(path)
             .insert_header(("content-type", "application/x-www-form-urlencoded"));
         if !self.cookies.is_empty() {
             req = req.insert_header(("cookie", self.cookies.join("; ")));
         }
-
-        let resp =
-            test::call_service(&service, req.set_payload(body.to_string()).to_request()).await;
-        self.collect_cookies(&resp);
-        resp
+        self.send(req.set_payload(body.to_string()).to_request())
+            .await
     }
 
     /// Extract and save cookies from a response, replacing existing cookies with the same name.
