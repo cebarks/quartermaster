@@ -499,33 +499,36 @@ pub async fn stash_partial(
             });
     }
 
-    // Sort items within each category by requested column
     let sort_ascending = query.sort_dir == "asc";
     for items in items_by_category.values_mut() {
         match query.sort.as_str() {
-            "name" => {
-                items.sort_by(|a, b| {
-                    a.short_name
-                        .to_lowercase()
-                        .cmp(&b.short_name.to_lowercase())
-                });
-                if !sort_ascending {
-                    items.reverse();
+            "name" => items.sort_by(|a, b| {
+                let cmp = a
+                    .short_name
+                    .to_lowercase()
+                    .cmp(&b.short_name.to_lowercase());
+                if sort_ascending {
+                    cmp
+                } else {
+                    cmp.reverse()
                 }
-            }
-            "count" => {
-                items.sort_by_key(|i| i.count);
-                if !sort_ascending {
-                    items.reverse();
+            }),
+            "count" => items.sort_by(|a, b| {
+                let cmp = a.count.cmp(&b.count);
+                if sort_ascending {
+                    cmp
+                } else {
+                    cmp.reverse()
                 }
-            }
-            _ => {
-                // Default: sort by value
-                items.sort_by_key(|i| i.total_value);
-                if !sort_ascending {
-                    items.reverse();
+            }),
+            _ => items.sort_by(|a, b| {
+                let cmp = a.total_value.cmp(&b.total_value);
+                if sort_ascending {
+                    cmp
+                } else {
+                    cmp.reverse()
                 }
-            }
+            }),
         }
     }
 

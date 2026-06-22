@@ -2,14 +2,14 @@
 <div class="empty-state"><p>No stash data available.</p></div>
 {% else %}
 <div id="stash-content"
-     hx-get="/quma/api/profiles/{{ profile_username }}/stash?search={{ search_filter }}&category={{ category_filter }}&sort={{ sort }}&sort_dir={{ sort_dir }}"
+     hx-get="/quma/api/profiles/{{ profile_username }}/stash?search={{ search_filter|urlencode }}&category={{ category_filter|urlencode }}&sort={{ sort }}&sort_dir={{ sort_dir }}"
      hx-trigger="every 10s"
      hx-target="#tab-content"
      hx-swap="innerHTML">
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap">
     <span><strong>{{ total_items }}</strong> items · {{ total_value|format_roubles_i64 }}</span>
     <button class="btn btn-sm btn-outline"
-            hx-get="/quma/api/profiles/{{ profile_username }}/stash?search={{ search_filter }}&category={{ category_filter }}&sort={{ sort }}&sort_dir={{ sort_dir }}"
+            hx-get="/quma/api/profiles/{{ profile_username }}/stash?search={{ search_filter|urlencode }}&category={{ category_filter|urlencode }}&sort={{ sort }}&sort_dir={{ sort_dir }}"
             hx-target="#tab-content"
             hx-swap="innerHTML"
             title="Refresh">↻</button>

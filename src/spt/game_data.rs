@@ -135,10 +135,8 @@ impl GameData {
         let hideout_areas = build_hideout_areas();
         let mut prices = Self::load_prices(spt_dir)?;
         let (item_locales, raw_locale) = Self::load_item_locales(spt_dir)?;
-        let item_categories = Self::load_item_categories(spt_dir, &raw_locale)?;
+        let (item_categories, handbook_prices) = Self::load_handbook_data(spt_dir, &raw_locale)?;
 
-        // Merge handbook prices for items not in prices.json (e.g. currencies)
-        let handbook_prices = Self::load_handbook_prices(spt_dir)?;
         for (id, price) in handbook_prices {
             prices.entry(id).or_insert(price);
         }
@@ -248,25 +246,6 @@ impl GameData {
         Ok(prices)
     }
 
-    fn load_handbook_prices(spt_dir: &Path) -> Result<HashMap<String, i64>> {
-        let path = spt_dir.join("SPT/SPT_Data/database/templates/handbook.json");
-        if !path.exists() {
-            return Ok(HashMap::new());
-        }
-        let contents = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let handbook: HandbookJson = serde_json::from_str(&contents)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
-
-        let mut prices = HashMap::new();
-        for item in &handbook.items {
-            if let Some(price) = item.price {
-                prices.insert(item.id.clone(), price);
-            }
-        }
-        Ok(prices)
-    }
-
     fn load_item_locales(
         spt_dir: &Path,
     ) -> Result<(HashMap<String, ItemLocale>, HashMap<String, String>)> {
@@ -302,24 +281,23 @@ impl GameData {
         Ok((item_locales, locale))
     }
 
-    fn load_item_categories(
+    fn load_handbook_data(
         spt_dir: &Path,
         raw_locale: &HashMap<String, String>,
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<(HashMap<String, String>, HashMap<String, i64>)> {
         let path = spt_dir.join("SPT/SPT_Data/database/templates/handbook.json");
         if !path.exists() {
             tracing::warn!(
                 "handbook.json not found at {}, item categories will show 'Other'",
                 path.display()
             );
-            return Ok(HashMap::new());
+            return Ok((HashMap::new(), HashMap::new()));
         }
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
         let handbook: HandbookJson = serde_json::from_str(&contents)
             .with_context(|| format!("failed to parse {}", path.display()))?;
 
-        // Build category name lookup: category_id → display name
         let cat_names: HashMap<&str, &str> = handbook
             .categories
             .iter()
@@ -329,13 +307,16 @@ impl GameData {
             })
             .collect();
 
-        // Map each item template to its category's display name
         let mut item_categories = HashMap::new();
+        let mut prices = HashMap::new();
         for item in &handbook.items {
             let cat_name = cat_names.get(item.parent_id.as_str()).unwrap_or(&"Other");
             item_categories.insert(item.id.clone(), cat_name.to_string());
+            if let Some(price) = item.price {
+                prices.insert(item.id.clone(), price);
+            }
         }
-        Ok(item_categories)
+        Ok((item_categories, prices))
     }
 
     pub fn quest_name<'a>(&'a self, qid: &'a str) -> &'a str {
