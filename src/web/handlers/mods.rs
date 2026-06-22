@@ -739,11 +739,20 @@ pub async fn install_mod(
         }
     };
 
-    let mod_info = state
-        .forge
-        .get_mod(mod_id, false)
-        .await
-        .map_err(WebError::from)?;
+    let mod_info = match state.forge.get_mod(mod_id, false).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(mod_id, error = %e, "failed to fetch mod info");
+            set_flash(
+                &session,
+                "Could not fetch mod info from Forge. Please try again.",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
 
     const FIKA_FORGE_MOD_ID: i64 = 2326;
 

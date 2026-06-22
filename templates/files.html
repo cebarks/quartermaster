@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% block title %}File Tracking — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("files", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <h1>File Tracking</h1>
 
