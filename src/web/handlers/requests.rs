@@ -119,6 +119,12 @@ pub(crate) fn fika_compat_to_string(fc: &Option<FikaCompat>) -> String {
     }
 }
 
+fn strip_html_tags(html: &str) -> String {
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"<[^>]+>").unwrap());
+    RE.replace_all(html, "").trim().to_string()
+}
+
 fn is_cache_stale(forge_cached_at: &str, ttl_secs: u64) -> bool {
     use chrono::{NaiveDateTime, Utc};
     let cached = NaiveDateTime::parse_from_str(forge_cached_at, "%Y-%m-%d %H:%M:%S")
@@ -193,13 +199,14 @@ pub async fn requests_tab(
                     match forge.get_mod(forge_mod_id, false).await {
                         Ok(m) => {
                             let fc = fika_compat_to_string(&m.fika_compatibility);
+                            let clean_desc = m.description.as_deref().map(strip_html_tags);
                             let _ = web::block(move || {
                                 let db = db.lock();
                                 db.update_mod_request_cache(
                                     request_id,
                                     &m.name,
                                     m.slug.as_deref(),
-                                    m.description.as_deref(),
+                                    clean_desc.as_deref(),
                                     &fc,
                                 )
                             })
@@ -326,7 +333,7 @@ pub async fn create_request(
         .map(|s| s.to_string());
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
-    let mod_desc = mod_info.description.clone();
+    let mod_desc = mod_info.description.as_deref().map(strip_html_tags);
 
     // Atomically check installed + pending + insert under a single DB lock
     // to prevent TOCTOU races on duplicate request creation.
@@ -861,5 +868,28 @@ mod tests {
     #[test]
     fn cache_stale_rfc3339_format() {
         assert!(is_cache_stale("2020-01-01T00:00:00+00:00", 86400));
+    }
+
+    #[test]
+    fn strip_html_tags_removes_tags() {
+        assert_eq!(strip_html_tags("<p>Hello <b>world</b></p>"), "Hello world");
+    }
+
+    #[test]
+    fn strip_html_tags_handles_nested_html() {
+        assert_eq!(
+            strip_html_tags("<div><p>Fika is a <a href=\"#\">cooperative</a> mod</p></div>"),
+            "Fika is a cooperative mod"
+        );
+    }
+
+    #[test]
+    fn strip_html_tags_preserves_plain_text() {
+        assert_eq!(strip_html_tags("no html here"), "no html here");
+    }
+
+    #[test]
+    fn strip_html_tags_handles_empty() {
+        assert_eq!(strip_html_tags(""), "");
     }
 }
