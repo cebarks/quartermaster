@@ -1,0 +1,44 @@
+<a href="/quma/mods" class="card stat-card-wide" style="border-left: 3px solid {% if report.updates_available > 0 || !report.incompatible_mods.is_empty() || !report.load_failures.is_empty() %}var(--warning){% else %}var(--success){% endif %}; text-decoration: none; color: inherit;">
+    <h3>Mods</h3>
+    <table>
+        <tr><th style="width:140px">Installed</th><td><strong>{{ report.installed_count }}</strong></td></tr>
+        {% if let Some(loaded) = report.loaded_count %}
+        <tr><th>Loaded</th><td>{{ loaded }}</td></tr>
+        {% endif %}
+        {% if !report.load_failures.is_empty() %}
+        <tr><th>Load Failures</th><td>
+            {% for name in &report.load_failures %}
+            <span class="badge badge-danger">{{ name }}</span>
+            {% endfor %}
+        </td></tr>
+        {% endif %}
+        {% if !report.untracked_loaded.is_empty() %}
+        <tr><th>Untracked</th><td>
+            {% for name in &report.untracked_loaded %}
+            <span class="badge badge-warning">{{ name }}</span>
+            {% endfor %}
+        </td></tr>
+        {% endif %}
+        <tr><th>Updates</th><td>
+            {% if report.updates_available > 0 %}
+            <span class="badge badge-warning">{{ report.updates_available }} available</span>
+            {% else %}
+            <span class="text-muted">All up to date</span>
+            {% endif %}
+        </td></tr>
+        {% if !report.incompatible_mods.is_empty() %}
+        <tr><th>Incompatible</th><td>
+            {% for name in &report.incompatible_mods %}
+            <span class="badge badge-danger">{{ name }}</span>
+            {% endfor %}
+        </td></tr>
+        {% endif %}
+        <tr><th>Queue</th><td>
+            {% if pending_count > 0 %}
+            <span class="badge badge-warning">{{ pending_count }} pending</span>
+            {% else %}
+            <span class="text-muted">Empty</span>
+            {% endif %}
+        </td></tr>
+    </table>
+</a>

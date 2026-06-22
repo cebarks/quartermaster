@@ -1,0 +1,61 @@
+{% import "partials/icons.html" as icons %}
+{% if let Some(t) = &report.transition %}
+<div class="hero-card transitioning">
+    <div class="hero-status">
+        <span class="status-dot transitioning glow"></span>
+        {% if t == "restarting" %}Restarting…
+        {% else if t == "stopping" %}Stopping…
+        {% else %}Starting…
+        {% endif %}
+    </div>
+    <div class="hero-meta">
+        {{ report.address }}
+    </div>
+</div>
+{% else %}
+<div class="hero-card {% if report.reachable %}up{% else %}down{% endif %}">
+    <div class="hero-status">
+        <div class="flex-between" style="width:100%">
+            <span>
+                {% if report.reachable %}
+                <span class="status-dot up glow"></span> Running
+                {% if let Some(ms) = report.latency_ms %}<span class="text-muted" style="font-size: 0.85rem; font-weight: 400;"> — {{ ms }}ms</span>{% endif %}
+                {% if let Some(sa) = &report.started_at %}<span class="text-muted" style="font-size: 0.85rem; font-weight: 400;"> · up {{ sa|format_uptime }}</span>{% endif %}
+                {% else %}
+                <span class="status-dot down"></span> Down
+                {% if let Some(err) = &report.error %}<span class="text-muted" style="font-size: 0.85rem; font-weight: 400;"> — {{ err }}</span>{% endif %}
+                {% endif %}
+            </span>
+            {% if user.role.can_control_server() %}
+            <div class="flex gap-1">
+                <form method="post" action="/quma/server/start" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
+                </form>
+                <form method="post" action="/quma/server/restart" style="display:inline"
+                      onsubmit="return confirm('Restart the server?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Restart</button>
+                </form>
+                <form method="post" action="/quma/server/stop" style="display:inline"
+                      onsubmit="return confirm('Stop the server?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-sm btn-danger">{% call icons::stop() %}{% endcall %} Stop</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="hero-meta">
+        {{ report.address }}
+        {% if let Some(v) = &report.version %}
+         · v{{ v }}
+            {% if let Some(matches) = report.version_matches %}
+                {% if matches %}<span class="badge badge-success">matches</span>
+                {% else %}<span class="badge badge-danger">mismatch</span>
+                {% endif %}
+            {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% endif %}

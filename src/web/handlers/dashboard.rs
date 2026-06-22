@@ -3,9 +3,7 @@ use actix_web::web::{self, Data, Html};
 use actix_web::HttpRequest;
 use askama::Template;
 
-use crate::cli::common::find_unmanaged_mod_dirs;
-use crate::db::mods::InstalledMod;
-use crate::health;
+use crate::health::{self, ModsHealth, ServerHealth};
 use crate::server_detect::resolve_server_addr;
 use crate::spt::server::SptClient;
 use crate::web::auth::{require_auth, SessionUser};
@@ -23,15 +21,13 @@ mod filters {
 #[template(path = "dashboard.html")]
 struct DashboardTemplate {
     user: SessionUser,
-    mods: Vec<InstalledMod>,
-    pending_count: usize,
-    unmanaged_dirs: Vec<(String, usize)>,
     spt_version: String,
     tarkov_version: String,
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
     modsync_managed: bool,
+    transitioning: bool,
 }
 
 pub async fn dashboard(
@@ -42,65 +38,149 @@ pub async fn dashboard(
     let user = require_auth(&req)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
-
-    let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
-
-    let (mods, pending_count, unmanaged_dirs) = web::block(move || {
-        let db = db.lock();
-        let mods = db.list_mods()?;
-        let pending = db.list_pending_ops()?;
-        let (dirs, _total) = find_unmanaged_mod_dirs(&spt_dir, &db)?;
-        let dirs_vec: Vec<(String, usize)> = dirs.into_iter().collect();
-        Ok::<_, anyhow::Error>((mods, pending.len(), dirs_vec))
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    let transitioning = state.get_server_transition().is_some();
 
     let nav = NavContext::from_state(&state);
     let modsync_managed = nav.modsync_installed && state.config.modsync.is_some();
     let tmpl = DashboardTemplate {
         user,
-        mods,
-        pending_count,
-        unmanaged_dirs,
         spt_version: state.spt_info.spt_version.clone(),
         tarkov_version: state.spt_info.tarkov_version.clone(),
         flash,
         csrf_token,
         nav,
         modsync_managed,
+        transitioning,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+// -- Partials --
+
+#[derive(Template)]
+#[template(path = "partials/dashboard_server.html")]
+struct DashboardServerTemplate {
+    report: ServerHealth,
+    user: SessionUser,
+    csrf_token: String,
+}
+
+pub async fn server_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let (host, port) = resolve_server_addr(&state.config, &state.spt_dir);
+    let spt_client = SptClient::new(&host, port).map_err(WebError::from)?;
+    let address = spt_client.base_url().to_string();
+
+    let mut report = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
+
+    let (started_at, transition) = fetch_server_context(&state).await;
+    report.started_at = started_at;
+    report.transition = transition;
+
+    let tmpl = DashboardServerTemplate {
+        report,
+        user,
+        csrf_token,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
 #[derive(Template)]
-#[template(path = "partials/dashboard_server_status.html")]
-struct DashboardServerStatusTemplate {
-    reachable: bool,
-    latency_ms: Option<u64>,
-    transition: Option<String>,
-    started_at: Option<String>,
+#[template(path = "partials/dashboard_mods.html")]
+struct DashboardModsTemplate {
+    report: ModsHealth,
+    pending_count: usize,
 }
 
-pub async fn server_status_partial(
-    state: Data<AppState>,
-    req: HttpRequest,
-) -> actix_web::Result<Html> {
+pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
     require_auth(&req)?;
+    let db = state.db.clone();
+    let (installed_mods, pending_count) = web::block(move || {
+        let db = db.lock();
+        let mods = db.list_mods()?;
+        let pending = db.list_pending_ops()?;
+        Ok::<_, anyhow::Error>((mods, pending.len()))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
     let (host, port) = resolve_server_addr(&state.config, &state.spt_dir);
-    let spt_client = SptClient::new(&host, port).map_err(WebError::from)?;
-    let address = spt_client.base_url().to_string();
+    let loaded_mods = if let Ok(spt_client) = SptClient::new(&host, port) {
+        spt_client.loaded_server_mods().await.ok()
+    } else {
+        None
+    };
 
-    let server = health::check_server(&spt_client, &state.spt_info.spt_version, &address).await;
-    let (started_at, transition) = crate::web::handlers::status::fetch_server_context(&state).await;
-
-    let tmpl = DashboardServerStatusTemplate {
-        reachable: server.reachable,
-        latency_ms: server.latency_ms,
-        transition,
-        started_at,
+    let report = health::check_mods_health(
+        &installed_mods,
+        loaded_mods.as_ref(),
+        &state.forge,
+        &state.spt_info.spt_version,
+    )
+    .await;
+    let tmpl = DashboardModsTemplate {
+        report,
+        pending_count,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+#[derive(Template)]
+#[template(path = "partials/dashboard_container.html")]
+struct DashboardContainerTemplate {
+    available: bool,
+    cpu_percent: f64,
+    mem_percent: f64,
+}
+
+pub async fn container_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+    require_auth(&req)?;
+
+    let tmpl = match (
+        state.config.server_container.as_deref(),
+        state.container_mgr.as_ref(),
+    ) {
+        (Some(container), Some(mgr)) => match mgr.stats(container).await {
+            Ok(stats) => DashboardContainerTemplate {
+                available: true,
+                cpu_percent: stats.cpu_percent,
+                mem_percent: stats.mem_percent,
+            },
+            Err(e) => {
+                tracing::trace!(error = %e, "container stats unavailable");
+                DashboardContainerTemplate {
+                    available: false,
+                    cpu_percent: 0.0,
+                    mem_percent: 0.0,
+                }
+            }
+        },
+        _ => DashboardContainerTemplate {
+            available: false,
+            cpu_percent: 0.0,
+            mem_percent: 0.0,
+        },
+    };
+
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub(crate) async fn fetch_server_context(state: &AppState) -> (Option<String>, Option<String>) {
+    let started_at = if let (Some(container), Some(mgr)) = (
+        state.config.server_container.as_deref(),
+        state.container_mgr.as_ref(),
+    ) {
+        mgr.container_started_at(container).await.ok().flatten()
+    } else {
+        None
+    };
+    let transition = state.get_server_transition();
+    (started_at, transition)
 }
