@@ -85,6 +85,7 @@
         <input type="text" placeholder="Filter mods..."
                value="{{ filter_q }}"
                name="q"
+               id="filter-q"
                hx-get="/quma/api/mods/list"
                hx-trigger="input changed delay:300ms"
                hx-target="#mod-list-table"
@@ -95,7 +96,7 @@
                 hx-trigger="change"
                 hx-target="#mod-list-table"
                 hx-swap="innerHTML"
-                hx-include="[name='q'],[name='sort'],[name='dir']">
+                hx-include="#filter-q,[name='sort'],[name='dir']">
             <option value="all"{% if filter_status == "all" %} selected{% endif %}>All</option>
             <option value="enabled"{% if filter_status == "enabled" %} selected{% endif %}>Enabled</option>
             <option value="disabled"{% if filter_status == "disabled" %} selected{% endif %}>Disabled</option>
@@ -107,7 +108,7 @@
            hx-get="/quma/api/mods/list"
            hx-trigger="sse:modsChanged"
            hx-swap="innerHTML"
-           hx-include="[name='q'],[name='status'],[name='sort'],[name='dir']">
+           hx-include="#filter-q,[name='status'],[name='sort'],[name='dir']">
         {% include "mods/partials/list_body.html" %}
     </table>
     <span hx-get="/quma/api/mods/update-status" hx-trigger="load, sse:modsChanged" hx-swap="none"></span>
