@@ -1,35 +1,25 @@
-{% if !can_view %}
-<div class="empty-state"><p>This player's stash is private.</p></div>
-{% else if categories.is_empty() && search_filter.is_empty() && category_filter.is_empty() %}
+{% if categories.is_empty() && search_filter.is_empty() && category_filter.is_empty() %}
 <div class="empty-state"><p>No stash data available.</p></div>
 {% else %}
+<div id="stash-content"
+     hx-get="/quma/api/profiles/{{ profile_username }}/stash?search={{ search_filter|urlencode }}&category={{ category_filter|urlencode }}&sort={{ sort }}&sort_dir={{ sort_dir }}"
+     hx-trigger="every 10s"
+     hx-target="#tab-content"
+     hx-swap="innerHTML">
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap">
     <span><strong>{{ total_items }}</strong> items · {{ total_value|format_roubles_i64 }}</span>
-    {% if is_own_profile %}
-    <span id="stash-visibility">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        {% if stash_public %}
-        <button class="btn btn-sm btn-outline"
-                hx-post="/quma/api/profiles/{{ profile_username }}/stash/visibility"
-                hx-target="#stash-visibility"
-                hx-swap="innerHTML"
-                hx-include="[name='csrf_token']">Make stash private</button>
-        {% else %}
-        <button class="btn btn-sm btn-outline"
-                hx-post="/quma/api/profiles/{{ profile_username }}/stash/visibility"
-                hx-target="#stash-visibility"
-                hx-swap="innerHTML"
-                hx-include="[name='csrf_token']">Make stash public</button>
-        {% endif %}
-    </span>
-    {% endif %}
+    <button class="btn btn-sm btn-outline"
+            hx-get="/quma/api/profiles/{{ profile_username }}/stash?search={{ search_filter|urlencode }}&category={{ category_filter|urlencode }}&sort={{ sort }}&sort_dir={{ sort_dir }}"
+            hx-target="#tab-content"
+            hx-swap="innerHTML"
+            title="Refresh">↻</button>
 </div>
 
 <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
     <select hx-get="/quma/api/profiles/{{ profile_username }}/stash"
             hx-target="#tab-content"
             hx-swap="innerHTML"
-            hx-include="[name='search']"
+            hx-include="[name='search'],[name='sort'],[name='sort_dir']"
             hx-trigger="change"
             name="category">
         <option value=""{% if category_filter.is_empty() %} selected{% endif %}>All Categories</option>
@@ -41,8 +31,10 @@
            hx-get="/quma/api/profiles/{{ profile_username }}/stash"
            hx-target="#tab-content"
            hx-swap="innerHTML"
-           hx-include="[name='category']"
+           hx-include="[name='category'],[name='sort'],[name='sort_dir']"
            hx-trigger="input changed delay:300ms">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
 </div>
 
 {% for cat in categories %}
@@ -52,7 +44,20 @@
     </summary>
     <table>
         <thead>
-            <tr><th>Item</th><th style="text-align:right">Count</th><th style="text-align:right">Value</th></tr>
+            <tr>
+                <th><a href="#" hx-get="/quma/api/profiles/{{ profile_username }}/stash?sort=name&sort_dir={% if sort == "name" && sort_dir == "asc" %}desc{% else %}asc{% endif %}"
+                       hx-target="#tab-content" hx-swap="innerHTML"
+                       hx-include="[name='search'],[name='category']"
+                       style="text-decoration:none;color:inherit">Item{% if sort == "name" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a></th>
+                <th style="text-align:right"><a href="#" hx-get="/quma/api/profiles/{{ profile_username }}/stash?sort=count&sort_dir={% if sort == "count" && sort_dir == "asc" %}desc{% else %}asc{% endif %}"
+                       hx-target="#tab-content" hx-swap="innerHTML"
+                       hx-include="[name='search'],[name='category']"
+                       style="text-decoration:none;color:inherit">Count{% if sort == "count" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a></th>
+                <th style="text-align:right"><a href="#" hx-get="/quma/api/profiles/{{ profile_username }}/stash?sort=value&sort_dir={% if sort == "value" && sort_dir == "asc" %}desc{% else %}asc{% endif %}"
+                       hx-target="#tab-content" hx-swap="innerHTML"
+                       hx-include="[name='search'],[name='category']"
+                       style="text-decoration:none;color:inherit">Value{% if sort == "value" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a></th>
+            </tr>
         </thead>
         <tbody>
             {% for item in cat.items %}
@@ -70,4 +75,5 @@
 {% if categories.is_empty() %}
 <div class="empty-state"><p>No items match your filters.</p></div>
 {% endif %}
+</div>
 {% endif %}

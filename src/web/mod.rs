@@ -271,10 +271,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 web::get().to(handlers::profiles::stash_partial),
                             )
                             .route(
-                                "/profiles/{username}/stash/visibility",
-                                web::post().to(handlers::profiles::toggle_stash_visibility),
-                            )
-                            .route(
                                 "/raids/active",
                                 web::get().to(handlers::raids::active_raids_partial),
                             )

@@ -21,6 +21,7 @@ pub struct SptProfileStats {
     pub survival_rate: Option<f64>,
     pub kill_count: Option<usize>,
     pub scav_kills: Option<i64>,
+    pub deaths: Option<i64>,
 }
 
 pub enum ProfileStatus {
@@ -261,18 +262,27 @@ fn extract_stats_from_pmc(pmc: PmcData) -> SptProfileStats {
                 let mut total_raids: i64 = 0;
                 let mut survived: i64 = 0;
                 let mut scav_kills: Option<i64> = None;
+                let mut deaths: Option<i64> = None;
                 for item in &counters {
-                    if item.key.len() >= 2 && item.key[0] == "Sessions" && item.key[1] == "Pmc" {
-                        total_raids += item.value;
-                        if item.key.len() == 3 && item.key[2] == "Survived" {
-                            survived = item.value;
-                        }
+                    if item.key.len() == 2 && item.key[0] == "Sessions" && item.key[1] == "Pmc" {
+                        total_raids = item.value;
                     }
-                    if item.key.len() == 1 && item.key[0] == "KilledSavages" {
+                    if item.key.len() == 3
+                        && item.key[0] == "Sessions"
+                        && item.key[1] == "Pmc"
+                        && item.key[2] == "Survived"
+                    {
+                        survived = item.value;
+                    }
+                    if item.key.len() == 1 && item.key[0] == "KilledSavage" {
                         scav_kills = Some(item.value);
+                    }
+                    if item.key.len() == 1 && item.key[0] == "Deaths" {
+                        deaths = Some(item.value);
                     }
                 }
                 stats.scav_kills = scav_kills;
+                stats.deaths = deaths;
                 if total_raids > 0 {
                     stats.raid_count = Some(total_raids);
                     stats.survival_rate = Some(
@@ -614,10 +624,12 @@ mod tests {
                         "Eft": {
                             "OverallCounters": {
                                 "Items": [
+                                    {"Key": ["Sessions", "Pmc"], "Value": 45},
                                     {"Key": ["Sessions", "Pmc", "Survived"], "Value": 30},
                                     {"Key": ["Sessions", "Pmc", "Died"], "Value": 10},
                                     {"Key": ["Sessions", "Pmc", "RunThrough"], "Value": 5},
-                                    {"Key": ["KilledSavages"], "Value": 100}
+                                    {"Key": ["KilledSavage"], "Value": 100},
+                                    {"Key": ["Deaths"], "Value": 10}
                                 ]
                             },
                             "Victims": [
@@ -650,8 +662,10 @@ mod tests {
         assert_eq!(s.side.as_deref(), Some("Usec"));
         assert_eq!(s.experience, Some(1234567));
         assert_eq!(s.registration_date, Some(1700000000));
-        assert_eq!(s.raid_count, Some(45)); // 30 + 10 + 5
+        assert_eq!(s.raid_count, Some(45)); // from aggregate ["Sessions", "Pmc"]
         assert!((s.survival_rate.unwrap() - 66.67).abs() < 0.1); // 30/45*100
+        assert_eq!(s.deaths, Some(10));
+        assert_eq!(s.scav_kills, Some(100));
         assert_eq!(s.kill_count, Some(3));
     }
 
@@ -737,9 +751,11 @@ mod tests {
                         "Eft": {
                             "OverallCounters": {
                                 "Items": [
+                                    {"Key": ["Sessions", "Pmc"], "Value": 40},
                                     {"Key": ["Sessions", "Pmc", "Survived"], "Value": 30},
                                     {"Key": ["Sessions", "Pmc", "Died"], "Value": 10},
-                                    {"Key": ["KilledSavages"], "Value": 247}
+                                    {"Key": ["KilledSavage"], "Value": 247},
+                                    {"Key": ["Deaths"], "Value": 10}
                                 ]
                             },
                             "Victims": [
@@ -880,6 +896,15 @@ mod tests {
         let stats = load_all_profile_stats(tmp.path());
         let s = &stats["scav_test"];
         assert_eq!(s.scav_kills, Some(247));
+    }
+
+    #[test]
+    fn deaths_extracted() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_full_profile(tmp.path(), "death_test", "DeathPlayer");
+        let stats = load_all_profile_stats(tmp.path());
+        let s = &stats["death_test"];
+        assert_eq!(s.deaths, Some(10));
     }
 
     #[test]

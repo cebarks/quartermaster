@@ -69,6 +69,7 @@ pub struct User {
     pub password_hash: Option<String>,
     pub role: Role,
     pub disabled: bool,
+    #[allow(dead_code)] // Kept for backward compatibility; UI removed
     pub stash_public: bool,
     pub created_at: String,
     pub password_changed_at: Option<String>,
@@ -263,6 +264,7 @@ impl Database {
         )
     }
 
+    #[allow(dead_code)] // Kept for backward compatibility; UI removed
     pub fn set_stash_public(&self, user_id: i64, public: bool) -> rusqlite::Result<usize> {
         self.conn.execute(
             "UPDATE users SET stash_public = ?1 WHERE id = ?2",
