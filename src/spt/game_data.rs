@@ -67,6 +67,8 @@ struct HandbookItem {
     id: String,
     #[serde(rename = "ParentId")]
     parent_id: String,
+    #[serde(rename = "Price")]
+    price: Option<i64>,
 }
 
 const CORE_TRADER_IDS: &[&str] = &[
@@ -131,9 +133,15 @@ impl GameData {
         let quest_names = Self::load_quest_names(spt_dir)?;
         let trader_info = Self::load_trader_info(spt_dir)?;
         let hideout_areas = build_hideout_areas();
-        let prices = Self::load_prices(spt_dir)?;
-        let item_locales = Self::load_item_locales(spt_dir)?;
-        let item_categories = Self::load_item_categories(spt_dir, &item_locales)?;
+        let mut prices = Self::load_prices(spt_dir)?;
+        let (item_locales, raw_locale) = Self::load_item_locales(spt_dir)?;
+        let item_categories = Self::load_item_categories(spt_dir, &raw_locale)?;
+
+        // Merge handbook prices for items not in prices.json (e.g. currencies)
+        let handbook_prices = Self::load_handbook_prices(spt_dir)?;
+        for (id, price) in handbook_prices {
+            prices.entry(id).or_insert(price);
+        }
 
         tracing::info!(
             quests = quest_names.len(),
@@ -240,14 +248,35 @@ impl GameData {
         Ok(prices)
     }
 
-    fn load_item_locales(spt_dir: &Path) -> Result<HashMap<String, ItemLocale>> {
+    fn load_handbook_prices(spt_dir: &Path) -> Result<HashMap<String, i64>> {
+        let path = spt_dir.join("SPT/SPT_Data/database/templates/handbook.json");
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+        let contents = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let handbook: HandbookJson = serde_json::from_str(&contents)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+
+        let mut prices = HashMap::new();
+        for item in &handbook.items {
+            if let Some(price) = item.price {
+                prices.insert(item.id.clone(), price);
+            }
+        }
+        Ok(prices)
+    }
+
+    fn load_item_locales(
+        spt_dir: &Path,
+    ) -> Result<(HashMap<String, ItemLocale>, HashMap<String, String>)> {
         let path = spt_dir.join("SPT/SPT_Data/database/locales/global/en.json");
         if !path.exists() {
             tracing::warn!(
                 "en.json not found at {}, item names will show raw IDs",
                 path.display()
             );
-            return Ok(HashMap::new());
+            return Ok((HashMap::new(), HashMap::new()));
         }
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
@@ -270,12 +299,12 @@ impl GameData {
                 );
             }
         }
-        Ok(item_locales)
+        Ok((item_locales, locale))
     }
 
     fn load_item_categories(
         spt_dir: &Path,
-        locales: &HashMap<String, ItemLocale>,
+        raw_locale: &HashMap<String, String>,
     ) -> Result<HashMap<String, String>> {
         let path = spt_dir.join("SPT/SPT_Data/database/templates/handbook.json");
         if !path.exists() {
@@ -295,10 +324,7 @@ impl GameData {
             .categories
             .iter()
             .map(|c| {
-                let name = locales
-                    .get(&c.id)
-                    .map(|l| l.name.as_str())
-                    .unwrap_or("Other");
+                let name = raw_locale.get(&c.id).map(|s| s.as_str()).unwrap_or("Other");
                 (c.id.as_str(), name)
             })
             .collect();
@@ -409,8 +435,8 @@ mod tests {
         let locale = serde_json::json!({
             "5ca20d5986f774331e7c9602 Name": "WARTECH Berkut BB-102 backpack",
             "5ca20d5986f774331e7c9602 ShortName": "Berkut",
-            "cat_backpacks Name": "Backpacks",
-            "cat_gear Name": "Gear",
+            "cat_backpacks": "Backpacks",
+            "cat_gear": "Gear",
         });
         std::fs::write(
             locale_dir.join("en.json"),
@@ -588,5 +614,31 @@ mod tests {
         create_test_item_data(tmp.path());
         let gd = GameData::load(tmp.path()).unwrap();
         assert_eq!(gd.item_category("nonexistent_tpl"), "Other");
+    }
+
+    #[test]
+    fn handbook_prices_merged_into_prices() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        create_test_item_data(tmp.path());
+        // No prices.json — handbook Price field should fill in
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert_eq!(gd.item_price("5ca20d5986f774331e7c9602"), Some(20000));
+    }
+
+    #[test]
+    fn prices_json_takes_precedence_over_handbook() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_spt_dir(tmp.path());
+        create_test_item_data(tmp.path());
+        let prices_path = tmp
+            .path()
+            .join("SPT/SPT_Data/database/templates/prices.json");
+        let prices = serde_json::json!({
+            "5ca20d5986f774331e7c9602": 99999
+        });
+        std::fs::write(&prices_path, serde_json::to_string(&prices).unwrap()).unwrap();
+        let gd = GameData::load(tmp.path()).unwrap();
+        assert_eq!(gd.item_price("5ca20d5986f774331e7c9602"), Some(99999));
     }
 }
