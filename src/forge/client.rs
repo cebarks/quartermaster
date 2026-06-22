@@ -22,7 +22,7 @@ impl ForgeClient {
     }
 
     /// Create a client with a custom base URL (for tests against a mock server).
-    #[cfg(test)]
+    /// This is public for integration tests in the `tests/` directory.
     pub fn with_base_url(base_url: String, token: Option<String>) -> Result<Self> {
         Self::build(base_url, token)
     }
