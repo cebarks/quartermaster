@@ -237,7 +237,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 web::get().to(handlers::dashboard::container_partial),
                             )
                             .route(
-                                "/dashboard/clients-status",
+                                "/dashboard/headless-status",
                                 web::get().to(handlers::clients::dashboard_clients_status_partial),
                             )
                             // Metrics partials
@@ -251,7 +251,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 web::get().to(handlers::mods::integrity_partial),
                             )
                             .route(
-                                "/clients/status",
+                                "/headless/status",
                                 web::get().to(handlers::clients::client_status_partial),
                             )
                             .route(
@@ -453,9 +453,9 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                                 "/settings/headless",
                                 web::post().to(handlers::settings::save_headless_settings),
                             )
-                            .route("/clients", web::get().to(handlers::clients::client_list))
+                            .route("/headless", web::get().to(handlers::clients::client_list))
                             .route(
-                                "/clients/{n}",
+                                "/headless/{n}",
                                 web::get().to(handlers::clients::client_detail),
                             )
                             .route("/stats", web::get().to(handlers::raids::stats_page))
@@ -506,20 +506,40 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                             )
                             .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
                             .route(
-                                "/clients/{n}/restart",
+                                "/headless/{n}/restart",
                                 web::post().to(handlers::clients::client_restart),
                             )
                             .route(
-                                "/clients/{n}/stop",
+                                "/headless/{n}/stop",
                                 web::post().to(handlers::clients::client_stop),
                             )
                             .route(
-                                "/clients/{n}/start",
+                                "/headless/{n}/start",
                                 web::post().to(handlers::clients::client_start),
                             )
                             .route(
-                                "/clients/scale",
+                                "/headless/scale",
                                 web::post().to(handlers::clients::client_scale),
+                            )
+                            // Redirect old /clients URLs to /headless
+                            .route(
+                                "/clients",
+                                web::get().to(|| async {
+                                    HttpResponse::MovedPermanently()
+                                        .insert_header(("Location", "/quma/headless"))
+                                        .finish()
+                                }),
+                            )
+                            .route(
+                                "/clients/{n}",
+                                web::get().to(|path: web::Path<u32>| async move {
+                                    HttpResponse::MovedPermanently()
+                                        .insert_header((
+                                            "Location",
+                                            format!("/quma/headless/{}", path.into_inner()),
+                                        ))
+                                        .finish()
+                                }),
                             ),
                     ),
             )
