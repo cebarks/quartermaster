@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -85,6 +85,65 @@ pub struct ExtractedFile {
     pub size: u64,
 }
 
+/// Resource limits for archive extraction to prevent zip bombs and DoS.
+struct ExtractionLimits {
+    max_entry_size: u64,
+    max_total_size: u64,
+    max_entry_count: usize,
+}
+
+impl ExtractionLimits {
+    const fn production() -> Self {
+        Self {
+            max_entry_size: 1 << 30, // 1 GB
+            max_total_size: 4 << 30, // 4 GB
+            max_entry_count: 20_000,
+        }
+    }
+}
+
+/// Wraps a writer and computes SHA256 on the fly, enforcing a per-entry byte limit.
+struct HashingWriter<W> {
+    inner: W,
+    hasher: Sha256,
+    bytes_written: u64,
+    max_bytes: u64,
+}
+
+impl<W: Write> HashingWriter<W> {
+    fn new(inner: W, max_bytes: u64) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+            bytes_written: 0,
+            max_bytes,
+        }
+    }
+
+    fn finish(self) -> (u64, String) {
+        (self.bytes_written, hex_encode(&self.hasher.finalize()))
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        self.bytes_written += n as u64;
+        if self.bytes_written > self.max_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("entry exceeds maximum size of {} bytes", self.max_bytes),
+            ));
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Known prefixes that indicate a mod's target directory.
 const SERVER_PREFIX: &str = "SPT/user/mods/";
 const CLIENT_PREFIX: &str = "BepInEx/plugins/";
@@ -152,23 +211,16 @@ pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
     Ok(common_prefix.unwrap_or_default())
 }
 
-// TODO(security): extraction has no resource limits — a crafted archive can OOM the server.
-// Stream entries to disk through a Sha256+BufWriter instead of buffering in Vec, and enforce:
-//   - 1 GB max per entry (bail on oversized decompressed entry)
-//   - 4 GB max total extracted size
-//   - 20,000 max entry count
-// The 7z path also trusts entry.size() for Vec::with_capacity — clamp before allocating.
-// Also apply streaming hash to compute_file_hash() below (currently reads entire file into memory).
-
 /// Extract a mod archive into `spt_root`, stripping any wrapper directory prefix.
 ///
 /// Returns a list of extracted files with their relative paths, SHA256 hashes, and sizes.
 pub fn extract_mod(archive_path: &Path, spt_root: &Path) -> Result<Vec<ExtractedFile>> {
     let prefix = detect_strip_prefix(archive_path)?;
+    let limits = ExtractionLimits::production();
 
     match detect_format(archive_path)? {
-        ArchiveFormat::Zip => extract_mod_zip(archive_path, spt_root, &prefix),
-        ArchiveFormat::SevenZ => extract_mod_7z(archive_path, spt_root, &prefix),
+        ArchiveFormat::Zip => extract_mod_zip(archive_path, spt_root, &prefix, &limits),
+        ArchiveFormat::SevenZ => extract_mod_7z(archive_path, spt_root, &prefix, &limits),
     }
 }
 
@@ -176,13 +228,23 @@ fn extract_mod_zip(
     archive_path: &Path,
     spt_root: &Path,
     prefix: &str,
+    limits: &ExtractionLimits,
 ) -> Result<Vec<ExtractedFile>> {
     let file = fs::File::open(archive_path)
         .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)
         .with_context(|| format!("failed to read ZIP: {}", archive_path.display()))?;
 
+    if archive.len() > limits.max_entry_count {
+        anyhow::bail!(
+            "archive contains {} entries, exceeding limit of {}",
+            archive.len(),
+            limits.max_entry_count
+        );
+    }
+
     let mut extracted = Vec::new();
+    let mut total_bytes: u64 = 0;
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -190,6 +252,10 @@ fn extract_mod_zip(
             .with_context(|| format!("failed to read ZIP entry {i}"))?;
 
         let raw_name = entry.name().to_string();
+
+        if entry.is_symlink() {
+            anyhow::bail!("archive contains symlink entry: {raw_name}");
+        }
 
         let relative = if !prefix.is_empty() && raw_name.starts_with(prefix) {
             &raw_name[prefix.len()..]
@@ -201,7 +267,7 @@ fn extract_mod_zip(
             continue;
         }
 
-        if relative.contains("..") {
+        if relative.split('/').any(|c| c == "..") {
             anyhow::bail!("archive entry contains path traversal: {raw_name}");
         }
 
@@ -214,21 +280,36 @@ fn extract_mod_zip(
             continue;
         }
 
+        if entry.size() > limits.max_entry_size {
+            anyhow::bail!(
+                "entry {raw_name} declares size {} bytes, exceeding limit of {}",
+                entry.size(),
+                limits.max_entry_size
+            );
+        }
+
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory: {}", parent.display()))?;
         }
 
-        let mut content = Vec::new();
-        entry
-            .read_to_end(&mut content)
-            .with_context(|| format!("failed to read ZIP entry: {relative}"))?;
+        let out_file = fs::File::create(&dest)
+            .with_context(|| format!("failed to create file: {}", dest.display()))?;
+        let mut writer =
+            HashingWriter::new(std::io::BufWriter::new(out_file), limits.max_entry_size);
 
-        let hash = compute_hash(&content);
-        let size = content.len() as u64;
+        std::io::copy(&mut entry, &mut writer)
+            .with_context(|| format!("failed to extract entry: {relative}"))?;
 
-        fs::write(&dest, &content)
-            .with_context(|| format!("failed to write file: {}", dest.display()))?;
+        let (size, hash) = writer.finish();
+
+        total_bytes = total_bytes.saturating_add(size);
+        if total_bytes > limits.max_total_size {
+            anyhow::bail!(
+                "archive exceeds total extraction limit of {} bytes",
+                limits.max_total_size
+            );
+        }
 
         extracted.push(ExtractedFile {
             path: relative.to_string(),
@@ -244,12 +325,22 @@ fn extract_mod_7z(
     archive_path: &Path,
     spt_root: &Path,
     prefix: &str,
+    limits: &ExtractionLimits,
 ) -> Result<Vec<ExtractedFile>> {
     let mut reader = ArchiveReader::open(archive_path, Password::empty())
         .with_context(|| format!("failed to read 7z: {}", archive_path.display()))?;
 
+    let entry_count = reader.archive().files.len();
+    if entry_count > limits.max_entry_count {
+        anyhow::bail!(
+            "archive contains {entry_count} entries, exceeding limit of {}",
+            limits.max_entry_count
+        );
+    }
+
     let mut extracted = Vec::new();
     let prefix = prefix.to_string();
+    let mut total_bytes: u64 = 0;
 
     reader
         .for_each_entries(|entry, reader| {
@@ -288,6 +379,17 @@ fn extract_mod_7z(
                 return Ok(true);
             }
 
+            if entry.size() > limits.max_entry_size {
+                return Err(sevenz_rust2::Error::Other(
+                    format!(
+                        "entry {raw_name} declares size {} bytes, exceeding limit of {}",
+                        entry.size(),
+                        limits.max_entry_size
+                    )
+                    .into(),
+                ));
+            }
+
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
                     sevenz_rust2::Error::Io(
@@ -300,26 +402,33 @@ fn extract_mod_7z(
                 })?;
             }
 
-            let mut content = Vec::with_capacity(entry.size() as usize);
-            std::io::copy(reader, &mut content).map_err(|e| {
-                sevenz_rust2::Error::Io(
-                    std::io::Error::new(e.kind(), format!("failed to read 7z entry: {relative}")),
-                    "".into(),
-                )
-            })?;
-
-            let hash = compute_hash(&content);
-            let size = content.len() as u64;
-
-            fs::write(&dest, &content).map_err(|e| {
+            let out_file = fs::File::create(&dest).map_err(|e| {
                 sevenz_rust2::Error::Io(
                     std::io::Error::new(
                         e.kind(),
-                        format!("failed to write file: {}", dest.display()),
+                        format!("failed to create file: {}", dest.display()),
                     ),
                     "".into(),
                 )
             })?;
+            let mut writer =
+                HashingWriter::new(std::io::BufWriter::new(out_file), limits.max_entry_size);
+
+            std::io::copy(reader, &mut writer)
+                .map_err(|e| sevenz_rust2::Error::Io(e, "".into()))?;
+
+            let (size, hash) = writer.finish();
+
+            total_bytes = total_bytes.saturating_add(size);
+            if total_bytes > limits.max_total_size {
+                return Err(sevenz_rust2::Error::Other(
+                    format!(
+                        "archive exceeds total extraction limit of {} bytes",
+                        limits.max_total_size
+                    )
+                    .into(),
+                ));
+            }
 
             extracted.push(ExtractedFile {
                 path: relative.to_string(),
@@ -491,7 +600,6 @@ fn strip_known_prefix_from_name(name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
@@ -772,5 +880,186 @@ mod tests {
             err.contains("path traversal"),
             "error should mention path traversal: {err}"
         );
+    }
+
+    fn test_limits() -> ExtractionLimits {
+        ExtractionLimits {
+            max_entry_size: 1024,
+            max_total_size: 4096,
+            max_entry_count: 10,
+        }
+    }
+
+    #[test]
+    fn hashing_writer_produces_correct_hash() {
+        let mut buf = Vec::new();
+        let mut writer = HashingWriter::new(&mut buf, 1024);
+        writer.write_all(b"hello world").unwrap();
+        let (size, hash) = writer.finish();
+        assert_eq!(size, 11);
+        assert_eq!(buf, b"hello world");
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+    }
+
+    #[test]
+    fn hashing_writer_enforces_limit() {
+        let mut buf = Vec::new();
+        let mut writer = HashingWriter::new(&mut buf, 5);
+        let result = writer.write_all(b"0123456789");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("maximum size"),
+            "error should mention maximum size: {err}"
+        );
+    }
+
+    #[test]
+    fn hashing_writer_allows_exact_limit() {
+        let mut buf = Vec::new();
+        let mut writer = HashingWriter::new(&mut buf, 5);
+        writer.write_all(b"01234").unwrap();
+        let (size, _hash) = writer.finish();
+        assert_eq!(size, 5);
+    }
+
+    #[test]
+    fn zip_rejects_too_many_entries() {
+        let limits = ExtractionLimits {
+            max_entry_count: 3,
+            ..test_limits()
+        };
+        let zip = create_test_zip(&[
+            ("SPT/user/mods/A/a.txt", b"a"),
+            ("SPT/user/mods/A/b.txt", b"b"),
+            ("SPT/user/mods/A/c.txt", b"c"),
+            ("SPT/user/mods/A/d.txt", b"d"),
+        ]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod_zip(zip.path(), tmp_dir.path(), "", &limits);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("entries"),
+            "error should mention entries: {err}"
+        );
+    }
+
+    #[test]
+    fn zip_rejects_oversized_entry() {
+        let limits = ExtractionLimits {
+            max_entry_size: 10,
+            ..test_limits()
+        };
+        let content = vec![0u8; 20];
+        let zip = create_test_zip(&[("SPT/user/mods/A/big.bin", &content)]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod_zip(zip.path(), tmp_dir.path(), "", &limits);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("size"), "error should mention size: {err}");
+    }
+
+    #[test]
+    fn zip_rejects_oversized_total() {
+        let limits = ExtractionLimits {
+            max_entry_size: 100,
+            max_total_size: 15,
+            ..test_limits()
+        };
+        let zip = create_test_zip(&[
+            ("SPT/user/mods/A/a.txt", b"0123456789"),
+            ("SPT/user/mods/A/b.txt", b"0123456789"),
+        ]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod_zip(zip.path(), tmp_dir.path(), "", &limits);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("total"), "error should mention total: {err}");
+    }
+
+    #[test]
+    fn zip_rejects_symlink() {
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zip = ZipWriter::new(buf);
+        let opts = SimpleFileOptions::default();
+        // add_symlink properly sets the S_IFLNK bit in the external attributes;
+        // start_file + unix_permissions(0o120777) does NOT — the crate masks with 0o777.
+        zip.add_symlink("SPT/user/mods/A/link", "/etc/passwd", opts)
+            .unwrap();
+        let buf = zip.finish().unwrap();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(buf.get_ref()).unwrap();
+        tmp.flush().unwrap();
+
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod_zip(
+            tmp.path(),
+            tmp_dir.path(),
+            "",
+            &ExtractionLimits::production(),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("symlink"),
+            "error should mention symlink: {err}"
+        );
+    }
+
+    #[test]
+    fn sevenz_rejects_too_many_entries() {
+        let limits = ExtractionLimits {
+            max_entry_count: 1,
+            ..test_limits()
+        };
+        let archive = create_test_7z(&[
+            ("SPT/user/mods/A/a.txt", b"a"),
+            ("SPT/user/mods/A/b.txt", b"b"),
+        ]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod_7z(archive.path(), tmp_dir.path(), "", &limits);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("entries"),
+            "error should mention entries: {err}"
+        );
+    }
+
+    #[test]
+    fn sevenz_rejects_oversized_entry() {
+        let limits = ExtractionLimits {
+            max_entry_size: 10,
+            ..test_limits()
+        };
+        let content = vec![0u8; 20];
+        let archive = create_test_7z(&[("SPT/user/mods/A/big.bin", &content)]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod_7z(archive.path(), tmp_dir.path(), "", &limits);
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("size"), "error should mention size: {err}");
+    }
+
+    #[test]
+    fn sevenz_rejects_oversized_total() {
+        let limits = ExtractionLimits {
+            max_entry_size: 100,
+            max_total_size: 15,
+            ..test_limits()
+        };
+        let archive = create_test_7z(&[
+            ("SPT/user/mods/A/a.txt", b"0123456789"),
+            ("SPT/user/mods/A/b.txt", b"0123456789"),
+        ]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod_7z(archive.path(), tmp_dir.path(), "", &limits);
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("total"), "error should mention total: {err}");
     }
 }
