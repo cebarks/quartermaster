@@ -304,6 +304,34 @@ impl Database {
         if role.name == "admin" {
             return Ok(0); // Admin role permissions are immutable
         }
+
+        // Guard: don't remove users.manage if it would leave zero enabled users with it
+        let old_perms = self.get_permissions_for_role(role_name)?;
+        let new_has_manage = permissions.contains(&Permission::UsersManage);
+        let old_has_manage = old_perms.contains(&Permission::UsersManage);
+        if old_has_manage && !new_has_manage {
+            // Count users on THIS role
+            let users_on_role: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM users WHERE role = ?1 AND disabled = 0",
+                params![role_name],
+                |row| row.get(0),
+            )?;
+            if users_on_role > 0 {
+                // Check if OTHER users (not on this role) still have users.manage
+                let others_with_manage: i64 = self.conn.query_row(
+                    "SELECT COUNT(*) FROM users u
+                     JOIN roles r ON u.role = r.name
+                     JOIN role_permissions rp ON r.id = rp.role_id
+                     WHERE rp.permission = 'users.manage' AND u.disabled = 0 AND u.role != ?1",
+                    params![role_name],
+                    |row| row.get(0),
+                )?;
+                if others_with_manage == 0 {
+                    return Ok(0);
+                }
+            }
+        }
+
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM role_permissions WHERE role_id = ?1",
@@ -333,6 +361,7 @@ impl Database {
 
     /// Delete a custom role. Returns 0 if built-in or has assigned users.
     pub fn delete_role(&self, role_name: &str) -> rusqlite::Result<DeleteRoleResult> {
+        let tx = self.conn.unchecked_transaction()?;
         let Some(role) = self.get_role_by_name(role_name)? else {
             return Ok(DeleteRoleResult::NotFound);
         };
@@ -351,6 +380,7 @@ impl Database {
             "DELETE FROM roles WHERE name = ?1 AND built_in = 0",
             params![role_name],
         )?;
+        tx.commit()?;
         Ok(DeleteRoleResult::Deleted)
     }
 

@@ -57,7 +57,8 @@
             <div>
                 <label for="new-role-name">Name (slug)</label>
                 <input type="text" name="name" id="new-role-name" placeholder="mod-curator"
-                       pattern="[a-z0-9-]+" maxlength="32" required>
+                       pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" maxlength="32" required
+                       title="Lowercase letters, digits, hyphens. Cannot start or end with a hyphen.">
             </div>
             <div>
                 <label for="new-role-display">Display Name</label>

@@ -54,7 +54,7 @@
         <div style="display: flex; align-items: center; gap: 0.5rem">
             <strong>{{ m.mod_info.name }}</strong>
             <span class="text-muted text-sm">{{ m.mod_info.version }}</span>
-            {% if user.can("mods.install") %}
+            {% if user.can("mods.update") %}
             <form method="post" action="/quma/mods/{{ m.mod_info.id }}/update" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-sm btn-outline" style="padding: 0.1rem 0.4rem; font-size: 0.75rem">{% call icons::refresh() %}{% endcall %}</button>
