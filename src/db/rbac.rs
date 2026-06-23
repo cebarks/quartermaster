@@ -121,6 +121,7 @@ impl fmt::Display for Permission {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RoleRecord {
     pub id: i64,
     pub name: String,
@@ -143,6 +144,7 @@ impl fmt::Display for RoleRecord {
 
 /// Named struct for template use (avoids tuple indexing in Askama)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PermissionInfo {
     pub slug: &'static str,
     pub display_name: &'static str,
@@ -244,6 +246,7 @@ impl Database {
         Ok(perms)
     }
 
+    #[allow(dead_code)]
     pub fn get_role_with_permissions(
         &self,
         role_name: &str,
@@ -316,6 +319,7 @@ impl Database {
         Ok(1)
     }
 
+    #[allow(dead_code)]
     pub fn update_role_display_name(
         &self,
         role_name: &str,
