@@ -18,6 +18,12 @@
             hx-swap="innerHTML"
             hx-push-url="#invites"
             onclick="setActiveTab(this)">Invites</button>
+    <button class="tab" id="tab-roles"
+            hx-get="/quma/api/admin/roles"
+            hx-target="#admin-content"
+            hx-swap="innerHTML"
+            hx-push-url="#roles"
+            onclick="setActiveTab(this)">Roles</button>
 </div>
 
 <div id="admin-content">
@@ -32,6 +38,9 @@ function setActiveTab(el) {
 document.addEventListener('DOMContentLoaded', function() {
     if (location.hash === '#invites') {
         var btn = document.getElementById('tab-invites');
+        if (btn) { btn.click(); }
+    } else if (location.hash === '#roles') {
+        var btn = document.getElementById('tab-roles');
         if (btn) { btn.click(); }
     }
 });
