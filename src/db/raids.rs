@@ -725,7 +725,6 @@ fn row_to_raid_kill(row: &rusqlite::Row<'_>) -> rusqlite::Result<RaidKill> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::users::Role;
 
     #[test]
     fn tables_exist() {
@@ -751,7 +750,7 @@ mod tests {
     fn insert_and_get_raid() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("alice", Some("profile-123"), Some("hash"), Role::Player)
+            .insert_user("alice", Some("profile-123"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -793,7 +792,7 @@ mod tests {
     fn close_orphaned_raids_marks_unknown() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("bob", Some("profile-456"), Some("hash"), Role::Player)
+            .insert_user("bob", Some("profile-456"), Some("hash"), "player")
             .unwrap();
 
         db.insert_raid(
@@ -824,7 +823,7 @@ mod tests {
     fn finish_raid_updates_fields() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("charlie", Some("profile-789"), Some("hash"), Role::Player)
+            .insert_user("charlie", Some("profile-789"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -873,7 +872,7 @@ mod tests {
     fn insert_and_get_kills() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("dave", Some("profile-abc"), Some("hash"), Role::Player)
+            .insert_user("dave", Some("profile-abc"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -931,10 +930,10 @@ mod tests {
     fn get_raid_group_returns_squad() {
         let db = Database::open_in_memory().unwrap();
         let user1 = db
-            .insert_user("alice", Some("profile-1"), Some("hash"), Role::Player)
+            .insert_user("alice", Some("profile-1"), Some("hash"), "player")
             .unwrap();
         let user2 = db
-            .insert_user("bob", Some("profile-2"), Some("hash"), Role::Player)
+            .insert_user("bob", Some("profile-2"), Some("hash"), "player")
             .unwrap();
 
         db.insert_raid(
@@ -977,7 +976,7 @@ mod tests {
     fn get_active_raids_only_open() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("eve", Some("profile-eve"), Some("hash"), Role::Player)
+            .insert_user("eve", Some("profile-eve"), Some("hash"), "player")
             .unwrap();
 
         let raid1 = db
@@ -1035,7 +1034,7 @@ mod tests {
     fn find_open_raid_returns_latest() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("frank", Some("profile-frank"), Some("hash"), Role::Player)
+            .insert_user("frank", Some("profile-frank"), Some("hash"), "player")
             .unwrap();
 
         db.insert_raid(
@@ -1078,7 +1077,7 @@ mod tests {
     fn close_stale_raids_respects_threshold() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("grace", Some("profile-grace"), Some("hash"), Role::Player)
+            .insert_user("grace", Some("profile-grace"), Some("hash"), "player")
             .unwrap();
 
         // Insert a raid manually with started_at 5 hours ago
@@ -1103,7 +1102,7 @@ mod tests {
     fn user_raid_stats_aggregates() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("hannah", Some("profile-hannah"), Some("hash"), Role::Player)
+            .insert_user("hannah", Some("profile-hannah"), Some("hash"), "player")
             .unwrap();
 
         // 3 PMC raids: 2 survived, 1 killed
@@ -1266,7 +1265,7 @@ mod tests {
     fn cascade_delete_user_removes_raids() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("ivan", Some("profile-ivan"), Some("hash"), Role::Player)
+            .insert_user("ivan", Some("profile-ivan"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -1322,10 +1321,10 @@ mod tests {
     fn leaderboard_respects_min_raids() {
         let db = Database::open_in_memory().unwrap();
         let user1 = db
-            .insert_user("alice", Some("p-alice"), Some("hash"), Role::Player)
+            .insert_user("alice", Some("p-alice"), Some("hash"), "player")
             .unwrap();
         let user2 = db
-            .insert_user("bob", Some("p-bob"), Some("hash"), Role::Player)
+            .insert_user("bob", Some("p-bob"), Some("hash"), "player")
             .unwrap();
 
         // alice: 3 completed raids
@@ -1402,7 +1401,7 @@ mod tests {
     fn leaderboard_stats_correct() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("carol", Some("p-carol"), Some("hash"), Role::Player)
+            .insert_user("carol", Some("p-carol"), Some("hash"), "player")
             .unwrap();
 
         // Raid 1: Survived, 2 kills (1 headshot), extract "Gate 3"
@@ -1551,12 +1550,7 @@ mod tests {
     fn insert_and_get_snapshot() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user(
-                "snap_user",
-                Some("profile-snap"),
-                Some("hash"),
-                Role::Player,
-            )
+            .insert_user("snap_user", Some("profile-snap"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -1593,12 +1587,7 @@ mod tests {
     fn snapshot_missing_returns_none() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user(
-                "snap_miss",
-                Some("profile-miss"),
-                Some("hash"),
-                Role::Player,
-            )
+            .insert_user("snap_miss", Some("profile-miss"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -1625,12 +1614,7 @@ mod tests {
     fn snapshot_cascade_deletes_with_raid() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user(
-                "snap_cascade",
-                Some("profile-casc"),
-                Some("hash"),
-                Role::Player,
-            )
+            .insert_user("snap_cascade", Some("profile-casc"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -1668,7 +1652,7 @@ mod tests {
     fn snapshot_unique_constraint() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_dup", Some("profile-dup"), Some("hash"), Role::Player)
+            .insert_user("snap_dup", Some("profile-dup"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -1713,12 +1697,7 @@ mod tests {
     fn snapshot_sizes_empty_when_none() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user(
-                "snap_empty",
-                Some("profile-empty"),
-                Some("hash"),
-                Role::Player,
-            )
+            .insert_user("snap_empty", Some("profile-empty"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -1745,12 +1724,7 @@ mod tests {
     fn raid_start_can_store_before_snapshot() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user(
-                "snap_start",
-                Some("profile-start"),
-                Some("hash"),
-                Role::Player,
-            )
+            .insert_user("snap_start", Some("profile-start"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db
@@ -1784,7 +1758,7 @@ mod tests {
     fn raid_end_can_store_after_snapshot() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_end", Some("profile-end"), Some("hash"), Role::Player)
+            .insert_user("snap_end", Some("profile-end"), Some("hash"), "player")
             .unwrap();
 
         let raid_id = db

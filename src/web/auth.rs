@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use actix_session::{Session, SessionExt};
 use actix_web::body::BoxBody;
 use actix_web::dev::{ServiceRequest, ServiceResponse};
@@ -9,7 +11,7 @@ use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono;
 
-use crate::db::users::Role;
+use crate::db::rbac::Permission;
 use crate::web::error::WebError;
 
 pub fn hash_password(password: &str) -> Result<String> {
@@ -34,7 +36,28 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 pub struct SessionUser {
     pub user_id: i64,
     pub username: String,
-    pub role: Role,
+    pub role_name: String,
+    pub role_display_name: String,
+    pub permissions: HashSet<Permission>,
+}
+
+impl SessionUser {
+    pub fn has_permission(&self, perm: Permission) -> bool {
+        self.permissions.contains(&perm)
+    }
+
+    pub fn can(&self, perm_str: &str) -> bool {
+        match Permission::from_slug(perm_str) {
+            Some(p) => self.permissions.contains(&p),
+            None => {
+                tracing::warn!(
+                    permission = perm_str,
+                    "unknown permission slug in can() check"
+                );
+                false
+            }
+        }
+    }
 }
 
 pub fn require_auth(req: &HttpRequest) -> std::result::Result<SessionUser, WebError> {
@@ -44,11 +67,11 @@ pub fn require_auth(req: &HttpRequest) -> std::result::Result<SessionUser, WebEr
         .ok_or(WebError::Forbidden)
 }
 
-pub fn require_capability(
+pub fn require_permission(
     user: &SessionUser,
-    check: fn(&Role) -> bool,
+    perm: Permission,
 ) -> std::result::Result<(), WebError> {
-    if !check(&user.role) {
+    if !user.has_permission(perm) {
         return Err(WebError::Forbidden);
     }
     Ok(())
@@ -62,7 +85,7 @@ pub fn set_session_user(session: &Session, user: &SessionUser) -> Result<()> {
         .insert("username", &user.username)
         .map_err(|e| anyhow::anyhow!("session error: {e}"))?;
     session
-        .insert("role", user.role.as_str())
+        .insert("role", &user.role_name)
         .map_err(|e| anyhow::anyhow!("session error: {e}"))?;
     session
         .insert("session_created_at", chrono::Utc::now().to_rfc3339())
@@ -103,7 +126,7 @@ pub async fn auth_middleware(
 
     let db_result = web::block(move || {
         let db = state.db.lock();
-        db.get_user_by_id(user_id)
+        db.get_user_with_permissions(user_id)
     })
     .await;
 
@@ -113,8 +136,10 @@ pub async fn auth_middleware(
             .finish()
     };
 
-    let verified_user = match db_result {
-        Ok(Ok(Some(user))) if !user.disabled => user,
+    let (verified_user, role_display, permissions) = match db_result {
+        Ok(Ok(Some((user, role_display, permissions)))) if !user.disabled => {
+            (user, role_display, permissions)
+        }
         Ok(Ok(Some(_))) => {
             tracing::warn!(user_id, "disabled user session purged");
             session.purge();
@@ -139,8 +164,10 @@ pub async fn auth_middleware(
 
     let session_user = SessionUser {
         user_id: verified_user.id,
-        username: verified_user.username,
-        role: verified_user.role,
+        username: verified_user.username.clone(),
+        role_name: verified_user.role.clone(),
+        role_display_name: role_display,
+        permissions,
     };
 
     // Check if password was changed after session was created
@@ -161,7 +188,7 @@ pub async fn auth_middleware(
     }
 
     let cached_role = session.get::<String>("role").unwrap_or(None);
-    if cached_role.as_deref() != Some(session_user.role.as_str()) {
+    if cached_role.as_deref() != Some(&session_user.role_name) {
         if let Err(e) = set_session_user(&session, &session_user) {
             tracing::debug!(user_id, error = %e, "failed to update session cookie");
         }
@@ -187,31 +214,53 @@ mod tests {
     }
 
     #[test]
-    fn session_user_role_capabilities() {
+    fn session_user_permission_checks() {
+        let mut perms = HashSet::new();
+        perms.insert(Permission::UsersManage);
+        perms.insert(Permission::ModsInstall);
+        perms.insert(Permission::ServerControl);
+
         let admin = SessionUser {
             user_id: 1,
             username: "admin".into(),
-            role: Role::Admin,
+            role_name: "admin".into(),
+            role_display_name: "Admin".into(),
+            permissions: perms,
         };
-        let moderator = SessionUser {
-            user_id: 2,
-            username: "moderator".into(),
-            role: Role::Moderator,
-        };
+
+        assert!(admin.has_permission(Permission::UsersManage));
+        assert!(admin.has_permission(Permission::ModsInstall));
+        assert!(!admin.has_permission(Permission::QueueManage));
+        assert!(require_permission(&admin, Permission::UsersManage).is_ok());
+        assert!(require_permission(&admin, Permission::QueueManage).is_err());
+
         let player = SessionUser {
-            user_id: 3,
+            user_id: 2,
             username: "player".into(),
-            role: Role::Player,
+            role_name: "player".into(),
+            role_display_name: "Player".into(),
+            permissions: HashSet::new(),
         };
 
-        // Admin can manage users
-        assert!(require_capability(&admin, Role::can_manage_users).is_ok());
-        assert!(require_capability(&moderator, Role::can_manage_users).is_err());
-        assert!(require_capability(&player, Role::can_manage_users).is_err());
+        assert!(!player.has_permission(Permission::UsersManage));
+        assert!(require_permission(&player, Permission::UsersManage).is_err());
+    }
 
-        // Admin and moderator can manage mods
-        assert!(require_capability(&admin, Role::can_manage_mods).is_ok());
-        assert!(require_capability(&moderator, Role::can_manage_mods).is_ok());
-        assert!(require_capability(&player, Role::can_manage_mods).is_err());
+    #[test]
+    fn can_method_with_slugs() {
+        let mut perms = HashSet::new();
+        perms.insert(Permission::ModsInstall);
+
+        let user = SessionUser {
+            user_id: 1,
+            username: "test".into(),
+            role_name: "moderator".into(),
+            role_display_name: "Moderator".into(),
+            permissions: perms,
+        };
+
+        assert!(user.can("mods.install"));
+        assert!(!user.can("users.manage"));
+        assert!(!user.can("nonexistent.perm"));
     }
 }

@@ -10,7 +10,6 @@ use crate::container::{
     ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
     DEFAULT_CONTAINER_NAME, DEFAULT_SPT_PORT, SPT_SERVER_IMAGE,
 };
-use crate::db::users::Role;
 use crate::db::Database;
 use crate::spt::detect::{read_spt_version, validate_spt_dir};
 use crate::web::auth::hash_password;
@@ -396,7 +395,7 @@ fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database
         println!("Admin user already exists.");
     } else {
         let password_hash = hash_password(admin_password)?;
-        db.insert_user("admin", None, Some(&password_hash), Role::Admin)
+        db.insert_user("admin", None, Some(&password_hash), "admin")
             .map_err(|e| anyhow::anyhow!("failed to create admin user: {e}"))?;
         println!("Admin user 'admin' created.");
     }

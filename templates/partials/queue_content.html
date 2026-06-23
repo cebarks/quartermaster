@@ -2,7 +2,7 @@
 
 <div class="flex-between">
     <h2>Pending Operations</h2>
-    {% if user.role.can_manage_queue() && !ops.is_empty() %}
+    {% if user.can("queue.manage") && !ops.is_empty() %}
     <form method="post" action="/quma/queue/apply"
           onsubmit="return confirm('Apply all pending operations?')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -27,7 +27,7 @@
                 <th>Mod</th>
                 <th>Queued</th>
                 <th>By</th>
-                {% if user.role.can_manage_queue() %}<th>Actions</th>{% endif %}
+                {% if user.can("queue.manage") %}<th>Actions</th>{% endif %}
             </tr>
         </thead>
         <tbody>
@@ -49,7 +49,7 @@
                     -
                     {% endif %}
                 </td>
-                {% if user.role.can_manage_queue() %}
+                {% if user.can("queue.manage") %}
                 <td>
                     <form method="post" action="/quma/queue/{{ op.id }}/cancel" style="display:inline"
                           onsubmit="return confirm('Cancel this operation?')">

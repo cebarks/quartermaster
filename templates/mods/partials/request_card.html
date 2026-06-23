@@ -78,7 +78,7 @@
         {% endif %}
     </div>
     {% endif %}
-    {% if r.request.status == "pending" && user.role.can_manage_mods() %}
+    {% if r.request.status == "pending" && user.can("mods.install") %}
     <div class="mt-1 resolve-form" style="display:flex;gap:0.5rem;align-items:flex-start;flex-wrap:wrap">
         <form hx-post="/quma/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
               style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">

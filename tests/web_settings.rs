@@ -2,12 +2,11 @@ mod common;
 
 use actix_web::http::StatusCode;
 use common::TestAppBuilder;
-use spt_quartermaster::db::users::Role;
 
 #[actix_web::test]
 async fn settings_page_requires_admin() {
     let mut app = TestAppBuilder::new()
-        .with_user("player", "password", Role::Player)
+        .with_user("player", "password", "player")
         .build()
         .await;
 
@@ -21,7 +20,7 @@ async fn settings_page_requires_admin() {
 #[actix_web::test]
 async fn settings_page_accessible_by_admin() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .build()
         .await;
 
@@ -35,7 +34,7 @@ async fn settings_page_accessible_by_admin() {
 #[actix_web::test]
 async fn settings_moderator_gets_403() {
     let mut app = TestAppBuilder::new()
-        .with_user("moderator", "password", Role::Moderator)
+        .with_user("moderator", "password", "moderator")
         .build()
         .await;
 

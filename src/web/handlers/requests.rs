@@ -3,9 +3,10 @@ use actix_web::web::{self, Data, Form, Html, Path, Query};
 use actix_web::HttpRequest;
 use askama::Template;
 
+use crate::db::rbac::Permission;
 use crate::db::requests::{ModRequestView, VoteComment};
 use crate::forge::models::FikaCompat;
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::csrf;
 use crate::web::error::WebError;
 use crate::web::state::AppState;
@@ -523,7 +524,7 @@ pub async fn resolve_request(
     form: Form<ResolveForm>,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, crate::db::users::Role::can_manage_mods)?;
+    require_permission(&user, Permission::RequestsResolve)?;
     if !csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }

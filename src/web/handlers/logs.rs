@@ -9,8 +9,8 @@ use askama::Template;
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::db::users::Role;
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::db::rbac::Permission;
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::nav::NavContext;
@@ -31,7 +31,7 @@ pub async fn app_logs_json(
     query: Query<LogQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerLogs)?;
     let limit = query.limit.unwrap_or(100).min(10000);
     let entries = state.log_broadcast.recent(limit);
     Ok(HttpResponse::Ok().json(entries))
@@ -42,7 +42,7 @@ pub async fn app_logs_stream(
     req: HttpRequest,
 ) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerLogs)?;
     let mut rx = state.log_broadcast.subscribe();
 
     let stream = async_stream::stream! {
@@ -75,7 +75,7 @@ pub async fn server_logs_json(
     query: Query<LogQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerLogs)?;
     let container = state
         .config
         .server_container
@@ -108,7 +108,7 @@ pub async fn server_logs_stream(
     req: HttpRequest,
 ) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerLogs)?;
     let container = state
         .config
         .server_container
@@ -216,7 +216,7 @@ pub async fn logs_page(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerLogs)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 

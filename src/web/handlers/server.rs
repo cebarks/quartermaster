@@ -5,8 +5,8 @@ use actix_web::web::{self, Data, Form};
 use actix_web::{HttpRequest, HttpResponse};
 
 use crate::container::ContainerManager;
-use crate::db::users::Role;
-use crate::web::auth::{require_auth, require_capability};
+use crate::db::rbac::Permission;
+use crate::web::auth::{require_auth, require_permission};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, FlashType};
 use crate::web::sse::ServerEvent;
@@ -50,7 +50,7 @@ pub async fn start_server(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerControl)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -92,7 +92,7 @@ pub async fn stop_server(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerControl)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -131,7 +131,7 @@ pub async fn restart_server(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerControl)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }

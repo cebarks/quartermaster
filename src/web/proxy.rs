@@ -301,12 +301,7 @@ fn handle_player_registration(
             }
         }
 
-        match db.insert_user(
-            username,
-            Some(profile_id),
-            None,
-            crate::db::users::Role::Player,
-        ) {
+        match db.insert_user(username, Some(profile_id), None, "player") {
             Ok(user_id) => {
                 tracing::info!(
                     user_id,

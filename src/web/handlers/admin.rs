@@ -3,7 +3,8 @@ use actix_web::web::{self, Data, Form, Html, Path};
 use actix_web::{HttpMessage, HttpRequest};
 use askama::Template;
 
-use crate::db::users::{InviteCodeWithUsers, Role, User};
+use crate::db::rbac::Permission;
+use crate::db::users::{InviteCodeWithUsers, User};
 use crate::spt::profiles::{load_all_profile_stats, ProfileStatus, SptProfileStats};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
@@ -153,7 +154,7 @@ pub async fn admin_middleware(
         .cloned()
         .ok_or(WebError::Forbidden)?;
 
-    if !user.role.can_manage_users() {
+    if !user.has_permission(Permission::UsersManage) {
         return Err(WebError::Forbidden.into());
     }
 
@@ -168,7 +169,7 @@ pub async fn admin_page(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    crate::web::auth::require_capability(&user, Role::can_manage_users)?;
+    crate::web::auth::require_permission(&user, Permission::UsersManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let flash = crate::web::flash::take_flash(&session);
 
@@ -251,13 +252,26 @@ pub async fn change_role(
         return Err(WebError::Forbidden.into());
     }
 
-    let new_role = Role::try_from(form.role.clone())
-        .map_err(|_| WebError::BadRequest("Invalid role".to_string()))?;
+    // Validate role exists in DB
+    let role_name = form.role.clone();
+    let db = state.db.clone();
+    let role_exists = web::block(move || {
+        let db = db.lock();
+        db.get_role_by_name(&role_name)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
 
+    if role_exists.is_none() {
+        return Err(WebError::BadRequest("Unknown role".to_string()).into());
+    }
+
+    let new_role = form.role.clone();
     let db = state.db.clone();
     let affected = web::block(move || {
         let db = db.lock();
-        db.update_user_role(target_id, new_role)
+        db.update_user_role(target_id, &new_role)
     })
     .await
     .map_err(WebError::from)?

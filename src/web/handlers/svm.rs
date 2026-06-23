@@ -3,9 +3,9 @@ use actix_web::web::{self, Data, Form, Json};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
-use crate::db::users::Role;
+use crate::db::rbac::Permission;
 use crate::svm::metadata::{self, FieldMeta, InputType, SectionMeta, SECTIONS};
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
@@ -79,8 +79,8 @@ pub async fn manager_page(
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
 
-    // Non-admins get redirected to the read-only view
-    if !user.role.can_manage_mods() {
+    // Users without SVM edit permission get redirected to the read-only view
+    if !user.has_permission(Permission::SvmEdit) {
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/svm/view"))
             .finish());
@@ -112,7 +112,7 @@ pub async fn switch_preset(
     form: Form<PresetSwitchForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -141,7 +141,7 @@ pub async fn create_preset(
     form: Form<PresetCreateForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -169,7 +169,7 @@ pub async fn duplicate_preset(
     form: Form<PresetDuplicateForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -198,7 +198,7 @@ pub async fn delete_preset(
     form: Form<PresetDeleteForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -226,7 +226,7 @@ pub async fn reload_from_disk(
     form: Form<ReloadForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -249,7 +249,7 @@ pub async fn export_preset(
     path: web::Path<String>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
 
     let preset_name = path.into_inner();
     crate::svm::SvmManager::validate_preset_name(&preset_name)
@@ -282,7 +282,7 @@ pub async fn import_preset(
     form: Form<PresetImportForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -386,7 +386,7 @@ pub async fn editor_page(
     query: web::Query<EditorQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
 
     let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
     let svm = svm.read();
@@ -432,7 +432,7 @@ pub async fn section_partial(
     path: web::Path<String>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
 
     let section = path.into_inner();
     let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
@@ -461,7 +461,7 @@ pub async fn save_section(
     body: Json<serde_json::Value>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::SvmEdit)?;
 
     let csrf = body
         .get("csrf_token")

@@ -27,7 +27,7 @@
     </table>
 </div>
 
-{% if user.role.can_manage_mods() %}
+{% if user.can("mods.install") %}
 <div class="flex gap-1 mb-2">
     <form method="post" action="/quma/mods/{{ mod_info.id }}/update">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

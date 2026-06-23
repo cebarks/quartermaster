@@ -2,7 +2,6 @@ mod common;
 
 use actix_web::http::StatusCode;
 use common::TestAppBuilder;
-use spt_quartermaster::db::users::Role;
 
 // Logs tests
 #[actix_web::test]
@@ -16,7 +15,7 @@ async fn logs_page_requires_auth() {
 #[actix_web::test]
 async fn logs_page_loads() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "pass", Role::Admin)
+        .with_user("admin", "pass", "admin")
         .build()
         .await;
 
@@ -46,7 +45,7 @@ async fn metrics_page_requires_auth() {
 #[actix_web::test]
 async fn metrics_requires_server_control() {
     let mut app = TestAppBuilder::new()
-        .with_user("player", "pass", Role::Player)
+        .with_user("player", "pass", "player")
         .build()
         .await;
 
@@ -59,7 +58,7 @@ async fn metrics_requires_server_control() {
 #[actix_web::test]
 async fn metrics_loads_for_admin() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "pass", Role::Admin)
+        .with_user("admin", "pass", "admin")
         .build()
         .await;
 
@@ -81,7 +80,7 @@ async fn task_status_requires_auth() {
 #[actix_web::test]
 async fn task_status_loads() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "pass", Role::Admin)
+        .with_user("admin", "pass", "admin")
         .build()
         .await;
 
@@ -120,7 +119,7 @@ async fn stats_page_requires_auth() {
 #[actix_web::test]
 async fn stats_page_loads() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "pass", Role::Admin)
+        .with_user("admin", "pass", "admin")
         .build()
         .await;
 
@@ -150,7 +149,7 @@ async fn svm_page_requires_auth() {
 #[actix_web::test]
 async fn svm_page_loads() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "pass", Role::Admin)
+        .with_user("admin", "pass", "admin")
         .build()
         .await;
 
@@ -177,7 +176,7 @@ async fn modsync_page_requires_auth() {
 #[actix_web::test]
 async fn modsync_page_loads() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "pass", Role::Admin)
+        .with_user("admin", "pass", "admin")
         .build()
         .await;
 
@@ -199,7 +198,7 @@ async fn requests_tab_requires_auth() {
 #[actix_web::test]
 async fn requests_tab_loads() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "pass", Role::Admin)
+        .with_user("admin", "pass", "admin")
         .build()
         .await;
 

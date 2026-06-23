@@ -2,7 +2,6 @@ mod common;
 
 use actix_web::http::StatusCode;
 use common::TestAppBuilder;
-use spt_quartermaster::db::users::Role;
 
 #[actix_web::test]
 async fn server_start_requires_auth() {
@@ -17,7 +16,7 @@ async fn server_start_requires_auth() {
 #[actix_web::test]
 async fn server_start_requires_capability() {
     let mut app = TestAppBuilder::new()
-        .with_user("player", "pass", Role::Player)
+        .with_user("player", "pass", "player")
         .build()
         .await;
 
@@ -33,7 +32,7 @@ async fn server_start_requires_capability() {
 #[actix_web::test]
 async fn server_stop_requires_capability() {
     let mut app = TestAppBuilder::new()
-        .with_user("player", "pass", Role::Player)
+        .with_user("player", "pass", "player")
         .build()
         .await;
 

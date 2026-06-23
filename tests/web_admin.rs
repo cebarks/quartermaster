@@ -3,7 +3,6 @@ mod common;
 use actix_web::http::StatusCode;
 use actix_web::test;
 use common::TestAppBuilder;
-use spt_quartermaster::db::users::Role;
 
 // -- Access Control Tests --
 
@@ -19,7 +18,7 @@ async fn admin_page_requires_auth() {
 #[actix_web::test]
 async fn admin_page_requires_admin_role() {
     let mut app = TestAppBuilder::new()
-        .with_user("player", "password", Role::Player)
+        .with_user("player", "password", "player")
         .build()
         .await;
 
@@ -31,7 +30,7 @@ async fn admin_page_requires_admin_role() {
 #[actix_web::test]
 async fn admin_page_accessible_by_admin() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .build()
         .await;
 
@@ -43,7 +42,7 @@ async fn admin_page_accessible_by_admin() {
 #[actix_web::test]
 async fn admin_api_requires_admin_role() {
     let mut app = TestAppBuilder::new()
-        .with_user("moderator", "password", Role::Moderator)
+        .with_user("moderator", "password", "moderator")
         .build()
         .await;
 
@@ -57,8 +56,8 @@ async fn admin_api_requires_admin_role() {
 #[actix_web::test]
 async fn admin_change_role() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
-        .with_user("player", "password", Role::Player)
+        .with_user("admin", "password", "admin")
+        .with_user("player", "password", "player")
         .build()
         .await;
 
@@ -95,13 +94,13 @@ async fn admin_change_role() {
         .get_user_by_username("player")
         .unwrap()
         .expect("player should still exist");
-    assert_eq!(updated_player.role, Role::Moderator);
+    assert_eq!(updated_player.role, "moderator");
 }
 
 #[actix_web::test]
 async fn admin_cannot_self_demote() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .build()
         .await;
 
@@ -138,8 +137,8 @@ async fn admin_cannot_self_demote() {
 #[actix_web::test]
 async fn admin_toggle_disable() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
-        .with_user("player", "password", Role::Player)
+        .with_user("admin", "password", "admin")
+        .with_user("player", "password", "player")
         .build()
         .await;
 
@@ -202,8 +201,8 @@ async fn admin_toggle_disable() {
 #[actix_web::test]
 async fn admin_create_reset_token() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
-        .with_user("player", "password", Role::Player)
+        .with_user("admin", "password", "admin")
+        .with_user("player", "password", "player")
         .build()
         .await;
 
@@ -245,7 +244,7 @@ async fn admin_create_reset_token() {
 #[actix_web::test]
 async fn admin_create_invite() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .build()
         .await;
 

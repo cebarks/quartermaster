@@ -5,8 +5,8 @@ use askama::Template;
 
 use crate::config::Config;
 use crate::db::mods::InstalledMod;
-use crate::db::users::Role;
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::db::rbac::Permission;
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
@@ -49,7 +49,7 @@ pub async fn modsync_page(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsyncManage)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
@@ -139,7 +139,7 @@ pub async fn save_settings(
     form: Form<ModSyncSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsyncManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }

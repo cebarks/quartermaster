@@ -3,8 +3,8 @@ use actix_web::web::{Data, Html};
 use actix_web::HttpRequest;
 use askama::Template;
 
-use crate::db::users::Role;
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::db::rbac::Permission;
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::nav::NavContext;
@@ -30,7 +30,7 @@ pub async fn metrics_page(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerMetrics)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
@@ -54,7 +54,7 @@ pub async fn proxy_metrics_partial(
     req: HttpRequest,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::ServerMetrics)?;
     let template = ProxyMetricsTemplate {
         proxy: state.proxy_metrics.snapshot(),
     };

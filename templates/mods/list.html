@@ -28,7 +28,7 @@
 <div id="mods-tab-content">
     <div class="flex-between">
         <h2>Installed Mods</h2>
-        {% if user.role.can_manage_mods() %}
+        {% if user.can("mods.install") %}
         <div class="flex gap-1">
             <form method="post" action="/quma/mods/update-all" style="display:inline"
                   onsubmit="return confirm('Update all mods?')">
@@ -54,7 +54,7 @@
         <div style="display: flex; align-items: center; gap: 0.5rem">
             <strong>{{ m.mod_info.name }}</strong>
             <span class="text-muted text-sm">{{ m.mod_info.version }}</span>
-            {% if user.role.can_manage_mods() %}
+            {% if user.can("mods.install") %}
             <form method="post" action="/quma/mods/{{ m.mod_info.id }}/update" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-sm btn-outline" style="padding: 0.1rem 0.4rem; font-size: 0.75rem">{% call icons::refresh() %}{% endcall %}</button>
@@ -76,7 +76,7 @@
 <div class="card">
     <div class="empty-state">
         <p>No mods installed.</p>
-        {% if user.role.can_manage_mods() %}<p class="mt-1">Use the form below to install your first mod.</p>{% endif %}
+        {% if user.can("mods.install") %}<p class="mt-1">Use the form below to install your first mod.</p>{% endif %}
     </div>
 </div>
 {% else %}
@@ -115,7 +115,7 @@
 </div>
 {% endif %}
 
-{% if user.role.can_manage_mods() %}
+{% if user.can("mods.install") %}
 <div class="card">
     <h2>Install Mod</h2>
     <form id="install-form" method="post" action="/quma/mods/install">

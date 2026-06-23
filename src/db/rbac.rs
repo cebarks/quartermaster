@@ -388,19 +388,18 @@ impl Database {
         let Some(ref u) = user else {
             return Ok(None);
         };
-        let role_str = u.role.as_str();
         let role_display = self
-            .get_role_by_name(role_str)?
+            .get_role_by_name(&u.role)?
             .map(|r| r.display_name)
             .unwrap_or_else(|| {
                 tracing::warn!(
                     user_id = u.id,
-                    role = role_str,
+                    role = u.role.as_str(),
                     "user has role not found in roles table"
                 );
-                u.role.to_string()
+                u.role.clone()
             });
-        let permissions = self.get_permissions_for_role(role_str)?;
+        let permissions = self.get_permissions_for_role(&u.role)?;
         Ok(user.map(|u| (u, role_display, permissions)))
     }
 }

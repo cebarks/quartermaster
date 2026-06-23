@@ -36,7 +36,7 @@
                hx-swap="innerHTML"
                hx-include="#filter-q,[name='status']">Installed{% if sort_column == "installed" %} {% if sort_dir == "asc" %}▲{% else %}▼{% endif %}{% endif %}</a>
         </th>
-        {% if user.role.can_manage_mods() %}<th>Actions</th>{% endif %}
+        {% if user.can("mods.install") %}<th>Actions</th>{% endif %}
     </tr>
 </thead>
 <tbody>
@@ -47,7 +47,7 @@
     <td class="text-muted">{{ m.file_count }}</td>
     <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>
     <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
-    {% if user.role.can_manage_mods() %}
+    {% if user.can("mods.install") %}
     <td>
         <span id="mod-update-{{ m.mod_info.id }}">
             <form method="post" action="/quma/mods/{{ m.mod_info.id }}/update" style="display:inline">
@@ -67,13 +67,13 @@
 {% endfor %}
 {% if mods.is_empty() %}
 <tr>
-    <td colspan="{% if user.role.can_manage_mods() %}6{% else %}5{% endif %}" class="text-muted" style="text-align:center;padding:2rem">
+    <td colspan="{% if user.can("mods.install") %}6{% else %}5{% endif %}" class="text-muted" style="text-align:center;padding:2rem">
         No mods match your filter.
     </td>
 </tr>
 {% endif %}
 <tr class="tfoot-row">
-    <td colspan="{% if user.role.can_manage_mods() %}6{% else %}5{% endif %}" class="text-muted text-sm">
+    <td colspan="{% if user.can("mods.install") %}6{% else %}5{% endif %}" class="text-muted text-sm">
         Total: {{ mods.len() }} mods — {{ grand_total_size|format_size_i64 }}
     </td>
 </tr>

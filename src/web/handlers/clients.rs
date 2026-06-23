@@ -4,9 +4,9 @@ use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::client::{ClientHealth, ClientState};
-use crate::db::users::Role;
+use crate::db::rbac::Permission;
 use crate::spt::headless::EHeadlessStatus;
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
@@ -123,7 +123,7 @@ pub async fn client_restart(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::HeadlessManage)?;
 
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
@@ -200,7 +200,7 @@ pub async fn client_stop(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::HeadlessManage)?;
 
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
@@ -276,7 +276,7 @@ pub async fn client_start(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::HeadlessManage)?;
 
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
@@ -359,7 +359,7 @@ pub async fn client_scale(
     form: Form<ScaleForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::HeadlessManage)?;
 
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
@@ -551,7 +551,7 @@ pub async fn client_create(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::HeadlessManage)?;
 
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
@@ -672,7 +672,7 @@ pub async fn client_delete(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_control_server)?;
+    require_permission(&user, Permission::HeadlessManage)?;
 
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
