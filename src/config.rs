@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -215,7 +215,10 @@ pub struct ModSyncConfig {
     pub exclusions: Vec<String>,
 
     #[serde(default)]
-    pub overrides: HashMap<String, ModSyncOverride>,
+    pub overrides: BTreeMap<String, ModSyncOverride>,
+
+    #[serde(default)]
+    pub groups: BTreeMap<String, ModSyncGroup>,
 }
 
 impl Default for ModSyncConfig {
@@ -226,7 +229,8 @@ impl Default for ModSyncConfig {
             restart_required: true,
             extra_sync_paths: Vec::new(),
             exclusions: Vec::new(),
-            overrides: HashMap::new(),
+            overrides: BTreeMap::new(),
+            groups: BTreeMap::new(),
         }
     }
 }
@@ -241,6 +245,76 @@ pub struct ModSyncOverride {
     pub restart_required: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModSyncGroup {
+    pub display_name: String,
+    pub members: Vec<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforced: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silent: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub exclude_headless: bool,
+}
+
+pub fn validate_group_slug(slug: &str) -> Result<()> {
+    if slug.is_empty() {
+        bail!("Group slug cannot be empty");
+    }
+    if slug.len() > 64 {
+        bail!("Group slug too long (max 64 characters)");
+    }
+    if slug.starts_with('-') || slug.ends_with('-') {
+        bail!("Group slug cannot start or end with a hyphen");
+    }
+    for ch in slug.chars() {
+        if !ch.is_ascii_lowercase() && !ch.is_ascii_digit() && ch != '-' {
+            bail!(
+                "Group slug contains invalid character: '{}' (only a-z, 0-9, - allowed)",
+                ch
+            );
+        }
+    }
+    Ok(())
+}
+
+pub fn slugify(name: &str) -> String {
+    let slug: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // Collapse consecutive hyphens, trim leading/trailing
+    let mut result = String::new();
+    let mut prev_hyphen = true; // treat start as hyphen to skip leading
+    for ch in slug.chars() {
+        if ch == '-' {
+            if !prev_hyphen {
+                result.push('-');
+            }
+            prev_hyphen = true;
+        } else {
+            result.push(ch);
+            prev_hyphen = false;
+        }
+    }
+    result.truncate(64);
+    result.trim_end_matches('-').to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -1475,5 +1549,89 @@ proxy_enabled = false
             config.apply_env_overrides();
             assert_eq!(config.leaderboard_min_raids, 3);
         });
+    }
+
+    #[test]
+    fn modsync_group_serde_roundtrip() {
+        let group = ModSyncGroup {
+            display_name: "Optional Mods".to_string(),
+            members: vec![100, 205],
+            enabled: Some(false),
+            enforced: None,
+            silent: None,
+            restart_required: None,
+            exclude_headless: false,
+        };
+        let toml_str = toml::to_string_pretty(&group).unwrap();
+        // exclude_headless=false should NOT appear in output
+        assert!(!toml_str.contains("exclude_headless"));
+        // enabled=false SHOULD appear
+        assert!(toml_str.contains("enabled = false"));
+        let parsed: ModSyncGroup = toml::from_str(&toml_str).unwrap();
+        assert_eq!(group, parsed);
+    }
+
+    #[test]
+    fn modsync_group_exclude_headless_true_serialized() {
+        let group = ModSyncGroup {
+            display_name: "No Headless".to_string(),
+            members: vec![150],
+            enabled: None,
+            enforced: None,
+            silent: None,
+            restart_required: None,
+            exclude_headless: true,
+        };
+        let toml_str = toml::to_string_pretty(&group).unwrap();
+        assert!(toml_str.contains("exclude_headless = true"));
+    }
+
+    #[test]
+    fn modsync_config_with_groups_roundtrip() {
+        let toml_input = r#"
+[modsync]
+enforced = true
+
+[modsync.groups.optional]
+display_name = "Optional Mods"
+members = [100, 205]
+enabled = false
+
+[modsync.groups.no-headless]
+display_name = "No Headless"
+members = [150]
+exclude_headless = true
+
+[modsync.overrides.100]
+silent = true
+"#;
+        let config: Config = toml::from_str(toml_input).unwrap();
+        let ms = config.modsync.unwrap();
+        assert_eq!(ms.groups.len(), 2);
+        assert_eq!(ms.groups["optional"].display_name, "Optional Mods");
+        assert_eq!(ms.groups["optional"].members, vec![100, 205]);
+        assert_eq!(ms.groups["optional"].enabled, Some(false));
+        assert!(!ms.groups["optional"].exclude_headless);
+        assert!(ms.groups["no-headless"].exclude_headless);
+        assert!(ms.overrides.contains_key("100"));
+    }
+
+    #[test]
+    fn validate_group_slug_accepts_valid() {
+        assert!(validate_group_slug("optional").is_ok());
+        assert!(validate_group_slug("no-headless").is_ok());
+        assert!(validate_group_slug("group-2").is_ok());
+        assert!(validate_group_slug("a").is_ok());
+    }
+
+    #[test]
+    fn validate_group_slug_rejects_invalid() {
+        assert!(validate_group_slug("").is_err());
+        assert!(validate_group_slug("-leading").is_err());
+        assert!(validate_group_slug("trailing-").is_err());
+        assert!(validate_group_slug("UPPER").is_err());
+        assert!(validate_group_slug("has space").is_err());
+        assert!(validate_group_slug("has.dot").is_err());
+        assert!(validate_group_slug(&"a".repeat(65)).is_err());
     }
 }

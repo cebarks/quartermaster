@@ -1,0 +1,51 @@
+<form method="post" action="/quma/modsync/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="card">
+        <h2>Global Defaults</h2>
+        <p class="text-muted text-sm mb-1">Applied to all synced mods unless overridden per-mod or per-group.</p>
+        <div class="form-group">
+            <label><input type="checkbox" name="enforced" {% if enforced %}checked{% endif %}> <strong>Enforced</strong> — force clients to match server files exactly</label>
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" name="silent" {% if silent %}checked{% endif %}> <strong>Silent</strong> — auto-apply updates without prompting</label>
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" name="restart_required" {% if restart_required %}checked{% endif %}> <strong>Restart Required</strong> — require game restart after sync</label>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Extra Sync Paths</h2>
+        <p class="text-muted text-sm mb-1">Additional paths to sync beyond auto-detected mod files. One per line.</p>
+        <textarea name="extra_sync_paths" rows="4" class="form-control" placeholder="BepInEx/config">{{ extra_sync_paths }}</textarea>
+    </div>
+
+    <div class="card">
+        <h2>Exclusions</h2>
+        <p class="text-muted text-sm mb-1">Glob patterns for files to exclude from sync. One per line.</p>
+        <textarea name="exclusions" rows="4" class="form-control" placeholder="**/*.nosync">{{ exclusions }}</textarea>
+    </div>
+
+    <button type="submit" class="btn">Save Settings</button>
+</form>
+
+<script>
+(function() {
+    var form = document.querySelector('#tab-content form');
+    if (!form) return;
+    var initial = new FormData(form);
+    var initialStr = new URLSearchParams(initial).toString();
+
+    document.querySelector('.tabs').addEventListener('htmx:beforeRequest', function(evt) {
+        if (!evt.target.closest('.tabs')) return;
+        var current = new FormData(form);
+        var currentStr = new URLSearchParams(current).toString();
+        if (currentStr !== initialStr) {
+            if (!confirm('You have unsaved changes that will be lost. Continue?')) {
+                evt.preventDefault();
+            }
+        }
+    });
+})();
+</script>
