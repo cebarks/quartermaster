@@ -473,6 +473,7 @@ pub async fn client_scale(
     let mgr_clone = container_mgr.clone();
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
+    let config_handle = state.config_handle();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
 
@@ -509,6 +510,8 @@ pub async fn client_scale(
                     }
                     if let Err(e) = fresh_config.save(&config_path) {
                         tracing::error!(error = %e, "Failed to save updated headless config");
+                    } else {
+                        *config_handle.write() = fresh_config;
                     }
                 }
                 Err(e) => {
@@ -613,6 +616,7 @@ pub async fn client_create(
     let mgr_clone = container_mgr.clone();
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
+    let config_handle = state.config_handle();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
 
@@ -628,6 +632,8 @@ pub async fn client_create(
                 if let Err(e) = fresh_config.save(&config_path) {
                     tracing::error!(error = %e, "Failed to save new client to config");
                     return;
+                } else {
+                    *config_handle.write() = fresh_config;
                 }
             }
             Err(e) => {
@@ -763,6 +769,7 @@ pub async fn client_delete(
     let mgr_clone = container_mgr.clone();
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
+    let config_handle = state.config_handle();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
 
@@ -789,6 +796,8 @@ pub async fn client_delete(
                 if let Err(e) = fresh_config.save(&config_path) {
                     tracing::error!(error = %e, "Failed to save config after deleting client");
                     return;
+                } else {
+                    *config_handle.write() = fresh_config;
                 }
             }
             Err(e) => {

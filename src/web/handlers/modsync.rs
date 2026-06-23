@@ -225,6 +225,9 @@ pub async fn save_settings(
     new_config
         .save(&state.config_path)
         .map_err(WebError::from)?;
+    if let Err(e) = state.update_config_from_disk() {
+        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+    }
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
@@ -608,6 +611,9 @@ pub async fn save_groups(
         });
     }
     config.save(&state.config_path).map_err(WebError::from)?;
+    if let Err(e) = state.update_config_from_disk() {
+        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+    }
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
@@ -933,6 +939,9 @@ pub async fn save_mods(
         }
     }
     config.save(&state.config_path).map_err(WebError::from)?;
+    if let Err(e) = state.update_config_from_disk() {
+        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+    }
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
