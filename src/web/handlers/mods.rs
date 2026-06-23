@@ -796,8 +796,9 @@ pub async fn install_mod(
     }
 
     // Check if the operation should be queued (server running + queue enabled)
+    let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
-        &state.config(),
+        &config,
         false,
         &state.spt_dir,
         state.container_mgr.as_deref(),
@@ -990,8 +991,9 @@ pub async fn update_mod(
     }
 
     // Check if the operation should be queued
+    let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
-        &state.config(),
+        &config,
         false,
         &state.spt_dir,
         state.container_mgr.as_deref(),
@@ -1136,8 +1138,9 @@ pub async fn remove_mod(
     .ok_or(WebError::NotFound)?;
 
     // Check if the operation should be queued
+    let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
-        &state.config(),
+        &config,
         false,
         &state.spt_dir,
         state.container_mgr.as_deref(),
@@ -1298,8 +1301,9 @@ pub async fn update_all_mods(
         .map_err(WebError::from)?;
 
     // Check if operations should be queued (server running + queue enabled)
+    let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
-        &state.config(),
+        &config,
         false,
         &state.spt_dir,
         state.container_mgr.as_deref(),

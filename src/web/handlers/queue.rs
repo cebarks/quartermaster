@@ -82,8 +82,9 @@ pub async fn apply_queue(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
+    let config = state.config_cloned();
     let server_running = crate::server_detect::is_server_running(
-        &state.config(),
+        &config,
         &state.spt_dir,
         state.container_mgr.as_deref(),
     )

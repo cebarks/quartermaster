@@ -21,7 +21,7 @@ use crate::web::update_cache::UpdateCache;
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     pub forge: ForgeClient,
-    pub(crate) config: Arc<parking_lot::RwLock<Config>>,
+    pub config: Arc<parking_lot::RwLock<Config>>,
     pub config_path: PathBuf,
     pub config_lock: parking_lot::Mutex<()>,
     pub spt_dir: PathBuf,

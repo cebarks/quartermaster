@@ -636,8 +636,9 @@ pub async fn resolve_request(
                 if state.tasks.has_running_for_mod(forge_mod_id) {
                     message += " (install already in progress)";
                 } else {
+                    let config = state.config_cloned();
                     let should_queue = crate::queue::should_queue(
-                        &state.config(),
+                        &config,
                         false,
                         &state.spt_dir,
                         state.container_mgr.as_deref(),
