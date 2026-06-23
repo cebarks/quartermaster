@@ -135,7 +135,7 @@ impl TestAppBuilder {
         let app_state = web::Data::new(AppState {
             db: db_arc.clone(),
             forge,
-            config: config.clone(),
+            config: Arc::new(parking_lot::RwLock::new(config.clone())),
             config_path,
             config_lock: parking_lot::Mutex::new(()),
             spt_dir: spt_dir.clone(),

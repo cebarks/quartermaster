@@ -21,7 +21,7 @@ use crate::web::update_cache::UpdateCache;
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     pub forge: ForgeClient,
-    pub config: Config,
+    pub(crate) config: Arc<parking_lot::RwLock<Config>>,
     pub config_path: PathBuf,
     pub config_lock: parking_lot::Mutex<()>,
     pub spt_dir: PathBuf,
@@ -45,6 +45,30 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Read-lock the config. Drop the guard before any `.await`.
+    pub fn config(&self) -> parking_lot::RwLockReadGuard<'_, Config> {
+        self.config.read()
+    }
+
+    /// Clone the full config (useful for passing into background tasks or sync closures).
+    pub fn config_cloned(&self) -> Config {
+        self.config.read().clone()
+    }
+
+    /// Get a handle to the config RwLock for passing into background tasks
+    /// that need to update config after disk writes.
+    pub fn config_handle(&self) -> Arc<parking_lot::RwLock<Config>> {
+        Arc::clone(&self.config)
+    }
+
+    /// Reload config from disk into the in-memory RwLock.
+    /// Call this after saving config to disk (while still holding config_lock).
+    pub fn update_config_from_disk(&self) -> anyhow::Result<()> {
+        let fresh = Config::load_with_env(&self.config_path)?;
+        *self.config.write() = fresh;
+        Ok(())
+    }
+
     pub fn get_server_transition(&self) -> Option<String> {
         self.server_transition.lock().clone()
     }
