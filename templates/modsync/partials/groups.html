@@ -244,5 +244,18 @@
 
     // Initial pass: hide assigned mods from dropdowns
     hideAssignedMods();
+
+    // ── Dirty-state guard on tab switch ──────────────────────────
+    var initialSnapshot = JSON.stringify(serializeGroups());
+
+    document.querySelector('.tabs').addEventListener('htmx:beforeRequest', function(evt) {
+        if (!evt.target.closest('.tabs')) return;
+        var currentSnapshot = JSON.stringify(serializeGroups());
+        if (currentSnapshot !== initialSnapshot) {
+            if (!confirm('You have unsaved changes that will be lost. Continue?')) {
+                evt.preventDefault();
+            }
+        }
+    });
 })();
 </script>

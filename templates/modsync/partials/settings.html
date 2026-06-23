@@ -29,3 +29,23 @@
 
     <button type="submit" class="btn">Save Settings</button>
 </form>
+
+<script>
+(function() {
+    var form = document.querySelector('#tab-content form');
+    if (!form) return;
+    var initial = new FormData(form);
+    var initialStr = new URLSearchParams(initial).toString();
+
+    document.querySelector('.tabs').addEventListener('htmx:beforeRequest', function(evt) {
+        if (!evt.target.closest('.tabs')) return;
+        var current = new FormData(form);
+        var currentStr = new URLSearchParams(current).toString();
+        if (currentStr !== initialStr) {
+            if (!confirm('You have unsaved changes that will be lost. Continue?')) {
+                evt.preventDefault();
+            }
+        }
+    });
+})();
+</script>
