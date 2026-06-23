@@ -267,7 +267,6 @@ pub struct ModSyncGroup {
     pub exclude_headless: bool,
 }
 
-#[allow(dead_code)] // Used in later tasks
 pub fn validate_group_slug(slug: &str) -> Result<()> {
     if slug.is_empty() {
         bail!("Group slug cannot be empty");
@@ -289,7 +288,6 @@ pub fn validate_group_slug(slug: &str) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)] // Used in later tasks
 pub fn slugify(name: &str) -> String {
     let slug: String = name
         .chars()
