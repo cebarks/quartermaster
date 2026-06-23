@@ -42,6 +42,14 @@ pub fn resolve_server_addr(config: &Config, spt_dir: &Path) -> (String, u16) {
         .or_else(|| http_config.as_ref().map(|(h, _)| h.clone()))
         .unwrap_or_else(|| "127.0.0.1".to_string());
 
+    // Wildcard bind addresses (0.0.0.0, ::) mean "listen on all interfaces" but
+    // aren't valid destinations for outbound connections. SPT's default http.json
+    // uses 0.0.0.0, so remap to loopback when we need to connect back.
+    let host = match host.as_str() {
+        "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
+        _ => host,
+    };
+
     let port = config
         .server_port
         .or_else(|| http_config.as_ref().map(|(_, p)| *p))
@@ -74,7 +82,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_addr_from_http_json() {
+    fn resolve_addr_from_http_json_remaps_wildcard() {
         let tmp = tempfile::tempdir().unwrap();
         let spt = tmp.path();
         let configs_dir = spt.join("SPT/SPT_Data/configs");
@@ -87,7 +95,42 @@ mod tests {
 
         let config = Config::default();
         let (host, port) = resolve_server_addr(&config, spt);
-        assert_eq!(host, "0.0.0.0");
+        assert_eq!(host, "127.0.0.1");
+        assert_eq!(port, 6970);
+    }
+
+    #[test]
+    fn resolve_addr_remaps_ipv6_wildcard() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt = tmp.path();
+        let configs_dir = spt.join("SPT/SPT_Data/configs");
+        std::fs::create_dir_all(&configs_dir).unwrap();
+        std::fs::write(
+            configs_dir.join("http.json"),
+            r#"{"ip": "::", "port": 6969}"#,
+        )
+        .unwrap();
+
+        let config = Config::default();
+        let (host, _) = resolve_server_addr(&config, spt);
+        assert_eq!(host, "127.0.0.1");
+    }
+
+    #[test]
+    fn resolve_addr_preserves_real_ip_from_http_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt = tmp.path();
+        let configs_dir = spt.join("SPT/SPT_Data/configs");
+        std::fs::create_dir_all(&configs_dir).unwrap();
+        std::fs::write(
+            configs_dir.join("http.json"),
+            r#"{"ip": "192.168.1.50", "port": 6970}"#,
+        )
+        .unwrap();
+
+        let config = Config::default();
+        let (host, port) = resolve_server_addr(&config, spt);
+        assert_eq!(host, "192.168.1.50");
         assert_eq!(port, 6970);
     }
 
