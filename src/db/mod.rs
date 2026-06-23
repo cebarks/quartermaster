@@ -1,5 +1,6 @@
 pub mod mods;
 pub mod raids;
+pub mod rbac;
 pub mod requests;
 pub mod schema;
 pub mod users;

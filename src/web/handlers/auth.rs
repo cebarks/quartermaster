@@ -4,7 +4,6 @@ use actix_web::HttpResponse;
 use askama::Template;
 use subtle::ConstantTimeEq;
 
-use crate::db::users::Role;
 use crate::spt::profiles::{list_profiles, SptProfile};
 use crate::web::auth::{hash_password, set_session_user, verify_password, SessionUser};
 use crate::web::error::WebError;
@@ -158,11 +157,30 @@ pub async fn login_submit(
             .body(tmpl.render().map_err(WebError::from)?));
     }
 
+    // Load permissions for session setup (middleware handles subsequent requests)
+    let db = state.db.clone();
+    let role = user.role.clone();
+    let (role_display, permissions) = web::block(move || {
+        let db = db.lock();
+        let role_display = db
+            .get_role_by_name(&role)
+            .ok()
+            .flatten()
+            .map(|r| r.display_name)
+            .unwrap_or_else(|| role.clone());
+        let permissions = db.get_permissions_for_role(&role).unwrap_or_default();
+        (role_display, permissions)
+    })
+    .await
+    .map_err(WebError::from)?;
+
     session.renew();
     let session_user = SessionUser {
         user_id: user.id,
         username: user.username,
-        role: user.role,
+        role_name: user.role,
+        role_display_name: role_display,
+        permissions,
     };
     set_session_user(&session, &session_user).map_err(WebError::from)?;
 
@@ -343,12 +361,8 @@ pub async fn register_submit(
             return Ok(Err("Invite code is invalid or expired".to_string()));
         }
 
-        let user_id = db.insert_user(
-            &username,
-            Some(&profile_id),
-            Some(&password_hash),
-            Role::Player,
-        )?;
+        let user_id =
+            db.insert_user(&username, Some(&profile_id), Some(&password_hash), "player")?;
 
         // Update the invite to point to the real user_id (no IS NULL guard needed)
         db.update_invite_user(&code, user_id)?;

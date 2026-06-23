@@ -8,7 +8,6 @@ use parking_lot::Mutex;
 use tempfile::TempDir;
 
 use spt_quartermaster::config::Config;
-use spt_quartermaster::db::users::Role;
 use spt_quartermaster::db::Database;
 use spt_quartermaster::forge::client::ForgeClient;
 use spt_quartermaster::spt::detect::SptInfo;
@@ -18,7 +17,7 @@ use spt_quartermaster::web::{configure_app, proxy_metrics::ProxyMetrics};
 
 /// Test app builder for integration tests.
 pub struct TestAppBuilder {
-    users: Vec<(String, String, Role)>,
+    users: Vec<(String, String, String)>,
     mods: Vec<(i64, String, String)>,
     mock_server: Option<wiremock::MockServer>,
 }
@@ -33,9 +32,9 @@ impl TestAppBuilder {
     }
 
     /// Seed a user into the test database.
-    pub fn with_user(mut self, username: &str, password: &str, role: Role) -> Self {
+    pub fn with_user(mut self, username: &str, password: &str, role: &str) -> Self {
         self.users
-            .push((username.to_string(), password.to_string(), role));
+            .push((username.to_string(), password.to_string(), role.to_string()));
         self
     }
 
@@ -82,7 +81,7 @@ impl TestAppBuilder {
             db.conn()
                 .execute(
                     "INSERT INTO users (username, password_hash, role, disabled) VALUES (?, ?, ?, 0)",
-                    rusqlite::params![username, hashed, role.as_str()],
+                    rusqlite::params![username, hashed, role],
                 )
                 .expect("failed to insert user");
         }

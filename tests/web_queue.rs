@@ -2,7 +2,6 @@ mod common;
 
 use actix_web::http::StatusCode;
 use common::TestAppBuilder;
-use spt_quartermaster::db::users::Role;
 
 #[actix_web::test]
 async fn queue_content_requires_auth() {
@@ -15,7 +14,7 @@ async fn queue_content_requires_auth() {
 #[actix_web::test]
 async fn queue_content_loads() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "pass", Role::Admin)
+        .with_user("admin", "pass", "admin")
         .build()
         .await;
 
@@ -28,7 +27,7 @@ async fn queue_content_loads() {
 #[actix_web::test]
 async fn apply_queue_requires_capability() {
     let mut app = TestAppBuilder::new()
-        .with_user("player", "pass", Role::Player)
+        .with_user("player", "pass", "player")
         .build()
         .await;
 

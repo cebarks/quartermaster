@@ -1,0 +1,80 @@
+<div id="roles-content">
+{% if let Some(msg) = message %}
+<div class="alert alert-success">{{ msg }}</div>
+{% endif %}
+{% if let Some(err) = error %}
+<div class="alert alert-danger">{{ err }}</div>
+{% endif %}
+
+{% for role in &roles %}
+<div class="card mb-1">
+    <div class="flex-between">
+        <h3>{{ role.role.display_name }}
+            {% if role.role.built_in %}<span class="badge badge-muted">Built-in</span>{% endif %}
+            {% if role.role.name == "admin" %}<span class="badge badge-warning">Locked</span>{% endif %}
+        </h3>
+        {% if !role.role.built_in %}
+        <form method="post" action="/quma/api/admin/roles/{{ role.role.name }}/delete"
+              hx-post="/quma/api/admin/roles/{{ role.role.name }}/delete"
+              hx-target="#roles-content"
+              hx-swap="innerHTML"
+              onsubmit="return confirm('Delete role {{ role.role.display_name }}?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+        {% endif %}
+    </div>
+
+    {% if role.role.name == "admin" %}
+    <p class="text-muted text-sm">Admin permissions cannot be modified. This role always has all permissions.</p>
+    {% else %}
+    <form hx-post="/quma/api/admin/roles/{{ role.role.name }}/permissions"
+          hx-target="#roles-content"
+          hx-swap="innerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem; margin: 0.5rem 0;">
+            {% for perm in &all_permissions %}
+            <label style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.9rem;">
+                <input type="checkbox" name="permissions" value="{{ perm.slug }}"
+                       {% if role.permissions.contains(&crate::db::rbac::Permission::from_slug(perm.slug).unwrap()) %}checked{% endif %}>
+                {{ perm.display_name }}
+            </label>
+            {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-sm">Save Permissions</button>
+    </form>
+    {% endif %}
+</div>
+{% endfor %}
+
+<div class="card">
+    <h3>Create New Role</h3>
+    <form hx-post="/quma/api/admin/roles"
+          hx-target="#roles-content"
+          hx-swap="innerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="flex gap-1 mb-1">
+            <div>
+                <label for="new-role-name">Name (slug)</label>
+                <input type="text" name="name" id="new-role-name" placeholder="mod-curator"
+                       pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" maxlength="32" required
+                       title="Lowercase letters, digits, hyphens. Cannot start or end with a hyphen.">
+            </div>
+            <div>
+                <label for="new-role-display">Display Name</label>
+                <input type="text" name="display_name" id="new-role-display" placeholder="Mod Curator"
+                       maxlength="64" required>
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem; margin: 0.5rem 0;">
+            {% for perm in &all_permissions %}
+            <label style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.9rem;">
+                <input type="checkbox" name="permissions" value="{{ perm.slug }}">
+                {{ perm.display_name }}
+            </label>
+            {% endfor %}
+        </div>
+        <button type="submit" class="btn">Create Role</button>
+    </form>
+</div>
+</div>

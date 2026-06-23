@@ -14,13 +14,15 @@
                     hx-swap="outerHTML"
                     hx-include="closest form"
                     hx-disabled-elt="this">
-                <option value="admin"{% if u.role.as_str() == "admin" %} selected{% endif %}>Admin</option>
-                <option value="moderator"{% if u.role.as_str() == "moderator" %} selected{% endif %}>Moderator</option>
-                <option value="player"{% if u.role.as_str() == "player" %} selected{% endif %}>Player</option>
+                {% for r in &roles %}
+                <option value="{{ r.name }}"{% if u.role == r.name %} selected{% endif %}>{{ r.display_name }}</option>
+                {% endfor %}
             </select>
         </form>
         {% else %}
-        <span class="badge badge-muted">{{ u.role }}</span>
+        {% for r in &roles %}{% if r.name == u.role %}
+        <span class="badge badge-muted">{{ r.display_name }}</span>
+        {% endif %}{% endfor %}
         {% endif %}
     </td>
     <td>

@@ -2,7 +2,6 @@ mod common;
 
 use actix_web::http::StatusCode;
 use common::TestAppBuilder;
-use spt_quartermaster::db::users::Role;
 
 #[actix_web::test]
 async fn dashboard_requires_auth() {
@@ -21,7 +20,7 @@ async fn dashboard_requires_auth() {
 #[actix_web::test]
 async fn dashboard_loads_for_authenticated_user() {
     let mut app = TestAppBuilder::new()
-        .with_user("testuser", "password", Role::Player)
+        .with_user("testuser", "password", "player")
         .build()
         .await;
 
@@ -49,7 +48,7 @@ async fn dashboard_server_partial_requires_auth() {
 #[actix_web::test]
 async fn dashboard_partials_load() {
     let mut app = TestAppBuilder::new()
-        .with_user("testuser", "password", Role::Player)
+        .with_user("testuser", "password", "player")
         .build()
         .await;
 

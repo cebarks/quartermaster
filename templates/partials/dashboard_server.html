@@ -26,7 +26,7 @@
                 {% if let Some(err) = &report.error %}<span class="text-muted" style="font-size: 0.85rem; font-weight: 400;"> — {{ err }}</span>{% endif %}
                 {% endif %}
             </span>
-            {% if user.role.can_control_server() %}
+            {% if user.can("server.control") %}
             <div class="flex gap-1">
                 <form method="post" action="/quma/server/start" style="display:inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

@@ -3,7 +3,6 @@ mod common;
 use actix_web::http::StatusCode;
 use actix_web::test;
 use common::{extract_csrf_token, TestAppBuilder};
-use spt_quartermaster::db::users::Role;
 
 // ── Login tests ───────────────────────────────────────────────────────
 
@@ -20,7 +19,7 @@ async fn login_page_renders() {
 #[actix_web::test]
 async fn login_valid_credentials_redirects() {
     let mut app = TestAppBuilder::new()
-        .with_user("testuser", "password123", Role::Player)
+        .with_user("testuser", "password123", "player")
         .build()
         .await;
 
@@ -34,7 +33,7 @@ async fn login_valid_credentials_redirects() {
 #[actix_web::test]
 async fn login_wrong_password() {
     let mut app = TestAppBuilder::new()
-        .with_user("testuser", "correctpass", Role::Player)
+        .with_user("testuser", "correctpass", "player")
         .build()
         .await;
 
@@ -71,7 +70,7 @@ async fn login_nonexistent_user() {
 #[actix_web::test]
 async fn login_missing_csrf() {
     let mut app = TestAppBuilder::new()
-        .with_user("testuser", "password123", Role::Player)
+        .with_user("testuser", "password123", "player")
         .build()
         .await;
 
@@ -84,7 +83,7 @@ async fn login_missing_csrf() {
 #[actix_web::test]
 async fn login_disabled_user() {
     let mut app = TestAppBuilder::new()
-        .with_user("disableduser", "password123", Role::Player)
+        .with_user("disableduser", "password123", "player")
         .build()
         .await;
 
@@ -117,7 +116,7 @@ async fn login_disabled_user() {
 #[actix_web::test]
 async fn logout_clears_session() {
     let mut app = TestAppBuilder::new()
-        .with_user("testuser", "password123", Role::Player)
+        .with_user("testuser", "password123", "player")
         .build()
         .await;
 
@@ -228,7 +227,7 @@ async fn reset_password_invalid_token_returns_400() {
 #[actix_web::test]
 async fn reset_password_valid_token_renders_form() {
     let mut app = TestAppBuilder::new()
-        .with_user("testuser", "oldpass123", Role::Player)
+        .with_user("testuser", "oldpass123", "player")
         .build()
         .await;
 
@@ -255,7 +254,7 @@ async fn reset_password_valid_token_renders_form() {
 #[actix_web::test]
 async fn reset_password_submit_changes_password() {
     let mut app = TestAppBuilder::new()
-        .with_user("testuser", "oldpass123", Role::Player)
+        .with_user("testuser", "oldpass123", "player")
         .build()
         .await;
 

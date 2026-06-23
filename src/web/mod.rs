@@ -297,7 +297,20 @@ pub fn configure_app(
                     "/users/{id}/reset-password",
                     web::post().to(handlers::admin::create_reset_token),
                 )
-                .route("/invites", web::post().to(handlers::admin::create_invite)),
+                .route("/invites", web::post().to(handlers::admin::create_invite))
+                .route("/roles", web::get().to(handlers::admin::admin_roles))
+                .route(
+                    "/roles",
+                    web::post().to(handlers::admin::create_role_handler),
+                )
+                .route(
+                    "/roles/{name}/permissions",
+                    web::post().to(handlers::admin::update_role_handler),
+                )
+                .route(
+                    "/roles/{name}/delete",
+                    web::post().to(handlers::admin::delete_role_handler),
+                ),
         );
 
     // Rate-limited search routes

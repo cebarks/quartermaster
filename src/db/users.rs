@@ -1,65 +1,7 @@
 use rusqlite::{params, OptionalExtension};
-use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use super::Database;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    Admin,
-    Moderator,
-    Player,
-}
-
-impl Role {
-    pub fn can_manage_mods(&self) -> bool {
-        matches!(self, Role::Admin | Role::Moderator)
-    }
-
-    pub fn can_control_server(&self) -> bool {
-        matches!(self, Role::Admin | Role::Moderator)
-    }
-
-    pub fn can_manage_queue(&self) -> bool {
-        matches!(self, Role::Admin | Role::Moderator)
-    }
-
-    pub fn can_manage_users(&self) -> bool {
-        matches!(self, Role::Admin)
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Role::Admin => "admin",
-            Role::Moderator => "moderator",
-            Role::Player => "player",
-        }
-    }
-}
-
-impl fmt::Display for Role {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Role::Admin => write!(f, "Admin"),
-            Role::Moderator => write!(f, "Moderator"),
-            Role::Player => write!(f, "Player"),
-        }
-    }
-}
-
-impl TryFrom<String> for Role {
-    type Error = String;
-
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        match s.as_str() {
-            "admin" => Ok(Role::Admin),
-            "moderator" => Ok(Role::Moderator),
-            "player" => Ok(Role::Player),
-            other => Err(format!("unknown role: {other}")),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct User {
@@ -67,7 +9,7 @@ pub struct User {
     pub username: String,
     pub spt_profile_id: Option<String>,
     pub password_hash: Option<String>,
-    pub role: Role,
+    pub role: String,
     pub disabled: bool,
     #[allow(dead_code)] // Kept for backward compatibility; UI removed
     pub stash_public: bool,
@@ -161,11 +103,11 @@ impl Database {
         username: &str,
         spt_profile_id: Option<&str>,
         password_hash: Option<&str>,
-        role: Role,
+        role: &str,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
             "INSERT INTO users (username, spt_profile_id, password_hash, role) VALUES (?1, ?2, ?3, ?4)",
-            params![username, spt_profile_id, password_hash, role.as_str()],
+            params![username, spt_profile_id, password_hash, role],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -193,7 +135,7 @@ impl Database {
     pub fn admin_exists(&self) -> rusqlite::Result<bool> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM users WHERE role = ?1",
-            params![Role::Admin.as_str()],
+            params!["admin"],
             |row| row.get(0),
         )?;
         Ok(count > 0)
@@ -222,26 +164,62 @@ impl Database {
             .optional()
     }
 
-    pub fn update_user_role(&self, user_id: i64, new_role: Role) -> rusqlite::Result<usize> {
-        let new_role_str = new_role.as_str();
+    pub fn update_user_role(&self, user_id: i64, new_role: &str) -> rusqlite::Result<usize> {
+        // Permission-based last-admin guard: if current user has a role with
+        // users.manage, ensure at least one OTHER enabled user also has it.
+        let current_has_manage: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM users u
+             JOIN roles r ON u.role = r.name
+             JOIN role_permissions rp ON r.id = rp.role_id
+             WHERE u.id = ?1 AND rp.permission = 'users.manage' AND u.disabled = 0",
+            params![user_id],
+            |row| Ok(row.get::<_, i64>(0)? > 0),
+        )?;
+
+        if current_has_manage {
+            // Check the NEW role still has users.manage, OR other users do
+            let new_role_has_manage: bool = self.conn.query_row(
+                "SELECT COUNT(*) FROM roles r
+                 JOIN role_permissions rp ON r.id = rp.role_id
+                 WHERE r.name = ?1 AND rp.permission = 'users.manage'",
+                params![new_role],
+                |row| Ok(row.get::<_, i64>(0)? > 0),
+            )?;
+
+            if !new_role_has_manage {
+                let others_with_manage =
+                    self.count_users_with_permission("users.manage", Some(user_id))?;
+                if others_with_manage == 0 {
+                    return Ok(0); // Would remove last user with users.manage
+                }
+            }
+        }
+
         self.conn.execute(
-            "UPDATE users SET role = ?1
-             WHERE id = ?2
-             AND (?1 = 'admin' OR ?1 != 'admin' AND (
-                 role != 'admin'
-                 OR (SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0 AND id != ?2) > 0
-             ))",
-            params![new_role_str, user_id],
+            "UPDATE users SET role = ?1 WHERE id = ?2",
+            params![new_role, user_id],
         )
     }
 
     pub fn set_user_disabled(&self, user_id: i64, disabled: bool) -> rusqlite::Result<usize> {
         if disabled {
+            let others = self.count_users_with_permission("users.manage", Some(user_id))?;
+            if others == 0 {
+                // Check if THIS user has users.manage — if so, can't disable last one
+                let has_manage: bool = self.conn.query_row(
+                    "SELECT COUNT(*) FROM users u
+                     JOIN roles r ON u.role = r.name
+                     JOIN role_permissions rp ON r.id = rp.role_id
+                     WHERE u.id = ?1 AND rp.permission = 'users.manage' AND u.disabled = 0",
+                    params![user_id],
+                    |row| Ok(row.get::<_, i64>(0)? > 0),
+                )?;
+                if has_manage {
+                    return Ok(0); // Would disable last user with users.manage
+                }
+            }
             self.conn.execute(
-                "UPDATE users SET disabled = 1
-                 WHERE id = ?1
-                 AND (role != 'admin'
-                      OR (SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0 AND id != ?1) > 0)",
+                "UPDATE users SET disabled = 1 WHERE id = ?1",
                 params![user_id],
             )
         } else {
@@ -440,20 +418,12 @@ impl Database {
 }
 
 fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
-    let role_str: String = row.get(4)?;
-    let role = Role::try_from(role_str).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(
-            4,
-            rusqlite::types::Type::Text,
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
-        )
-    })?;
     Ok(User {
         id: row.get(0)?,
         username: row.get(1)?,
         spt_profile_id: row.get(2)?,
         password_hash: row.get(3)?,
-        role,
+        role: row.get(4)?,
         disabled: row.get(5)?,
         stash_public: row.get(6)?,
         created_at: row.get(7)?,

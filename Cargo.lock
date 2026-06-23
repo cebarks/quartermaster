@@ -3528,6 +3528,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "urlencoding",
+ "walkdir",
  "wiremock",
  "zip",
 ]

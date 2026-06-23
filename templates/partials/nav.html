@@ -11,19 +11,23 @@
     <a href="/quma/svm"{% if active == "svm" %} class="active"{% endif %}>{% call icons::settings() %}{% endcall %} Server Config</a>
     {% endif %}
     <a href="/quma/profiles/{{ user.username }}"{% if active == "profile" %} class="active"{% endif %}>{% call icons::user() %}{% endcall %} Profile</a>
-    {% if user.role.can_control_server() %}
+    {% if user.can("server.control") || user.can("server.logs") || user.can("server.metrics") || user.can("users.manage") || user.can("settings.manage") %}
     <div class="nav-dropdown" id="admin-dropdown">
         <button class="nav-dropdown-toggle{% if active == "logs" || active == "metrics" || active == "settings" || active == "admin" %} active{% endif %}"
                 onclick="event.stopPropagation(); document.getElementById('admin-dropdown').classList.toggle('open')">
             {% call icons::shield() %}{% endcall %} Admin ▾
         </button>
         <div class="nav-dropdown-menu">
-            {% if user.role.can_manage_users() %}
+            {% if user.can("users.manage") %}
             <a href="/quma/admin"{% if active == "admin" %} class="active"{% endif %}>Users & Invites</a>
             {% endif %}
+            {% if user.can("server.logs") %}
             <a href="/quma/logs"{% if active == "logs" %} class="active"{% endif %}>Logs</a>
+            {% endif %}
+            {% if user.can("server.metrics") %}
             <a href="/quma/metrics"{% if active == "metrics" %} class="active"{% endif %}>Metrics</a>
-            {% if user.role.can_manage_users() %}
+            {% endif %}
+            {% if user.can("settings.manage") %}
             <a href="/quma/settings"{% if active == "settings" %} class="active"{% endif %}>Settings</a>
             {% endif %}
         </div>
@@ -31,7 +35,7 @@
     {% endif %}
 </div>
 <div class="user-info">
-    {{ user.username }} ({{ user.role }})
+    {{ user.username }} ({{ user.role_display_name }})
     <form method="post" action="/quma/logout" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">{% call icons::log_out() %}{% endcall %} Logout</button>

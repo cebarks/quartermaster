@@ -3,7 +3,11 @@ use actix_web::web::{self, Data, Form, Html, Path};
 use actix_web::{HttpMessage, HttpRequest};
 use askama::Template;
 
-use crate::db::users::{InviteCodeWithUsers, Role, User};
+use crate::db::rbac::{
+    validate_role_name, DeleteRoleResult, Permission, PermissionInfo, RoleRecord,
+    RoleWithPermissions,
+};
+use crate::db::users::{InviteCodeWithUsers, User};
 use crate::spt::profiles::{load_all_profile_stats, ProfileStatus, SptProfileStats};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
@@ -62,6 +66,7 @@ struct AdminPageTemplate {
     current_user_id: i64,
     flash: Option<crate::web::flash::FlashMessage>,
     nav: NavContext,
+    roles: Vec<RoleRecord>,
 }
 
 #[derive(Template)]
@@ -70,6 +75,7 @@ struct UsersPartialTemplate {
     users: Vec<(User, ProfileStatus)>,
     current_user_id: i64,
     csrf_token: String,
+    roles: Vec<RoleRecord>,
 }
 
 #[derive(Template)]
@@ -81,6 +87,7 @@ struct UserRowTemplate {
     csrf_token: String,
     reset_link: Option<String>,
     row_message: Option<String>,
+    roles: Vec<RoleRecord>,
 }
 
 // InviteView -- pre-computed view struct for invites template
@@ -122,6 +129,16 @@ struct InvitesPartialTemplate {
     highlight_code: Option<String>,
 }
 
+#[derive(Template)]
+#[template(path = "admin/partials/roles.html")]
+struct RolesPartialTemplate {
+    roles: Vec<RoleWithPermissions>,
+    all_permissions: Vec<PermissionInfo>,
+    csrf_token: String,
+    message: Option<String>,
+    error: Option<String>,
+}
+
 // -- Form structs --
 
 #[derive(serde::Deserialize)]
@@ -141,6 +158,38 @@ pub struct InviteForm {
     csrf_token: String,
 }
 
+#[derive(serde::Deserialize)]
+pub struct CreateRoleForm {
+    name: String,
+    display_name: String,
+    #[serde(default)]
+    permissions: Vec<String>,
+    csrf_token: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdatePermissionsForm {
+    #[serde(default)]
+    permissions: Vec<String>,
+    csrf_token: String,
+}
+
+// -- Helpers --
+
+fn build_permission_info_list(
+    checked: &std::collections::HashSet<Permission>,
+) -> Vec<PermissionInfo> {
+    Permission::ALL
+        .iter()
+        .map(|p| PermissionInfo {
+            slug: p.as_str(),
+            display_name: p.display_name(),
+            category: p.category(),
+            checked: checked.contains(p),
+        })
+        .collect()
+}
+
 // -- Admin scope middleware --
 
 pub async fn admin_middleware(
@@ -153,7 +202,7 @@ pub async fn admin_middleware(
         .cloned()
         .ok_or(WebError::Forbidden)?;
 
-    if !user.role.can_manage_users() {
+    if !user.has_permission(Permission::UsersManage) {
         return Err(WebError::Forbidden.into());
     }
 
@@ -168,14 +217,16 @@ pub async fn admin_page(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    crate::web::auth::require_capability(&user, Role::can_manage_users)?;
+    crate::web::auth::require_permission(&user, Permission::UsersManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let flash = crate::web::flash::take_flash(&session);
 
     let db = state.db.clone();
-    let all_users = web::block(move || {
+    let (all_users, roles) = web::block(move || {
         let db = db.lock();
-        db.list_users()
+        let users = db.list_users()?;
+        let roles = db.list_roles()?;
+        Ok::<_, rusqlite::Error>((users, roles))
     })
     .await
     .map_err(WebError::from)?
@@ -197,6 +248,7 @@ pub async fn admin_page(
         current_user_id,
         flash,
         nav: NavContext::from_state(&state),
+        roles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -210,9 +262,11 @@ pub async fn admin_users(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let db = state.db.clone();
-    let all_users = web::block(move || {
+    let (all_users, roles) = web::block(move || {
         let db = db.lock();
-        db.list_users()
+        let users = db.list_users()?;
+        let roles = db.list_roles()?;
+        Ok::<_, rusqlite::Error>((users, roles))
     })
     .await
     .map_err(WebError::from)?
@@ -230,6 +284,7 @@ pub async fn admin_users(
         users,
         current_user_id: user.user_id,
         csrf_token,
+        roles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -251,13 +306,26 @@ pub async fn change_role(
         return Err(WebError::Forbidden.into());
     }
 
-    let new_role = Role::try_from(form.role.clone())
-        .map_err(|_| WebError::BadRequest("Invalid role".to_string()))?;
+    // Validate role exists in DB
+    let role_name = form.role.clone();
+    let db = state.db.clone();
+    let role_exists = web::block(move || {
+        let db = db.lock();
+        db.get_role_by_name(&role_name)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
 
+    if role_exists.is_none() {
+        return Err(WebError::BadRequest("Unknown role".to_string()).into());
+    }
+
+    let new_role = form.role.clone();
     let db = state.db.clone();
     let affected = web::block(move || {
         let db = db.lock();
-        db.update_user_role(target_id, new_role)
+        db.update_user_role(target_id, &new_role)
     })
     .await
     .map_err(WebError::from)?
@@ -483,7 +551,236 @@ pub async fn create_invite(
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-// -- Helpers --
+// -- Role management handlers --
+
+async fn render_roles_partial(
+    state: &Data<AppState>,
+    session: &Session,
+    message: Option<String>,
+    error: Option<String>,
+) -> actix_web::Result<Html> {
+    let csrf_token = crate::web::csrf::get_or_create_token(session);
+    let db = state.db.clone();
+    let roles = web::block(move || {
+        let db = db.lock();
+        db.list_roles_with_permissions()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let all_permissions = build_permission_info_list(&std::collections::HashSet::new());
+
+    let tmpl = RolesPartialTemplate {
+        roles,
+        all_permissions,
+        csrf_token,
+        message,
+        error,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn admin_roles(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    crate::web::auth::require_permission(&user, Permission::UsersManage)?;
+    render_roles_partial(&state, &session, None, None).await
+}
+
+pub async fn create_role_handler(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<CreateRoleForm>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    crate::web::auth::require_permission(&user, Permission::UsersManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    // Validate role name
+    if let Err(msg) = validate_role_name(&form.name) {
+        return render_roles_partial(&state, &session, None, Some(msg.to_string())).await;
+    }
+
+    // Validate display_name: 1-64 chars, no control chars
+    let display_name = form.display_name.trim();
+    if display_name.is_empty() || display_name.len() > 64 {
+        return render_roles_partial(
+            &state,
+            &session,
+            None,
+            Some("Display name must be 1-64 characters".to_string()),
+        )
+        .await;
+    }
+    if display_name.chars().any(|c| c.is_control()) {
+        return render_roles_partial(
+            &state,
+            &session,
+            None,
+            Some("Display name cannot contain control characters".to_string()),
+        )
+        .await;
+    }
+
+    // Parse permission slugs
+    let permissions: Vec<Permission> = form
+        .permissions
+        .iter()
+        .filter_map(|s| Permission::from_slug(s))
+        .collect();
+
+    let name = form.name.clone();
+    let dn = display_name.to_string();
+    let db = state.db.clone();
+    let result = web::block(move || {
+        let db = db.lock();
+        db.create_role(&name, &dn, &permissions)
+    })
+    .await
+    .map_err(WebError::from)?;
+
+    match result {
+        Ok(_) => {
+            render_roles_partial(
+                &state,
+                &session,
+                Some(format!("Role \"{}\" created", form.name)),
+                None,
+            )
+            .await
+        }
+        Err(e) => {
+            let msg = if e.to_string().contains("UNIQUE") {
+                format!("Role \"{}\" already exists", form.name)
+            } else {
+                format!("Failed to create role: {e}")
+            };
+            render_roles_partial(&state, &session, None, Some(msg)).await
+        }
+    }
+}
+
+pub async fn update_role_handler(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<String>,
+    form: Form<UpdatePermissionsForm>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    crate::web::auth::require_permission(&user, Permission::UsersManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let role_name = path.into_inner();
+
+    // Parse permissions from form
+    let permissions: Vec<Permission> = form
+        .permissions
+        .iter()
+        .filter_map(|s| Permission::from_slug(s))
+        .collect();
+
+    let rn = role_name.clone();
+    let db = state.db.clone();
+    let affected = web::block(move || {
+        let db = db.lock();
+        db.update_role_permissions(&rn, &permissions)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    if affected == 0 {
+        return render_roles_partial(
+            &state,
+            &session,
+            None,
+            Some("Admin role permissions cannot be modified".to_string()),
+        )
+        .await;
+    }
+
+    render_roles_partial(
+        &state,
+        &session,
+        Some(format!("Permissions updated for \"{}\"", role_name)),
+        None,
+    )
+    .await
+}
+
+pub async fn delete_role_handler(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<String>,
+    form: Form<CsrfOnly>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    crate::web::auth::require_permission(&user, Permission::UsersManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let role_name = path.into_inner();
+
+    let rn = role_name.clone();
+    let db = state.db.clone();
+    let result = web::block(move || {
+        let db = db.lock();
+        db.delete_role(&rn)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    match result {
+        DeleteRoleResult::Deleted => {
+            render_roles_partial(
+                &state,
+                &session,
+                Some(format!("Role \"{}\" deleted", role_name)),
+                None,
+            )
+            .await
+        }
+        DeleteRoleResult::BuiltIn => {
+            render_roles_partial(
+                &state,
+                &session,
+                None,
+                Some("Cannot delete built-in role".to_string()),
+            )
+            .await
+        }
+        DeleteRoleResult::HasUsers(n) => {
+            render_roles_partial(
+                &state,
+                &session,
+                None,
+                Some(format!(
+                    "Cannot delete: {n} user{} assigned to this role",
+                    if n == 1 { " is" } else { "s are" }
+                )),
+            )
+            .await
+        }
+        DeleteRoleResult::NotFound => {
+            render_roles_partial(&state, &session, None, Some("Role not found".to_string())).await
+        }
+    }
+}
+
+// -- User row helpers --
 
 async fn render_user_row(
     state: &Data<AppState>,
@@ -496,14 +793,16 @@ async fn render_user_row(
     let csrf_token = crate::web::csrf::get_or_create_token(session);
 
     let db = state.db.clone();
-    let user = web::block(move || {
+    let (user, roles) = web::block(move || {
         let db = db.lock();
-        db.get_user_by_id(user_id)
+        let user = db.get_user_by_id(user_id)?;
+        let roles = db.list_roles()?;
+        Ok::<_, rusqlite::Error>((user, roles))
     })
     .await
     .map_err(WebError::from)?
-    .map_err(WebError::from)?
-    .ok_or(WebError::NotFound)?;
+    .map_err(WebError::from)?;
+    let user = user.ok_or(WebError::NotFound)?;
 
     let spt_dir = state.spt_dir.clone();
     let aid = user.spt_profile_id.clone().unwrap_or_default();
@@ -537,6 +836,7 @@ async fn render_user_row(
         csrf_token,
         reset_link,
         row_message,
+        roles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

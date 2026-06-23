@@ -3,8 +3,9 @@ use actix_web::web::{self, Data, Form, Html, Path};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
-use crate::db::users::{PendingOperation, Role};
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::db::rbac::Permission;
+use crate::db::users::PendingOperation;
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, FlashType};
 use crate::web::state::AppState;
@@ -49,7 +50,7 @@ pub async fn cancel_op(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_queue)?;
+    require_permission(&user, Permission::QueueManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -77,7 +78,7 @@ pub async fn apply_queue(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_queue)?;
+    require_permission(&user, Permission::QueueManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }

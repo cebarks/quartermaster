@@ -7,10 +7,10 @@ use crate::db::mods::{
     InstalledFile, InstalledMod, ModDependency, ModListFilter, ModSortColumn, ModStatusFilter,
     SortDirection,
 };
-use crate::db::users::Role;
+use crate::db::rbac::Permission;
 use crate::forge::models::DependencyNode;
 use crate::health::{self, IntegrityHealth};
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::handlers::requests::{fika_compat_to_string, parse_forge_url};
@@ -544,7 +544,7 @@ pub async fn dep_tree_partial(
     req: HttpRequest,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsInstall)?;
     let deps = match (query.mod_id, &query.ver) {
         (Some(mod_id), Some(ver)) => state
             .forge
@@ -564,7 +564,7 @@ pub async fn search_mods(
     query: Query<ModSearchQuery>,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsInstall)?;
     let q = query.q.as_deref().unwrap_or("").trim().to_string();
 
     if let Some(mod_id) = parse_forge_url(&q) {
@@ -632,7 +632,7 @@ pub async fn compat_check(
     path: Path<i64>,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsInstall)?;
     let mod_id = path.into_inner();
 
     let status = match state
@@ -656,7 +656,7 @@ pub async fn install_mod(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsInstall)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -956,7 +956,7 @@ pub async fn update_mod(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsUpdate)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -1118,7 +1118,7 @@ pub async fn remove_mod(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsRemove)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -1209,7 +1209,7 @@ pub async fn toggle_disable(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsDisable)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -1267,7 +1267,7 @@ pub async fn update_all_mods(
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsUpdate)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -1530,6 +1530,7 @@ pub async fn file_tracking_page(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 

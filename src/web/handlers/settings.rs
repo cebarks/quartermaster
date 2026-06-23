@@ -7,8 +7,8 @@ use crate::config::{
     Config, ConsoleLogConfig, FileLogConfig, HeadlessConfig, LogFormat, LoggingConfig,
     RestartPolicy, RotationPolicy, WebLogConfig,
 };
-use crate::db::users::Role;
-use crate::web::auth::{require_auth, require_capability, SessionUser};
+use crate::db::rbac::Permission;
+use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
@@ -51,7 +51,7 @@ pub async fn settings_page(
     query: Query<SettingsQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_users)?;
+    require_permission(&user, Permission::SettingsManage)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
@@ -165,7 +165,7 @@ pub async fn save_web_settings(
     form: Form<WebSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_users)?;
+    require_permission(&user, Permission::SettingsManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -221,7 +221,7 @@ pub async fn save_server_settings(
     form: Form<ServerSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_users)?;
+    require_permission(&user, Permission::SettingsManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -262,7 +262,7 @@ pub async fn save_queue_settings(
     form: Form<QueueSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_users)?;
+    require_permission(&user, Permission::SettingsManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -288,7 +288,7 @@ pub async fn save_forge_settings(
     form: Form<ForgeSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_users)?;
+    require_permission(&user, Permission::SettingsManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -337,7 +337,7 @@ pub async fn save_logging_settings(
     form: Form<LoggingSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_users)?;
+    require_permission(&user, Permission::SettingsManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -386,7 +386,7 @@ pub async fn save_headless_settings(
     form: Form<HeadlessSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_users)?;
+    require_permission(&user, Permission::SettingsManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }

@@ -6,7 +6,7 @@
 {% block content %}
 <div class="flex-between">
     <h1>Headless Clients</h1>
-    {% if user.role.can_control_server() %}
+    {% if user.can("headless.manage") %}
     <div class="flex gap-1">
         <form method="post" action="/quma/headless/scale" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

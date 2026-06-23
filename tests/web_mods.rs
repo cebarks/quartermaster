@@ -2,7 +2,6 @@ mod common;
 
 use actix_web::http::StatusCode;
 use common::TestAppBuilder;
-use spt_quartermaster::db::users::Role;
 
 #[actix_web::test]
 async fn mods_page_requires_auth() {
@@ -16,7 +15,7 @@ async fn mods_page_requires_auth() {
 #[actix_web::test]
 async fn mods_page_loads() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .build()
         .await;
 
@@ -28,7 +27,7 @@ async fn mods_page_loads() {
 #[actix_web::test]
 async fn mods_page_shows_installed_mods() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .with_mod(123, "TestMod", "1.0.0")
         .build()
         .await;
@@ -45,7 +44,7 @@ async fn mods_page_shows_installed_mods() {
 #[actix_web::test]
 async fn mod_detail_nonexistent_returns_404() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .build()
         .await;
 
@@ -57,7 +56,7 @@ async fn mod_detail_nonexistent_returns_404() {
 #[actix_web::test]
 async fn mod_detail_shows_mod() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .with_mod(123, "TestMod", "1.0.0")
         .build()
         .await;
@@ -84,7 +83,7 @@ async fn mod_detail_shows_mod() {
 #[actix_web::test]
 async fn toggle_disable_mod() {
     let mut app = TestAppBuilder::new()
-        .with_user("admin", "password", Role::Admin)
+        .with_user("admin", "password", "admin")
         .with_mod(123, "TestMod", "1.0.0")
         .build()
         .await;
@@ -131,7 +130,7 @@ async fn mods_list_partial_requires_auth() {
 #[actix_web::test]
 async fn install_mod_requires_capability() {
     let mut app = TestAppBuilder::new()
-        .with_user("player", "password", Role::Player)
+        .with_user("player", "password", "player")
         .build()
         .await;
 
