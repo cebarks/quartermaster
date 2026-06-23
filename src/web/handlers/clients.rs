@@ -494,7 +494,7 @@ pub async fn client_scale(
             tracing::info!(target_count = target, "Client scaling completed");
 
             // Persist the updated client count to config file
-            match crate::config::Config::load(&config_path) {
+            match crate::config::Config::load_with_env(&config_path) {
                 Ok(mut fresh_config) => {
                     if let Some(ref mut headless) = fresh_config.headless {
                         let current = headless.client_count();
@@ -622,7 +622,7 @@ pub async fn client_create(
 
     tokio::spawn(async move {
         // Persist first
-        match crate::config::Config::load(&config_path) {
+        match crate::config::Config::load_with_env(&config_path) {
             Ok(mut fresh_config) => {
                 if let Some(ref mut headless) = fresh_config.headless {
                     headless
@@ -786,7 +786,7 @@ pub async fn client_delete(
         }
 
         // Persist
-        match crate::config::Config::load(&config_path) {
+        match crate::config::Config::load_with_env(&config_path) {
             Ok(mut fresh_config) => {
                 if let Some(ref mut headless) = fresh_config.headless {
                     if (index as usize) <= headless.clients.len() && index > 0 {
