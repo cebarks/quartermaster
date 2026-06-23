@@ -6,7 +6,6 @@ use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::config::{validate_group_slug, Config, ModSyncGroup, NARCONET_FORGE_MOD_ID};
-use crate::db::mods::InstalledMod;
 use crate::db::rbac::Permission;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
@@ -847,7 +846,7 @@ pub async fn mods_partial(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsyncManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let html = render_mods_tab(&state, &csrf_token).await?;
@@ -898,7 +897,7 @@ pub async fn save_mods(
     body: Json<serde_json::Value>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsyncManage)?;
 
     let csrf = body
         .get("csrf_token")
@@ -999,7 +998,7 @@ pub async fn preview_partial(
     _session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_capability(&user, Role::can_manage_mods)?;
+    require_permission(&user, Permission::ModsyncManage)?;
 
     let live_config = crate::config::Config::load_with_env(&state.config_path)
         .ok()
