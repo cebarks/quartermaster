@@ -166,6 +166,11 @@ pub async fn save_settings(
         .as_ref()
         .map(|ms| ms.overrides.clone())
         .unwrap_or_default();
+    let existing_groups = new_config
+        .modsync
+        .as_ref()
+        .map(|ms| ms.groups.clone())
+        .unwrap_or_default();
 
     let ms_config = crate::config::ModSyncConfig {
         enforced: form.enforced.is_some(),
@@ -174,6 +179,7 @@ pub async fn save_settings(
         extra_sync_paths: extra_paths,
         exclusions: exclusion_list,
         overrides: existing_overrides,
+        groups: existing_groups,
     };
 
     // Update config and save
