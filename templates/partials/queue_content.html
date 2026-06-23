@@ -1,5 +1,6 @@
 {% import "partials/icons.html" as icons %}
 
+<div hx-get="/quma/api/queue/content" hx-trigger="sse:modsChanged" hx-swap="innerHTML" hx-target="#mods-tab-content">
 <div class="flex-between">
     <h2>Pending Operations</h2>
     {% if user.can("queue.manage") && !ops.is_empty() %}
@@ -64,3 +65,4 @@
     </table>
 </div>
 {% endif %}
+</div>
