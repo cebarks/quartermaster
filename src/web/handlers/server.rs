@@ -17,8 +17,8 @@ use crate::web::state::AppState;
 fn require_container<'a>(
     state: &'a AppState,
     session: &Session,
-) -> Result<(&'a str, &'a Arc<ContainerManager>), HttpResponse> {
-    let name = state.config.server_container.as_deref().ok_or_else(|| {
+) -> Result<(String, &'a Arc<ContainerManager>), HttpResponse> {
+    let name = state.config().server_container.clone().ok_or_else(|| {
         set_flash(
             session,
             "No server_container configured. Set it in quartermaster.toml.",
@@ -62,7 +62,7 @@ pub async fn start_server(
     state.set_server_transition(Some("starting"));
     let _ = state.events.send(ServerEvent::ServerTransition);
 
-    if let Err(e) = mgr.start(container).await {
+    if let Err(e) = mgr.start(&container).await {
         tracing::error!(container, error = %e, "failed to start server");
         set_flash(
             &session,
@@ -104,7 +104,7 @@ pub async fn stop_server(
     state.set_server_transition(Some("stopping"));
     let _ = state.events.send(ServerEvent::ServerTransition);
 
-    if let Err(e) = mgr.stop(container).await {
+    if let Err(e) = mgr.stop(&container).await {
         tracing::error!(container, error = %e, "failed to stop server");
         set_flash(
             &session,
@@ -144,7 +144,7 @@ pub async fn restart_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     // Stop first
-    if let Err(e) = mgr.stop(container).await {
+    if let Err(e) = mgr.stop(&container).await {
         tracing::error!(container, error = %e, "failed to stop server for restart");
         set_flash(
             &session,
@@ -159,7 +159,7 @@ pub async fn restart_server(
     }
 
     // Drain queue if configured
-    if state.config.auto_drain_on_lifecycle {
+    if state.config().auto_drain_on_lifecycle {
         let db = state.db.clone();
         let ops = web::block(move || {
             let db = db.lock();
@@ -194,7 +194,7 @@ pub async fn restart_server(
     }
 
     // Start
-    if let Err(e) = mgr.start(container).await {
+    if let Err(e) = mgr.start(&container).await {
         tracing::error!(container, error = %e, "failed to start server after restart");
         set_flash(
             &session,

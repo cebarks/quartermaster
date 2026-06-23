@@ -65,7 +65,7 @@ pub async fn client_list(
 
     let converging = state.converging.load(std::sync::atomic::Ordering::Relaxed);
     let target_count = state
-        .config
+        .config()
         .headless
         .as_ref()
         .map(|h| h.client_count())
@@ -369,7 +369,7 @@ pub async fn client_scale(
     let force = form.force;
 
     // Check if we have headless clients configured
-    if state.config.headless.is_none() {
+    if state.config().headless.is_none() {
         set_flash(
             &session,
             "No headless config in quartermaster.toml",
@@ -440,8 +440,8 @@ pub async fn client_scale(
         }
     };
 
-    let headless_config = state.config.headless.as_ref().unwrap(); // Already checked above
-    let mut updated_config = headless_config.clone();
+    let headless_config = state.config().headless.as_ref().unwrap().clone(); // Already checked above
+    let mut updated_config = headless_config;
     let current = updated_config.client_count();
     if target > current {
         for _ in 0..(target - current) {
@@ -454,7 +454,7 @@ pub async fn client_scale(
     }
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(client) => client,
         Err(e) => {
@@ -471,7 +471,7 @@ pub async fn client_scale(
 
     // Run convergence in a background task
     let mgr_clone = container_mgr.clone();
-    let config_clone = state.config.clone();
+    let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
@@ -558,8 +558,8 @@ pub async fn client_create(
     }
 
     // Headless must be configured
-    let headless_config = match state.config.headless.as_ref() {
-        Some(h) => h.clone(),
+    let headless_config = match state.config().headless.clone() {
+        Some(h) => h,
         None => {
             set_flash(
                 &session,
@@ -594,7 +594,7 @@ pub async fn client_create(
     let new_count = updated_config.client_count();
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(client) => client,
         Err(e) => {
@@ -611,7 +611,7 @@ pub async fn client_create(
 
     // Persist to config and spawn convergence
     let mgr_clone = container_mgr.clone();
-    let config_clone = state.config.clone();
+    let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
@@ -680,8 +680,8 @@ pub async fn client_delete(
 
     let index = path.into_inner();
 
-    let headless_config = match state.config.headless.as_ref() {
-        Some(h) => h.clone(),
+    let headless_config = match state.config().headless.clone() {
+        Some(h) => h,
         None => {
             set_flash(
                 &session,
@@ -744,7 +744,7 @@ pub async fn client_delete(
     updated_config.clients.remove((index - 1) as usize);
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(client) => client,
         Err(e) => {
@@ -761,7 +761,7 @@ pub async fn client_delete(
 
     // Stop and remove the container, persist config, then converge
     let mgr_clone = container_mgr.clone();
-    let config_clone = state.config.clone();
+    let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();

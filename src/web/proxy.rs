@@ -22,7 +22,7 @@ pub async fn proxy_handler(
     mut payload: web::Payload,
     state: Data<AppState>,
 ) -> actix_web::Result<HttpResponse> {
-    if !state.config.proxy_enabled {
+    if !state.config().proxy_enabled {
         return Err(actix_web::error::ErrorNotFound("proxy not enabled"));
     }
 
@@ -52,7 +52,7 @@ pub async fn proxy_handler(
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or(req.path());
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let upstream_url = format!("https://{host}:{port}{path}");
 
     let mut headers = HeaderMap::new();
@@ -132,7 +132,7 @@ pub async fn proxy_handler(
                         let spt_dir = state.spt_dir.clone();
                         let db = state.db.clone();
                         let events = state.events.clone();
-                        let snapshots_enabled = state.config.snapshots_enabled;
+                        let snapshots_enabled = state.config().snapshots_enabled;
                         if is_raid_start {
                             tokio::task::spawn_blocking(move || {
                                 crate::web::raid_tracker::handle_raid_start(

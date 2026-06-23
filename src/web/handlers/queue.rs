@@ -83,7 +83,7 @@ pub async fn apply_queue(
         return Err(WebError::Forbidden.into());
     }
     let server_running = crate::server_detect::is_server_running(
-        &state.config,
+        &state.config(),
         &state.spt_dir,
         state.container_mgr.as_deref(),
     )
@@ -182,7 +182,7 @@ pub async fn apply_queue(
         {
             let db = state_clone.db.clone();
             let spt_dir = state_clone.spt_dir.clone();
-            let config = state_clone.config.clone();
+            let config = state_clone.config_cloned();
             let _ = web::block(move || {
                 let db = db.lock();
                 crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
@@ -247,7 +247,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
-    let config = state.config.clone();
+    let config = state.config_cloned();
     let mod_name = op.mod_name.clone();
     let forge_mod_id = op.forge_mod_id;
 
@@ -284,7 +284,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
-    let config = state.config.clone();
+    let config = state.config_cloned();
     let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
@@ -310,7 +310,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
 pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
-    let config = state.config.clone();
+    let config = state.config_cloned();
     let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
