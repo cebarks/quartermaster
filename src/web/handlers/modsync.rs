@@ -1,5 +1,5 @@
 use actix_session::Session;
-use actix_web::web::{self, Data, Form};
+use actix_web::web::{self, Data, Form, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
@@ -17,13 +17,14 @@ mod filters {
     pub use crate::web::template_filters::*;
 }
 
-struct ModSyncModEntry {
-    mod_info: InstalledMod,
-    has_client_files: bool,
-    override_enforced: Option<bool>,
-    override_silent: Option<bool>,
-    override_restart_required: Option<bool>,
-    override_enabled: Option<bool>,
+#[derive(serde::Deserialize)]
+pub struct ModsyncQuery {
+    #[serde(default = "default_tab")]
+    tab: String,
+}
+
+fn default_tab() -> String {
+    "settings".to_string()
 }
 
 #[derive(Template)]
@@ -34,19 +35,26 @@ struct ModSyncTemplate {
     csrf_token: String,
     nav: NavContext,
     modsync_managed: bool,
+    active_tab: String,
+    tab_content: String,
+}
+
+#[derive(Template)]
+#[template(path = "modsync/partials/settings.html")]
+struct SettingsPartialTemplate {
+    csrf_token: String,
     enforced: bool,
     silent: bool,
     restart_required: bool,
     extra_sync_paths: String,
     exclusions: String,
-    mods: Vec<ModSyncModEntry>,
-    has_client_mods: bool,
 }
 
 pub async fn modsync_page(
     state: Data<AppState>,
     req: HttpRequest,
     session: Session,
+    query: Query<ModsyncQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ModsyncManage)?;
@@ -60,33 +68,78 @@ pub async fn modsync_page(
         .and_then(|c| c.modsync);
     let ms_config = live_config.or_else(|| state.config.modsync.clone());
 
-    let db = state.db.clone();
-    let ms_config_for_block = ms_config.clone();
-    let mods = web::block(move || {
-        let db = db.lock();
-        let all_mods = db.list_mods()?;
-        let mut entries = Vec::new();
-        for m in all_mods {
-            let files = db.get_files_for_mod(m.id)?;
-            let has_client = files.iter().any(|f| f.file_path.starts_with("BepInEx/"));
-            let forge_id_str = m.forge_mod_id.to_string();
-            let overrides = ms_config_for_block
-                .as_ref()
-                .and_then(|c| c.overrides.get(&forge_id_str));
-            entries.push(ModSyncModEntry {
-                mod_info: m,
-                has_client_files: has_client,
-                override_enforced: overrides.and_then(|o| o.enforced),
-                override_silent: overrides.and_then(|o| o.silent),
-                override_restart_required: overrides.and_then(|o| o.restart_required),
-                override_enabled: overrides.and_then(|o| o.enabled),
-            });
+    let nav = NavContext::from_state(&state);
+    let modsync_managed = nav.modsync_installed && ms_config.is_some();
+
+    // Determine active tab (validate and constrain based on state)
+    let mut active_tab = query.tab.as_str();
+    let valid_tabs = ["settings", "groups", "mods", "preview"];
+    if !valid_tabs.contains(&active_tab) {
+        active_tab = "settings";
+    }
+    // If not managed, force to settings
+    if !modsync_managed && active_tab != "settings" {
+        active_tab = "settings";
+    }
+
+    // Render the appropriate tab partial
+    let tab_content = match active_tab {
+        "settings" => {
+            let (enforced, silent, restart_required, extra_sync_paths, exclusions) =
+                if let Some(ref ms) = ms_config {
+                    (
+                        ms.enforced,
+                        ms.silent,
+                        ms.restart_required,
+                        ms.extra_sync_paths.join("\n"),
+                        ms.exclusions.join("\n"),
+                    )
+                } else {
+                    (true, false, true, String::new(), String::new())
+                };
+            let partial = SettingsPartialTemplate {
+                csrf_token: csrf_token.clone(),
+                enforced,
+                silent,
+                restart_required,
+                extra_sync_paths,
+                exclusions,
+            };
+            partial.render().map_err(WebError::from)?
         }
-        Ok::<_, anyhow::Error>(entries)
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+        "groups" => "<p>Groups tab coming soon</p>".to_string(),
+        "mods" => "<p>Mods tab coming soon</p>".to_string(),
+        "preview" => "<p>Preview tab coming soon</p>".to_string(),
+        _ => "<p>Unknown tab</p>".to_string(),
+    };
+
+    let tmpl = ModSyncTemplate {
+        user,
+        flash,
+        csrf_token,
+        nav,
+        modsync_managed,
+        active_tab: active_tab.to_string(),
+        tab_content,
+    };
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn settings_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let live_config = crate::config::Config::load_with_env(&state.config_path)
+        .ok()
+        .and_then(|c| c.modsync);
+    let ms_config = live_config.or_else(|| state.config.modsync.clone());
 
     let (enforced, silent, restart_required, extra_sync_paths, exclusions) =
         if let Some(ref ms) = ms_config {
@@ -101,21 +154,13 @@ pub async fn modsync_page(
             (true, false, true, String::new(), String::new())
         };
 
-    let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && ms_config.is_some();
-    let tmpl = ModSyncTemplate {
-        user,
-        flash,
+    let tmpl = SettingsPartialTemplate {
         csrf_token,
-        nav,
-        modsync_managed,
         enforced,
         silent,
         restart_required,
         extra_sync_paths,
         exclusions,
-        has_client_mods: mods.iter().any(|m| m.has_client_files),
-        mods,
     };
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
@@ -203,6 +248,6 @@ pub async fn save_settings(
 
     set_flash(&session, "NarcoNet settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/modsync"))
+        .insert_header(("Location", "/quma/modsync?tab=settings"))
         .finish())
 }

@@ -279,6 +279,11 @@ pub fn configure_app(
             "/svm/edit/{section}",
             web::post().to(handlers::svm::save_section),
         )
+        // ModSync API routes
+        .route(
+            "/modsync/settings",
+            web::get().to(handlers::modsync::settings_partial),
+        )
         // Admin API (requires can_manage_users via scoped middleware)
         .service(
             web::scope("/admin")
