@@ -296,6 +296,10 @@ pub fn configure_app(
             "/modsync/mods",
             web::get().to(handlers::modsync::mods_partial),
         )
+        .route(
+            "/modsync/preview",
+            web::get().to(handlers::modsync::preview_partial),
+        )
         // Admin API (requires can_manage_users via scoped middleware)
         .service(
             web::scope("/admin")

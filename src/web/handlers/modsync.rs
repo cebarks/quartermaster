@@ -111,7 +111,7 @@ pub async fn modsync_page(
         }
         "groups" => render_groups_tab(&state, &csrf_token)?,
         "mods" => render_mods_tab(&state, &csrf_token)?,
-        "preview" => "<p>Preview tab coming soon</p>".to_string(),
+        "preview" => render_preview_tab(&state)?,
         _ => "<p>Unknown tab</p>".to_string(),
     };
 
@@ -811,6 +811,40 @@ pub async fn mods_partial(
         .body(html))
 }
 
+/// Shared logic: render the preview tab HTML from config + DB state.
+fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
+    let live_config = Config::load_with_env(&state.config_path)
+        .ok()
+        .and_then(|c| c.modsync);
+    let ms_config = live_config
+        .or_else(|| state.config.modsync.clone())
+        .ok_or(WebError::NotFound)?;
+
+    let has_headless_groups = ms_config.groups.values().any(|g| g.exclude_headless);
+    let ms_config_clone = ms_config.clone();
+    let db = state.db.clone();
+
+    // This is synchronous rendering, so we need to get the YAML strings.
+    // Since we're in a sync context, we'll do the blocking work here.
+    let db_lock = db.lock();
+    let player = crate::modsync::preview_config(&ms_config_clone, &db_lock, false)
+        .map_err(WebError::Internal)?;
+    let headless = if has_headless_groups {
+        crate::modsync::preview_config(&ms_config_clone, &db_lock, true)
+            .map_err(WebError::Internal)?
+    } else {
+        String::new()
+    };
+    drop(db_lock);
+
+    let tmpl = PreviewPartialTemplate {
+        player_yaml: player,
+        headless_yaml: headless,
+        has_headless_groups,
+    };
+    tmpl.render().map_err(WebError::from)
+}
+
 pub async fn save_mods(
     state: Data<AppState>,
     req: HttpRequest,
@@ -905,4 +939,57 @@ pub async fn save_mods(
         "ok": true,
         "redirect": "/quma/modsync?tab=mods"
     })))
+}
+
+// ─── Preview Tab ────────────────────────────────────────────────────────────
+
+#[derive(Template)]
+#[template(path = "modsync/partials/preview.html")]
+struct PreviewPartialTemplate {
+    player_yaml: String,
+    headless_yaml: String,
+    has_headless_groups: bool,
+}
+
+pub async fn preview_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    _session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_capability(&user, Role::can_manage_mods)?;
+
+    let live_config = crate::config::Config::load_with_env(&state.config_path)
+        .ok()
+        .and_then(|c| c.modsync);
+    let ms_config = live_config
+        .or_else(|| state.config.modsync.clone())
+        .ok_or(WebError::NotFound)?;
+
+    let has_headless_groups = ms_config.groups.values().any(|g| g.exclude_headless);
+    let ms_config_clone = ms_config.clone();
+    let db = state.db.clone();
+
+    let (player_yaml, headless_yaml) = web::block(move || {
+        let db = db.lock();
+        let player = crate::modsync::preview_config(&ms_config_clone, &db, false)?;
+        let headless = if has_headless_groups {
+            crate::modsync::preview_config(&ms_config_clone, &db, true)?
+        } else {
+            String::new()
+        };
+        Ok::<_, anyhow::Error>((player, headless))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let tmpl = PreviewPartialTemplate {
+        player_yaml,
+        headless_yaml,
+        has_headless_groups,
+    };
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(tmpl.render().map_err(WebError::from)?))
 }
