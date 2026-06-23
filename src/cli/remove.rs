@@ -112,6 +112,7 @@ pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::cli::common::resolve_installed_mod;

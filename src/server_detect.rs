@@ -59,6 +59,7 @@ pub fn resolve_server_addr(config: &Config, spt_dir: &Path) -> (String, u16) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

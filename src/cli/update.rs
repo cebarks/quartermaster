@@ -214,6 +214,7 @@ fn mod_name_for_id(mods: &[InstalledMod], forge_mod_id: i64) -> &str {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

@@ -348,6 +348,7 @@ pub fn backoff_duration(failures: u32, cap: u64) -> Duration {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

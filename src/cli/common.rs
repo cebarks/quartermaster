@@ -76,7 +76,7 @@ pub async fn resolve_mod(
 
     match results.len() {
         0 => bail!("no mods found matching '{mod_ref}' on Forge"),
-        1 => Ok(results.into_iter().next().unwrap()),
+        1 => Ok(results.into_iter().next().expect("length checked to be 1")),
         _ => {
             if let Some(exact) = results.iter().find(|m| {
                 m.name.eq_ignore_ascii_case(mod_ref)
@@ -112,7 +112,10 @@ pub async fn resolve_mod(
                 bail!("selection out of range");
             }
 
-            Ok(results.into_iter().nth(choice - 1).unwrap())
+            Ok(results
+                .into_iter()
+                .nth(choice - 1)
+                .expect("bounds checked above"))
         }
     }
 }

@@ -605,6 +605,7 @@ async fn detect_or_create_container(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

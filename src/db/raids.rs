@@ -723,6 +723,7 @@ fn row_to_raid_kill(row: &rusqlite::Row<'_>) -> rusqlite::Result<RaidKill> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

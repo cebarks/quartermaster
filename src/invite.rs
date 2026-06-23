@@ -44,6 +44,7 @@ pub fn parse_expiry(input: &str) -> Result<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
