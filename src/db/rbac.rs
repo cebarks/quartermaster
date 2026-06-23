@@ -521,8 +521,17 @@ mod tests {
         assert!(db.get_role_by_name("temp").unwrap().is_none());
     }
 
-    // Note: cannot_delete_role_with_assigned_users test deferred to Task 4
-    // (requires insert_user signature change to &str)
+    #[test]
+    fn cannot_delete_role_with_assigned_users() {
+        let db = Database::open_in_memory().unwrap();
+        db.create_role("custom", "Custom", &[]).unwrap();
+        db.insert_user("testuser", None, Some("hash"), "custom")
+            .unwrap();
+        assert_eq!(
+            db.delete_role("custom").unwrap(),
+            DeleteRoleResult::HasUsers(1)
+        );
+    }
 
     #[test]
     fn permission_roundtrip() {

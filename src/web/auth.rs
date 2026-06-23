@@ -263,4 +263,20 @@ mod tests {
         assert!(!user.can("users.manage"));
         assert!(!user.can("nonexistent.perm"));
     }
+
+    #[test]
+    fn session_user_can_checks_permissions() {
+        let user = SessionUser {
+            user_id: 1,
+            username: "test".into(),
+            role_name: "custom".into(),
+            role_display_name: "Custom".into(),
+            permissions: HashSet::from([Permission::ModsInstall, Permission::ServerLogs]),
+        };
+        assert!(user.can("mods.install"));
+        assert!(user.can("server.logs"));
+        assert!(!user.can("users.manage"));
+        // Unknown permission string returns false (and would log a warning)
+        assert!(!user.can("nonexistent.perm"));
+    }
 }

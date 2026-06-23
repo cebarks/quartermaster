@@ -3,6 +3,7 @@ mod common;
 use actix_web::http::StatusCode;
 use actix_web::test;
 use common::TestAppBuilder;
+use spt_quartermaster::db::rbac::Permission;
 
 // -- Access Control Tests --
 
@@ -269,4 +270,60 @@ async fn admin_create_invite() {
         invites[0].invite.expires_at.is_none(),
         "invite should never expire"
     );
+}
+
+// -- RBAC Tests --
+
+#[actix_web::test]
+async fn custom_role_with_specific_permission() {
+    let mut app = TestAppBuilder::new()
+        .with_user("admin", "password", "admin")
+        .with_user("curator", "password", "player")
+        .build()
+        .await;
+
+    {
+        let db = app.db.lock();
+        db.create_role("curator", "Mod Curator", &[Permission::ModsInstall])
+            .unwrap();
+        db.update_user_role(
+            db.get_user_by_username("curator").unwrap().unwrap().id,
+            "curator",
+        )
+        .unwrap();
+    }
+
+    app.login_as("curator", "password").await;
+    // Has ModsInstall → can search
+    let resp = app.get("/quma/api/mods/search?q=test").await;
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+    // No UsersManage → can't access admin
+    let resp = app.get("/quma/admin").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[actix_web::test]
+async fn permission_based_last_admin_guard() {
+    let mut app = TestAppBuilder::new()
+        .with_user("admin", "password", "admin")
+        .with_user("player", "password", "player")
+        .build()
+        .await;
+
+    app.login_as("admin", "password").await;
+    let csrf = app.csrf_token_from("/quma/admin").await;
+    let admin_id = {
+        let db = app.db.lock();
+        db.get_user_by_username("admin").unwrap().unwrap().id
+    };
+
+    // Cannot demote self (existing protection)
+    let form_body = format!("role=player&csrf_token={}", urlencoding::encode(&csrf));
+    let resp = app
+        .post_form(
+            &format!("/quma/api/admin/users/{}/role", admin_id),
+            &form_body,
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
