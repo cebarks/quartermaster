@@ -292,6 +292,10 @@ pub fn configure_app(
             "/modsync/groups/new",
             web::get().to(handlers::modsync::new_group_card),
         )
+        .route(
+            "/modsync/mods",
+            web::get().to(handlers::modsync::mods_partial),
+        )
         // Admin API (requires can_manage_users via scoped middleware)
         .service(
             web::scope("/admin")
@@ -379,6 +383,10 @@ pub fn configure_app(
             .route(
                 "/modsync/groups",
                 web::post().to(handlers::modsync::save_groups),
+            )
+            .route(
+                "/modsync/mods",
+                web::post().to(handlers::modsync::save_mods),
             )
             .route("/svm", web::get().to(handlers::svm::manager_page))
             .route("/svm/view", web::get().to(handlers::svm::player_view))
