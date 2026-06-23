@@ -109,9 +109,9 @@ pub async fn modsync_page(
             };
             partial.render().map_err(WebError::from)?
         }
-        "groups" => render_groups_tab(&state, &csrf_token)?,
-        "mods" => render_mods_tab(&state, &csrf_token)?,
-        "preview" => render_preview_tab(&state)?,
+        "groups" => render_groups_tab(&state, &csrf_token).await?,
+        "mods" => render_mods_tab(&state, &csrf_token).await?,
+        "preview" => render_preview_tab(&state).await?,
         _ => "<p>Unknown tab</p>".to_string(),
     };
 
@@ -295,6 +295,19 @@ struct GroupsPartialTemplate {
     next_index: usize,
 }
 
+/// Parse a JSON field as an `Option<bool>` three-state value.
+/// `"true"` → `Some(true)`, `"false"` → `Some(false)`, anything else → `None` (inherit).
+fn parse_opt_bool(val: &serde_json::Value, key: &str) -> Option<bool> {
+    val.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None, // empty string = default/inherit
+        })
+        .unwrap_or(None)
+}
+
 /// Convert an Option<bool> to three-state string for template select.
 fn opt_bool_to_val(v: Option<bool>) -> String {
     match v {
@@ -305,23 +318,39 @@ fn opt_bool_to_val(v: Option<bool>) -> String {
 }
 
 /// Identify which installed mods have at least one BepInEx/ client file.
-fn mods_with_client_files(state: &AppState) -> Result<Vec<(i64, String, bool)>, WebError> {
-    let db = state.db.lock();
-    let mods = db.list_mods().map_err(WebError::from)?;
+/// Takes a `Database` reference directly so callers can pass a locked DB from within `web::block`.
+fn mods_with_client_files(
+    db: &crate::db::Database,
+) -> Result<Vec<(i64, String, bool)>, anyhow::Error> {
+    let mods = db.list_mods()?;
     let mut result = Vec::new();
     for m in &mods {
         if m.forge_mod_id == NARCONET_FORGE_MOD_ID {
             continue;
         }
-        let files = db.get_files_for_mod(m.id).map_err(WebError::from)?;
+        let files = db.get_files_for_mod(m.id)?;
         let has_client = files.iter().any(|f| f.file_path.starts_with("BepInEx/"));
         result.push((m.forge_mod_id, m.name.clone(), has_client));
     }
     Ok(result)
 }
 
+/// Fetch mods_with_client_files via web::block (async-safe).
+async fn fetch_mods_with_client_files(
+    state: &AppState,
+) -> Result<Vec<(i64, String, bool)>, WebError> {
+    let db = state.db.clone();
+    web::block(move || {
+        let db = db.lock();
+        mods_with_client_files(&db)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)
+}
+
 /// Shared logic: build the groups tab HTML from config + DB state.
-fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
+async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
     let live_config = Config::load_with_env(&state.config_path)
         .ok()
         .and_then(|c| c.modsync);
@@ -329,7 +358,7 @@ fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String, WebEr
         .or_else(|| state.config.modsync.clone())
         .unwrap_or_default();
 
-    let all_mods = mods_with_client_files(state)?;
+    let all_mods = fetch_mods_with_client_files(state).await?;
 
     // Build set of assigned mod IDs across all groups
     let mut assigned: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -414,7 +443,7 @@ pub async fn groups_partial(
     require_permission(&user, Permission::ModsyncManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let html = render_groups_tab(&state, &csrf_token)?;
+    let html = render_groups_tab(&state, &csrf_token).await?;
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(html))
@@ -436,7 +465,7 @@ pub async fn new_group_card(
     require_permission(&user, Permission::ModsyncManage)?;
     let _csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let all_mods = mods_with_client_files(&state)?;
+    let all_mods = fetch_mods_with_client_files(&state).await?;
 
     // Load current config to know which mods are already assigned
     let live_config = Config::load_with_env(&state.config_path)
@@ -504,7 +533,7 @@ pub async fn save_groups(
         .unwrap_or_default();
 
     // Build the set of mods with client files for validation
-    let all_mods = mods_with_client_files(&state)?;
+    let all_mods = fetch_mods_with_client_files(&state).await?;
     let client_mod_ids: std::collections::HashSet<i64> = all_mods
         .iter()
         .filter(|(_, _, has_client)| *has_client)
@@ -548,17 +577,6 @@ pub async fn save_groups(
             })
             .unwrap_or_default();
 
-        fn parse_opt_bool(val: &serde_json::Value, key: &str) -> Option<bool> {
-            val.get(key)
-                .and_then(|v| v.as_str())
-                .map(|s| match s {
-                    "true" => Some(true),
-                    "false" => Some(false),
-                    _ => None, // empty string = default/inherit
-                })
-                .unwrap_or(None)
-        }
-
         let group = ModSyncGroup {
             display_name,
             members,
@@ -587,6 +605,14 @@ pub async fn save_groups(
         }
 
         new_groups.insert(final_slug, group);
+    }
+
+    // Dedup: if a mod appears in multiple groups, keep only the first occurrence
+    {
+        let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        for group in new_groups.values_mut() {
+            group.members.retain(|id| seen.insert(*id));
+        }
     }
 
     // Load-then-mutate: only replace the groups field
@@ -643,6 +669,7 @@ struct ModOverrideRow {
     override_conflict_silent: bool,
     override_conflict_restart_required: bool,
     headless_warning: bool,
+    headless_disabled: bool,
 }
 
 #[derive(Template)]
@@ -696,7 +723,7 @@ fn compute_effective_values(
 }
 
 /// Shared logic: build the mods tab HTML from config + DB state.
-fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
+async fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
     let live_config = Config::load_with_env(&state.config_path)
         .ok()
         .and_then(|c| c.modsync);
@@ -704,23 +731,40 @@ fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebErro
         .or_else(|| state.config.modsync.clone())
         .unwrap_or_default();
 
-    let all_mods = mods_with_client_files(state)?;
+    // Fetch all DB data in a single web::block call: mod list + forge_id → db_id mapping
+    let db = state.db.clone();
+    let all_mods_and_ids = web::block(move || {
+        let db = db.lock();
+        let all_mods = mods_with_client_files(&db)?;
+        let mut forge_to_db_id: std::collections::HashMap<i64, i64> =
+            std::collections::HashMap::new();
+        for (forge_id, _, has_client) in &all_mods {
+            if !has_client {
+                continue;
+            }
+            if let Some(m) = db.get_mod_by_forge_id(*forge_id)? {
+                forge_to_db_id.insert(*forge_id, m.id);
+            }
+        }
+        Ok::<_, anyhow::Error>((all_mods, forge_to_db_id))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let (all_mods, forge_to_db_id) = all_mods_and_ids;
     let group_map = build_group_membership_map(&ms_config);
 
-    // Build rows
+    // Build rows (no DB access needed here — all data pre-fetched)
     let mut rows = Vec::new();
     for (forge_id, name, has_client) in &all_mods {
         if !has_client {
-            continue; // Only mods with client files appear in this table
+            continue;
         }
 
-        // Find DB ID for this mod
-        let db = state.db.lock();
-        let db_mod = db.get_mod_by_forge_id(*forge_id).map_err(WebError::from)?;
-        drop(db);
-        let db_id = match db_mod {
-            Some(m) => m.id,
-            None => continue, // Shouldn't happen (mod list came from DB)
+        let db_id = match forge_to_db_id.get(forge_id) {
+            Some(&id) => id,
+            None => continue,
         };
 
         let group_slug = group_map.get(forge_id);
@@ -759,6 +803,10 @@ fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebErro
             .map(|enabled| enabled && group_obj.map(|g| g.exclude_headless).unwrap_or(false))
             .unwrap_or(false);
 
+        // Headless disabled: mod is in an exclude_headless group AND no per-mod enabled=Some(true) override
+        let headless_disabled = group_obj.map(|g| g.exclude_headless).unwrap_or(false)
+            && !override_val.and_then(|o| o.enabled).unwrap_or(false);
+
         rows.push(ModOverrideRow {
             db_id,
             forge_mod_id: *forge_id,
@@ -779,6 +827,7 @@ fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebErro
             override_conflict_silent,
             override_conflict_restart_required,
             headless_warning,
+            headless_disabled,
         });
     }
 
@@ -801,14 +850,14 @@ pub async fn mods_partial(
     require_capability(&user, Role::can_manage_mods)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let html = render_mods_tab(&state, &csrf_token)?;
+    let html = render_mods_tab(&state, &csrf_token).await?;
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(html))
 }
 
 /// Shared logic: render the preview tab HTML from config + DB state.
-fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
+async fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
     let live_config = Config::load_with_env(&state.config_path)
         .ok()
         .and_then(|c| c.modsync);
@@ -820,18 +869,19 @@ fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
     let ms_config_clone = ms_config.clone();
     let db = state.db.clone();
 
-    // This is synchronous rendering, so we need to get the YAML strings.
-    // Since we're in a sync context, we'll do the blocking work here.
-    let db_lock = db.lock();
-    let player = crate::modsync::preview_config(&ms_config_clone, &db_lock, false)
-        .map_err(WebError::Internal)?;
-    let headless = if has_headless_groups {
-        crate::modsync::preview_config(&ms_config_clone, &db_lock, true)
-            .map_err(WebError::Internal)?
-    } else {
-        String::new()
-    };
-    drop(db_lock);
+    let (player, headless) = web::block(move || {
+        let db = db.lock();
+        let player = crate::modsync::preview_config(&ms_config_clone, &db, false)?;
+        let headless = if has_headless_groups {
+            crate::modsync::preview_config(&ms_config_clone, &db, true)?
+        } else {
+            String::new()
+        };
+        Ok::<_, anyhow::Error>((player, headless))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
 
     let tmpl = PreviewPartialTemplate {
         player_yaml: player,
@@ -864,17 +914,6 @@ pub async fn save_mods(
         .cloned()
         .unwrap_or_default();
 
-    fn parse_opt_bool(val: &serde_json::Value, key: &str) -> Option<bool> {
-        val.get(key)
-            .and_then(|v| v.as_str())
-            .map(|s| match s {
-                "true" => Some(true),
-                "false" => Some(false),
-                _ => None, // empty string = default/inherit
-            })
-            .unwrap_or(None)
-    }
-
     let mut new_overrides: BTreeMap<String, crate::config::ModSyncOverride> = BTreeMap::new();
 
     for mod_val in &mods_val {
@@ -904,16 +943,23 @@ pub async fn save_mods(
         }
     }
 
-    // Load-then-mutate: only replace the overrides field
+    // Load-then-merge: overlay form changes onto existing overrides,
+    // preserving entries for mods not in the form (server-only mods, etc.).
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
-    if let Some(ref mut ms) = config.modsync {
-        ms.overrides = new_overrides;
-    } else {
-        config.modsync = Some(crate::config::ModSyncConfig {
-            overrides: new_overrides,
-            ..crate::config::ModSyncConfig::default()
-        });
+    let ms = config
+        .modsync
+        .get_or_insert_with(crate::config::ModSyncConfig::default);
+    for (key, val) in new_overrides {
+        if val.enabled.is_none()
+            && val.enforced.is_none()
+            && val.silent.is_none()
+            && val.restart_required.is_none()
+        {
+            ms.overrides.remove(&key); // All None = remove override entirely
+        } else {
+            ms.overrides.insert(key, val);
+        }
     }
     config.save(&state.config_path).map_err(WebError::from)?;
     drop(_guard);

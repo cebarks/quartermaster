@@ -85,6 +85,9 @@
                             {% if m.effective_restart_required %}
                             <span class="badge" style="background: #3498db; padding: 0.15rem 0.35rem; color: white" title="Restart Required">R</span>
                             {% endif %}
+                            {% if m.headless_disabled %}
+                            <span class="badge badge-warning" title="Disabled for headless clients" style="font-size:0.7rem">H:OFF</span>
+                            {% endif %}
                             {% if m.headless_warning %}
                             <span style="color: var(--warning); font-size: 1rem" title="Per-mod override will cause this mod to sync to headless clients despite group exclusion">⚠</span>
                             {% endif %}

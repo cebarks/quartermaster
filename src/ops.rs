@@ -183,7 +183,7 @@ pub fn remove_mod_by_id(
 
     // Eager cleanup: strip uninstalled mod from any group
     if let Some(forge_id) = forge_mod_id {
-        let config_path = spt_dir.join("quartermaster.toml");
+        let config_path = crate::config::Config::resolve_path(None, Some(spt_dir));
         if config_path.exists() {
             if let Ok(mut cfg) = crate::config::Config::load(&config_path) {
                 let mut changed = false;

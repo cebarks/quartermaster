@@ -65,8 +65,9 @@
     function slugify(name) {
         return name.toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '')
-            .substring(0, 64);
+            .replace(/^-+/, '')
+            .substring(0, 64)
+            .replace(/-+$/, '');
     }
 
     // ── Save button ───────────────────────────────────────────────
