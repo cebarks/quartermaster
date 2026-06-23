@@ -169,10 +169,9 @@ pub async fn login_submit(
             .map(|r| r.display_name)
             .unwrap_or_else(|| role.clone());
         let permissions = db.get_permissions_for_role(&role).unwrap_or_default();
-        Ok::<_, WebError>((role_display, permissions))
+        (role_display, permissions)
     })
     .await
-    .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
     session.renew();
