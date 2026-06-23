@@ -3,7 +3,7 @@ use actix_web::web::{self, Data, Form, Html, Path};
 use actix_web::{HttpMessage, HttpRequest};
 use askama::Template;
 
-use crate::db::rbac::Permission;
+use crate::db::rbac::{Permission, RoleRecord};
 use crate::db::users::{InviteCodeWithUsers, User};
 use crate::spt::profiles::{load_all_profile_stats, ProfileStatus, SptProfileStats};
 use crate::web::auth::{require_auth, SessionUser};
@@ -63,6 +63,7 @@ struct AdminPageTemplate {
     current_user_id: i64,
     flash: Option<crate::web::flash::FlashMessage>,
     nav: NavContext,
+    roles: Vec<RoleRecord>,
 }
 
 #[derive(Template)]
@@ -71,6 +72,7 @@ struct UsersPartialTemplate {
     users: Vec<(User, ProfileStatus)>,
     current_user_id: i64,
     csrf_token: String,
+    roles: Vec<RoleRecord>,
 }
 
 #[derive(Template)]
@@ -82,6 +84,7 @@ struct UserRowTemplate {
     csrf_token: String,
     reset_link: Option<String>,
     row_message: Option<String>,
+    roles: Vec<RoleRecord>,
 }
 
 // InviteView -- pre-computed view struct for invites template
@@ -174,9 +177,11 @@ pub async fn admin_page(
     let flash = crate::web::flash::take_flash(&session);
 
     let db = state.db.clone();
-    let all_users = web::block(move || {
+    let (all_users, roles) = web::block(move || {
         let db = db.lock();
-        db.list_users()
+        let users = db.list_users()?;
+        let roles = db.list_roles()?;
+        Ok::<_, rusqlite::Error>((users, roles))
     })
     .await
     .map_err(WebError::from)?
@@ -198,6 +203,7 @@ pub async fn admin_page(
         current_user_id,
         flash,
         nav: NavContext::from_state(&state),
+        roles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -211,9 +217,11 @@ pub async fn admin_users(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let db = state.db.clone();
-    let all_users = web::block(move || {
+    let (all_users, roles) = web::block(move || {
         let db = db.lock();
-        db.list_users()
+        let users = db.list_users()?;
+        let roles = db.list_roles()?;
+        Ok::<_, rusqlite::Error>((users, roles))
     })
     .await
     .map_err(WebError::from)?
@@ -231,6 +239,7 @@ pub async fn admin_users(
         users,
         current_user_id: user.user_id,
         csrf_token,
+        roles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -510,14 +519,16 @@ async fn render_user_row(
     let csrf_token = crate::web::csrf::get_or_create_token(session);
 
     let db = state.db.clone();
-    let user = web::block(move || {
+    let (user, roles) = web::block(move || {
         let db = db.lock();
-        db.get_user_by_id(user_id)
+        let user = db.get_user_by_id(user_id)?;
+        let roles = db.list_roles()?;
+        Ok::<_, rusqlite::Error>((user, roles))
     })
     .await
     .map_err(WebError::from)?
-    .map_err(WebError::from)?
-    .ok_or(WebError::NotFound)?;
+    .map_err(WebError::from)?;
+    let user = user.ok_or(WebError::NotFound)?;
 
     let spt_dir = state.spt_dir.clone();
     let aid = user.spt_profile_id.clone().unwrap_or_default();
@@ -551,6 +562,7 @@ async fn render_user_row(
         csrf_token,
         reset_link,
         row_message,
+        roles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
