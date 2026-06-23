@@ -39,7 +39,7 @@ pub async fn dashboard(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && state.config.modsync.is_some();
+    let modsync_managed = nav.modsync_installed && state.config().modsync.is_some();
     let tmpl = DashboardTemplate {
         user,
         spt_version: state.spt_info.spt_version.clone(),
@@ -70,7 +70,7 @@ pub async fn server_partial(
     let user = require_auth(&req)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let (host, port) = resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_client = SptClient::new(&host, port).map_err(WebError::from)?;
     let address = spt_client.base_url().to_string();
 
@@ -108,7 +108,7 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let (host, port) = resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = resolve_server_addr(&state.config(), &state.spt_dir);
     let loaded_mods = if let Ok(spt_client) = SptClient::new(&host, port) {
         spt_client.loaded_server_mods().await.ok()
     } else {
@@ -140,10 +140,8 @@ struct DashboardContainerTemplate {
 pub async fn container_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
     require_auth(&req)?;
 
-    let tmpl = match (
-        state.config.server_container.as_deref(),
-        state.container_mgr.as_ref(),
-    ) {
+    let container_name = state.config().server_container.clone();
+    let tmpl = match (container_name.as_deref(), state.container_mgr.as_ref()) {
         (Some(container), Some(mgr)) => match mgr.stats(container).await {
             Ok(stats) => DashboardContainerTemplate {
                 available: true,
@@ -170,10 +168,10 @@ pub async fn container_partial(state: Data<AppState>, req: HttpRequest) -> actix
 }
 
 pub(crate) async fn fetch_server_context(state: &AppState) -> (Option<String>, Option<String>) {
-    let started_at = if let (Some(container), Some(mgr)) = (
-        state.config.server_container.as_deref(),
-        state.container_mgr.as_ref(),
-    ) {
+    let container_name = state.config().server_container.clone();
+    let started_at = if let (Some(container), Some(mgr)) =
+        (container_name.as_deref(), state.container_mgr.as_ref())
+    {
         mgr.container_started_at(container).await.ok().flatten()
     } else {
         None

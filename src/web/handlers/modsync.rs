@@ -62,12 +62,7 @@ pub async fn modsync_page(
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    // Re-read config from disk to pick up changes saved by save_settings
-    // (state.config is immutable behind Arc, so it goes stale after saves)
-    let live_config = crate::config::Config::load_with_env(&state.config_path)
-        .ok()
-        .and_then(|c| c.modsync);
-    let ms_config = live_config.or_else(|| state.config.modsync.clone());
+    let ms_config = state.config().modsync.clone();
 
     let nav = NavContext::from_state(&state);
     let modsync_managed = nav.modsync_installed && ms_config.is_some();
@@ -137,10 +132,7 @@ pub async fn settings_partial(
     require_permission(&user, Permission::ModsyncManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let live_config = crate::config::Config::load_with_env(&state.config_path)
-        .ok()
-        .and_then(|c| c.modsync);
-    let ms_config = live_config.or_else(|| state.config.modsync.clone());
+    let ms_config = state.config().modsync.clone();
 
     let (enforced, silent, restart_required, extra_sync_paths, exclusions) =
         if let Some(ref ms) = ms_config {
@@ -233,6 +225,9 @@ pub async fn save_settings(
     new_config
         .save(&state.config_path)
         .map_err(WebError::from)?;
+    if let Err(e) = state.update_config_from_disk() {
+        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+    }
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
@@ -350,12 +345,7 @@ async fn fetch_mods_with_client_files(
 
 /// Shared logic: build the groups tab HTML from config + DB state.
 async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
-    let live_config = Config::load_with_env(&state.config_path)
-        .ok()
-        .and_then(|c| c.modsync);
-    let ms_config = live_config
-        .or_else(|| state.config.modsync.clone())
-        .unwrap_or_default();
+    let ms_config = state.config().modsync.clone().unwrap_or_default();
 
     let all_mods = fetch_mods_with_client_files(state).await?;
 
@@ -467,12 +457,7 @@ pub async fn new_group_card(
     let all_mods = fetch_mods_with_client_files(&state).await?;
 
     // Load current config to know which mods are already assigned
-    let live_config = Config::load_with_env(&state.config_path)
-        .ok()
-        .and_then(|c| c.modsync);
-    let ms_config = live_config
-        .or_else(|| state.config.modsync.clone())
-        .unwrap_or_default();
+    let ms_config = state.config().modsync.clone().unwrap_or_default();
 
     let mut assigned: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for group in ms_config.groups.values() {
@@ -626,6 +611,9 @@ pub async fn save_groups(
         });
     }
     config.save(&state.config_path).map_err(WebError::from)?;
+    if let Err(e) = state.update_config_from_disk() {
+        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+    }
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
@@ -723,12 +711,7 @@ fn compute_effective_values(
 
 /// Shared logic: build the mods tab HTML from config + DB state.
 async fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
-    let live_config = Config::load_with_env(&state.config_path)
-        .ok()
-        .and_then(|c| c.modsync);
-    let ms_config = live_config
-        .or_else(|| state.config.modsync.clone())
-        .unwrap_or_default();
+    let ms_config = state.config().modsync.clone().unwrap_or_default();
 
     // Fetch all DB data in a single web::block call: mod list + forge_id → db_id mapping
     let db = state.db.clone();
@@ -857,12 +840,7 @@ pub async fn mods_partial(
 
 /// Shared logic: render the preview tab HTML from config + DB state.
 async fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
-    let live_config = Config::load_with_env(&state.config_path)
-        .ok()
-        .and_then(|c| c.modsync);
-    let ms_config = live_config
-        .or_else(|| state.config.modsync.clone())
-        .ok_or(WebError::NotFound)?;
+    let ms_config = state.config().modsync.clone().ok_or(WebError::NotFound)?;
 
     let has_headless_groups = ms_config.groups.values().any(|g| g.exclude_headless);
     let ms_config_clone = ms_config.clone();
@@ -961,6 +939,9 @@ pub async fn save_mods(
         }
     }
     config.save(&state.config_path).map_err(WebError::from)?;
+    if let Err(e) = state.update_config_from_disk() {
+        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+    }
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
@@ -1000,12 +981,7 @@ pub async fn preview_partial(
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ModsyncManage)?;
 
-    let live_config = crate::config::Config::load_with_env(&state.config_path)
-        .ok()
-        .and_then(|c| c.modsync);
-    let ms_config = live_config
-        .or_else(|| state.config.modsync.clone())
-        .ok_or(WebError::NotFound)?;
+    let ms_config = state.config().modsync.clone().ok_or(WebError::NotFound)?;
 
     let has_headless_groups = ms_config.groups.values().any(|g| g.exclude_headless);
     let ms_config_clone = ms_config.clone();

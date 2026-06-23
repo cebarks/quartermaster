@@ -333,13 +333,13 @@ pub async fn mod_detail(
         .any(|f| f.file_path.starts_with("BepInEx/"));
     let forge_id_str = mod_info.forge_mod_id.to_string();
     let overrides = state
-        .config
+        .config()
         .modsync
         .as_ref()
-        .and_then(|ms| ms.overrides.get(&forge_id_str));
+        .and_then(|ms| ms.overrides.get(&forge_id_str).cloned());
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && state.config.modsync.is_some();
+    let modsync_managed = nav.modsync_installed && state.config().modsync.is_some();
     let tmpl = ModDetailTemplate {
         user,
         mod_info,
@@ -350,10 +350,10 @@ pub async fn mod_detail(
         csrf_token,
         nav,
         has_client_files,
-        sync_enforced: overrides.and_then(|o| o.enforced),
-        sync_silent: overrides.and_then(|o| o.silent),
-        sync_restart_required: overrides.and_then(|o| o.restart_required),
-        sync_enabled: overrides.and_then(|o| o.enabled),
+        sync_enforced: overrides.as_ref().and_then(|o| o.enforced),
+        sync_silent: overrides.as_ref().and_then(|o| o.silent),
+        sync_restart_required: overrides.as_ref().and_then(|o| o.restart_required),
+        sync_enabled: overrides.as_ref().and_then(|o| o.enabled),
         modsync_managed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
@@ -796,8 +796,9 @@ pub async fn install_mod(
     }
 
     // Check if the operation should be queued (server running + queue enabled)
+    let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
-        &state.config,
+        &config,
         false,
         &state.spt_dir,
         state.container_mgr.as_deref(),
@@ -847,7 +848,7 @@ pub async fn install_mod(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
-    let config = state.config.clone();
+    let config = state.config_cloned();
     let version = version.clone();
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
@@ -990,8 +991,9 @@ pub async fn update_mod(
     }
 
     // Check if the operation should be queued
+    let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
-        &state.config,
+        &config,
         false,
         &state.spt_dir,
         state.container_mgr.as_deref(),
@@ -1044,7 +1046,7 @@ pub async fn update_mod(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
-    let config = state.config.clone();
+    let config = state.config_cloned();
     let version = version.clone();
     let update_cache = state.update_cache.clone();
 
@@ -1136,8 +1138,9 @@ pub async fn remove_mod(
     .ok_or(WebError::NotFound)?;
 
     // Check if the operation should be queued
+    let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
-        &state.config,
+        &config,
         false,
         &state.spt_dir,
         state.container_mgr.as_deref(),
@@ -1172,7 +1175,7 @@ pub async fn remove_mod(
 
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
-    let config = state.config.clone();
+    let config = state.config_cloned();
 
     tracing::info!(mod_db_id, mod_name = %installed.name, "removing mod");
     web::block(move || {
@@ -1298,8 +1301,9 @@ pub async fn update_all_mods(
         .map_err(WebError::from)?;
 
     // Check if operations should be queued (server running + queue enabled)
+    let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
-        &state.config,
+        &config,
         false,
         &state.spt_dir,
         state.container_mgr.as_deref(),
@@ -1349,7 +1353,7 @@ pub async fn update_all_mods(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
-    let config = state.config.clone();
+    let config = state.config_cloned();
     let installed = installed.clone();
     let update_cache = state.update_cache.clone();
     let state_clone = state.clone();

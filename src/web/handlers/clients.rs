@@ -65,7 +65,7 @@ pub async fn client_list(
 
     let converging = state.converging.load(std::sync::atomic::Ordering::Relaxed);
     let target_count = state
-        .config
+        .config()
         .headless
         .as_ref()
         .map(|h| h.client_count())
@@ -369,7 +369,7 @@ pub async fn client_scale(
     let force = form.force;
 
     // Check if we have headless clients configured
-    if state.config.headless.is_none() {
+    if state.config().headless.is_none() {
         set_flash(
             &session,
             "No headless config in quartermaster.toml",
@@ -440,8 +440,8 @@ pub async fn client_scale(
         }
     };
 
-    let headless_config = state.config.headless.as_ref().unwrap(); // Already checked above
-    let mut updated_config = headless_config.clone();
+    let headless_config = state.config().headless.as_ref().unwrap().clone(); // Already checked above
+    let mut updated_config = headless_config;
     let current = updated_config.client_count();
     if target > current {
         for _ in 0..(target - current) {
@@ -454,7 +454,7 @@ pub async fn client_scale(
     }
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(client) => client,
         Err(e) => {
@@ -471,8 +471,9 @@ pub async fn client_scale(
 
     // Run convergence in a background task
     let mgr_clone = container_mgr.clone();
-    let config_clone = state.config.clone();
+    let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
+    let config_handle = state.config_handle();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
 
@@ -493,7 +494,7 @@ pub async fn client_scale(
             tracing::info!(target_count = target, "Client scaling completed");
 
             // Persist the updated client count to config file
-            match crate::config::Config::load(&config_path) {
+            match crate::config::Config::load_with_env(&config_path) {
                 Ok(mut fresh_config) => {
                     if let Some(ref mut headless) = fresh_config.headless {
                         let current = headless.client_count();
@@ -509,6 +510,8 @@ pub async fn client_scale(
                     }
                     if let Err(e) = fresh_config.save(&config_path) {
                         tracing::error!(error = %e, "Failed to save updated headless config");
+                    } else {
+                        *config_handle.write() = fresh_config;
                     }
                 }
                 Err(e) => {
@@ -558,8 +561,8 @@ pub async fn client_create(
     }
 
     // Headless must be configured
-    let headless_config = match state.config.headless.as_ref() {
-        Some(h) => h.clone(),
+    let headless_config = match state.config().headless.clone() {
+        Some(h) => h,
         None => {
             set_flash(
                 &session,
@@ -594,7 +597,7 @@ pub async fn client_create(
     let new_count = updated_config.client_count();
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(client) => client,
         Err(e) => {
@@ -611,14 +614,15 @@ pub async fn client_create(
 
     // Persist to config and spawn convergence
     let mgr_clone = container_mgr.clone();
-    let config_clone = state.config.clone();
+    let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
+    let config_handle = state.config_handle();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
 
     tokio::spawn(async move {
         // Persist first
-        match crate::config::Config::load(&config_path) {
+        match crate::config::Config::load_with_env(&config_path) {
             Ok(mut fresh_config) => {
                 if let Some(ref mut headless) = fresh_config.headless {
                     headless
@@ -628,6 +632,8 @@ pub async fn client_create(
                 if let Err(e) = fresh_config.save(&config_path) {
                     tracing::error!(error = %e, "Failed to save new client to config");
                     return;
+                } else {
+                    *config_handle.write() = fresh_config;
                 }
             }
             Err(e) => {
@@ -680,8 +686,8 @@ pub async fn client_delete(
 
     let index = path.into_inner();
 
-    let headless_config = match state.config.headless.as_ref() {
-        Some(h) => h.clone(),
+    let headless_config = match state.config().headless.clone() {
+        Some(h) => h,
         None => {
             set_flash(
                 &session,
@@ -744,7 +750,7 @@ pub async fn client_delete(
     updated_config.clients.remove((index - 1) as usize);
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config, &state.spt_dir);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(client) => client,
         Err(e) => {
@@ -761,8 +767,9 @@ pub async fn client_delete(
 
     // Stop and remove the container, persist config, then converge
     let mgr_clone = container_mgr.clone();
-    let config_clone = state.config.clone();
+    let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
+    let config_handle = state.config_handle();
     let spt_dir_clone = state.spt_dir.clone();
     let converging_clone = state.converging.clone();
 
@@ -779,7 +786,7 @@ pub async fn client_delete(
         }
 
         // Persist
-        match crate::config::Config::load(&config_path) {
+        match crate::config::Config::load_with_env(&config_path) {
             Ok(mut fresh_config) => {
                 if let Some(ref mut headless) = fresh_config.headless {
                     if (index as usize) <= headless.clients.len() && index > 0 {
@@ -789,6 +796,8 @@ pub async fn client_delete(
                 if let Err(e) = fresh_config.save(&config_path) {
                     tracing::error!(error = %e, "Failed to save config after deleting client");
                     return;
+                } else {
+                    *config_handle.write() = fresh_config;
                 }
             }
             Err(e) => {

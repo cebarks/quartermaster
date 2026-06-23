@@ -618,7 +618,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
-        config: config.clone(),
+        config: Arc::new(parking_lot::RwLock::new(config.clone())),
         config_path,
         config_lock: parking_lot::Mutex::new(()),
         spt_dir,

@@ -85,7 +85,7 @@ pub async fn stats_page(
     let flash = take_flash(&session);
     let csrf_token = csrf::get_or_create_token(&session);
     let nav = NavContext::from_state(&state);
-    let min_raids = state.config.leaderboard_min_raids;
+    let min_raids = state.config().leaderboard_min_raids;
 
     let db = state.db.clone();
     let (stats, active_raids, leaderboard_entries) = web::block(move || {

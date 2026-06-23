@@ -184,7 +184,7 @@ pub async fn requests_tab(
     // unbounded concurrent Forge API requests; remaining entries refresh
     // on subsequent page loads).
     const MAX_BACKGROUND_REFRESHES: usize = 3;
-    if let Some(ttl) = state.config.forge_cache_ttl.filter(|&t| t > 0) {
+    if let Some(ttl) = state.config().forge_cache_ttl.filter(|&t| t > 0) {
         let mut refresh_count = 0usize;
         for rv in &requests {
             if refresh_count >= MAX_BACKGROUND_REFRESHES {
@@ -636,8 +636,9 @@ pub async fn resolve_request(
                 if state.tasks.has_running_for_mod(forge_mod_id) {
                     message += " (install already in progress)";
                 } else {
+                    let config = state.config_cloned();
                     let should_queue = crate::queue::should_queue(
-                        &state.config,
+                        &config,
                         false,
                         &state.spt_dir,
                         state.container_mgr.as_deref(),

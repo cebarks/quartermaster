@@ -77,14 +77,14 @@ pub async fn server_logs_json(
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ServerLogs)?;
     let container = state
-        .config
+        .config()
         .server_container
-        .as_deref()
+        .clone()
         .ok_or(WebError::NotFound)?;
     let tail = query.limit.unwrap_or(100).min(10000);
 
     let output = tokio::process::Command::new("podman")
-        .args(["logs", "--tail", &tail.to_string(), container])
+        .args(["logs", "--tail", &tail.to_string(), &container])
         .output()
         .await
         .map_err(|e| WebError::Internal(anyhow::anyhow!("podman logs failed: {e}")))?;
@@ -110,7 +110,7 @@ pub async fn server_logs_stream(
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ServerLogs)?;
     let container = state
-        .config
+        .config()
         .server_container
         .clone()
         .ok_or(WebError::NotFound)?;
