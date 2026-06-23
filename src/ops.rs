@@ -173,9 +173,37 @@ pub fn remove_mod_by_id(
     let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = paths.len(), "deleting mod files");
     crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
+
+    // Look up forge_mod_id before deletion for group cleanup
+    let forge_mod_id = db.get_mod(mod_db_id)?.map(|m| m.forge_mod_id);
+
     let tx = db.begin_transaction()?;
     db.delete_mod(mod_db_id)?;
     tx.commit()?;
+
+    // Eager cleanup: strip uninstalled mod from any group
+    if let Some(forge_id) = forge_mod_id {
+        let config_path = spt_dir.join("quartermaster.toml");
+        if config_path.exists() {
+            if let Ok(mut cfg) = crate::config::Config::load(&config_path) {
+                let mut changed = false;
+                if let Some(ref mut ms) = cfg.modsync {
+                    for group in ms.groups.values_mut() {
+                        if let Some(pos) = group.members.iter().position(|&id| id == forge_id) {
+                            group.members.remove(pos);
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    if let Err(e) = cfg.save(&config_path) {
+                        tracing::warn!(error = %e, "failed to clean up group membership after mod removal");
+                    }
+                }
+            }
+        }
+    }
+
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
         tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
     }
