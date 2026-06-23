@@ -652,14 +652,14 @@ struct ModsPartialTemplate {
     mods: Vec<ModOverrideRow>,
 }
 
-/// Build a reverse group membership map: forge_mod_id -> group display_name
+/// Build a reverse group membership map: forge_mod_id -> group slug
 fn build_group_membership_map(
     config: &crate::config::ModSyncConfig,
 ) -> std::collections::HashMap<i64, String> {
     let mut map = std::collections::HashMap::new();
-    for group in config.groups.values() {
+    for (slug, group) in &config.groups {
         for &member_id in &group.members {
-            map.insert(member_id, group.display_name.clone());
+            map.insert(member_id, slug.clone());
         }
     }
     map
@@ -723,14 +723,8 @@ fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebErro
             None => continue, // Shouldn't happen (mod list came from DB)
         };
 
-        let group_name = group_map.get(forge_id);
-        let group_obj = group_name.and_then(|gn| {
-            ms_config
-                .groups
-                .iter()
-                .find(|(_, g)| &g.display_name == gn)
-                .map(|(_, g)| g)
-        });
+        let group_slug = group_map.get(forge_id);
+        let group_obj = group_slug.and_then(|slug| ms_config.groups.get(slug));
 
         let override_val = ms_config.overrides.get(&forge_id.to_string());
 
@@ -759,15 +753,17 @@ fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebErro
             .map(|v| v != group_restart_required)
             .unwrap_or(false);
 
-        // Headless warning: per-mod enabled=true + group has exclude_headless=true
-        let headless_warning =
-            eff_enabled && group_obj.map(|g| g.exclude_headless).unwrap_or(false);
+        // Headless warning: per-mod override with enabled=Some(true) + group has exclude_headless=true
+        let headless_warning = override_val
+            .and_then(|o| o.enabled)
+            .map(|enabled| enabled && group_obj.map(|g| g.exclude_headless).unwrap_or(false))
+            .unwrap_or(false);
 
         rows.push(ModOverrideRow {
             db_id,
             forge_mod_id: *forge_id,
             name: name.clone(),
-            group: group_name.cloned(),
+            group: group_obj.map(|g| g.display_name.clone()),
             override_enabled: opt_bool_to_val(override_val.and_then(|o| o.enabled)),
             override_enforced: opt_bool_to_val(override_val.and_then(|o| o.enforced)),
             override_silent: opt_bool_to_val(override_val.and_then(|o| o.silent)),

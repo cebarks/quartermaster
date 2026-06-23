@@ -159,7 +159,14 @@
         badge.className = 'badge badge-success';
         badge.setAttribute('data-mod-id', val);
         badge.style.cssText = 'display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.5rem; font-size: 0.8rem';
-        badge.innerHTML = modName + ' <button type="button" data-remove-member style="background:none;border:none;color:inherit;cursor:pointer;padding:0;font-size:1rem;line-height:1" title="Remove">&times;</button>';
+        badge.appendChild(document.createTextNode(modName + ' '));
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.setAttribute('data-remove-member', '');
+        removeBtn.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;padding:0;font-size:1rem;line-height:1';
+        removeBtn.title = 'Remove';
+        removeBtn.textContent = '×';
+        badge.appendChild(removeBtn);
         members.appendChild(badge);
 
         // Hide this mod from ALL cards' dropdowns (a mod can only be in one group)
