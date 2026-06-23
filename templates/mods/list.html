@@ -28,7 +28,7 @@
 <div id="mods-tab-content">
     <div class="flex-between">
         <h2>Installed Mods</h2>
-        {% if user.can("mods.install") %}
+        {% if user.can("mods.update") %}
         <div class="flex gap-1">
             <form method="post" action="/quma/mods/update-all" style="display:inline"
                   onsubmit="return confirm('Update all mods?')">

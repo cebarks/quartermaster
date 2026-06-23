@@ -158,18 +158,23 @@ pub async fn login_submit(
     }
 
     // Load permissions for session setup (middleware handles subsequent requests)
-    let role_display = {
-        let db = state.db.lock();
-        db.get_role_by_name(&user.role)
+    let db = state.db.clone();
+    let role = user.role.clone();
+    let (role_display, permissions) = web::block(move || {
+        let db = db.lock();
+        let role_display = db
+            .get_role_by_name(&role)
             .ok()
             .flatten()
             .map(|r| r.display_name)
-            .unwrap_or_else(|| user.role.clone())
-    };
-    let permissions = {
-        let db = state.db.lock();
-        db.get_permissions_for_role(&user.role).unwrap_or_default()
-    };
+            .unwrap_or_else(|| role.clone());
+        let permissions = db.get_permissions_for_role(&role).unwrap_or_default();
+        Ok::<_, WebError>((role_display, permissions))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
     session.renew();
     let session_user = SessionUser {
         user_id: user.id,
