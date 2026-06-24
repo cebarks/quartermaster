@@ -250,18 +250,19 @@ pub fn check_mod_loads(
     loaded_mods: &std::collections::HashMap<String, serde_json::Value>,
     server_mod_ids: &std::collections::HashSet<i64>,
 ) -> (Vec<String>, Vec<String>) {
-    let installed_lower: std::collections::HashSet<String> = installed_mods
+    let checkable: Vec<&crate::db::mods::InstalledMod> = installed_mods
         .iter()
         .filter(|m| !m.disabled && server_mod_ids.contains(&m.id))
-        .map(|m| m.name.to_lowercase())
         .collect();
+
+    let installed_lower: std::collections::HashSet<String> =
+        checkable.iter().map(|m| m.name.to_lowercase()).collect();
 
     let loaded_lower: std::collections::HashSet<String> =
         loaded_mods.keys().map(|k| k.to_lowercase()).collect();
 
-    let load_failures: Vec<String> = installed_mods
+    let load_failures: Vec<String> = checkable
         .iter()
-        .filter(|m| !m.disabled && server_mod_ids.contains(&m.id))
         .filter(|m| !loaded_lower.contains(&m.name.to_lowercase()))
         .map(|m| m.name.clone())
         .collect();

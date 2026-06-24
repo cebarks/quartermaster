@@ -98,11 +98,12 @@ struct DashboardModsTemplate {
 pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
     require_auth(&req)?;
     let db = state.db.clone();
-    let (installed_mods, pending_count) = web::block(move || {
+    let (installed_mods, pending_count, server_mod_ids) = web::block(move || {
         let db = db.lock();
         let mods = db.list_mods()?;
         let pending = db.list_pending_ops()?;
-        Ok::<_, anyhow::Error>((mods, pending.len()))
+        let server_ids = db.mods_with_server_files()?;
+        Ok::<_, anyhow::Error>((mods, pending.len(), server_ids))
     })
     .await
     .map_err(WebError::from)?
@@ -115,16 +116,6 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
         None
     };
 
-    let server_mod_ids = {
-        let db = state.db.lock();
-        match db.mods_with_server_files() {
-            Ok(ids) => ids,
-            Err(e) => {
-                tracing::warn!("failed to query server mod files: {e}");
-                std::collections::HashSet::new()
-            }
-        }
-    };
     let report = health::check_mods_health(
         &installed_mods,
         loaded_mods.as_ref(),
