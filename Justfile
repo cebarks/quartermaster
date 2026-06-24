@@ -61,6 +61,14 @@ dev-serve *ARGS: dev-init
 dev-cli *ARGS: dev-init
     QUMA_SPT_DIR="{{dev_dir}}" cargo run -- {{ARGS}}
 
+# Install development tools (cargo-watch for auto-reload)
+dev-install-tools:
+    cargo install cargo-watch
+
+# Auto-rebuild and restart the dev server on file changes
+dev-watch *ARGS: dev-init
+    QUMA_SPT_DIR="{{dev_dir}}" cargo watch -x 'run -- serve {{ARGS}}' -w src -w templates
+
 # Wipe the dev database (keeps config and SPT structure)
 dev-reset-db:
     rm -f "{{dev_dir}}/quartermaster.db" "{{dev_dir}}/quartermaster.db-journal" "{{dev_dir}}/quartermaster.db-wal"
