@@ -1,6 +1,5 @@
 #![deny(clippy::unwrap_used)]
 
-#[allow(dead_code)] // Functions used in later tasks (CLI commands, web handlers)
 mod backup;
 mod cli;
 mod client;
@@ -132,6 +131,18 @@ async fn main() -> Result<()> {
         Command::Invite { expires } => {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::invite::run(expires.as_deref(), &ctx)
+        }
+        Command::Backup { mod_ref, list } => {
+            let ctx = init_context(&cli, &reload_handles)?;
+            cli::backup::run(mod_ref.as_deref(), *list, &ctx)
+        }
+        Command::Restore {
+            backup_id,
+            latest,
+            force,
+        } => {
+            let ctx = init_context(&cli, &reload_handles)?;
+            cli::restore::run(*backup_id, latest.as_deref(), *force, &ctx).await
         }
         Command::Serve { .. } => unreachable!(),
     }

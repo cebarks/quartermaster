@@ -3,7 +3,7 @@ use rusqlite::{params, OptionalExtension};
 use super::Database;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields used by web UI handlers (tasks 6-7)
 pub struct BackupRecord {
     pub id: i64,
     pub backup_type: String,
@@ -21,7 +21,6 @@ pub struct BackupRecord {
     pub restored_at: Option<String>,
 }
 
-#[allow(dead_code)]
 fn row_to_backup(row: &rusqlite::Row) -> rusqlite::Result<BackupRecord> {
     Ok(BackupRecord {
         id: row.get(0)?,
@@ -41,12 +40,10 @@ fn row_to_backup(row: &rusqlite::Row) -> rusqlite::Result<BackupRecord> {
     })
 }
 
-#[allow(dead_code)]
 const SELECT_COLS: &str = "id, backup_type, trigger, backup_id, mod_db_id, forge_mod_id, \
     forge_version_id, mod_name, mod_slug, mod_version, backup_path, backup_size, \
     created_at, restored_at";
 
-#[allow(dead_code)]
 impl Database {
     #[allow(clippy::too_many_arguments)]
     pub fn insert_backup(
