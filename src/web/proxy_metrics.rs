@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 
-#[allow(dead_code)] // Fields used by Tasks 5-7 (proxy handlers)
 pub struct ProxyMetrics {
     pub total_requests: AtomicU64,
     pub error_count: AtomicU64,
@@ -14,7 +13,6 @@ pub struct ProxyMetrics {
     latencies: Mutex<LatencyBuffer>,
 }
 
-#[allow(dead_code)] // Used internally by ProxyMetrics
 struct LatencyBuffer {
     buffer: Vec<u64>,
     cursor: usize,
@@ -23,7 +21,6 @@ struct LatencyBuffer {
 
 const LATENCY_BUFFER_SIZE: usize = 256;
 
-#[allow(dead_code)] // Used internally by ProxyMetrics
 impl LatencyBuffer {
     fn new() -> Self {
         Self {
@@ -56,7 +53,6 @@ impl LatencyBuffer {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Used by Task 7 (status page)
 pub struct MetricsSnapshot {
     pub total_requests: u64,
     pub error_count: u64,
@@ -68,7 +64,6 @@ pub struct MetricsSnapshot {
     pub avg_latency_ms: Option<u64>,
 }
 
-#[allow(dead_code)] // Used by Tasks 5-7 (proxy handlers, status page)
 impl Default for ProxyMetrics {
     fn default() -> Self {
         Self::new()
