@@ -59,9 +59,6 @@ async fn dashboard_partials_load() {
 
     let mods_response = app.get("/quma/api/dashboard/mods").await;
     assert_eq!(mods_response.status(), StatusCode::OK);
-
-    let container_response = app.get("/quma/api/dashboard/container").await;
-    assert_eq!(container_response.status(), StatusCode::OK);
 }
 
 #[actix_web::test]

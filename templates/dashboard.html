@@ -24,13 +24,11 @@
     <div class="hero-card"><div class="hero-status"><span class="text-muted loading-pulse">Loading server status...</span></div></div>
 </div>
 
+<div hx-get="/quma/api/dashboard/mods" hx-trigger="load, every 60s" hx-swap="innerHTML">
+    <div class="card"><h3>Mods</h3><span class="loading-pulse">Loading...</span></div>
+</div>
+
 <div class="stat-card-grid">
-    <div hx-get="/quma/api/dashboard/mods" hx-trigger="load, every 60s" hx-swap="innerHTML">
-        <div class="stat-card" style="border-left-color: var(--border)">
-            <div class="stat-label">Mods</div>
-            <div class="stat-value"><span class="loading-pulse">...</span></div>
-        </div>
-    </div>
     {% if nav.modsync_installed %}
     <div class="stat-card" style="border-left-color: {% if modsync_managed %}var(--success){% else %}var(--warning){% endif %}">
         <div class="stat-label">NarcoNet</div>
@@ -46,11 +44,5 @@
         </div>
     </a>
     {% endif %}
-    <div hx-get="/quma/api/dashboard/container" hx-trigger="load, every 5s" hx-swap="innerHTML">
-        <div class="stat-card" style="border-left-color: var(--border)">
-            <div class="stat-label">Container</div>
-            <div class="stat-value"><span class="loading-pulse">...</span></div>
-        </div>
-    </div>
 </div>
 {% endblock %}

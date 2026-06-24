@@ -388,7 +388,16 @@ pub async fn save_logging_settings(
         tracing::warn!(error = %e, "failed to refresh in-memory config after save");
     }
 
-    set_flash(&session, "Logging settings saved", FlashType::Success);
+    let filter = crate::logging::resolve_log_filter(&config.logging, 0, None);
+    state
+        .reload_handles
+        .reconfigure(&config.logging, &filter, Some(&state.spt_dir));
+
+    set_flash(
+        &session,
+        "Logging settings saved and applied",
+        FlashType::Success,
+    );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/settings?tab=logging"))
         .finish())

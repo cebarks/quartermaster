@@ -8,12 +8,11 @@ use bollard::models::{
 };
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
-    LogsOptionsBuilder, RemoveContainerOptionsBuilder, StartContainerOptions, StatsOptionsBuilder,
+    LogsOptionsBuilder, RemoveContainerOptionsBuilder, StartContainerOptions,
     StopContainerOptionsBuilder,
 };
 use bollard::Docker;
 use futures_util::Stream;
-use futures_util::TryStreamExt;
 
 pub const SPT_SERVER_IMAGE: &str = "ghcr.io/zhliau/fika-spt-server-docker:latest";
 pub const DEFAULT_CONTAINER_NAME: &str = "spt-server";
@@ -121,20 +120,6 @@ impl CreateContainerOpts {
 
 fn filter_started_at(started_at: Option<String>) -> Option<String> {
     started_at.filter(|s| !s.is_empty() && s != "0001-01-01T00:00:00Z")
-}
-
-#[derive(Debug, Clone)]
-pub struct ContainerStats {
-    pub cpu_percent: f64,
-    pub mem_percent: f64,
-}
-
-fn compute_cpu_percent(container_delta: u64, system_delta: u64, num_cpus: u32) -> f64 {
-    if system_delta == 0 || num_cpus == 0 {
-        return 0.0;
-    }
-    // Normalize to 0-100% regardless of core count (matches docker stats / htop convention)
-    (container_delta as f64 / system_delta as f64) * 100.0
 }
 
 impl ContainerManager {
@@ -365,62 +350,6 @@ impl ContainerManager {
             })
             .collect())
     }
-
-    pub async fn stats(&self, container: &str) -> Result<ContainerStats> {
-        let opts = StatsOptionsBuilder::default()
-            .stream(false)
-            .one_shot(true)
-            .build();
-        let stat = self
-            .docker
-            .stats(container, Some(opts))
-            .try_next()
-            .await
-            .with_context(|| format!("failed to get stats for container '{container}'"))?
-            .with_context(|| format!("no stats returned for container '{container}'"))?;
-
-        let cpu_percent = match (&stat.cpu_stats, &stat.precpu_stats) {
-            (Some(cpu), Some(precpu)) => {
-                let cpu_total = cpu
-                    .cpu_usage
-                    .as_ref()
-                    .and_then(|u| u.total_usage)
-                    .unwrap_or(0);
-                let precpu_total = precpu
-                    .cpu_usage
-                    .as_ref()
-                    .and_then(|u| u.total_usage)
-                    .unwrap_or(0);
-                let container_delta = cpu_total.saturating_sub(precpu_total);
-                let system_delta = cpu
-                    .system_cpu_usage
-                    .unwrap_or(0)
-                    .saturating_sub(precpu.system_cpu_usage.unwrap_or(0));
-                let num_cpus = cpu.online_cpus.unwrap_or(1);
-                compute_cpu_percent(container_delta, system_delta, num_cpus)
-            }
-            _ => 0.0,
-        };
-
-        let mem_percent = stat
-            .memory_stats
-            .as_ref()
-            .map(|m| {
-                let usage = m.usage.unwrap_or(0);
-                let limit = m.limit.unwrap_or(0);
-                if limit > 0 {
-                    (usage as f64 / limit as f64) * 100.0
-                } else {
-                    0.0
-                }
-            })
-            .unwrap_or(0.0);
-
-        Ok(ContainerStats {
-            cpu_percent,
-            mem_percent,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -487,24 +416,5 @@ mod tests {
         );
         assert_eq!(filter_started_at(Some(String::new())), None);
         assert_eq!(filter_started_at(None), None);
-    }
-
-    #[test]
-    fn cpu_percent_basic() {
-        // Normalized to 0-100%: 50M/100M * 100 = 50%, regardless of core count
-        let pct = compute_cpu_percent(50_000_000, 100_000_000, 4);
-        assert!((pct - 50.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn cpu_percent_zero_system_delta() {
-        let pct = compute_cpu_percent(100, 0, 4);
-        assert_eq!(pct, 0.0);
-    }
-
-    #[test]
-    fn cpu_percent_zero_cpus() {
-        let pct = compute_cpu_percent(100, 200, 0);
-        assert_eq!(pct, 0.0);
     }
 }
