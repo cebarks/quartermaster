@@ -1,12 +1,12 @@
-{% if quests.is_empty() %}
+{% if total_quests == 0 %}
 <div class="empty-state"><p>No quest data available.</p></div>
 {% else %}
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
     <span><strong>{{ completed_quests }}</strong> / {{ total_quests }} completed</span>
     <div class="progress-bar" style="flex:1">
-        <div class="progress-fill progress-fill-success" style="width:{% if total_quests > 0 %}{{ completed_quests * 100 / total_quests }}{% else %}0{% endif %}%"></div>
+        <div class="progress-fill progress-fill-success" style="width:{{ completed_quests * 100 / total_quests }}%"></div>
     </div>
-    <span class="text-muted text-sm">{% if total_quests > 0 %}{{ completed_quests * 100 / total_quests }}%{% else %}0%{% endif %}</span>
+    <span class="text-muted text-sm">{{ completed_quests * 100 / total_quests }}%</span>
 </div>
 
 <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
@@ -31,6 +31,9 @@
            hx-trigger="input changed delay:300ms">
 </div>
 
+{% if quests.is_empty() %}
+<div class="empty-state"><p>No quests match the current filter.</p></div>
+{% else %}
 <table>
     <thead>
         <tr><th>Quest</th><th>Status</th></tr>
@@ -44,4 +47,5 @@
         {% endfor %}
     </tbody>
 </table>
+{% endif %}
 {% endif %}
