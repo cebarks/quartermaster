@@ -1,3 +1,4 @@
+pub mod backups;
 pub mod mods;
 pub mod raids;
 pub mod rbac;

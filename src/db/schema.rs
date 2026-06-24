@@ -18,6 +18,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/012_raid_snapshots.sql"),
     include_str!("../../migrations/013_cascade_mod_requests.sql"),
     include_str!("../../migrations/014_rbac.sql"),
+    include_str!("../../migrations/015_backups.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {

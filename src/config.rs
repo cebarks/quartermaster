@@ -50,6 +50,18 @@ fn default_leaderboard_min_raids() -> u32 {
     5
 }
 
+fn default_auto_backup() -> bool {
+    true
+}
+
+fn default_backup_dir() -> String {
+    "quartermaster/backups".to_string()
+}
+
+fn default_max_backups() -> u32 {
+    3
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum LogFormat {
@@ -195,6 +207,38 @@ fn default_enforced() -> bool {
 
 fn default_restart_required() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BackupConfig {
+    #[serde(default = "default_auto_backup")]
+    pub auto_backup: bool,
+
+    #[serde(default = "default_backup_dir")]
+    pub backup_dir: String,
+
+    #[serde(default = "default_max_backups")]
+    pub max_backups: u32,
+
+    #[serde(default)]
+    pub require_backup: bool,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            auto_backup: true,
+            backup_dir: "quartermaster/backups".to_string(),
+            max_backups: 3,
+            require_backup: false,
+        }
+    }
+}
+
+impl BackupConfig {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -622,6 +666,10 @@ pub struct Config {
     #[serde(skip_serializing_if = "LoggingConfig::is_default")]
     pub logging: LoggingConfig,
 
+    #[serde(default)]
+    #[serde(skip_serializing_if = "BackupConfig::is_default")]
+    pub backup: BackupConfig,
+
     #[serde(default = "default_tls_enabled")]
     pub tls_enabled: bool,
 
@@ -660,6 +708,7 @@ impl Default for Config {
             headless: None,
             modsync: None,
             logging: LoggingConfig::default(),
+            backup: BackupConfig::default(),
             tls_enabled: true,
             tls_cert: None,
             tls_key: None,
@@ -804,6 +853,10 @@ impl Config {
         env_override!(bool: self.proxy_enabled, "QUMA_PROXY_ENABLED");
         env_override!(bool: self.snapshots_enabled, "QUMA_SNAPSHOTS_ENABLED");
         env_override!(parse: self.leaderboard_min_raids, "QUMA_LEADERBOARD_MIN_RAIDS", u32);
+        env_override!(bool: self.backup.auto_backup, "QUMA_AUTO_BACKUP");
+        env_override!(str: self.backup.backup_dir, "QUMA_BACKUP_DIR");
+        env_override!(parse: self.backup.max_backups, "QUMA_MAX_BACKUPS", u32);
+        env_override!(bool: self.backup.require_backup, "QUMA_REQUIRE_BACKUP");
     }
 
     /// If `session_secret` is empty, generate a random 48-character alphanumeric secret.
@@ -1560,6 +1613,38 @@ proxy_enabled = false
             config.apply_env_overrides();
             assert_eq!(config.leaderboard_min_raids, 3);
         });
+    }
+
+    #[test]
+    fn backup_config_defaults() {
+        let config = Config::default();
+        assert!(config.backup.auto_backup);
+        assert_eq!(config.backup.backup_dir, "quartermaster/backups");
+        assert_eq!(config.backup.max_backups, 3);
+        assert!(!config.backup.require_backup);
+    }
+
+    #[test]
+    fn backup_config_deserialization() {
+        let toml_str = r#"
+    [backup]
+    auto_backup = false
+    backup_dir = "custom/backups"
+    max_backups = 5
+    require_backup = true
+    "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.backup.auto_backup);
+        assert_eq!(config.backup.backup_dir, "custom/backups");
+        assert_eq!(config.backup.max_backups, 5);
+        assert!(config.backup.require_backup);
+    }
+
+    #[test]
+    fn backup_config_skip_serializing_when_default() {
+        let config = Config::default();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(!serialized.contains("[backup]"));
     }
 
     #[test]
