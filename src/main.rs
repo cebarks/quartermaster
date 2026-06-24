@@ -1,5 +1,7 @@
 #![deny(clippy::unwrap_used)]
 
+#[allow(dead_code)] // Functions used in later tasks (CLI commands, web handlers)
+mod backup;
 mod cli;
 mod client;
 mod config;
