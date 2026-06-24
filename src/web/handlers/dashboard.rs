@@ -115,11 +115,22 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
         None
     };
 
+    let server_mod_ids = {
+        let db = state.db.lock();
+        match db.mods_with_server_files() {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!("failed to query server mod files: {e}");
+                std::collections::HashSet::new()
+            }
+        }
+    };
     let report = health::check_mods_health(
         &installed_mods,
         loaded_mods.as_ref(),
         &state.forge,
         &state.spt_info.spt_version,
+        &server_mod_ids,
     )
     .await;
     let tmpl = DashboardModsTemplate {

@@ -83,11 +83,13 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
     };
 
     let installed_mods = ctx.db.list_mods()?;
+    let server_mod_ids = ctx.db.mods_with_server_files()?;
     let mods = check_mods_health(
         &installed_mods,
         loaded_mods.as_ref(),
         &ctx.forge,
         &ctx.spt_info.spt_version,
+        &server_mod_ids,
     )
     .await;
 
@@ -147,6 +149,7 @@ pub async fn check_mods_health(
     loaded_mods: Option<&std::collections::HashMap<String, serde_json::Value>>,
     forge: &crate::forge::client::ForgeClient,
     spt_version: &str,
+    server_mod_ids: &std::collections::HashSet<i64>,
 ) -> ModsHealth {
     let mut updates_available = 0;
     let mut incompatible_mods = Vec::new();
@@ -168,7 +171,7 @@ pub async fn check_mods_health(
 
     let (loaded_count, load_failures, untracked_loaded) = match loaded_mods {
         Some(loaded) => {
-            let (failures, untracked) = check_mod_loads(installed_mods, loaded);
+            let (failures, untracked) = check_mod_loads(installed_mods, loaded, server_mod_ids);
             (Some(loaded.len()), failures, untracked)
         }
         None => (None, vec![], vec![]),
@@ -245,9 +248,11 @@ pub fn check_integrity_from(
 pub fn check_mod_loads(
     installed_mods: &[crate::db::mods::InstalledMod],
     loaded_mods: &std::collections::HashMap<String, serde_json::Value>,
+    server_mod_ids: &std::collections::HashSet<i64>,
 ) -> (Vec<String>, Vec<String>) {
     let installed_lower: std::collections::HashSet<String> = installed_mods
         .iter()
+        .filter(|m| !m.disabled && server_mod_ids.contains(&m.id))
         .map(|m| m.name.to_lowercase())
         .collect();
 
@@ -256,6 +261,7 @@ pub fn check_mod_loads(
 
     let load_failures: Vec<String> = installed_mods
         .iter()
+        .filter(|m| !m.disabled && server_mod_ids.contains(&m.id))
         .filter(|m| !loaded_lower.contains(&m.name.to_lowercase()))
         .map(|m| m.name.clone())
         .collect();
@@ -370,7 +376,8 @@ mod tests {
         loaded.insert("ModA".to_string(), serde_json::json!({}));
         loaded.insert("ModB".to_string(), serde_json::json!({}));
 
-        let (failures, untracked) = check_mod_loads(&installed, &loaded);
+        let server_mod_ids: std::collections::HashSet<i64> = [1, 2].into_iter().collect();
+        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
         assert!(failures.is_empty());
         assert!(untracked.is_empty());
     }
@@ -404,7 +411,8 @@ mod tests {
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("WorkingMod".to_string(), serde_json::json!({}));
 
-        let (failures, untracked) = check_mod_loads(&installed, &loaded);
+        let server_mod_ids: std::collections::HashSet<i64> = [1, 2].into_iter().collect();
+        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
         assert_eq!(failures, vec!["BrokenMod"]);
         assert!(untracked.is_empty());
     }
@@ -426,7 +434,8 @@ mod tests {
         loaded.insert("TrackedMod".to_string(), serde_json::json!({}));
         loaded.insert("ManualMod".to_string(), serde_json::json!({}));
 
-        let (failures, untracked) = check_mod_loads(&installed, &loaded);
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
         assert!(failures.is_empty());
         assert_eq!(untracked, vec!["ManualMod"]);
     }
@@ -447,7 +456,8 @@ mod tests {
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("sain".to_string(), serde_json::json!({}));
 
-        let (failures, untracked) = check_mod_loads(&installed, &loaded);
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
         assert!(
             failures.is_empty(),
             "case-insensitive match should not report failure"
@@ -723,5 +733,85 @@ mod tests {
         assert_eq!(result.untracked_dirs.len(), 1);
         assert_eq!(result.untracked_dirs[0].path, "SPT/user/mods/UnknownMod");
         assert_eq!(result.untracked_dirs[0].file_count, 1);
+    }
+
+    #[test]
+    fn check_mod_loads_excludes_disabled_mods() {
+        let installed = vec![
+            InstalledMod {
+                id: 1,
+                forge_mod_id: 100,
+                forge_version_id: 200,
+                name: "EnabledMod".to_string(),
+                slug: None,
+                version: "1.0.0".to_string(),
+                installed_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: None,
+                disabled: false,
+            },
+            InstalledMod {
+                id: 2,
+                forge_mod_id: 101,
+                forge_version_id: 201,
+                name: "DisabledMod".to_string(),
+                slug: None,
+                version: "1.0.0".to_string(),
+                installed_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: None,
+                disabled: true,
+            },
+        ];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("EnabledMod".to_string(), serde_json::json!({}));
+
+        // Both mods have server files — test is specifically about the disabled filter
+        let server_mod_ids: std::collections::HashSet<i64> = [1, 2].into_iter().collect();
+        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
+        assert!(
+            failures.is_empty(),
+            "disabled mod should not be reported as load failure, got: {:?}",
+            failures
+        );
+        assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn check_mod_loads_excludes_client_only_mods() {
+        let installed = vec![
+            InstalledMod {
+                id: 1,
+                forge_mod_id: 100,
+                forge_version_id: 200,
+                name: "ServerMod".to_string(),
+                slug: None,
+                version: "1.0.0".to_string(),
+                installed_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: None,
+                disabled: false,
+            },
+            InstalledMod {
+                id: 2,
+                forge_mod_id: 101,
+                forge_version_id: 201,
+                name: "ClientOnlyMod".to_string(),
+                slug: None,
+                version: "1.0.0".to_string(),
+                installed_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: None,
+                disabled: false,
+            },
+        ];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("ServerMod".to_string(), serde_json::json!({}));
+
+        // ClientOnlyMod has no server files — its ID is NOT in the server_mod_ids set
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
+        assert!(
+            failures.is_empty(),
+            "client-only mod should not be reported as load failure, got: {:?}",
+            failures
+        );
+        assert!(untracked.is_empty());
     }
 }
