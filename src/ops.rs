@@ -412,7 +412,9 @@ pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
     // Rename top-level directories (strip .disabled suffix)
     for dir in &top_dirs {
         if dir.ends_with(".disabled") {
-            let restored = dir.strip_suffix(".disabled").unwrap();
+            let restored = dir
+                .strip_suffix(".disabled")
+                .expect("checked by ends_with above");
             let src = spt_dir.join(dir);
             let dst = spt_dir.join(restored);
             if src.exists() {
@@ -427,7 +429,9 @@ pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
     let loose = find_loose_files(&file_paths, &top_dirs);
     for loose_path in &loose {
         if loose_path.ends_with(".disabled") {
-            let restored = loose_path.strip_suffix(".disabled").unwrap();
+            let restored = loose_path
+                .strip_suffix(".disabled")
+                .expect("checked by ends_with above");
             let src = spt_dir.join(loose_path);
             let dst = spt_dir.join(restored);
             if src.exists() {
@@ -446,7 +450,9 @@ pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
             .find(|d| file.file_path.starts_with(d.as_str()))
         {
             if matching_dir.ends_with(".disabled") {
-                let restored_dir = matching_dir.strip_suffix(".disabled").unwrap();
+                let restored_dir = matching_dir
+                    .strip_suffix(".disabled")
+                    .expect("checked by ends_with above");
                 file.file_path
                     .replacen(matching_dir.as_str(), restored_dir, 1)
             } else {
@@ -455,7 +461,7 @@ pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
         } else if file.file_path.ends_with(".disabled") {
             file.file_path
                 .strip_suffix(".disabled")
-                .unwrap()
+                .expect("checked by ends_with above")
                 .to_string()
         } else {
             continue;
@@ -494,6 +500,7 @@ pub fn collect_all_reverse_deps(db: &Database, mod_db_id: i64) -> Result<Vec<Ins
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::config::Config;

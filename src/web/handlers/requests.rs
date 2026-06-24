@@ -122,7 +122,7 @@ pub(crate) fn fika_compat_to_string(fc: &Option<FikaCompat>) -> String {
 
 fn strip_html_tags(html: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"<[^>]+>").unwrap());
+        std::sync::LazyLock::new(|| regex::Regex::new(r"<[^>]+>").expect("valid regex"));
     RE.replace_all(html, "").trim().to_string()
 }
 
@@ -599,7 +599,7 @@ pub async fn resolve_request(
             .await
         {
             Ok(versions) if !versions.is_empty() => {
-                let version = versions.last().unwrap();
+                let version = versions.last().expect("checked non-empty above");
 
                 // Fika compatibility check (same pattern as install_mod)
                 const FIKA_FORGE_MOD_ID: i64 = 2326;
@@ -794,6 +794,7 @@ pub async fn resolve_request(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

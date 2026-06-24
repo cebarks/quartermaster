@@ -237,6 +237,7 @@ pub fn preview_config(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::config::{ModSyncConfig, ModSyncOverride, NARCONET_FORGE_MOD_ID};

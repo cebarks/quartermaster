@@ -433,9 +433,14 @@ pub fn find_narconet_dir(spt_dir: &Path) -> Option<PathBuf> {
         .min_by(|a, b| {
             a.file_name()
                 .to_str()
-                .unwrap()
+                .unwrap_or_default()
                 .to_ascii_lowercase()
-                .cmp(&b.file_name().to_str().unwrap().to_ascii_lowercase())
+                .cmp(
+                    &b.file_name()
+                        .to_str()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase(),
+                )
         })
         .map(|e| e.path())
 }
@@ -460,9 +465,14 @@ pub fn find_svm_dir(spt_dir: &Path) -> Option<PathBuf> {
         .min_by(|a, b| {
             a.file_name()
                 .to_str()
-                .unwrap()
+                .unwrap_or_default()
                 .to_ascii_lowercase()
-                .cmp(&b.file_name().to_str().unwrap().to_ascii_lowercase())
+                .cmp(
+                    &b.file_name()
+                        .to_str()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase(),
+                )
         })
         .map(|e| e.path())
 }
@@ -830,6 +840,7 @@ impl Config {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

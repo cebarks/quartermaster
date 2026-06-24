@@ -84,6 +84,7 @@ fn generate_systemd(install: bool, cli: &Cli) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

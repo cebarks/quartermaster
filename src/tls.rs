@@ -92,6 +92,7 @@ fn generate_self_signed(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

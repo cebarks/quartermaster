@@ -476,7 +476,7 @@ pub async fn reset_password_page(
     }
 
     // Check user exists and is not disabled
-    let reset_token = reset_token.unwrap();
+    let reset_token = reset_token.expect("None case returned above");
     let db2 = state.db.clone();
     let uid = reset_token.user_id;
     let target_user = web::block(move || {

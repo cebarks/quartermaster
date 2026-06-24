@@ -48,6 +48,7 @@ pub fn edit_headless_amount(path: &Path, amount: u32) -> Result<()> {
 /// set of profile IDs. Returns the profile IDs (filenames without .json extension) that
 /// are new.
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 pub fn discover_new_profiles(profiles_dir: &Path, before: &HashSet<String>) -> Vec<String> {
     let mut new_profiles = Vec::new();
 
@@ -252,6 +253,7 @@ pub fn client_port(base: u16, index: u32) -> u16 {
 ///
 /// Returns the names of conflicting containers.
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 pub fn find_name_conflicts(
     managed: &[String],
     all_matching_name: &[String],
@@ -631,6 +633,7 @@ async fn create_client_container(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashSet;

@@ -394,6 +394,7 @@ fn collect_deps_to_install(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::db::Database;

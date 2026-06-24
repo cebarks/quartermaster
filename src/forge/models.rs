@@ -178,6 +178,7 @@ pub struct UpdatesResponse {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

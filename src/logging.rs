@@ -228,11 +228,11 @@ impl ReloadHandles {
             let (file_layer, guard) = build_file_layer(&config.file, &file_path);
             let _ = self.file_handle.reload(Some(file_layer));
             // Store the new guard, dropping the old one (if any)
-            *self.file_guard.lock().unwrap() = Some(guard);
+            *self.file_guard.lock().expect("mutex poisoned") = Some(guard);
         } else {
             let _ = self.file_handle.reload(None);
             // Clear the guard when file logging is disabled
-            *self.file_guard.lock().unwrap() = None;
+            *self.file_guard.lock().expect("mutex poisoned") = None;
         }
     }
 }
@@ -414,6 +414,7 @@ fn build_file_layer(
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

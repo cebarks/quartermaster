@@ -440,7 +440,12 @@ pub async fn client_scale(
         }
     };
 
-    let headless_config = state.config().headless.as_ref().unwrap().clone(); // Already checked above
+    let headless_config = state
+        .config()
+        .headless
+        .as_ref()
+        .expect("None case returned above")
+        .clone();
     let mut updated_config = headless_config;
     let current = updated_config.client_count();
     if target > current {

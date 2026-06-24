@@ -598,6 +598,7 @@ fn strip_known_prefix_from_name(name: &str) -> &str {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use tempfile::TempDir;

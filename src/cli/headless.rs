@@ -265,7 +265,10 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
 
     crate::client::converge::converge(
         container_mgr,
-        config.headless.as_ref().unwrap(),
+        config
+            .headless
+            .as_ref()
+            .expect("set by get_or_insert_with above"),
         &config,
         &ctx.spt_dir,
         &spt_client,
@@ -523,7 +526,10 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     println!("Converging to {} client(s)...", count);
     crate::client::converge::converge(
         container_mgr,
-        config.headless.as_ref().unwrap(),
+        config
+            .headless
+            .as_ref()
+            .expect("set by get_or_insert_with above"),
         &config,
         &ctx.spt_dir,
         &spt_client,

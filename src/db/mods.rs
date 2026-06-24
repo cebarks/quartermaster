@@ -394,6 +394,7 @@ fn row_to_mod_dependency(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModDepende
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use crate::db::Database;
 

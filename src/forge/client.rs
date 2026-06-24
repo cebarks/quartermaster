@@ -224,6 +224,7 @@ impl ForgeClient {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use wiremock::matchers::{method, path, query_param};

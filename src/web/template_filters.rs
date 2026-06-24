@@ -89,6 +89,7 @@ pub fn format_roubles_i64(value: &i64, _env: &dyn askama::Values) -> askama::Res
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

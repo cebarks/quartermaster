@@ -270,6 +270,7 @@ pub fn check_mod_loads(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::db::mods::InstalledMod;

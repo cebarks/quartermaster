@@ -557,6 +557,7 @@ pub fn load_stash_items(spt_dir: &Path, profile_id: &str) -> Result<Option<Vec<S
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
