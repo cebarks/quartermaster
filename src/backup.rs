@@ -219,6 +219,231 @@ pub fn auto_backup_mod(
     }
 }
 
+/// Restore a single mod from a mod-type backup.
+///
+/// Looks up the backup record, locates the backup files on disk, deletes the
+/// mod's current files (if the mod still exists), copies the backup files back
+/// into the SPT directory, re-records them in the database, and marks the
+/// backup as restored.
+///
+/// If the mod was previously removed, re-inserts it from the backup metadata.
+pub fn restore_mod_backup(
+    db: &crate::db::Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    backup_db_id: i64,
+) -> Result<()> {
+    let backup = db
+        .get_backup(backup_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("backup {backup_db_id} not found"))?;
+
+    if backup.backup_type != "mod" {
+        anyhow::bail!("backup {} is a full backup, not a mod backup", backup_db_id);
+    }
+
+    let forge_mod_id = backup
+        .forge_mod_id
+        .ok_or_else(|| anyhow::anyhow!("mod backup missing forge_mod_id"))?;
+
+    let backup_files_dir = spt_dir.join(&backup.backup_path);
+    if !backup_files_dir.exists() {
+        anyhow::bail!("backup directory missing: {}", backup_files_dir.display());
+    }
+
+    // Find or re-create the mod row
+    let mod_db_id = match db.get_mod_by_forge_id(forge_mod_id)? {
+        Some(existing) => {
+            // Delete current files from disk and DB
+            let current_files = db.get_files_for_mod(existing.id)?;
+            let paths: Vec<String> = current_files.into_iter().map(|f| f.file_path).collect();
+            crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
+            db.delete_files_for_mod(existing.id)?;
+            existing.id
+        }
+        None => {
+            // Re-insert mod from backup metadata
+            let name = backup
+                .mod_name
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("backup missing mod_name"))?;
+            let version_id = backup
+                .forge_version_id
+                .ok_or_else(|| anyhow::anyhow!("backup missing forge_version_id"))?;
+            let version = backup
+                .mod_version
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("backup missing mod_version"))?;
+            db.insert_mod(
+                forge_mod_id,
+                version_id,
+                name,
+                backup.mod_slug.as_deref(),
+                version,
+            )?
+        }
+    };
+
+    // Copy backup files to spt_dir and record them in a transaction
+    let tx = db.begin_transaction()?;
+    let mut restored_count = 0u64;
+    copy_backup_tree_and_record(
+        db,
+        spt_dir,
+        &backup_files_dir,
+        &backup_files_dir,
+        mod_db_id,
+        &mut restored_count,
+    )?;
+
+    // Update mod version to the backup's version
+    if let (Some(version_id), Some(version)) =
+        (backup.forge_version_id, backup.mod_version.as_deref())
+    {
+        db.update_mod(mod_db_id, version_id, version)?;
+    }
+
+    db.set_backup_restored(backup_db_id)?;
+    tx.commit()?;
+
+    tracing::info!(
+        backup_db_id,
+        mod_db_id,
+        restored_count,
+        "mod restored from backup"
+    );
+
+    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
+        tracing::warn!(error = %e, "failed to regenerate NarcoNet config after restore");
+    }
+
+    Ok(())
+}
+
+/// Restore all mods, profiles, and config from a full backup.
+///
+/// Deletes all current mod files, copies everything back from the backup
+/// directory, and re-records file metadata. Also restores player profiles
+/// and the `quartermaster.toml` config file if present in the backup.
+pub fn restore_full_backup(
+    db: &crate::db::Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    backup_db_id: i64,
+) -> Result<()> {
+    let backup = db
+        .get_backup(backup_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("backup {backup_db_id} not found"))?;
+
+    if backup.backup_type != "full" {
+        anyhow::bail!("backup {} is not a full backup", backup_db_id);
+    }
+
+    let backup_dir = spt_dir.join(&backup.backup_path);
+    if !backup_dir.exists() {
+        anyhow::bail!("backup directory missing: {}", backup_dir.display());
+    }
+
+    // Restore mod files
+    let mods_dir = backup_dir.join("mods");
+    if mods_dir.is_dir() {
+        // Collect per-mod file paths before deleting, so we know which
+        // backup files belong to which mod during the copy-back phase.
+        let all_mods = db.list_mods()?;
+        let mut mod_file_sets: Vec<(i64, Vec<String>)> = Vec::new();
+        for m in &all_mods {
+            let files = db.get_files_for_mod(m.id)?;
+            let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
+            mod_file_sets.push((m.id, paths.clone()));
+            crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
+            db.delete_files_for_mod(m.id)?;
+        }
+
+        // Copy back each mod's files from the backup
+        for (mod_db_id, file_paths) in &mod_file_sets {
+            for rel_path in file_paths {
+                let src = mods_dir.join(rel_path);
+                if !src.exists() {
+                    continue;
+                }
+                let dst = spt_dir.join(rel_path);
+                if let Some(parent) = dst.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&src, &dst)?;
+
+                let content = std::fs::read(&dst)?;
+                let hash = crate::spt::mods::compute_hash_public(&content);
+                let size = content.len() as i64;
+                db.insert_file(*mod_db_id, rel_path, Some(&hash), Some(size))?;
+            }
+        }
+    }
+
+    // Restore profiles
+    let profiles_dir = backup_dir.join("profiles");
+    if profiles_dir.is_dir() {
+        let profiles_dst = spt_dir.join("user/profiles");
+        std::fs::create_dir_all(&profiles_dst)?;
+        for entry in std::fs::read_dir(&profiles_dir)? {
+            let entry = entry?;
+            let dst = profiles_dst.join(entry.file_name());
+            std::fs::copy(entry.path(), &dst)?;
+        }
+    }
+
+    // Restore config
+    let config_src = backup_dir.join("quartermaster.toml");
+    if config_src.exists() {
+        let config_dst = spt_dir.join("quartermaster.toml");
+        std::fs::copy(&config_src, &config_dst)?;
+        tracing::warn!("quartermaster.toml restored — restart the web server to reload config");
+    }
+
+    db.set_backup_restored(backup_db_id)?;
+
+    tracing::info!(backup_db_id, "full backup restored");
+
+    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
+        tracing::warn!(error = %e, "failed to regenerate NarcoNet config after full restore");
+    }
+
+    Ok(())
+}
+
+/// Recursively copy files from a backup directory tree into the SPT directory,
+/// recording each file in the database.
+fn copy_backup_tree_and_record(
+    db: &crate::db::Database,
+    spt_dir: &Path,
+    current_dir: &Path,
+    backup_root: &Path,
+    mod_db_id: i64,
+    count: &mut u64,
+) -> Result<()> {
+    for entry in std::fs::read_dir(current_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            copy_backup_tree_and_record(db, spt_dir, &path, backup_root, mod_db_id, count)?;
+        } else {
+            let relative = path.strip_prefix(backup_root)?;
+            let dst = spt_dir.join(relative);
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(&path, &dst)?;
+
+            let content = std::fs::read(&dst)?;
+            let hash = crate::spt::mods::compute_hash_public(&content);
+            let size = content.len() as i64;
+            let rel_str = relative.to_string_lossy();
+            db.insert_file(mod_db_id, &rel_str, Some(&hash), Some(size))?;
+            *count += 1;
+        }
+    }
+    Ok(())
+}
+
 /// Prune per-mod backups that exceed the retention limit.
 fn enforce_retention_mod(
     db: &crate::db::Database,
@@ -425,5 +650,100 @@ mod tests {
 
         let result = auto_backup_mod(&db, spt_dir.path(), &config, 999, "auto_update");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn restore_mod_backup_replaces_files() {
+        let spt_dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(spt_dir.path().join("SPT/user/mods/TestMod")).unwrap();
+        std::fs::write(
+            spt_dir.path().join("SPT/user/mods/TestMod/package.json"),
+            b"{\"v\":\"1\"}",
+        )
+        .unwrap();
+
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(100, 200, "TestMod", Some("test-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "SPT/user/mods/TestMod/package.json",
+            Some("abc"),
+            Some(12),
+        )
+        .unwrap();
+
+        let config = crate::config::Config::default();
+        let backup_db_id = backup_mod(&db, spt_dir.path(), &config, mod_id, "manual").unwrap();
+
+        // Simulate an update — overwrite the file
+        std::fs::write(
+            spt_dir.path().join("SPT/user/mods/TestMod/package.json"),
+            b"{\"v\":\"2\"}",
+        )
+        .unwrap();
+        db.update_mod(mod_id, 300, "2.0.0").unwrap();
+
+        // Restore
+        restore_mod_backup(&db, spt_dir.path(), &config, backup_db_id).unwrap();
+
+        let content =
+            std::fs::read_to_string(spt_dir.path().join("SPT/user/mods/TestMod/package.json"))
+                .unwrap();
+        assert!(content.contains("\"v\":\"1\""));
+
+        let m = db.get_mod(mod_id).unwrap().unwrap();
+        assert_eq!(m.version, "1.0.0");
+
+        let backup = db.get_backup(backup_db_id).unwrap().unwrap();
+        assert!(backup.restored_at.is_some());
+    }
+
+    #[test]
+    fn restore_mod_backup_reinstalls_removed_mod() {
+        let spt_dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(spt_dir.path().join("SPT/user/mods/TestMod")).unwrap();
+        std::fs::write(
+            spt_dir.path().join("SPT/user/mods/TestMod/package.json"),
+            b"{}",
+        )
+        .unwrap();
+
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(100, 200, "TestMod", Some("test-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "SPT/user/mods/TestMod/package.json",
+            Some("abc"),
+            Some(2),
+        )
+        .unwrap();
+
+        let config = crate::config::Config::default();
+        let backup_db_id = backup_mod(&db, spt_dir.path(), &config, mod_id, "auto_remove").unwrap();
+
+        // Simulate removal
+        crate::spt::mods::delete_mod_files(
+            spt_dir.path(),
+            &["SPT/user/mods/TestMod/package.json".to_string()],
+        )
+        .unwrap();
+        db.delete_mod(mod_id).unwrap();
+        assert!(db.get_mod(mod_id).unwrap().is_none());
+
+        // Restore
+        restore_mod_backup(&db, spt_dir.path(), &config, backup_db_id).unwrap();
+
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod/package.json")
+            .exists());
+        // Mod should be re-inserted
+        let m = db.get_mod_by_forge_id(100).unwrap().unwrap();
+        assert_eq!(m.name, "TestMod");
+        assert_eq!(m.version, "1.0.0");
     }
 }
