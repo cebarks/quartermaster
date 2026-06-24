@@ -69,6 +69,33 @@ dev-install-tools:
 dev-watch *ARGS: dev-init
     QUMA_SPT_DIR="{{dev_dir}}" cargo watch -x 'run -- serve {{ARGS}}' -w src -w templates
 
+# Seed the dev database with test data (wipes and repopulates)
+dev-seed: dev-init
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v sqlite3 >/dev/null || { echo "Error: sqlite3 is required but not installed"; exit 1; }
+    db="{{dev_dir}}/quartermaster.db"
+    if [[ ! -f "$db" ]]; then
+        echo "Error: dev database not found at $db"
+        echo "Run 'just dev-serve' once to initialize the database, then try again."
+        exit 1
+    fi
+    echo "Seeding dev database..."
+    sqlite3 "$db" < dev/seed.sql
+    echo "Database seeded."
+    # Copy profile fixtures if any exist
+    fixtures="dev/fixtures/profiles"
+    target="{{dev_dir}}/SPT/user/profiles"
+    if [ -d "$fixtures" ] && [ "$(find "$fixtures" -name '*.json' 2>/dev/null | head -1)" ]; then
+        mkdir -p "$target"
+        cp "$fixtures"/*.json "$target/"
+        count=$(find "$fixtures" -name '*.json' | wc -l)
+        echo "Copied $count profile(s) to $target/"
+    else
+        echo "No profile fixtures found in $fixtures/ (add .json files there to seed profiles)"
+    fi
+    echo "Done."
+
 # Wipe the dev database (keeps config and SPT structure)
 dev-reset-db:
     rm -f "{{dev_dir}}/quartermaster.db" "{{dev_dir}}/quartermaster.db-journal" "{{dev_dir}}/quartermaster.db-wal"
