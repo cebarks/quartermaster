@@ -298,6 +298,19 @@ impl Database {
         rows.collect()
     }
 
+    pub fn mods_with_server_files(&self) -> rusqlite::Result<std::collections::HashSet<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT mod_id FROM installed_files
+             WHERE file_path LIKE 'SPT/user/mods/%'",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        let mut ids = std::collections::HashSet::new();
+        for id in rows {
+            ids.insert(id?);
+        }
+        Ok(ids)
+    }
+
     // ── Disable/Enable ─────────────────────────────────────────────────
 
     pub fn set_mod_disabled(&self, id: i64, disabled: bool) -> rusqlite::Result<usize> {
