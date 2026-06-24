@@ -272,6 +272,24 @@ pub fn init_subscriber(log_broadcast: &Arc<LogBroadcast>) -> ReloadHandles {
     }
 }
 
+/// Create ReloadHandles without setting the global subscriber.
+/// Used in tests where the global subscriber may already be set.
+#[allow(dead_code)]
+pub fn init_reload_handles_only() -> ReloadHandles {
+    let filter = EnvFilter::new("info");
+    let (_filter_layer, filter_handle) = reload::Layer::new(filter);
+    let console_layer: BoxedConsole = Box::new(fmt::layer().with_writer(std::io::stderr));
+    let (_console_reload, console_handle) = reload::Layer::new(console_layer);
+    let file_layer: BoxedFile = None;
+    let (_file_reload, file_handle) = reload::Layer::new(file_layer);
+    ReloadHandles {
+        filter_handle,
+        console_handle,
+        file_handle,
+        file_guard: std::sync::Mutex::new(None),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // resolve_log_filter — priority chain for log filter string
 // ---------------------------------------------------------------------------

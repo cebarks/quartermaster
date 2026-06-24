@@ -9,7 +9,7 @@ use crate::config::Config;
 use crate::container::ContainerManager;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
-use crate::logging::LogBroadcast;
+use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::SptInfo;
 use crate::spt::game_data::GameData;
 use crate::svm::SvmManager;
@@ -30,6 +30,7 @@ pub struct AppState {
     pub update_cache: UpdateCache,
     pub events: broadcast::Sender<ServerEvent>,
     pub log_broadcast: Arc<LogBroadcast>,
+    pub reload_handles: Arc<ReloadHandles>,
     pub container_mgr: Option<Arc<ContainerManager>>,
     pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<AtomicBool>,

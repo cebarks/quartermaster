@@ -129,44 +129,6 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
-#[derive(Template)]
-#[template(path = "partials/dashboard_container.html")]
-struct DashboardContainerTemplate {
-    available: bool,
-    cpu_percent: f64,
-    mem_percent: f64,
-}
-
-pub async fn container_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
-    require_auth(&req)?;
-
-    let container_name = state.config().server_container.clone();
-    let tmpl = match (container_name.as_deref(), state.container_mgr.as_ref()) {
-        (Some(container), Some(mgr)) => match mgr.stats(container).await {
-            Ok(stats) => DashboardContainerTemplate {
-                available: true,
-                cpu_percent: stats.cpu_percent,
-                mem_percent: stats.mem_percent,
-            },
-            Err(e) => {
-                tracing::trace!(error = %e, "container stats unavailable");
-                DashboardContainerTemplate {
-                    available: false,
-                    cpu_percent: 0.0,
-                    mem_percent: 0.0,
-                }
-            }
-        },
-        _ => DashboardContainerTemplate {
-            available: false,
-            cpu_percent: 0.0,
-            mem_percent: 0.0,
-        },
-    };
-
-    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
-}
-
 pub(crate) async fn fetch_server_context(state: &AppState) -> (Option<String>, Option<String>) {
     let container_name = state.config().server_container.clone();
     let started_at = if let (Some(container), Some(mgr)) =

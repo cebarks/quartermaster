@@ -1,4 +1,4 @@
-<a href="/quma/mods" class="card stat-card-wide" style="border-left: 3px solid {% if report.updates_available > 0 || !report.incompatible_mods.is_empty() || !report.load_failures.is_empty() %}var(--warning){% else %}var(--success){% endif %}; text-decoration: none; color: inherit;">
+<a href="/quma/mods" class="card" style="display: block; border-left: 3px solid {% if report.updates_available > 0 || !report.incompatible_mods.is_empty() || !report.load_failures.is_empty() %}var(--warning){% else %}var(--success){% endif %}; text-decoration: none; color: inherit;">
     <h3>Mods</h3>
     <table>
         <tr><th style="width:140px">Installed</th><td><strong>{{ report.installed_count }}</strong></td></tr>

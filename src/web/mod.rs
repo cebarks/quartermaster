@@ -33,7 +33,7 @@ use actix_web::middleware::from_fn;
 use crate::config::Config;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
-use crate::logging::LogBroadcast;
+use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::SptInfo;
 use crate::spt::game_data::GameData;
 
@@ -59,6 +59,7 @@ pub struct ServerContext {
     pub spt_dir: std::path::PathBuf,
     pub spt_info: SptInfo,
     pub log_broadcast: Arc<LogBroadcast>,
+    pub reload_handles: Arc<ReloadHandles>,
     pub container_mgr: Option<Arc<crate::container::ContainerManager>>,
     pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<std::sync::atomic::AtomicBool>,
@@ -178,10 +179,6 @@ pub fn configure_app(
         .route(
             "/dashboard/mods",
             web::get().to(handlers::dashboard::mods_partial),
-        )
-        .route(
-            "/dashboard/container",
-            web::get().to(handlers::dashboard::container_partial),
         )
         .route(
             "/dashboard/headless-status",
@@ -572,6 +569,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         spt_dir,
         spt_info,
         log_broadcast,
+        reload_handles,
         container_mgr,
         client_states,
         converging,
@@ -627,6 +625,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         update_cache: crate::web::update_cache::UpdateCache::new(config.update_check_interval),
         events: events_tx,
         log_broadcast,
+        reload_handles,
         container_mgr,
         client_states,
         converging,

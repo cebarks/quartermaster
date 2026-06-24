@@ -165,6 +165,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         spt_dir,
         spt_info,
         log_broadcast: Arc::clone(&log_broadcast),
+        reload_handles: Arc::new(reload_handles),
         container_mgr,
         client_states,
         converging,

@@ -148,6 +148,7 @@ impl TestAppBuilder {
             update_cache: spt_quartermaster::web::update_cache::UpdateCache::new(300),
             events: events_tx,
             log_broadcast: Arc::new(spt_quartermaster::logging::LogBroadcast::new(1000)),
+            reload_handles: Arc::new(spt_quartermaster::logging::init_reload_handles_only()),
             container_mgr: None,
             client_states: None,
             converging: Arc::new(std::sync::atomic::AtomicBool::new(false)),
