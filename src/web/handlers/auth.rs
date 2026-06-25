@@ -4,9 +4,14 @@ use actix_web::HttpResponse;
 use askama::Template;
 use subtle::ConstantTimeEq;
 
+use actix_web::HttpRequest;
+
 use crate::spt::profiles::{list_profiles, SptProfile};
-use crate::web::auth::{hash_password, set_session_user, verify_password, SessionUser};
+use crate::web::auth::{
+    hash_password, require_auth, set_session_user, verify_password, SessionUser,
+};
 use crate::web::error::WebError;
+use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
 // -- Templates --
@@ -85,9 +90,23 @@ fn is_invite_expired(expires_at: Option<&str>) -> bool {
 
 // -- Handlers --
 
-pub async fn login_page(session: Session) -> actix_web::Result<HttpResponse> {
+#[derive(serde::Deserialize)]
+pub struct LoginQuery {
+    pw: Option<String>,
+}
+
+pub async fn login_page(
+    session: Session,
+    query: Query<LoginQuery>,
+) -> actix_web::Result<HttpResponse> {
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
-    let flash = crate::web::flash::take_flash(&session);
+    let mut flash = crate::web::flash::take_flash(&session);
+    if flash.is_none() && query.pw.as_deref() == Some("changed") {
+        flash = Some(crate::web::flash::FlashMessage {
+            message: "Password updated — please log in.".to_string(),
+            flash_type: crate::web::flash::FlashType::Success,
+        });
+    }
     let tmpl = LoginTemplate {
         error: None,
         csrf_token,
@@ -177,6 +196,7 @@ pub async fn login_submit(
     session.renew();
     let session_user = SessionUser {
         user_id: user.id,
+        has_password: user.password_hash.is_some(),
         username: user.username,
         role_name: user.role,
         role_display_name: role_display,
@@ -627,5 +647,139 @@ pub async fn reset_password_submit(
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/login"))
+        .finish())
+}
+
+// -- Change password (self-service) --
+
+#[derive(serde::Deserialize)]
+pub struct ChangePasswordForm {
+    current_password: String,
+    password: String,
+    password_confirm: String,
+    csrf_token: String,
+}
+
+#[derive(Template)]
+#[template(path = "change_password.html")]
+struct ChangePasswordTemplate {
+    error: Option<String>,
+    csrf_token: String,
+    user: SessionUser,
+    nav: NavContext,
+    flash: Option<crate::web::flash::FlashMessage>,
+}
+
+pub async fn change_password_page(
+    req: HttpRequest,
+    session: Session,
+    state: Data<AppState>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let nav = NavContext::from_state(&state);
+    let tmpl = ChangePasswordTemplate {
+        error: None,
+        csrf_token,
+        user,
+        nav,
+        flash: None,
+    };
+    Ok(HttpResponse::Ok()
+        .content_type("text/html")
+        .body(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn change_password_submit(
+    req: HttpRequest,
+    form: Form<ChangePasswordForm>,
+    state: Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    let form = form.into_inner();
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let render_error = |msg: &str| -> actix_web::Result<HttpResponse> {
+        let tmpl = ChangePasswordTemplate {
+            error: Some(msg.to_string()),
+            csrf_token: csrf_token.clone(),
+            user: user.clone(),
+            nav: NavContext::from_state(&state),
+            flash: None,
+        };
+        Ok(HttpResponse::BadRequest()
+            .content_type("text/html")
+            .body(tmpl.render().map_err(WebError::from)?))
+    };
+
+    // Look up the user to get their current password hash
+    let db = state.db.clone();
+    let user_id = user.user_id;
+    let db_user = web::block(move || {
+        let db = db.lock();
+        db.get_user_by_id(user_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let db_user = match db_user {
+        Some(u) => u,
+        None => return Err(WebError::Forbidden.into()),
+    };
+
+    // Users without a password hash (profile-only) cannot change password
+    let existing_hash = match db_user.password_hash {
+        Some(h) => h,
+        None => {
+            return render_error("Your account does not have a password set.");
+        }
+    };
+
+    // Validate new password before expensive verify/hash operations
+    if form.password.len() < MIN_PASSWORD_LEN || form.password.len() > MAX_PASSWORD_LEN {
+        return render_error("New password must be 8-128 characters.");
+    }
+    if form.password != form.password_confirm {
+        return render_error("New passwords do not match.");
+    }
+
+    // Verify current password
+    let current_password = form.current_password;
+    let current_valid = web::block(move || verify_password(&current_password, &existing_hash))
+        .await
+        .map_err(WebError::from)?;
+
+    if !current_valid {
+        return render_error("Current password is incorrect.");
+    }
+
+    // Hash and save
+    let new_password = form.password;
+    let new_hash = web::block(move || hash_password(&new_password))
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+    let db = state.db.clone();
+    web::block(move || {
+        let db = db.lock();
+        db.update_user_password(user_id, &new_hash)?;
+        Ok::<_, rusqlite::Error>(())
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    session.purge();
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/login?pw=changed"))
         .finish())
 }

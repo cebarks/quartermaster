@@ -39,6 +39,7 @@
 </div>
 <div class="user-info">
     {{ user.username }} ({{ user.role_display_name }})
+    {% if user.has_password %}<a href="/quma/change-password" class="btn btn-sm btn-outline" style="margin-left:0.5rem">{% call icons::key() %}{% endcall %} Change Password</a>{% endif %}
     <form method="post" action="/quma/logout" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-sm btn-outline" style="margin-left:0.5rem">{% call icons::log_out() %}{% endcall %} Logout</button>

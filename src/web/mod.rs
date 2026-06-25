@@ -369,6 +369,15 @@ pub fn configure_app(
     quma_scope = quma_scope.service(
         web::scope("")
             .wrap(from_fn(auth::auth_middleware))
+            .route(
+                "/change-password",
+                web::get().to(handlers::auth::change_password_page),
+            )
+            .service(
+                web::resource("/change-password")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::post().to(handlers::auth::change_password_submit)),
+            )
             .route("/", web::get().to(handlers::dashboard::dashboard))
             .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
             .route("/logs", web::get().to(handlers::logs::logs_page))

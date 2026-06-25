@@ -21,22 +21,24 @@ DELETE FROM users;
 -- ============================================================
 -- Users (password for all: devdevdev)
 -- ============================================================
-INSERT INTO users (id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at, stash_public) VALUES
+INSERT INTO users (id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at) VALUES
   (1, 'admin', NULL,
    '$argon2id$v=19$m=19456,t=2,p=1$no1XTJYpj+UMVT6a8EhiVQ$xC9kwrT5TO/HkhWA89Fyme8FiaEOgjmgaPfQimO++gU',
-   'admin', 0, '2026-01-15 10:00:00', '2026-01-15 10:00:00', 0),
+   'admin', 0, '2026-01-15 10:00:00', '2026-01-15 10:00:00'),
   (2, 'ModeratorMike', NULL,
    '$argon2id$v=19$m=19456,t=2,p=1$no1XTJYpj+UMVT6a8EhiVQ$xC9kwrT5TO/HkhWA89Fyme8FiaEOgjmgaPfQimO++gU',
-   'moderator', 0, '2026-02-01 14:30:00', '2026-02-01 14:30:00', 0),
+   'moderator', 0, '2026-02-01 14:30:00', '2026-02-01 14:30:00'),
   (3, 'TarkovChad', NULL,
    '$argon2id$v=19$m=19456,t=2,p=1$no1XTJYpj+UMVT6a8EhiVQ$xC9kwrT5TO/HkhWA89Fyme8FiaEOgjmgaPfQimO++gU',
-   'player', 0, '2026-02-10 08:15:00', '2026-02-10 08:15:00', 1),
+   'player', 0, '2026-02-10 08:15:00', '2026-02-10 08:15:00'),
   (4, 'LootGoblin', NULL,
    '$argon2id$v=19$m=19456,t=2,p=1$no1XTJYpj+UMVT6a8EhiVQ$xC9kwrT5TO/HkhWA89Fyme8FiaEOgjmgaPfQimO++gU',
-   'player', 0, '2026-03-05 19:00:00', '2026-03-05 19:00:00', 0),
+   'player', 0, '2026-03-05 19:00:00', '2026-03-05 19:00:00'),
   (5, 'ExtractCamper', NULL,
    '$argon2id$v=19$m=19456,t=2,p=1$no1XTJYpj+UMVT6a8EhiVQ$xC9kwrT5TO/HkhWA89Fyme8FiaEOgjmgaPfQimO++gU',
-   'player', 0, '2026-03-20 12:00:00', '2026-03-20 12:00:00', 0);
+   'player', 0, '2026-03-20 12:00:00', '2026-03-20 12:00:00'),
+  (6, 'ProfileOnlyUser', 'profile-only-123', NULL,
+   'player', 0, '2026-04-01 10:00:00', NULL);
 
 -- ============================================================
 -- Installed mods

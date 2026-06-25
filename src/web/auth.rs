@@ -39,6 +39,7 @@ pub struct SessionUser {
     pub role_name: String,
     pub role_display_name: String,
     pub permissions: HashSet<Permission>,
+    pub has_password: bool,
 }
 
 impl SessionUser {
@@ -168,6 +169,7 @@ pub async fn auth_middleware(
         role_name: verified_user.role.clone(),
         role_display_name: role_display,
         permissions,
+        has_password: verified_user.password_hash.is_some(),
     };
 
     // Check if password was changed after session was created
@@ -227,6 +229,7 @@ mod tests {
             role_name: "admin".into(),
             role_display_name: "Admin".into(),
             permissions: perms,
+            has_password: true,
         };
 
         assert!(admin.has_permission(Permission::UsersManage));
@@ -241,6 +244,7 @@ mod tests {
             role_name: "player".into(),
             role_display_name: "Player".into(),
             permissions: HashSet::new(),
+            has_password: true,
         };
 
         assert!(!player.has_permission(Permission::UsersManage));
@@ -258,6 +262,7 @@ mod tests {
             role_name: "moderator".into(),
             role_display_name: "Moderator".into(),
             permissions: perms,
+            has_password: true,
         };
 
         assert!(user.can("mods.install"));
@@ -273,6 +278,7 @@ mod tests {
             role_name: "custom".into(),
             role_display_name: "Custom".into(),
             permissions: HashSet::from([Permission::ModsInstall, Permission::ServerLogs]),
+            has_password: true,
         };
         assert!(user.can("mods.install"));
         assert!(user.can("server.logs"));
