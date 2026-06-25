@@ -46,9 +46,9 @@
     <form method="post" action="/quma/mods/{{ mod_info.id }}/toggle-disable">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         {% if mod_info.disabled %}
-        <button type="submit" class="btn btn-outline">Enable</button>
+        <button type="submit" class="btn btn-success">Enable</button>
         {% else %}
-        <button type="submit" class="btn btn-outline">Disable</button>
+        <button type="submit" class="btn btn-warning">Disable</button>
         {% endif %}
     </form>
     {% endif %}
