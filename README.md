@@ -20,6 +20,8 @@ Built for Linux hosts running SPT in a Podman container.
 - **Server settings** — View and manage SPT server configuration
 - **Mod requests** — Players can request mods; admins review and approve with a voting system
 - **Mod enable/disable** — Toggle mods on and off without uninstalling
+- **Backup/restore** — Per-mod and full snapshots of mod files, profiles, and config with CLI and web UI support
+- **RBAC** — Role-based access control with admin and player roles
 - **Container lifecycle** — Start, stop, restart the SPT server container via Podman
 - **Systemd integration** — Generate and install a systemd service for the web UI
 
@@ -50,10 +52,12 @@ Commands:
   check       Check all installed mods for updates
   status      Run health checks against SPT server and mod integrity
   server      Manage the SPT server container (start/stop/restart/logs)
-  client      Manage Fika dedicated headless clients
+  headless    Manage Fika headless clients
   serve       Start the Quartermaster web UI
   generate    Generate configuration files (systemd service)
   invite      Generate an invite code for a player
+  backup      Backup mods, profiles, and config
+  restore     Restore from a backup
 
 Options:
   --spt-dir <PATH>      Explicit SPT server directory
@@ -113,12 +117,13 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 |-------|---------|
 | `src/cli/` | One file per CLI subcommand (clap derive) |
 | `src/web/` | actix-web server, HTMX templates (Askama), SSE, HTTPS/WSS proxy |
-| `src/db/` | SQLite via rusqlite (WAL mode) |
+| `src/db/` | SQLite via rusqlite (WAL mode), RBAC, backup metadata |
 | `src/forge/` | HTTP client for SPT Forge API |
 | `src/spt/` | SPT directory interaction, archive extraction, profiles, game data |
 | `src/client/` | Fika headless client supervisor and convergence |
 | `src/svm/` | Server Value Modifier browsing and configuration |
 | `src/ops.rs` | Core mod operations (install/update/remove) |
+| `src/backup.rs` | Mod backup/restore (per-mod and full snapshots) |
 | `src/health.rs` | Health check system |
 | `src/queue.rs` | Change queue for deferred mod operations |
 | `src/modsync.rs` | NarcoNet config.yaml auto-management |

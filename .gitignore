@@ -4,6 +4,7 @@
 *.db-wal
 quartermaster.toml
 .superpowers/
+docs/superpowers/
 
 # Override global gitignore
 !CLAUDE.md
