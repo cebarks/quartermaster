@@ -140,7 +140,16 @@ pub async fn client_restart(
             FlashType::Error,
         );
     } else {
-        tracing::info!(container = %container_name, "client restarted");
+        // Reset supervisor state so the client gets a fresh chance
+        if let Some(states) = &state.client_states {
+            let mut clients = states.write().await;
+            if let Some(client) = clients.iter_mut().find(|c| c.index == index) {
+                client.consecutive_failures = 0;
+                client.health = ClientHealth::Down;
+                client.restarting = false;
+            }
+        }
+        tracing::info!(container = %container_name, "client restarted (state reset)");
         set_flash(
             &session,
             &format!("Client {index} restarting"),
@@ -292,7 +301,16 @@ pub async fn client_start(
             FlashType::Error,
         );
     } else {
-        tracing::info!(container = %container_name, "client started");
+        // Reset supervisor state so the client gets a fresh chance
+        if let Some(states) = &state.client_states {
+            let mut clients = states.write().await;
+            if let Some(client) = clients.iter_mut().find(|c| c.index == index) {
+                client.consecutive_failures = 0;
+                client.health = ClientHealth::Down;
+                client.restarting = false;
+            }
+        }
+        tracing::info!(container = %container_name, "client started (state reset)");
         set_flash(
             &session,
             &format!("Client {index} starting"),
