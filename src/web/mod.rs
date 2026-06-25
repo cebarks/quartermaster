@@ -552,26 +552,6 @@ pub fn configure_app(
             .route(
                 "/headless/{n}/delete",
                 web::post().to(handlers::clients::client_delete),
-            )
-            // Redirect old /clients URLs to /headless
-            .route(
-                "/clients",
-                web::get().to(|| async {
-                    HttpResponse::MovedPermanently()
-                        .insert_header(("Location", "/quma/headless"))
-                        .finish()
-                }),
-            )
-            .route(
-                "/clients/{n}",
-                web::get().to(|path: web::Path<u32>| async move {
-                    HttpResponse::MovedPermanently()
-                        .insert_header((
-                            "Location",
-                            format!("/quma/headless/{}", path.into_inner()),
-                        ))
-                        .finish()
-                }),
             ),
     );
 

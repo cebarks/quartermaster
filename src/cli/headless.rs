@@ -272,6 +272,8 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
         &config,
         &ctx.spt_dir,
         &spt_client,
+        &ctx.forge,
+        &ctx.spt_info.spt_version,
         converging,
     )
     .await?;
@@ -533,6 +535,8 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
         &config,
         &ctx.spt_dir,
         &spt_client,
+        &ctx.forge,
+        &ctx.spt_info.spt_version,
         converging,
     )
     .await?;

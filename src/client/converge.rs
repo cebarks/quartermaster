@@ -1,5 +1,6 @@
 use crate::config::{Config, HeadlessConfig};
 use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
+use crate::forge::client::ForgeClient;
 use crate::spt::profiles;
 use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
@@ -12,6 +13,9 @@ use tracing::{debug, info, warn};
 /// Label key for marking containers as managed by quartermaster
 const MANAGED_BY_LABEL: &str = "quma.managed-by";
 const MANAGED_BY_VALUE: &str = "quartermaster-clients";
+
+/// Forge mod ID for the Fika client mod (https://forge.sp-tarkov.com/mod/2326)
+const FIKA_CLIENT_FORGE_ID: i64 = 2326;
 
 /// Edit the headless amount in fika.jsonc using targeted text replacement to preserve comments.
 ///
@@ -39,6 +43,160 @@ pub fn edit_headless_amount(path: &Path, amount: u32) -> Result<()> {
         .with_context(|| format!("failed to write {}", path.display()))?;
 
     debug!("Updated headless amount to {amount} in {}", path.display());
+    Ok(())
+}
+
+/// Check if the Fika client mod is present in the headless install directory.
+///
+/// Looks for a `Fika.Core.dll`, `Fika.Core/`, or `Fika/` entry in
+/// `install_dir/BepInEx/plugins/`. The archive layout has changed across
+/// Fika versions (older: `Fika.Core/`, newer: `Fika/`), so we check both.
+pub fn is_fika_client_present(install_dir: &Path) -> bool {
+    let plugins_dir = install_dir.join("BepInEx/plugins");
+    let Ok(entries) = std::fs::read_dir(&plugins_dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let name = e.file_name();
+        let s = name.to_string_lossy();
+        s == "Fika" || s.starts_with("Fika.Core")
+    })
+}
+
+/// Ensure the Fika client mod is installed in the headless install directory.
+///
+/// If Fika.Core is already present, this is a no-op. Otherwise, it queries the Forge API
+/// for the latest compatible version, downloads the archive to a temp file, and extracts
+/// it into the install directory.
+pub async fn ensure_fika_client(
+    forge: &ForgeClient,
+    install_dir: &Path,
+    spt_version: &str,
+) -> Result<()> {
+    if is_fika_client_present(install_dir) {
+        debug!("Fika client already present in {}", install_dir.display());
+        return Ok(());
+    }
+
+    info!(
+        "Fika client not found in {}. Downloading from Forge...",
+        install_dir.display()
+    );
+
+    // Find a compatible version for the current SPT version
+    let versions = forge
+        .get_versions(FIKA_CLIENT_FORGE_ID, Some(spt_version))
+        .await
+        .context("failed to query Forge for Fika client versions")?;
+
+    let version = versions
+        .into_iter()
+        .max_by_key(|v| v.id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no Fika client version found for SPT {spt_version} on Forge (mod ID {FIKA_CLIENT_FORGE_ID})"
+            )
+        })?;
+
+    let download_url = version.link.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Fika client version {} has no download link",
+            version.version
+        )
+    })?;
+
+    info!(
+        "Downloading Fika client v{} for SPT {spt_version}",
+        version.version
+    );
+
+    // Download to a temp file, then extract
+    let tmp_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
+    forge
+        .download_file(download_url, tmp_file.path())
+        .await
+        .context("failed to download Fika client archive")?;
+
+    crate::spt::mods::extract_mod(tmp_file.path(), install_dir)
+        .context("failed to extract Fika client archive")?;
+
+    info!(
+        "Fika client v{} installed to {}",
+        version.version,
+        install_dir.display()
+    );
+    Ok(())
+}
+
+const FIKA_HEADLESS_GITHUB_REPO: &str = "project-fika/Fika-Headless";
+
+/// Check if the Fika.Headless plugin is present in the install directory.
+///
+/// This is a separate plugin from Fika.Core — it implements the headless idle
+/// loop that keeps the game running and ready to host raids.
+fn is_fika_headless_present(install_dir: &Path) -> bool {
+    install_dir
+        .join("BepInEx/plugins/Fika/Fika.Headless.dll")
+        .is_file()
+}
+
+/// Ensure the Fika.Headless plugin is installed in the headless install directory.
+///
+/// Unlike Fika.Core (which is on Forge), Fika.Headless is distributed via GitHub
+/// releases at project-fika/Fika-Headless. This function fetches the latest release,
+/// downloads the zip, and extracts it.
+async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result<()> {
+    if is_fika_headless_present(install_dir) {
+        debug!("Fika.Headless already present in {}", install_dir.display());
+        return Ok(());
+    }
+
+    info!(
+        "Fika.Headless not found in {}. Downloading from GitHub...",
+        install_dir.display()
+    );
+
+    // Query GitHub API for the latest release
+    let client = reqwest::Client::builder()
+        .user_agent("quartermaster")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("failed to build HTTP client")?;
+
+    let release: serde_json::Value = client
+        .get(format!(
+            "https://api.github.com/repos/{FIKA_HEADLESS_GITHUB_REPO}/releases/latest"
+        ))
+        .send()
+        .await
+        .context("failed to query GitHub for Fika.Headless releases")?
+        .error_for_status()
+        .context("GitHub API returned error")?
+        .json()
+        .await
+        .context("failed to parse GitHub release response")?;
+
+    let tag = release["tag_name"].as_str().unwrap_or("unknown");
+    let asset = release["assets"]
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or_else(|| anyhow::anyhow!("Fika.Headless latest release has no assets"))?;
+    let download_url = asset["browser_download_url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Fika.Headless asset has no download URL"))?;
+
+    info!("Downloading Fika.Headless {tag}...");
+
+    let tmp_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
+    forge
+        .download_file(download_url, tmp_file.path())
+        .await
+        .context("failed to download Fika.Headless archive")?;
+
+    crate::spt::mods::extract_mod(tmp_file.path(), install_dir)
+        .context("failed to extract Fika.Headless archive")?;
+
+    info!("Fika.Headless {tag} installed to {}", install_dir.display());
     Ok(())
 }
 
@@ -297,12 +455,15 @@ pub fn find_name_conflicts(
 ///
 /// The `converging` flag is an Arc<AtomicBool> that prevents concurrent convergence
 /// operations and signals to the supervisor that state is in flux.
+#[allow(clippy::too_many_arguments)]
 pub async fn converge(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
     config: &Config,
     spt_dir: &Path,
     spt_client: &SptClient,
+    forge: &ForgeClient,
+    spt_version: &str,
     converging: Arc<AtomicBool>,
 ) -> Result<()> {
     // Set converging flag (atomic compare-exchange for race-free check-and-set)
@@ -352,6 +513,10 @@ pub async fn converge(
 
     // Scale up or down
     if current_count < desired_count {
+        // Ensure the Fika client mod is installed before creating containers
+        ensure_fika_client(forge, &headless_config.install_dir, spt_version).await?;
+        ensure_fika_headless(forge, &headless_config.install_dir).await?;
+
         ensure_clients(
             container_mgr,
             headless_config,
@@ -556,22 +721,30 @@ async fn create_client_container(
 
     // Build volume mounts
     let mut volumes = vec![
-        // SPT install directory (read-only)
+        // Game client directory — mounted read-write because the headless image
+        // entrypoint writes wine.log, BepInEx logs, etc. directly into this tree.
         VolumeMount {
             host_path: headless_config.install_dir.clone(),
             container_path: "/opt/tarkov".to_string(),
-            read_only: true,
+            read_only: false,
             selinux: SelinuxLabel::Shared,
         },
     ];
 
-    // Add overlay as read-write mount for isolated paths
-    if !effective_paths.is_empty() {
+    // Mount each isolated path from the overlay on top of the base install,
+    // so per-client config/state shadows the shared copy.
+    for isolated_path in effective_paths {
+        let p = std::path::Path::new(isolated_path);
+        if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
+            bail!("isolated_path contains traversal sequence: {isolated_path:?}");
+        }
+        let overlay_subdir = overlay_dir.join(isolated_path);
+        let container_subdir = format!("/opt/tarkov/{isolated_path}");
         volumes.push(VolumeMount {
-            host_path: overlay_dir,
-            container_path: "/opt/tarkov-overlay".to_string(),
+            host_path: overlay_subdir,
+            container_path: container_subdir,
             read_only: false,
-            selinux: SelinuxLabel::Private,
+            selinux: SelinuxLabel::Shared,
         });
     }
 
@@ -596,13 +769,22 @@ async fn create_client_container(
         );
     }
 
-    // Add SPT server host/port if configured
-    if let Some(ref host) = config.server_host {
-        env.push(("SPT_SERVER_HOST".to_string(), host.clone()));
-    }
-    if let Some(port) = config.server_port {
-        env.push(("SPT_SERVER_PORT".to_string(), port.to_string()));
-    }
+    // SERVER_URL / SERVER_PORT are what the headless image reads to connect.
+    // When the server binds 0.0.0.0, use host.containers.internal so the
+    // headless container can reach the host's network stack via Podman DNS.
+    let server_host = config
+        .server_host
+        .as_deref()
+        .unwrap_or("host.containers.internal");
+    let server_url = match server_host {
+        "0.0.0.0" | "127.0.0.1" | "localhost" => "host.containers.internal",
+        other => other,
+    };
+    env.push(("SERVER_URL".to_string(), server_url.to_string()));
+    env.push((
+        "SERVER_PORT".to_string(),
+        config.server_port.unwrap_or(6969).to_string(),
+    ));
 
     // Labels
     let labels = vec![
@@ -745,5 +927,63 @@ mod tests {
         // Both paths should exist in overlay
         assert!(spt_dir.join("clients/1/BepInEx/config/test.cfg").exists());
         assert!(spt_dir.join("clients/1/BepInEx/cache/data.bin").exists());
+    }
+
+    #[test]
+    fn fika_client_detected_by_dll() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugins = tmp.path().join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::write(plugins.join("Fika.Core.dll"), b"fake dll").unwrap();
+
+        assert!(is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_client_detected_by_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fika_dir = tmp.path().join("BepInEx/plugins/Fika.Core");
+        std::fs::create_dir_all(&fika_dir).unwrap();
+        std::fs::write(fika_dir.join("Fika.Core.dll"), b"fake dll").unwrap();
+
+        assert!(is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_client_not_detected_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugins = tmp.path().join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::write(plugins.join("SomeOtherMod.dll"), b"other").unwrap();
+
+        assert!(!is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_client_not_detected_no_plugins_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No BepInEx/plugins directory at all
+        assert!(!is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_client_detected_by_fika_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fika_dir = tmp.path().join("BepInEx/plugins/Fika");
+        std::fs::create_dir_all(&fika_dir).unwrap();
+        std::fs::write(fika_dir.join("Fika.Core.dll"), b"fake dll").unwrap();
+
+        assert!(is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_compat_mod_not_false_positive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugins = tmp.path().join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        // "Fika.Compat" should NOT trigger detection — only "Fika.Core" matters
+        std::fs::write(plugins.join("Fika.Compat.dll"), b"compat mod").unwrap();
+
+        assert!(!is_fika_client_present(tmp.path()));
     }
 }
