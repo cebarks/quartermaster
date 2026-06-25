@@ -80,6 +80,8 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         }
     };
 
+    let forge = ForgeClient::new(config.forge_token.clone())?;
+
     let fika_installed = is_fika_installed(&spt_dir);
     let modsync_installed = crate::config::is_modsync_installed(&spt_dir);
     let converging = Arc::new(AtomicBool::new(false));
@@ -114,6 +116,8 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         &config,
                         &spt_dir,
                         &spt_client,
+                        &forge,
+                        &spt_info.spt_version,
                         Arc::clone(&converging),
                     )
                     .await;
@@ -154,8 +158,6 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     } else {
         None
     };
-
-    let forge = ForgeClient::new(config.forge_token.clone())?;
 
     crate::web::start_server(crate::web::ServerContext {
         config,

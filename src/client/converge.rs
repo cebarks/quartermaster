@@ -1,5 +1,6 @@
 use crate::config::{Config, HeadlessConfig};
 use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
+use crate::forge::client::ForgeClient;
 use crate::spt::profiles;
 use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
@@ -12,6 +13,9 @@ use tracing::{debug, info, warn};
 /// Label key for marking containers as managed by quartermaster
 const MANAGED_BY_LABEL: &str = "quma.managed-by";
 const MANAGED_BY_VALUE: &str = "quartermaster-clients";
+
+/// Forge mod ID for the Fika client mod (https://forge.sp-tarkov.com/mod/2326)
+const FIKA_CLIENT_FORGE_ID: i64 = 2326;
 
 /// Edit the headless amount in fika.jsonc using targeted text replacement to preserve comments.
 ///
@@ -39,6 +43,87 @@ pub fn edit_headless_amount(path: &Path, amount: u32) -> Result<()> {
         .with_context(|| format!("failed to write {}", path.display()))?;
 
     debug!("Updated headless amount to {amount} in {}", path.display());
+    Ok(())
+}
+
+/// Check if the Fika client mod is present in the headless install directory.
+///
+/// Looks for any entry starting with "Fika.Core" in `install_dir/BepInEx/plugins/`.
+/// This handles both directory-style installs (e.g. `Fika.Core/`) and loose DLL
+/// installs (e.g. `Fika.Core.dll`).
+pub fn is_fika_client_present(install_dir: &Path) -> bool {
+    let plugins_dir = install_dir.join("BepInEx/plugins");
+    let Ok(entries) = std::fs::read_dir(&plugins_dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("Fika.Core"))
+    })
+}
+
+/// Ensure the Fika client mod is installed in the headless install directory.
+///
+/// If Fika.Core is already present, this is a no-op. Otherwise, it queries the Forge API
+/// for the latest compatible version, downloads the archive to a temp file, and extracts
+/// it into the install directory.
+pub async fn ensure_fika_client(
+    forge: &ForgeClient,
+    install_dir: &Path,
+    spt_version: &str,
+) -> Result<()> {
+    if is_fika_client_present(install_dir) {
+        debug!("Fika client already present in {}", install_dir.display());
+        return Ok(());
+    }
+
+    info!(
+        "Fika client not found in {}. Downloading from Forge...",
+        install_dir.display()
+    );
+
+    // Find a compatible version for the current SPT version
+    let versions = forge
+        .get_versions(FIKA_CLIENT_FORGE_ID, Some(spt_version))
+        .await
+        .context("failed to query Forge for Fika client versions")?;
+
+    let version = versions
+        .first()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no Fika client version found for SPT {spt_version} on Forge (mod ID {FIKA_CLIENT_FORGE_ID})"
+            )
+        })?;
+
+    let download_url = version.link.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Fika client version {} has no download link",
+            version.version
+        )
+    })?;
+
+    info!(
+        "Downloading Fika client v{} for SPT {spt_version}",
+        version.version
+    );
+
+    // Download to a temp file, then extract
+    let tmp_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
+    forge
+        .download_file(download_url, tmp_file.path())
+        .await
+        .context("failed to download Fika client archive")?;
+
+    crate::spt::mods::extract_mod(tmp_file.path(), install_dir)
+        .context("failed to extract Fika client archive")?;
+
+    info!(
+        "Fika client v{} installed to {}",
+        version.version,
+        install_dir.display()
+    );
     Ok(())
 }
 
@@ -297,12 +382,15 @@ pub fn find_name_conflicts(
 ///
 /// The `converging` flag is an Arc<AtomicBool> that prevents concurrent convergence
 /// operations and signals to the supervisor that state is in flux.
+#[allow(clippy::too_many_arguments)]
 pub async fn converge(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
     config: &Config,
     spt_dir: &Path,
     spt_client: &SptClient,
+    forge: &ForgeClient,
+    spt_version: &str,
     converging: Arc<AtomicBool>,
 ) -> Result<()> {
     // Set converging flag (atomic compare-exchange for race-free check-and-set)
@@ -352,6 +440,9 @@ pub async fn converge(
 
     // Scale up or down
     if current_count < desired_count {
+        // Ensure the Fika client mod is installed before creating containers
+        ensure_fika_client(forge, &headless_config.install_dir, spt_version).await?;
+
         ensure_clients(
             container_mgr,
             headless_config,
@@ -745,5 +836,53 @@ mod tests {
         // Both paths should exist in overlay
         assert!(spt_dir.join("clients/1/BepInEx/config/test.cfg").exists());
         assert!(spt_dir.join("clients/1/BepInEx/cache/data.bin").exists());
+    }
+
+    #[test]
+    fn fika_client_detected_by_dll() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugins = tmp.path().join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::write(plugins.join("Fika.Core.dll"), b"fake dll").unwrap();
+
+        assert!(is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_client_detected_by_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fika_dir = tmp.path().join("BepInEx/plugins/Fika.Core");
+        std::fs::create_dir_all(&fika_dir).unwrap();
+        std::fs::write(fika_dir.join("Fika.Core.dll"), b"fake dll").unwrap();
+
+        assert!(is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_client_not_detected_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugins = tmp.path().join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::write(plugins.join("SomeOtherMod.dll"), b"other").unwrap();
+
+        assert!(!is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_client_not_detected_no_plugins_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No BepInEx/plugins directory at all
+        assert!(!is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_compat_mod_not_false_positive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugins = tmp.path().join("BepInEx/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        // "Fika.Compat" should NOT trigger detection — only "Fika.Core" matters
+        std::fs::write(plugins.join("Fika.Compat.dll"), b"compat mod").unwrap();
+
+        assert!(!is_fika_client_present(tmp.path()));
     }
 }
