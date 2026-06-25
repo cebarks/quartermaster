@@ -1,1 +1,0 @@
-ALTER TABLE installed_mods ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0;
