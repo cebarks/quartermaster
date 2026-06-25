@@ -734,14 +734,16 @@ macro_rules! env_override {
     };
     (path: $field:expr, $var:literal) => {
         if let Ok(val) = std::env::var($var) {
-            tracing::debug!(var = $var, value = %val, "env var override applied");
-            $field = PathBuf::from(val);
+            let path = std::path::absolute(PathBuf::from(&val)).unwrap_or_else(|_| PathBuf::from(&val));
+            tracing::debug!(var = $var, value = %path.display(), "env var override applied");
+            $field = path;
         }
     };
     (opt_path: $field:expr, $var:literal) => {
         if let Ok(val) = std::env::var($var) {
-            tracing::debug!(var = $var, value = %val, "env var override applied");
-            $field = Some(PathBuf::from(val));
+            let path = std::path::absolute(PathBuf::from(&val)).unwrap_or_else(|_| PathBuf::from(&val));
+            tracing::debug!(var = $var, value = %path.display(), "env var override applied");
+            $field = Some(path);
         }
     };
     (parse: $field:expr, $var:literal, $ty:ty) => {

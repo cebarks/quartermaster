@@ -662,7 +662,7 @@ async fn create_client_container(
             host_path: overlay_dir,
             container_path: "/opt/tarkov-overlay".to_string(),
             read_only: false,
-            selinux: SelinuxLabel::Private,
+            selinux: SelinuxLabel::Shared,
         });
     }
 
