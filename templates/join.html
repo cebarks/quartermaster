@@ -16,7 +16,7 @@
 
         {% if let Some(error) = error %}
         <div class="alert alert-error">{{ error }}</div>
-        {% endif %}
+        {% else %}
 
         {% if !modsync_installed %}
         <div class="alert alert-error">
@@ -60,6 +60,8 @@
 
         <h3>Step 3: Register Your Account</h3>
         <p>After connecting for the first time, <a href="/quma/register?code={{ code }}">register your account</a> to access the dashboard.</p>
+
+        {% endif %}
     </div>
     </main>
 </body>

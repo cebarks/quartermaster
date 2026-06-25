@@ -307,7 +307,7 @@ fn escape_powershell(s: &str) -> String {
 
 fn generate_bash_script(server_name: &str, external_url: &str, code: &str) -> String {
     let server_name = escape_bash(server_name);
-    let external_url = escape_bash(external_url);
+    let external_url = escape_bash(external_url.trim_end_matches('/'));
     let code = escape_bash(code);
 
     format!(
@@ -360,7 +360,7 @@ echo "  3. After connecting, register at: $SERVER_URL/quma/register?code={code}"
 
 fn generate_powershell_script(server_name: &str, external_url: &str, code: &str) -> String {
     let server_name = escape_powershell(server_name);
-    let external_url = escape_powershell(external_url);
+    let external_url = escape_powershell(external_url.trim_end_matches('/'));
     let code = escape_powershell(code);
 
     format!(
