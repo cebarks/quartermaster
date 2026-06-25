@@ -311,6 +311,18 @@ impl Database {
         Ok(ids)
     }
 
+    pub fn count_client_syncable_mods(&self) -> rusqlite::Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(DISTINCT m.id) FROM installed_mods m
+             JOIN installed_files f ON f.mod_id = m.id
+             WHERE f.file_path LIKE 'BepInEx/%'
+             AND m.disabled = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     // ── Disable/Enable ─────────────────────────────────────────────────
 
     pub fn set_mod_disabled(&self, id: i64, disabled: bool) -> rusqlite::Result<usize> {

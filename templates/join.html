@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Join — {{ server_name }}</title>
+    <link rel="stylesheet" href="/quma/assets/style.css">
+</head>
+<body>
+    <nav>
+        <span class="brand">Quartermaster</span>
+    </nav>
+    <main>
+    <div class="card auth-card" style="max-width: 640px; margin: 2rem auto;">
+        <h2>Join {{ server_name }}</h2>
+
+        {% if let Some(error) = error %}
+        <div class="alert alert-error">{{ error }}</div>
+        {% endif %}
+
+        {% if !modsync_installed %}
+        <div class="alert alert-error">
+            NarcoNet is not installed on this server. The bootstrap script may not fully set up mod syncing.
+        </div>
+        {% endif %}
+
+        <div class="server-info" style="margin-bottom: 1.5rem;">
+            <p><strong>SPT Version:</strong> {{ spt_version }}</p>
+            <p><strong>Fika:</strong> {% if fika_installed %}Installed{% else %}Not installed{% endif %}</p>
+            <p><strong>Synced Mods:</strong> {{ mod_count }}</p>
+        </div>
+
+        <h3>Step 1: Set Up Your Client</h3>
+        <p>Run this from your SPT installation directory:</p>
+
+        <details open>
+            <summary><strong>Linux / macOS</strong></summary>
+            <pre><code>curl -sSL '{{ external_url }}/quma/join/bootstrap.sh?code={{ code }}' | bash</code></pre>
+            <p>Or <a href="/quma/join/bootstrap.sh?code={{ code }}">download the script</a> and run it manually.</p>
+        </details>
+
+        <details>
+            <summary><strong>Windows (PowerShell)</strong></summary>
+            <pre><code>irm '{{ external_url }}/quma/join/bootstrap.ps1?code={{ code }}' | iex</code></pre>
+            <p>Or <a href="/quma/join/bootstrap.ps1?code={{ code }}">download the script</a> and run it manually.</p>
+        </details>
+
+        <details>
+            <summary><strong>Manual Setup</strong></summary>
+            <ol>
+                <li>Download the <a href="/quma/join/mods.zip?code={{ code }}">mod archive</a></li>
+                <li>Extract it into your SPT installation directory (overwrite if prompted)</li>
+            </ol>
+        </details>
+
+        <h3>Step 2: Connect</h3>
+        <p>Open the SPT Launcher, set the server address to:</p>
+        <pre><code>{{ external_url }}</code></pre>
+        <p>Launch the game and connect.</p>
+
+        <h3>Step 3: Register Your Account</h3>
+        <p>After connecting for the first time, <a href="/quma/register?code={{ code }}">register your account</a> to access the dashboard.</p>
+    </div>
+    </main>
+</body>
+</html>
