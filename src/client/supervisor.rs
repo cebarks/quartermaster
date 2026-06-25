@@ -250,6 +250,7 @@ impl ClientSupervisor {
             &state.health,
             server_up,
             in_grace_period,
+            state.restarting,
         );
 
         // Check if given up
@@ -329,8 +330,9 @@ pub fn count_failure(
     health: &ClientHealth,
     server_up: bool,
     in_grace_period: bool,
+    restarting: bool,
 ) -> u32 {
-    if in_grace_period {
+    if in_grace_period || restarting {
         current_failures
     } else if !server_up {
         // Server is down — not the client's fault, don't count
@@ -440,27 +442,42 @@ mod tests {
 
     #[test]
     fn count_failure_holds_when_server_down() {
-        assert_eq!(count_failure(3, &ClientHealth::Degraded, false, false), 3);
+        assert_eq!(
+            count_failure(3, &ClientHealth::Degraded, false, false, false),
+            3
+        );
     }
 
     #[test]
     fn count_failure_increments_when_degraded_and_server_up() {
-        assert_eq!(count_failure(3, &ClientHealth::Degraded, true, false), 4);
+        assert_eq!(
+            count_failure(3, &ClientHealth::Degraded, true, false, false),
+            4
+        );
     }
 
     #[test]
     fn count_failure_resets_when_healthy() {
-        assert_eq!(count_failure(5, &ClientHealth::Healthy, true, false), 0);
+        assert_eq!(
+            count_failure(5, &ClientHealth::Healthy, true, false, false),
+            0
+        );
     }
 
     #[test]
     fn count_failure_holds_during_grace_period() {
-        assert_eq!(count_failure(3, &ClientHealth::Degraded, true, true), 3);
+        assert_eq!(
+            count_failure(3, &ClientHealth::Degraded, true, true, false),
+            3
+        );
     }
 
     #[test]
     fn count_failure_holds_during_grace_even_if_server_down() {
-        assert_eq!(count_failure(3, &ClientHealth::Degraded, false, true), 3);
+        assert_eq!(
+            count_failure(3, &ClientHealth::Degraded, false, true, false),
+            3
+        );
     }
 
     #[test]
@@ -474,7 +491,12 @@ mod tests {
         // The count_failure function already handles the grace period
         // correctly (holds current value), so resetting to 0 before the
         // new grace period means the client truly starts fresh.
-        let reset_value = count_failure(0, &ClientHealth::Degraded, true, true);
+        let reset_value = count_failure(0, &ClientHealth::Degraded, true, true, false);
         assert_eq!(reset_value, 0, "grace period should hold at 0 after reset");
+    }
+
+    #[test]
+    fn count_failure_holds_while_restarting() {
+        assert_eq!(count_failure(3, &ClientHealth::Down, true, false, true), 3);
     }
 }
