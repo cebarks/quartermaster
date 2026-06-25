@@ -473,8 +473,16 @@ pub fn compute_file_hash(path: &Path) -> Result<String> {
         .with_context(|| format!("failed to open file for hashing: {}", path.display()))?;
     let mut reader = std::io::BufReader::new(file);
     let mut hasher = Sha256::new();
-    std::io::copy(&mut reader, &mut hasher)
-        .with_context(|| format!("failed to read file for hashing: {}", path.display()))?;
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .with_context(|| format!("failed to read file for hashing: {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
     Ok(hex_encode(&hasher.finalize()))
 }
 
