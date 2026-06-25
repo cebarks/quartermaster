@@ -10,7 +10,7 @@
 <h2>Backups</h2>
 
 {% if let Some(flash) = flash %}
-<div class="flash flash-{{ flash.flash_type }}">{{ flash.message }}</div>
+<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
 {% endif %}
 
 <div class="card" style="margin-bottom: 1rem;">
