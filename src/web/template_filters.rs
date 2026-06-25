@@ -88,6 +88,12 @@ pub fn format_roubles_i64(value: &i64, _env: &dyn askama::Values) -> askama::Res
     Ok(format!("₽{}", format_roubles_value(*value)))
 }
 
+/// Truncate a datetime string to just the date+time portion (first 19 chars: `YYYY-MM-DD HH:MM:SS`).
+#[askama::filter_fn]
+pub fn format_datetime(s: &str, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(s.chars().take(19).collect())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
