@@ -152,7 +152,6 @@ impl Database {
             .optional()
     }
 
-    #[allow(dead_code)] // Used by Task 5-7 (proxy handlers)
     pub fn get_user_by_spt_profile_id(&self, profile_id: &str) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(

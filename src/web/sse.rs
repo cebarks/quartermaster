@@ -11,11 +11,8 @@ pub enum ServerEvent {
     TaskChanged,
     ModsChanged,
     ServerTransition,
-    #[allow(dead_code)] // Used by Tasks 5-6 (proxy handlers)
     PlayerRegistered,
-    #[allow(dead_code)] // Used by Task 2 (raid event processing)
     RaidStarted,
-    #[allow(dead_code)] // Used by Task 2 (raid event processing)
     RaidEnded,
 }
 
