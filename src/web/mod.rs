@@ -145,6 +145,16 @@ pub fn configure_app(
                 web::resource("/join/mods.zip")
                     .wrap(Governor::new(&governor_conf))
                     .route(web::get().to(handlers::join::mod_archive)),
+            )
+            .service(
+                web::resource("/join/bootstrap.sh")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::join::bootstrap_bash)),
+            )
+            .service(
+                web::resource("/join/bootstrap.ps1")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::join::bootstrap_powershell)),
             );
     } else {
         // Same routes without rate limiting (for tests)
@@ -161,7 +171,15 @@ pub fn configure_app(
                 web::post().to(handlers::auth::reset_password_submit),
             )
             .route("/join", web::get().to(handlers::join::join_page))
-            .route("/join/mods.zip", web::get().to(handlers::join::mod_archive));
+            .route("/join/mods.zip", web::get().to(handlers::join::mod_archive))
+            .route(
+                "/join/bootstrap.sh",
+                web::get().to(handlers::join::bootstrap_bash),
+            )
+            .route(
+                "/join/bootstrap.ps1",
+                web::get().to(handlers::join::bootstrap_powershell),
+            );
     }
 
     // Build the API scope
