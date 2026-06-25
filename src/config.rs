@@ -6,6 +6,37 @@ use rand::distr::Alphanumeric;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OnExit {
+    #[default]
+    Nothing,
+    Stop,
+    Remove,
+}
+
+impl std::fmt::Display for OnExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OnExit::Nothing => write!(f, "nothing"),
+            OnExit::Stop => write!(f, "stop"),
+            OnExit::Remove => write!(f, "remove"),
+        }
+    }
+}
+
+impl std::str::FromStr for OnExit {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "nothing" => Ok(OnExit::Nothing),
+            "stop" => Ok(OnExit::Stop),
+            "remove" => Ok(OnExit::Remove),
+            _ => bail!("unknown on_exit mode: {s} (expected nothing, stop, or remove)"),
+        }
+    }
+}
+
 fn default_queue_changes() -> bool {
     true
 }
@@ -632,6 +663,9 @@ pub struct Config {
     #[serde(default = "default_auto_start_server")]
     pub auto_start_server: bool,
 
+    #[serde(default)]
+    pub on_exit: OnExit,
+
     #[serde(default = "default_session_secret")]
     pub session_secret: String,
 
@@ -705,6 +739,7 @@ impl Default for Config {
             queue_changes: true,
             auto_drain_on_lifecycle: false,
             auto_start_server: true,
+            on_exit: OnExit::Nothing,
             session_secret: String::new(),
             server_container: None,
             server_host: None,
@@ -854,6 +889,7 @@ impl Config {
         env_override!(parse: self.update_check_interval, "QUMA_UPDATE_CHECK_INTERVAL", u64);
         env_override!(opt_parse: self.forge_cache_ttl, "QUMA_FORGE_CACHE_TTL", u64);
         env_override!(bool: self.auto_start_server, "QUMA_AUTO_START_SERVER");
+        env_override!(parse: self.on_exit, "QUMA_ON_EXIT", OnExit);
         env_override!(str: self.logging.level, "QUMA_LOG_LEVEL");
         env_override!(str: self.logging.file.path, "QUMA_LOG_FILE_PATH");
         env_override!(bool: self.logging.file.enabled, "QUMA_LOG_FILE_ENABLED");
@@ -1743,5 +1779,50 @@ silent = true
         assert!(validate_group_slug("has space").is_err());
         assert!(validate_group_slug("has.dot").is_err());
         assert!(validate_group_slug(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn on_exit_default_is_nothing() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert_eq!(config.on_exit, OnExit::Nothing);
+    }
+
+    #[test]
+    fn on_exit_deserialize_all_variants() {
+        let stop: Config = toml::from_str(r#"on_exit = "stop""#).expect("stop");
+        assert_eq!(stop.on_exit, OnExit::Stop);
+
+        let remove: Config = toml::from_str(r#"on_exit = "remove""#).expect("remove");
+        assert_eq!(remove.on_exit, OnExit::Remove);
+
+        let nothing: Config = toml::from_str(r#"on_exit = "nothing""#).expect("nothing");
+        assert_eq!(nothing.on_exit, OnExit::Nothing);
+    }
+
+    #[test]
+    fn on_exit_roundtrip() {
+        let mut config = Config::default();
+        config.on_exit = OnExit::Stop;
+
+        let serialized = toml::to_string_pretty(&config).expect("serialize");
+        let reloaded: Config = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(reloaded.on_exit, OnExit::Stop);
+    }
+
+    #[test]
+    fn on_exit_env_override() {
+        temp_env::with_vars([("QUMA_ON_EXIT", Some("remove"))], || {
+            let mut config = Config::default();
+            config.apply_env_overrides();
+            assert_eq!(config.on_exit, OnExit::Remove);
+        });
+    }
+
+    #[test]
+    fn on_exit_from_str() {
+        assert_eq!("nothing".parse::<OnExit>().unwrap(), OnExit::Nothing);
+        assert_eq!("stop".parse::<OnExit>().unwrap(), OnExit::Stop);
+        assert_eq!("remove".parse::<OnExit>().unwrap(), OnExit::Remove);
+        assert!("invalid".parse::<OnExit>().is_err());
     }
 }
