@@ -1,5 +1,10 @@
+use std::path::Path;
+
 use anyhow::{bail, Context, Result};
 
+use crate::config::Config;
+use crate::db::Database;
+use crate::forge::client::ForgeClient;
 use crate::forge::models::{DependencyNode, FikaCompat, ForgeVersion};
 use crate::spt::mods::{detect_mod_type, ModType};
 
@@ -284,8 +289,21 @@ pub struct ModInstallParams<'a> {
     pub version: &'a str,
 }
 
-/// Download, extract, and record a single mod in the database.
-pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>) -> Result<i64> {
+/// Download a mod archive from Forge, extract it, and record it in the database.
+///
+/// This is the shared core of mod installation used by both the CLI `install`
+/// command and the setup wizard's NarcoNet installer. It handles:
+/// 1. Downloading the archive to a temp directory
+/// 2. Detecting mod type and warning on ambiguous archives
+/// 3. Extracting via `ops::install_mod_from_archive`
+/// 4. Reporting the installed file count
+pub async fn download_and_install(
+    forge: &ForgeClient,
+    db: &Database,
+    spt_dir: &Path,
+    config: &Config,
+    params: &ModInstallParams<'_>,
+) -> Result<i64> {
     let ModInstallParams {
         forge_mod_id,
         forge_version_id,
@@ -294,18 +312,11 @@ pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>)
         slug,
         version,
     } = params;
-    if let Some(existing) = ctx.db.get_mod_by_forge_id(*forge_mod_id)? {
-        println!(
-            "  {} already installed (v{}), skipping",
-            name, existing.version
-        );
-        return Ok(existing.id);
-    }
 
     let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
     let archive_path = tmp_dir.path().join("mod.zip");
     println!("  Downloading {}...", name);
-    ctx.forge.download_file(download_url, &archive_path).await?;
+    forge.download_file(download_url, &archive_path).await?;
 
     let mod_type = detect_mod_type(&archive_path)?;
     if mod_type == ModType::Ambiguous {
@@ -317,9 +328,9 @@ pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>)
 
     println!("  Extracting...");
     let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
-        db: &ctx.db,
-        spt_dir: &ctx.spt_dir,
-        config: &ctx.config,
+        db,
+        spt_dir,
+        config,
         forge_mod_id: *forge_mod_id,
         version_id: *forge_version_id,
         name,
@@ -328,10 +339,24 @@ pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>)
         archive_path: &archive_path,
     })?;
 
-    let file_count = ctx.db.get_files_for_mod(db_id)?.len();
+    let file_count = db.get_files_for_mod(db_id)?.len();
     println!("  Extracted {} files", file_count);
 
     Ok(db_id)
+}
+
+/// Download, extract, and record a single mod in the database.
+/// Skips installation if the mod is already present.
+pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>) -> Result<i64> {
+    if let Some(existing) = ctx.db.get_mod_by_forge_id(params.forge_mod_id)? {
+        println!(
+            "  {} already installed (v{}), skipping",
+            params.name, existing.version
+        );
+        return Ok(existing.id);
+    }
+
+    download_and_install(&ctx.forge, &ctx.db, &ctx.spt_dir, &ctx.config, params).await
 }
 
 fn check_fika_compat(mod_name: &str, version: &ForgeVersion) -> Result<()> {

@@ -208,32 +208,25 @@ async fn install_narconet_from_forge(
         .ok_or_else(|| anyhow::anyhow!("NarcoNet version has no download link"))?;
 
     let version_str = &version.version;
-    let version_id = version.id;
-    println!("Downloading NarcoNet v{version_str}...");
+    println!("  NarcoNet v{version_str}");
 
-    let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
-    let archive_path = tmp_dir.path().join("narconet.zip");
-    forge
-        .download_file(download_url, &archive_path)
-        .await
-        .context("failed to download NarcoNet")?;
-
-    println!("Extracting...");
-    // TODO(debt): consider extracting shared install logic with install_single_mod
-    let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+    super::install::download_and_install(
+        &forge,
         db,
         spt_dir,
         config,
-        forge_mod_id: NARCONET_FORGE_MOD_ID,
-        version_id,
-        name: &forge_mod.name,
-        slug: forge_mod.slug.as_deref(),
-        version: version_str,
-        archive_path: &archive_path,
-    })?;
+        &super::install::ModInstallParams {
+            forge_mod_id: NARCONET_FORGE_MOD_ID,
+            forge_version_id: version.id,
+            download_url,
+            name: &forge_mod.name,
+            slug: forge_mod.slug.as_deref(),
+            version: version_str,
+        },
+    )
+    .await?;
 
-    let file_count = db.get_files_for_mod(db_id)?.len();
-    println!("NarcoNet v{version_str} installed ({file_count} files).");
+    println!("NarcoNet v{version_str} installed.");
     Ok(())
 }
 
@@ -585,7 +578,18 @@ async fn detect_or_create_container(
     }
 
     if detected.len() > 1 {
-        // TODO(debt): use managed-by=quma label to prefer quma-managed containers
+        let managed = mgr.detect_containers_by_label("managed-by", "quma").await?;
+        let quma_managed: Vec<_> = detected
+            .iter()
+            .filter(|name| managed.contains(name))
+            .collect();
+        if let Some(preferred) = quma_managed.first() {
+            println!(
+                "Multiple containers detected, preferring quma-managed: {}",
+                preferred
+            );
+            return Ok((*preferred).clone());
+        }
         println!("Multiple containers detected, using first: {}", detected[0]);
         return Ok(detected[0].clone());
     }
