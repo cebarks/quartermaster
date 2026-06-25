@@ -48,18 +48,18 @@ pub fn edit_headless_amount(path: &Path, amount: u32) -> Result<()> {
 
 /// Check if the Fika client mod is present in the headless install directory.
 ///
-/// Looks for any entry starting with "Fika.Core" in `install_dir/BepInEx/plugins/`.
-/// This handles both directory-style installs (e.g. `Fika.Core/`) and loose DLL
-/// installs (e.g. `Fika.Core.dll`).
+/// Looks for a `Fika.Core.dll`, `Fika.Core/`, or `Fika/` entry in
+/// `install_dir/BepInEx/plugins/`. The archive layout has changed across
+/// Fika versions (older: `Fika.Core/`, newer: `Fika/`), so we check both.
 pub fn is_fika_client_present(install_dir: &Path) -> bool {
     let plugins_dir = install_dir.join("BepInEx/plugins");
     let Ok(entries) = std::fs::read_dir(&plugins_dir) else {
         return false;
     };
     entries.flatten().any(|e| {
-        e.file_name()
-            .to_str()
-            .is_some_and(|name| name.starts_with("Fika.Core"))
+        let name = e.file_name();
+        let s = name.to_string_lossy();
+        s == "Fika" || s.starts_with("Fika.Core")
     })
 }
 
@@ -90,7 +90,8 @@ pub async fn ensure_fika_client(
         .context("failed to query Forge for Fika client versions")?;
 
     let version = versions
-        .first()
+        .into_iter()
+        .max_by_key(|v| v.id)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no Fika client version found for SPT {spt_version} on Forge (mod ID {FIKA_CLIENT_FORGE_ID})"
@@ -890,6 +891,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // No BepInEx/plugins directory at all
         assert!(!is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn fika_client_detected_by_fika_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fika_dir = tmp.path().join("BepInEx/plugins/Fika");
+        std::fs::create_dir_all(&fika_dir).unwrap();
+        std::fs::write(fika_dir.join("Fika.Core.dll"), b"fake dll").unwrap();
+
+        assert!(is_fika_client_present(tmp.path()));
     }
 
     #[test]
