@@ -244,11 +244,13 @@ impl ClientSupervisor {
         state.health = compute_health(container_running, state.fika_status.clone(), server_up);
 
         // Update failure count
-        if state.health == ClientHealth::Down || state.health == ClientHealth::Degraded {
-            state.consecutive_failures += 1;
-        } else {
-            state.consecutive_failures = 0;
-        }
+        let in_grace_period = false; // Grace period not yet implemented
+        state.consecutive_failures = count_failure(
+            state.consecutive_failures,
+            &state.health,
+            server_up,
+            in_grace_period,
+        );
 
         // Check if given up
         if state.consecutive_failures > self.headless_config.max_restart_attempts {
@@ -316,6 +318,26 @@ async fn restart_client_task(
 
     if let Err(e) = result {
         tracing::error!(container = %container_name, error = %e, "Failed to restart client");
+    }
+}
+
+/// Determines whether to increment, reset, or hold the failure counter.
+/// Returns the updated consecutive_failures value.
+pub fn count_failure(
+    current_failures: u32,
+    health: &ClientHealth,
+    server_up: bool,
+    in_grace_period: bool,
+) -> u32 {
+    if in_grace_period {
+        current_failures
+    } else if !server_up {
+        // Server is down — not the client's fault, don't count
+        current_failures
+    } else if *health == ClientHealth::Down || *health == ClientHealth::Degraded {
+        current_failures + 1
+    } else {
+        0
     }
 }
 
@@ -403,5 +425,40 @@ mod tests {
     #[test]
     fn backoff_custom_cap() {
         assert_eq!(backoff_duration(10, 60), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn failures_not_counted_when_server_down() {
+        // When server is down, health is Degraded but it's not the client's fault.
+        // consecutive_failures should NOT increment.
+        let health = compute_health(true, None, false);
+        assert_eq!(health, ClientHealth::Degraded);
+        // The actual failure counting logic is in check_client, tested via
+        // count_failure() helper below.
+    }
+
+    #[test]
+    fn count_failure_holds_when_server_down() {
+        assert_eq!(count_failure(3, &ClientHealth::Degraded, false, false), 3);
+    }
+
+    #[test]
+    fn count_failure_increments_when_degraded_and_server_up() {
+        assert_eq!(count_failure(3, &ClientHealth::Degraded, true, false), 4);
+    }
+
+    #[test]
+    fn count_failure_resets_when_healthy() {
+        assert_eq!(count_failure(5, &ClientHealth::Healthy, true, false), 0);
+    }
+
+    #[test]
+    fn count_failure_holds_during_grace_period() {
+        assert_eq!(count_failure(3, &ClientHealth::Degraded, true, true), 3);
+    }
+
+    #[test]
+    fn count_failure_holds_during_grace_even_if_server_down() {
+        assert_eq!(count_failure(3, &ClientHealth::Degraded, false, true), 3);
     }
 }
