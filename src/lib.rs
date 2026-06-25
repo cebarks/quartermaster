@@ -1,5 +1,6 @@
 #![deny(clippy::unwrap_used)]
 
+pub mod backup;
 pub mod cli;
 pub mod client;
 pub mod config;

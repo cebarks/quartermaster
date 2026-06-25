@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as navigation %}
+{% import "partials/icons.html" as icons %}
+
+{% block title %}Backups — Quartermaster{% endblock %}
+
+{% block nav %}{% call navigation::nav("backups", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+
+{% block content %}
+<h2>Backups</h2>
+
+{% if let Some(flash) = flash %}
+<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Total backup size: <strong>{{ total_size|format_size_i64 }}</strong></span>
+        <form method="post" action="/quma/admin/backups/full">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-primary">Full Backup Now</button>
+        </form>
+    </div>
+</div>
+
+{% if backups.is_empty() %}
+<div class="card">
+    <p class="text-muted">No backups yet. Backups are created automatically before mod updates, removals, and disable/enable operations.</p>
+</div>
+{% else %}
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Type</th>
+                <th>Mod</th>
+                <th>Version</th>
+                <th>Trigger</th>
+                <th>Size</th>
+                <th>Date</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in backups %}
+            <tr>
+                <td>{{ b.id }}</td>
+                <td>{{ b.backup_type }}</td>
+                <td>{{ b.mod_name.as_deref().unwrap_or("-") }}</td>
+                <td>{{ b.mod_version.as_deref().unwrap_or("-") }}</td>
+                <td>{{ b.trigger }}</td>
+                <td>{{ b.backup_size|format_size }}</td>
+                <td>{{ b.created_at|format_datetime }}</td>
+                <td>
+                    <form method="post" action="/quma/backups/{{ b.id }}/restore"
+                          onsubmit="return confirm('Restore backup #{{ b.id }}? Current files will be overwritten.')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-outline">Restore</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

@@ -1072,6 +1072,7 @@ pub async fn update_mod(
             crate::ops::apply_mod_update(
                 db.clone(),
                 spt_dir.clone(),
+                config.clone(),
                 staging_dir.path().to_path_buf(),
                 extracted,
                 mod_db_id,
@@ -1230,15 +1231,16 @@ pub async fn toggle_disable(
 
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config_cloned();
     let was_disabled = installed.disabled;
     let mod_name = installed.name.clone();
 
     web::block(move || {
         let db = db.lock();
         if was_disabled {
-            crate::ops::enable_mod(&db, &spt_dir, mod_db_id)
+            crate::ops::enable_mod(&db, &spt_dir, &config, mod_db_id)
         } else {
-            crate::ops::disable_mod(&db, &spt_dir, mod_db_id)
+            crate::ops::disable_mod(&db, &spt_dir, &config, mod_db_id)
         }
     })
     .await
@@ -1396,6 +1398,7 @@ pub async fn update_all_mods(
                 crate::ops::apply_mod_update(
                     db.clone(),
                     spt_dir.clone(),
+                    config.clone(),
                     staging_dir.path().to_path_buf(),
                     extracted,
                     mod_db_id,

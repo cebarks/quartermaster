@@ -484,6 +484,26 @@ pub fn configure_app(
                 web::post().to(handlers::mods::toggle_disable),
             )
             .route(
+                "/mods/{id}/backups",
+                web::get().to(handlers::backup::mod_backups_partial),
+            )
+            .route(
+                "/mods/{id}/backup",
+                web::post().to(handlers::backup::create_mod_backup),
+            )
+            .route(
+                "/backups/{id}/restore",
+                web::post().to(handlers::backup::restore_backup),
+            )
+            .route(
+                "/admin/backups",
+                web::get().to(handlers::backup::admin_backups_page),
+            )
+            .route(
+                "/admin/backups/full",
+                web::post().to(handlers::backup::create_full_backup),
+            )
+            .route(
                 "/server/start",
                 web::post().to(handlers::server::start_server),
             )

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 pub mod apply;
+pub mod backup;
 pub mod check;
 pub mod common;
 pub mod generate;
@@ -11,6 +12,7 @@ pub mod install;
 pub mod invite;
 pub mod list;
 pub mod remove;
+pub mod restore;
 pub mod serve;
 pub mod server;
 pub mod setup;
@@ -145,6 +147,27 @@ pub enum Command {
         /// Expiry duration (e.g. 24h, 7d)
         #[arg(long)]
         expires: Option<String>,
+    },
+
+    /// Backup mods, profiles, and config
+    Backup {
+        /// Specific mod to backup (full snapshot if omitted)
+        mod_ref: Option<String>,
+        /// List existing backups instead of creating one
+        #[arg(long)]
+        list: bool,
+    },
+
+    /// Restore from a backup
+    Restore {
+        /// Backup ID (numeric) to restore
+        backup_id: Option<i64>,
+        /// Restore the latest backup for a specific mod
+        #[arg(long)]
+        latest: Option<String>,
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        force: bool,
     },
 }
 

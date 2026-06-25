@@ -25,33 +25,32 @@
         <tr><th>Forge</th><td><a href="https://forge.sp-tarkov.com/mod/{{ mod_info.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener">View on Forge ↗</a></td></tr>
         {% endif %}
     </table>
-</div>
-
-<div class="flex gap-1 mb-2">
-    {% if user.can("mods.update") %}
-    <form method="post" action="/quma/mods/{{ mod_info.id }}/update">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn">{% call icons::refresh() %}{% endcall %} Update</button>
-    </form>
-    {% endif %}
-    {% if user.can("mods.remove") %}
-    <form method="post" action="/quma/mods/{{ mod_info.id }}/remove"
-          data-name="{{ mod_info.name }}"
-          onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
-    </form>
-    {% endif %}
-    {% if user.can("mods.disable") %}
-    <form method="post" action="/quma/mods/{{ mod_info.id }}/toggle-disable">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        {% if mod_info.disabled %}
-        <button type="submit" class="btn btn-outline">Enable</button>
-        {% else %}
-        <button type="submit" class="btn btn-outline">Disable</button>
+    <div class="flex gap-1" style="margin-top: 1rem;">
+        {% if user.can("mods.update") %}
+        <form method="post" action="/quma/mods/{{ mod_info.id }}/update">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn">{% call icons::refresh() %}{% endcall %} Update</button>
+        </form>
         {% endif %}
-    </form>
-    {% endif %}
+        {% if user.can("mods.remove") %}
+        <form method="post" action="/quma/mods/{{ mod_info.id }}/remove"
+              data-name="{{ mod_info.name }}"
+              onsubmit="return confirm('Remove ' + this.dataset.name + '?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-danger">{% call icons::trash() %}{% endcall %} Remove</button>
+        </form>
+        {% endif %}
+        {% if user.can("mods.disable") %}
+        <form method="post" action="/quma/mods/{{ mod_info.id }}/toggle-disable">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% if mod_info.disabled %}
+            <button type="submit" class="btn btn-success">Enable</button>
+            {% else %}
+            <button type="submit" class="btn btn-warning">Disable</button>
+            {% endif %}
+        </form>
+        {% endif %}
+    </div>
 </div>
 
 {% if !dependencies.is_empty() %}
@@ -135,4 +134,8 @@
     </table>
 </div>
 {% endif %}
+
+<div hx-get="/quma/mods/{{ mod_info.id }}/backups" hx-trigger="load" hx-swap="innerHTML">
+    <p class="text-muted">Loading backups...</p>
+</div>
 {% endblock %}

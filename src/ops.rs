@@ -81,6 +81,7 @@ pub fn update_mod_from_archive(
         new_file_count = extracted.len(),
         "replacing mod files"
     );
+    crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_update")?;
     crate::spt::mods::delete_mod_files(spt_dir, &old_paths)?;
 
     let tx = db.begin_transaction()?;
@@ -113,19 +114,30 @@ pub fn update_mod_from_archive(
 ///
 /// `extracted` must be the files already extracted to `staging_path` (e.g. via
 /// [`crate::spt::mods::extract_mod`]).
+#[allow(clippy::too_many_arguments)]
 pub async fn apply_mod_update(
     db: Arc<parking_lot::Mutex<Database>>,
     spt_dir: PathBuf,
+    config: crate::config::Config,
     staging_path: PathBuf,
     extracted: Vec<ExtractedFile>,
     mod_db_id: i64,
     version_id: i64,
     version_str: String,
 ) -> Result<()> {
-    // Step 1: Read old file paths (brief DB lock)
+    // Step 1: Read old file paths + auto-backup (brief DB lock)
     let db_read = db.clone();
+    let spt_dir_backup = spt_dir.clone();
+    let config_backup = config;
     let old_paths = actix_web::web::block(move || {
         let db = db_read.lock();
+        crate::backup::auto_backup_mod(
+            &db,
+            &spt_dir_backup,
+            &config_backup,
+            mod_db_id,
+            "auto_update",
+        )?;
         let files = db.get_files_for_mod(mod_db_id)?;
         Ok::<_, anyhow::Error>(files.into_iter().map(|f| f.file_path).collect::<Vec<_>>())
     })
@@ -169,6 +181,7 @@ pub fn remove_mod_by_id(
     mod_db_id: i64,
 ) -> Result<()> {
     tracing::info!(mod_db_id, "removing mod");
+    crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_remove")?;
     let files = db.get_files_for_mod(mod_db_id)?;
     let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = paths.len(), "deleting mod files");
@@ -332,7 +345,12 @@ fn find_loose_files<'a>(file_paths: &'a [String], top_dirs: &[String]) -> Vec<&'
 /// Disable a mod by renaming its top-level directories and loose files with
 /// a `.disabled` suffix, updating file paths in the database, and marking
 /// the mod as disabled.
-pub fn disable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
+pub fn disable_mod(
+    db: &Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    mod_db_id: i64,
+) -> Result<()> {
     let mod_info = db
         .get_mod(mod_db_id)?
         .ok_or_else(|| anyhow::anyhow!("mod not found"))?;
@@ -345,6 +363,8 @@ pub fn disable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> 
     let top_dirs = find_top_level_mod_dirs(&file_paths);
 
     tracing::info!(mod_db_id, name = %mod_info.name, "disabling mod");
+
+    crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_disable")?;
 
     // Rename top-level directories
     for dir in &top_dirs {
@@ -395,7 +415,12 @@ pub fn disable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> 
 /// Enable a previously disabled mod by removing the `.disabled` suffix from
 /// its directories and files, updating file paths in the database, and
 /// clearing the disabled flag.
-pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
+pub fn enable_mod(
+    db: &Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    mod_db_id: i64,
+) -> Result<()> {
     let mod_info = db
         .get_mod(mod_db_id)?
         .ok_or_else(|| anyhow::anyhow!("mod not found"))?;
@@ -408,6 +433,8 @@ pub fn enable_mod(db: &Database, spt_dir: &Path, mod_db_id: i64) -> Result<()> {
     let top_dirs = find_top_level_mod_dirs(&file_paths);
 
     tracing::info!(mod_db_id, name = %mod_info.name, "enabling mod");
+
+    crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_enable")?;
 
     // Rename top-level directories (strip .disabled suffix)
     for dir in &top_dirs {
@@ -708,7 +735,7 @@ mod tests {
         assert!(!db.get_mod(db_id).unwrap().unwrap().disabled);
 
         // Disable the mod
-        disable_mod(&db, spt_dir.path(), db_id).unwrap();
+        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
 
         // Directory should be renamed
         assert!(!spt_dir.path().join("SPT/user/mods/TestMod").exists());
@@ -732,7 +759,7 @@ mod tests {
             .all(|f| f.file_path.contains("TestMod.disabled")));
 
         // Enable the mod
-        enable_mod(&db, spt_dir.path(), db_id).unwrap();
+        enable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
 
         // Directory should be restored
         assert!(spt_dir
@@ -774,7 +801,7 @@ mod tests {
 
         assert!(spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
 
-        disable_mod(&db, spt_dir.path(), db_id).unwrap();
+        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
 
         assert!(!spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
         assert!(spt_dir
@@ -785,7 +812,7 @@ mod tests {
         let files = db.get_files_for_mod(db_id).unwrap();
         assert_eq!(files[0].file_path, "BepInEx/plugins/loose.dll.disabled");
 
-        enable_mod(&db, spt_dir.path(), db_id).unwrap();
+        enable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
 
         assert!(spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
         assert!(!spt_dir
@@ -813,8 +840,8 @@ mod tests {
         })
         .unwrap();
 
-        disable_mod(&db, spt_dir.path(), db_id).unwrap();
-        let result = disable_mod(&db, spt_dir.path(), db_id);
+        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        let result = disable_mod(&db, spt_dir.path(), &Config::default(), db_id);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already disabled"));
     }
