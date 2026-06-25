@@ -124,8 +124,22 @@ fn filter_started_at(started_at: Option<String>) -> Option<String> {
 
 impl ContainerManager {
     pub fn new() -> Result<Self> {
-        let docker = Docker::connect_with_unix_defaults().context(
-            "failed to connect to Podman socket. Ensure podman.socket is enabled:\n  \
+        let docker = Docker::connect_with_unix_defaults().or_else(|_| {
+            // Podman rootless socket lives under XDG_RUNTIME_DIR, not /var/run/docker.sock
+            let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok().filter(|d| {
+                std::path::Path::new(d).join("podman/podman.sock").exists()
+            });
+            match runtime_dir {
+                Some(dir) => {
+                    let sock = format!("unix://{dir}/podman/podman.sock");
+                    Docker::connect_with_unix(&sock, 120, bollard::API_DEFAULT_VERSION)
+                }
+                None => Err(bollard::errors::Error::SocketNotFoundError(
+                    "No container runtime socket found".into(),
+                )),
+            }
+        }).context(
+            "No container runtime found. Install Podman or Docker and ensure the socket is enabled:\n  \
              systemctl --user enable --now podman.socket",
         )?;
         Ok(Self {
