@@ -8,22 +8,25 @@ use std::io::{Read, Write};
 use super::Database;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // SQL row model — fields populated by query results
 pub struct Raid {
     pub id: i64,
     pub user_id: i64,
+    #[allow(dead_code)]
     pub spt_profile_id: String,
     pub server_id: Option<String>,
     pub player_side: String,
     pub faction: Option<String>,
     pub map: String,
+    #[allow(dead_code)]
     pub time_variant: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
     pub play_time_seconds: Option<i64>,
     pub exit_status: Option<String>,
     pub exit_name: Option<String>,
+    #[allow(dead_code)]
     pub killer_id: Option<String>,
+    #[allow(dead_code)]
     pub killer_aid: Option<String>,
     pub xp_before: Option<i64>,
     pub xp_after: Option<i64>,
@@ -33,21 +36,23 @@ pub struct Raid {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // SQL row model
 pub struct RaidKill {
+    #[allow(dead_code)]
     pub id: i64,
+    #[allow(dead_code)]
     pub raid_id: i64,
     pub victim_name: Option<String>,
     pub victim_side: Option<String>,
     pub victim_role: Option<String>,
     pub weapon: Option<String>,
     pub distance: Option<f64>,
+    #[allow(dead_code)]
     pub body_part: Option<String>,
+    #[allow(dead_code)]
     pub kill_time: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Used by Tasks 2-4 for raid event processing
 pub struct NewRaidKill {
     pub victim_name: Option<String>,
     pub victim_side: Option<String>,
@@ -59,7 +64,6 @@ pub struct NewRaidKill {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Used by Task 3 (web UI)
 pub struct UserRaidStats {
     pub total_raids: i64,
     pub pmc_raids: i64,
@@ -72,12 +76,13 @@ pub struct UserRaidStats {
     pub total_deaths: i64,
     pub avg_raid_duration: f64,
     pub favorite_map: Option<String>,
+    #[allow(dead_code)]
     pub pmc_xp_gained: i64,
+    #[allow(dead_code)]
     pub scav_xp_gained: i64,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Used by Task 3 (web UI)
 pub struct ServerRaidStats {
     pub total_raids: i64,
     pub unique_players: i64,
@@ -109,7 +114,7 @@ pub fn compress_snapshot(json: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     encoder.finish()
 }
 
-#[allow(dead_code)] // Used by Task 5 (raid detail handler)
+#[allow(dead_code)]
 pub fn decompress_snapshot(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut decoder = ZlibDecoder::new(data);
     let mut buf = Vec::new();
@@ -118,7 +123,6 @@ pub fn decompress_snapshot(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
 }
 
 impl Database {
-    #[allow(dead_code)] // Used by Task 2 (raid start event)
     #[allow(clippy::too_many_arguments)] // All parameters needed for raid creation
     pub fn insert_raid(
         &self,
@@ -154,7 +158,6 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    #[allow(dead_code)] // Used by Task 2 (raid start event to close previous open raids)
     pub fn close_orphaned_raids(&self, spt_profile_id: &str) -> rusqlite::Result<usize> {
         self.conn.execute(
             "UPDATE raids SET exit_status = 'Unknown', ended_at = datetime('now')
@@ -163,7 +166,7 @@ impl Database {
         )
     }
 
-    #[allow(dead_code)] // Used by Task 2 (cleanup job for orphaned raids)
+    #[allow(dead_code)]
     pub fn close_stale_raids(&self, max_age_hours: i64) -> rusqlite::Result<usize> {
         self.conn.execute(
             "UPDATE raids SET exit_status = 'Unknown', ended_at = datetime('now')
@@ -172,7 +175,6 @@ impl Database {
         )
     }
 
-    #[allow(dead_code)] // Used by Task 2 (raid end event)
     #[allow(clippy::too_many_arguments)] // All parameters needed for raid completion
     pub fn finish_raid(
         &self,
@@ -203,7 +205,7 @@ impl Database {
         )
     }
 
-    #[allow(dead_code)] // Used by Task 2 (raid end event)
+    #[allow(dead_code)]
     pub fn insert_raid_kills(&self, raid_id: i64, kills: &[NewRaidKill]) -> rusqlite::Result<()> {
         if kills.is_empty() {
             return Ok(());
@@ -273,7 +275,6 @@ impl Database {
         tx.commit()
     }
 
-    #[allow(dead_code)] // Used by Task 3 (web UI)
     pub fn get_raids_for_user(
         &self,
         user_id: i64,
@@ -288,7 +289,6 @@ impl Database {
         rows.collect()
     }
 
-    #[allow(dead_code)] // Used by Task 3 (web UI)
     pub fn get_raid_with_kills(
         &self,
         raid_id: i64,
@@ -317,7 +317,6 @@ impl Database {
         }
     }
 
-    #[allow(dead_code)] // Used by Task 3 (web UI for squad raids)
     pub fn get_raid_group(&self, server_id: &str) -> rusqlite::Result<Vec<(Raid, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before, u.username
@@ -334,7 +333,6 @@ impl Database {
         rows.collect()
     }
 
-    #[allow(dead_code)] // Used by Task 3 (web UI dashboard)
     pub fn get_active_raids(&self) -> rusqlite::Result<Vec<(Raid, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before, u.username
@@ -351,7 +349,6 @@ impl Database {
         rows.collect()
     }
 
-    #[allow(dead_code)] // Used by Task 3 (web UI)
     pub fn get_user_raid_stats(&self, user_id: i64) -> rusqlite::Result<UserRaidStats> {
         let total_raids: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM raids WHERE user_id = ?1",
@@ -474,7 +471,6 @@ impl Database {
         })
     }
 
-    #[allow(dead_code)] // Used by Task 3 (web UI dashboard)
     pub fn get_server_raid_stats(&self) -> rusqlite::Result<ServerRaidStats> {
         let total_raids: i64 = self
             .conn
@@ -530,7 +526,6 @@ impl Database {
         })
     }
 
-    #[allow(dead_code)] // Used by Task 3 (web UI) and get_server_raid_stats
     pub fn get_recent_raids(&self, limit: i64) -> rusqlite::Result<Vec<(Raid, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before, u.username
@@ -632,7 +627,6 @@ impl Database {
         rows.collect()
     }
 
-    #[allow(dead_code)] // Used by Task 2 (raid event processing)
     pub fn find_open_raid(&self, spt_profile_id: &str) -> rusqlite::Result<Option<Raid>> {
         self.conn
             .query_row(
@@ -644,7 +638,6 @@ impl Database {
             .optional()
     }
 
-    #[allow(dead_code)] // Used by raid event handlers
     pub fn insert_raid_snapshot(
         &self,
         raid_id: i64,
@@ -658,7 +651,7 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    #[allow(dead_code)] // Used by raid detail handler
+    #[allow(dead_code)]
     pub fn get_raid_snapshot(
         &self,
         raid_id: i64,
@@ -673,7 +666,6 @@ impl Database {
             .optional()
     }
 
-    #[allow(dead_code)] // Used by raid detail handler
     pub fn get_raid_snapshot_sizes(&self, raid_id: i64) -> rusqlite::Result<Vec<(String, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT snapshot_type, length(data) FROM raid_snapshots WHERE raid_id = ?1 ORDER BY snapshot_type",

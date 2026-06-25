@@ -8,14 +8,11 @@ use serde_json::Value;
 
 pub use config::SvmConfig;
 
-#[allow(dead_code)] // Used in later tasks
+#[allow(dead_code)]
 const SVM_FORGE_ID: i64 = 236;
-#[allow(dead_code)] // Used in later tasks
 const LOADER_FILE: &str = "Loader/loader.json";
-#[allow(dead_code)] // Used in later tasks
 const PRESETS_DIR: &str = "Presets";
 
-#[allow(dead_code)] // Used in later tasks
 pub struct SvmManager {
     svm_dir: PathBuf,
     active_preset: String,
@@ -26,7 +23,6 @@ pub struct SvmManager {
     dirty: bool,
 }
 
-#[allow(dead_code)] // Used in later tasks
 impl SvmManager {
     /// Detect SVM installation and initialize manager.
     /// Returns None if SVM is not installed or detection fails.
@@ -255,6 +251,7 @@ impl SvmManager {
     }
 
     /// Load a preset and make it active.
+    #[allow(dead_code)]
     pub fn load_preset(&mut self, name: &str) -> Result<()> {
         self.set_active_preset(name)
     }

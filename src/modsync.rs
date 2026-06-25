@@ -223,7 +223,6 @@ pub fn regenerate_if_enabled(spt_dir: &Path, config: &Config, db: &Database) -> 
 }
 
 /// Generate and return a preview of the ModSync config as a YAML string.
-#[allow(dead_code)]
 pub fn preview_config(
     ms_config: &ModSyncConfig,
     db: &Database,

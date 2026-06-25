@@ -121,12 +121,12 @@ impl fmt::Display for Permission {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct RoleRecord {
     pub id: i64,
     pub name: String,
     pub display_name: String,
     pub built_in: bool,
+    #[allow(dead_code)]
     pub created_at: String,
 }
 
@@ -144,11 +144,12 @@ impl fmt::Display for RoleRecord {
 
 /// Named struct for template use (avoids tuple indexing in Askama)
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct PermissionInfo {
     pub slug: &'static str,
     pub display_name: &'static str,
+    #[allow(dead_code)]
     pub category: &'static str,
+    #[allow(dead_code)]
     pub checked: bool,
 }
 
