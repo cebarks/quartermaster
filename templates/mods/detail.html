@@ -135,4 +135,8 @@
     </table>
 </div>
 {% endif %}
+
+<div hx-get="/quma/mods/{{ mod_info.id }}/backups" hx-trigger="load" hx-swap="innerHTML">
+    <p class="text-muted">Loading backups...</p>
+</div>
 {% endblock %}

@@ -1,0 +1,43 @@
+<div class="card" id="backups">
+    <h3>Backups</h3>
+    {% if can_update %}
+    <form method="post" action="/quma/mods/{{ mod_db_id }}/backup" style="margin-bottom: 1rem;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-sm btn-outline">Backup Now</button>
+    </form>
+    {% endif %}
+    {% if backups.is_empty() %}
+    <p class="text-muted">No backups yet.</p>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Version</th>
+                <th>Trigger</th>
+                <th>Size</th>
+                {% if can_update %}<th></th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in backups %}
+            <tr>
+                <td>{{ b.created_at }}</td>
+                <td>{{ b.mod_version.as_deref().unwrap_or("-") }}</td>
+                <td>{{ b.trigger }}</td>
+                <td>{{ b.backup_size|format_size }}</td>
+                {% if can_update %}
+                <td>
+                    <form method="post" action="/quma/backups/{{ b.id }}/restore"
+                          onsubmit="return confirm('Restore this backup? Current files will be overwritten.')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-outline">Restore</button>
+                    </form>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
