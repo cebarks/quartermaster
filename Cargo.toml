@@ -44,12 +44,12 @@ tokio-util = "0.7"
 anyhow = "1"
 
 # Crypto & hashing
-sha2 = "0.10"
+sha2 = "0.11"
 rand = "0.10"
 subtle = "2"
 
 # TLS
-rcgen = "0.13"
+rcgen = "0.14"
 rustls = "0.23"
 
 # WebSocket proxy
@@ -70,7 +70,7 @@ chrono = { version = "0.4", features = ["serde"] }
 actix-web = { version = "4", features = ["rustls-0_23"] }
 actix-session = { version = "0.11", features = ["cookie-session"] }
 actix-governor = "0.10"
-actix-ws = "0.3"
+actix-ws = "0.4"
 
 # Templating
 askama = "0.16"
