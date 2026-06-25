@@ -49,15 +49,16 @@ fn unique_backup_id(base_dir: &Path) -> String {
 /// Validates that the resolved path is within `spt_dir` to prevent path
 /// traversal via crafted `backup_dir` config values.
 pub fn resolve_backup_dir(spt_dir: &Path, config: &crate::config::Config) -> Result<PathBuf> {
-    let resolved = spt_dir.join(&config.backup.backup_dir);
-    let canonical_spt = spt_dir
-        .canonicalize()
-        .unwrap_or_else(|_| spt_dir.to_path_buf());
-    let canonical_backup = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
-    if !canonical_backup.starts_with(&canonical_spt) {
-        anyhow::bail!("backup_dir must resolve within spt_dir");
+    let backup_dir = &config.backup.backup_dir;
+    if Path::new(backup_dir).is_absolute() {
+        anyhow::bail!("backup_dir must be a relative path (got absolute: {backup_dir})");
     }
-    Ok(resolved)
+    for component in Path::new(backup_dir).components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            anyhow::bail!("backup_dir must not contain '..' components");
+        }
+    }
+    Ok(spt_dir.join(backup_dir))
 }
 
 /// Back up a single mod's files to the backup directory.
