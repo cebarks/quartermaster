@@ -3,6 +3,7 @@ pub mod csrf;
 pub mod error;
 pub mod flash;
 pub mod handlers;
+pub mod invite;
 pub mod nav;
 pub mod proxy;
 pub mod proxy_metrics;
@@ -134,6 +135,26 @@ pub fn configure_app(
                     .wrap(Governor::new(&governor_conf))
                     .route(web::get().to(handlers::auth::reset_password_page))
                     .route(web::post().to(handlers::auth::reset_password_submit)),
+            )
+            .service(
+                web::resource("/join")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::join::join_page)),
+            )
+            .service(
+                web::resource("/join/mods.zip")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::join::mod_archive)),
+            )
+            .service(
+                web::resource("/join/bootstrap.sh")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::join::bootstrap_bash)),
+            )
+            .service(
+                web::resource("/join/bootstrap.ps1")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::join::bootstrap_powershell)),
             );
     } else {
         // Same routes without rate limiting (for tests)
@@ -148,6 +169,16 @@ pub fn configure_app(
             .route(
                 "/reset-password",
                 web::post().to(handlers::auth::reset_password_submit),
+            )
+            .route("/join", web::get().to(handlers::join::join_page))
+            .route("/join/mods.zip", web::get().to(handlers::join::mod_archive))
+            .route(
+                "/join/bootstrap.sh",
+                web::get().to(handlers::join::bootstrap_bash),
+            )
+            .route(
+                "/join/bootstrap.ps1",
+                web::get().to(handlers::join::bootstrap_powershell),
             );
     }
 

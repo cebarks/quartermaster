@@ -78,16 +78,6 @@ fn render_register_error(
         .body(tmpl.render().map_err(WebError::from)?))
 }
 
-fn is_invite_expired(expires_at: Option<&str>) -> bool {
-    let Some(exp) = expires_at else {
-        return false;
-    };
-    match chrono::DateTime::parse_from_rfc3339(exp) {
-        Ok(dt) => dt < chrono::Utc::now(),
-        Err(_) => exp < chrono::Utc::now().to_rfc3339().as_str(),
-    }
-}
-
 // -- Handlers --
 
 #[derive(serde::Deserialize)]
@@ -217,10 +207,19 @@ pub async fn register_page(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let code = query.code.clone().unwrap_or_default();
 
-    if code.is_empty() {
+    let db = state.db.clone();
+    let code_clone = code.clone();
+    let invite_result = web::block(move || {
+        let db = db.lock();
+        crate::web::invite::validate_invite_code(&db, &code_clone)
+    })
+    .await
+    .map_err(WebError::from)?;
+
+    if let Err(e) = invite_result {
         let tmpl = RegisterTemplate {
-            error: Some("Invite code required".to_string()),
-            code: String::new(),
+            error: Some(e.to_string()),
+            code,
             profiles: vec![],
             csrf_token,
         };
@@ -229,67 +228,21 @@ pub async fn register_page(
             .body(tmpl.render().map_err(WebError::from)?));
     }
 
-    let db = state.db.clone();
-    let code_check = code.clone();
-    let invite = web::block(move || {
-        let db = db.lock();
-        db.get_invite(&code_check)
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
-
-    match invite {
-        None => {
-            let tmpl = RegisterTemplate {
-                error: Some("Invalid invite code".to_string()),
-                code,
-                profiles: vec![],
-                csrf_token,
-            };
-            Ok(HttpResponse::BadRequest()
-                .content_type("text/html")
-                .body(tmpl.render().map_err(WebError::from)?))
-        }
-        Some(inv) if inv.used_by.is_some() => {
-            let tmpl = RegisterTemplate {
-                error: Some("This invite code has already been used".to_string()),
-                code,
-                profiles: vec![],
-                csrf_token,
-            };
-            Ok(HttpResponse::BadRequest()
-                .content_type("text/html")
-                .body(tmpl.render().map_err(WebError::from)?))
-        }
-        Some(ref inv) if is_invite_expired(inv.expires_at.as_deref()) => {
-            let tmpl = RegisterTemplate {
-                error: Some("This invite code has expired".to_string()),
-                code,
-                profiles: vec![],
-                csrf_token,
-            };
-            Ok(HttpResponse::BadRequest()
-                .content_type("text/html")
-                .body(tmpl.render().map_err(WebError::from)?))
-        }
-        Some(_) => {
-            let spt_dir = state.spt_dir.clone();
-            let profiles = web::block(move || list_profiles(&spt_dir))
-                .await
-                .map_err(WebError::from)?
-                .unwrap_or_default();
-            let tmpl = RegisterTemplate {
-                error: None,
-                code,
-                profiles,
-                csrf_token,
-            };
-            Ok(HttpResponse::Ok()
-                .content_type("text/html")
-                .body(tmpl.render().map_err(WebError::from)?))
-        }
-    }
+    // Validation passed, load profiles
+    let spt_dir = state.spt_dir.clone();
+    let profiles = web::block(move || list_profiles(&spt_dir))
+        .await
+        .map_err(WebError::from)?
+        .unwrap_or_default();
+    let tmpl = RegisterTemplate {
+        error: None,
+        code,
+        profiles,
+        csrf_token,
+    };
+    Ok(HttpResponse::Ok()
+        .content_type("text/html")
+        .body(tmpl.render().map_err(WebError::from)?))
 }
 
 pub async fn register_submit(

@@ -19,6 +19,8 @@ use spt_quartermaster::web::{configure_app, proxy_metrics::ProxyMetrics};
 pub struct TestAppBuilder {
     users: Vec<(String, String, String)>,
     mods: Vec<(i64, String, String)>,
+    invites: Vec<(String, Option<String>)>, // (code, expires_at)
+    external_url: Option<String>,
     mock_server: Option<wiremock::MockServer>,
 }
 
@@ -27,6 +29,8 @@ impl TestAppBuilder {
         Self {
             users: Vec::new(),
             mods: Vec::new(),
+            invites: Vec::new(),
+            external_url: None,
             mock_server: None,
         }
     }
@@ -42,6 +46,19 @@ impl TestAppBuilder {
     pub fn with_mod(mut self, forge_id: i64, name: &str, version: &str) -> Self {
         self.mods
             .push((forge_id, name.to_string(), version.to_string()));
+        self
+    }
+
+    /// Seed an invite code into the test database.
+    pub fn with_invite(mut self, code: &str, expires_at: Option<&str>) -> Self {
+        self.invites
+            .push((code.to_string(), expires_at.map(String::from)));
+        self
+    }
+
+    /// Set the external_url in the test config.
+    pub fn with_external_url(mut self, url: &str) -> Self {
+        self.external_url = Some(url.to_string());
         self
     }
 
@@ -92,6 +109,12 @@ impl TestAppBuilder {
                 .expect("failed to insert mod");
         }
 
+        // Seed invites
+        for (code, expires_at) in &self.invites {
+            db.create_invite(code, None, expires_at.as_deref())
+                .expect("failed to insert invite");
+        }
+
         // Start or reuse mock server
         let mock_server = match self.mock_server {
             Some(s) => s,
@@ -107,6 +130,7 @@ impl TestAppBuilder {
             session_secret: "test-session-secret-at-least-48-chars-long-abcdefgh".to_string(),
             tls_enabled: false,
             proxy_enabled: false,
+            external_url: self.external_url.clone(),
             ..Config::default()
         };
 

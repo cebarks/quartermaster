@@ -3,6 +3,7 @@ pub mod auth;
 pub mod backup;
 pub mod clients;
 pub mod dashboard;
+pub mod join;
 pub mod logs;
 pub mod metrics;
 pub mod mods;
