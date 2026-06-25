@@ -341,7 +341,8 @@ impl Database {
             "SELECT COUNT(DISTINCT m.id) FROM installed_mods m
              JOIN installed_files f ON f.mod_id = m.id
              WHERE f.file_path LIKE 'BepInEx/%'
-             AND m.disabled = 0",
+             AND m.disabled = 0
+             AND m.forge_mod_id NOT IN (2441, 2326, 2357)",
             [],
             |row| row.get(0),
         )?;

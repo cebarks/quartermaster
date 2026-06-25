@@ -1,15 +1,12 @@
 use actix_web::{web, HttpResponse};
 use askama::Template;
 
-use crate::config::NARCONET_FORGE_MOD_ID;
+use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID, NARCONET_FORGE_MOD_ID};
 use crate::web::error::WebError;
 use crate::web::invite::validate_invite_code;
 use crate::web::state::AppState;
 
 const DEFAULT_SERVER_NAME: &str = "SPT Server";
-
-const FIKA_CLIENT_FORGE_ID: i64 = 2326;
-const FIKA_SERVER_FORGE_ID: i64 = 2357;
 
 const BOOTSTRAP_FORGE_IDS: &[i64] = &[
     NARCONET_FORGE_MOD_ID, // 2441
@@ -61,10 +58,22 @@ pub async fn join_page(
     .map_err(WebError::from)?;
 
     if let Err(e) = invite_result {
+        let tmpl = JoinTemplate {
+            server_name: DEFAULT_SERVER_NAME.to_string(),
+            spt_version: state.spt_info.spt_version.clone(),
+            external_url: String::new(),
+            fika_installed: state.fika_installed,
+            modsync_installed: state
+                .modsync_installed
+                .load(std::sync::atomic::Ordering::Relaxed),
+            mod_count: 0,
+            code,
+            error: Some(e.to_string()),
+        };
         return Ok(referrer_policy(
             HttpResponse::BadRequest()
                 .content_type("text/html")
-                .body(e.to_string()),
+                .body(tmpl.render().map_err(WebError::from)?),
         ));
     }
 
@@ -288,7 +297,19 @@ pub async fn bootstrap_powershell(
     ))
 }
 
+fn escape_bash(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
+fn escape_powershell(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
 fn generate_bash_script(server_name: &str, external_url: &str, code: &str) -> String {
+    let server_name = escape_bash(server_name);
+    let external_url = escape_bash(external_url);
+    let code = escape_bash(code);
+
     format!(
         r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -338,6 +359,10 @@ echo "  3. After connecting, register at: $SERVER_URL/quma/register?code={code}"
 }
 
 fn generate_powershell_script(server_name: &str, external_url: &str, code: &str) -> String {
+    let server_name = escape_powershell(server_name);
+    let external_url = escape_powershell(external_url);
+    let code = escape_powershell(code);
+
     format!(
         r#"$ErrorActionPreference = 'Stop'
 
@@ -409,4 +434,48 @@ fn build_mod_zip(
 
     let cursor = zip.finish()?;
     Ok(cursor.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bash_script_escapes_shell_metacharacters() {
+        let script = generate_bash_script(
+            "My'; rm -rf /; echo 'Server",
+            "https://example.com",
+            "code1",
+        );
+        // Verify the quote is escaped — the SERVER_NAME line should contain the escaped form
+        assert!(script.contains("My'\\''"));
+        // Verify the entire string is properly escaped
+        assert!(script.contains("SERVER_NAME='My'\\''"));
+        // Verify the semicolon and subsequent commands are part of the escaped string,
+        // not executable shell code
+        let server_name_line = script
+            .lines()
+            .find(|line| line.starts_with("SERVER_NAME="))
+            .expect("SERVER_NAME line should exist");
+        // The line should start with SERVER_NAME=' and contain the escaped quote sequence
+        assert!(server_name_line.starts_with("SERVER_NAME='My'\\''"));
+    }
+
+    #[test]
+    fn bash_script_escapes_single_quotes_in_url() {
+        let script = generate_bash_script("Server", "https://example.com'injected", "code1");
+        assert!(script.contains("example.com'\\''injected"));
+    }
+
+    #[test]
+    fn powershell_script_escapes_single_quotes() {
+        let script = generate_powershell_script("My' Server", "https://example.com", "code1");
+        assert!(script.contains("My'' Server"));
+    }
+
+    #[test]
+    fn powershell_script_escapes_single_quotes_in_url() {
+        let script = generate_powershell_script("Server", "https://example.com'injected", "code1");
+        assert!(script.contains("example.com''injected"));
+    }
 }
