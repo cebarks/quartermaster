@@ -71,7 +71,7 @@ fn list_backups(mod_ref: Option<&str>, ctx: &CliContext) -> Result<()> {
             b.mod_name.as_deref().unwrap_or("-"),
             b.mod_version.as_deref().unwrap_or("-"),
             b.trigger,
-            &b.created_at[..10],
+            b.created_at.get(..10).unwrap_or(&b.created_at),
         );
     }
     Ok(())

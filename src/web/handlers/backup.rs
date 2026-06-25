@@ -103,6 +103,24 @@ pub async fn restore_backup(
     }
     let backup_db_id = path.into_inner();
 
+    // Fetch backup type first so we can enforce permission before restoring
+    let db = state.db.clone();
+    let backup_type = web::block(move || {
+        let db = db.lock();
+        let backup = db
+            .get_backup(backup_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("backup not found"))?;
+        Ok::<_, anyhow::Error>(backup.backup_type.clone())
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    // Full restores overwrite config and profiles — require SettingsManage
+    if backup_type == "full" {
+        require_permission(&user, Permission::SettingsManage)?;
+    }
+
     // Check server status
     let config = state.config_cloned();
     let running = crate::server_detect::is_server_running(
@@ -123,27 +141,24 @@ pub async fn restore_backup(
             .finish());
     }
 
+    let is_full = backup_type == "full";
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
 
-    let backup_type = web::block(move || {
+    web::block(move || {
         let db = db.lock();
-        let backup = db
-            .get_backup(backup_db_id)?
-            .ok_or_else(|| anyhow::anyhow!("backup not found"))?;
-        let backup_type = backup.backup_type.clone();
         match backup_type.as_str() {
             "mod" => crate::backup::restore_mod_backup(&db, &spt_dir, &config, backup_db_id)?,
             "full" => crate::backup::restore_full_backup(&db, &spt_dir, &config, backup_db_id)?,
-            _ => anyhow::bail!("unknown backup type"),
+            _ => anyhow::bail!("unknown backup type: {backup_type}"),
         }
-        Ok::<_, anyhow::Error>(backup_type)
+        Ok::<_, anyhow::Error>(())
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let msg = if backup_type == "full" {
+    let msg = if is_full {
         "Full backup restored — restart the web server to reload config"
     } else {
         "Backup restored"

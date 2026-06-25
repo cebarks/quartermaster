@@ -3,12 +3,12 @@ use rusqlite::{params, OptionalExtension};
 use super::Database;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields used by web UI handlers (tasks 6-7)
 pub struct BackupRecord {
     pub id: i64,
     pub backup_type: String,
     pub trigger: String,
     pub backup_id: String,
+    #[allow(dead_code)] // SQL row model field — used in tests and future UI
     pub mod_db_id: Option<i64>,
     pub forge_mod_id: Option<i64>,
     pub forge_version_id: Option<i64>,
@@ -18,6 +18,7 @@ pub struct BackupRecord {
     pub backup_path: String,
     pub backup_size: Option<i64>,
     pub created_at: String,
+    #[allow(dead_code)] // SQL row model field — used in tests
     pub restored_at: Option<String>,
 }
 

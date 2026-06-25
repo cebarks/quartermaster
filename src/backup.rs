@@ -2,6 +2,25 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rand::RngExt;
+use serde::{Deserialize, Serialize};
+
+/// Manifest entry for a single mod in a full backup.
+#[derive(Debug, Serialize, Deserialize)]
+struct ManifestMod {
+    forge_mod_id: i64,
+    forge_version_id: i64,
+    name: String,
+    slug: Option<String>,
+    version: String,
+    file_paths: Vec<String>,
+}
+
+/// Manifest written into every full backup, recording which mods and files
+/// existed at backup time so we can reconstruct the DB state on restore.
+#[derive(Debug, Serialize, Deserialize)]
+struct BackupManifest {
+    mods: Vec<ManifestMod>,
+}
 
 /// Generate a backup ID from the current UTC timestamp.
 /// Format: `YYYYMMDDTHHMMSS` (15 characters).
@@ -26,8 +45,19 @@ fn unique_backup_id(base_dir: &Path) -> String {
 }
 
 /// Resolve the backup directory path from the SPT dir and config.
-pub fn resolve_backup_dir(spt_dir: &Path, config: &crate::config::Config) -> PathBuf {
-    spt_dir.join(&config.backup.backup_dir)
+///
+/// Validates that the resolved path is within `spt_dir` to prevent path
+/// traversal via crafted `backup_dir` config values.
+pub fn resolve_backup_dir(spt_dir: &Path, config: &crate::config::Config) -> Result<PathBuf> {
+    let resolved = spt_dir.join(&config.backup.backup_dir);
+    let canonical_spt = spt_dir
+        .canonicalize()
+        .unwrap_or_else(|_| spt_dir.to_path_buf());
+    let canonical_backup = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
+    if !canonical_backup.starts_with(&canonical_spt) {
+        anyhow::bail!("backup_dir must resolve within spt_dir");
+    }
+    Ok(resolved)
 }
 
 /// Back up a single mod's files to the backup directory.
@@ -48,7 +78,7 @@ pub fn backup_mod(
         .ok_or_else(|| anyhow::anyhow!("mod {mod_db_id} not found"))?;
 
     let files = db.get_files_for_mod(mod_db_id)?;
-    let backup_dir = resolve_backup_dir(spt_dir, config);
+    let backup_dir = resolve_backup_dir(spt_dir, config)?;
     let mod_backup_dir = backup_dir
         .join("mods")
         .join(mod_info.forge_mod_id.to_string());
@@ -119,18 +149,20 @@ pub fn backup_full(
     spt_dir: &Path,
     config: &crate::config::Config,
 ) -> Result<i64> {
-    let backup_dir = resolve_backup_dir(spt_dir, config);
+    let backup_dir = resolve_backup_dir(spt_dir, config)?;
     let full_dir = backup_dir.join("full");
     std::fs::create_dir_all(&full_dir)?;
     let bid = unique_backup_id(&full_dir);
     let dest = full_dir.join(&bid);
 
     let mut total_size: i64 = 0;
+    let mut manifest_mods: Vec<ManifestMod> = Vec::new();
 
-    // 1. Copy all mod files
+    // 1. Copy all mod files and build manifest
     let mods = db.list_mods()?;
     for m in &mods {
         let files = db.get_files_for_mod(m.id)?;
+        let mut file_paths: Vec<String> = Vec::new();
         for file in &files {
             let src = spt_dir.join(&file.file_path);
             let dst = dest.join("mods").join(&file.file_path);
@@ -140,9 +172,27 @@ pub fn backup_full(
             if src.exists() {
                 std::fs::copy(&src, &dst)?;
                 total_size += file.file_size.unwrap_or(0);
+                file_paths.push(file.file_path.clone());
             }
         }
+        manifest_mods.push(ManifestMod {
+            forge_mod_id: m.forge_mod_id,
+            forge_version_id: m.forge_version_id,
+            name: m.name.clone(),
+            slug: m.slug.clone(),
+            version: m.version.clone(),
+            file_paths,
+        });
     }
+
+    // Write manifest so restore can reconstruct DB state for removed mods
+    let manifest = BackupManifest {
+        mods: manifest_mods,
+    };
+    let manifest_json =
+        serde_json::to_string_pretty(&manifest).context("failed to serialize backup manifest")?;
+    std::fs::write(dest.join("manifest.json"), manifest_json)
+        .context("failed to write backup manifest")?;
 
     // 2. Copy profiles
     let profiles_src = spt_dir.join("user/profiles");
@@ -250,6 +300,9 @@ pub fn restore_mod_backup(
         anyhow::bail!("backup directory missing: {}", backup_files_dir.display());
     }
 
+    // Wrap all DB mutations in a single transaction
+    let tx = db.begin_transaction()?;
+
     // Find or re-create the mod row
     let mod_db_id = match db.get_mod_by_forge_id(forge_mod_id)? {
         Some(existing) => {
@@ -283,8 +336,7 @@ pub fn restore_mod_backup(
         }
     };
 
-    // Copy backup files to spt_dir and record them in a transaction
-    let tx = db.begin_transaction()?;
+    // Copy backup files to spt_dir and record them
     let mut restored_count = 0u64;
     copy_backup_tree_and_record(
         db,
@@ -321,9 +373,11 @@ pub fn restore_mod_backup(
 
 /// Restore all mods, profiles, and config from a full backup.
 ///
-/// Deletes all current mod files, copies everything back from the backup
-/// directory, and re-records file metadata. Also restores player profiles
-/// and the `quartermaster.toml` config file if present in the backup.
+/// Uses the backup manifest to reconstruct the DB state, including mods that
+/// were removed after the backup was created. Deletes all current mod files,
+/// copies everything back from the backup directory, and re-records file
+/// metadata. Also restores player profiles and the `quartermaster.toml`
+/// config file if present in the backup.
 pub fn restore_full_backup(
     db: &crate::db::Database,
     spt_dir: &Path,
@@ -343,26 +397,52 @@ pub fn restore_full_backup(
         anyhow::bail!("backup directory missing: {}", backup_dir.display());
     }
 
+    // Wrap all DB mutations in a transaction
+    let tx = db.begin_transaction()?;
+
     // Restore mod files
     let mods_dir = backup_dir.join("mods");
     if mods_dir.is_dir() {
-        // Collect per-mod file paths before deleting, so we know which
-        // backup files belong to which mod during the copy-back phase.
+        // Delete all current mod files and DB records
         let all_mods = db.list_mods()?;
-        let mut mod_file_sets: Vec<(i64, Vec<String>)> = Vec::new();
         for m in &all_mods {
             let files = db.get_files_for_mod(m.id)?;
             let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
-            mod_file_sets.push((m.id, paths.clone()));
             crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
             db.delete_files_for_mod(m.id)?;
+            db.delete_mod(m.id)?;
         }
 
-        // Copy back each mod's files from the backup
-        for (mod_db_id, file_paths) in &mod_file_sets {
-            for rel_path in file_paths {
+        // Read manifest to know which mods existed at backup time
+        let manifest_path = backup_dir.join("manifest.json");
+        let manifest: BackupManifest = if manifest_path.exists() {
+            let data = std::fs::read_to_string(&manifest_path)
+                .context("failed to read backup manifest")?;
+            serde_json::from_str(&data).context("failed to parse backup manifest")?
+        } else {
+            // Legacy backup without manifest — fall back to copying the
+            // mods/ tree without DB file records. This is lossy but avoids
+            // a hard failure on old backups.
+            tracing::warn!("full backup has no manifest.json — file-to-mod mapping will be lost");
+            copy_backup_subtree(&mods_dir, spt_dir)?;
+            BackupManifest { mods: vec![] }
+        };
+
+        // For each mod in the manifest: re-insert the mod row, copy files,
+        // and record file metadata.
+        for mm in &manifest.mods {
+            let mod_db_id = db.insert_mod(
+                mm.forge_mod_id,
+                mm.forge_version_id,
+                &mm.name,
+                mm.slug.as_deref(),
+                &mm.version,
+            )?;
+
+            for rel_path in &mm.file_paths {
                 let src = mods_dir.join(rel_path);
                 if !src.exists() {
+                    tracing::warn!(path = %rel_path, "manifest file missing from backup, skipping");
                     continue;
                 }
                 let dst = spt_dir.join(rel_path);
@@ -374,7 +454,7 @@ pub fn restore_full_backup(
                 let content = std::fs::read(&dst)?;
                 let hash = crate::spt::mods::compute_hash_public(&content);
                 let size = content.len() as i64;
-                db.insert_file(*mod_db_id, rel_path, Some(&hash), Some(size))?;
+                db.insert_file(mod_db_id, rel_path, Some(&hash), Some(size))?;
             }
         }
     }
@@ -400,6 +480,7 @@ pub fn restore_full_backup(
     }
 
     db.set_backup_restored(backup_db_id)?;
+    tx.commit()?;
 
     tracing::info!(backup_db_id, "full backup restored");
 
@@ -407,6 +488,29 @@ pub fn restore_full_backup(
         tracing::warn!(error = %e, "failed to regenerate NarcoNet config after full restore");
     }
 
+    Ok(())
+}
+
+/// Copy an entire backup subtree into spt_dir, preserving relative paths.
+/// Used as a fallback for legacy backups that lack a manifest.
+fn copy_backup_subtree(src_root: &Path, dst_root: &Path) -> Result<()> {
+    for entry in std::fs::read_dir(src_root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(src_root)
+            .context("failed to compute relative path")?;
+        let dst = dst_root.join(relative);
+        if path.is_dir() {
+            std::fs::create_dir_all(&dst)?;
+            copy_backup_subtree(&path, dst_root)?;
+        } else {
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(&path, &dst)?;
+        }
+    }
     Ok(())
 }
 
@@ -615,6 +719,19 @@ mod tests {
             .exists());
         assert!(backup_dir.join("profiles/abc123.json").exists());
         assert!(backup_dir.join("quartermaster.toml").exists());
+
+        // Manifest should be written
+        let manifest_path = backup_dir.join("manifest.json");
+        assert!(manifest_path.exists());
+        let manifest: BackupManifest =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert_eq!(manifest.mods.len(), 1);
+        assert_eq!(manifest.mods[0].forge_mod_id, 100);
+        assert_eq!(manifest.mods[0].name, "TestMod");
+        assert_eq!(
+            manifest.mods[0].file_paths,
+            vec!["SPT/user/mods/TestMod/package.json"]
+        );
     }
 
     #[test]
@@ -745,5 +862,82 @@ mod tests {
         let m = db.get_mod_by_forge_id(100).unwrap().unwrap();
         assert_eq!(m.name, "TestMod");
         assert_eq!(m.version, "1.0.0");
+    }
+
+    #[test]
+    fn restore_full_backup_restores_removed_mods() {
+        let spt_dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(spt_dir.path().join("SPT/user/mods/ModA")).unwrap();
+        std::fs::write(
+            spt_dir.path().join("SPT/user/mods/ModA/package.json"),
+            b"{\"a\":1}",
+        )
+        .unwrap();
+        std::fs::create_dir_all(spt_dir.path().join("SPT/user/mods/ModB")).unwrap();
+        std::fs::write(
+            spt_dir.path().join("SPT/user/mods/ModB/package.json"),
+            b"{\"b\":1}",
+        )
+        .unwrap();
+
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let mod_a = db
+            .insert_mod(100, 200, "ModA", Some("mod-a"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_a,
+            "SPT/user/mods/ModA/package.json",
+            Some("aaa"),
+            Some(7),
+        )
+        .unwrap();
+        let mod_b = db
+            .insert_mod(101, 201, "ModB", Some("mod-b"), "2.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_b,
+            "SPT/user/mods/ModB/package.json",
+            Some("bbb"),
+            Some(7),
+        )
+        .unwrap();
+
+        let config = crate::config::Config::default();
+        let backup_db_id = backup_full(&db, spt_dir.path(), &config).unwrap();
+
+        // Simulate removing ModB after backup
+        crate::spt::mods::delete_mod_files(
+            spt_dir.path(),
+            &["SPT/user/mods/ModB/package.json".to_string()],
+        )
+        .unwrap();
+        db.delete_files_for_mod(mod_b).unwrap();
+        db.delete_mod(mod_b).unwrap();
+        assert!(db.get_mod(mod_b).unwrap().is_none());
+
+        // Restore full backup — ModB should come back
+        restore_full_backup(&db, spt_dir.path(), &config, backup_db_id).unwrap();
+
+        // Both mods should exist
+        let restored_a = db.get_mod_by_forge_id(100).unwrap().unwrap();
+        assert_eq!(restored_a.name, "ModA");
+        let restored_b = db.get_mod_by_forge_id(101).unwrap().unwrap();
+        assert_eq!(restored_b.name, "ModB");
+
+        // Files should be on disk
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/ModA/package.json")
+            .exists());
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/ModB/package.json")
+            .exists());
+
+        // File records should exist
+        let a_files = db.get_files_for_mod(restored_a.id).unwrap();
+        assert_eq!(a_files.len(), 1);
+        let b_files = db.get_files_for_mod(restored_b.id).unwrap();
+        assert_eq!(b_files.len(), 1);
     }
 }
