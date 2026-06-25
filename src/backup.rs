@@ -155,6 +155,7 @@ pub fn backup_full(
     std::fs::create_dir_all(&full_dir)?;
     let bid = unique_backup_id(&full_dir);
     let dest = full_dir.join(&bid);
+    std::fs::create_dir_all(&dest)?;
 
     let mut total_size: i64 = 0;
     let mut manifest_mods: Vec<ManifestMod> = Vec::new();
