@@ -33,4 +33,5 @@ pub struct ClientState {
     pub health: ClientHealth,
     pub restarting: bool,
     pub consecutive_failures: u32,
+    pub first_seen: DateTime<Utc>,
 }

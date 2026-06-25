@@ -72,63 +72,150 @@ pub async fn ensure_fika_client(
     forge: &ForgeClient,
     install_dir: &Path,
     spt_version: &str,
+    spt_client: &SptClient,
 ) -> Result<()> {
-    if is_fika_client_present(install_dir) {
+    // Detect the server's Fika version so we can match the client to it.
+    // The container image may auto-update the server mod independently of
+    // what Forge reports as "latest compatible".
+    let server_fika_version = spt_client.loaded_server_mods().await.ok().and_then(|mods| {
+        mods.get("server")
+            .and_then(|m| m.get("Version"))
+            .and_then(|v| v.as_str().map(String::from))
+    });
+
+    let fika_present = is_fika_client_present(install_dir);
+
+    if fika_present && server_fika_version.is_none() {
         debug!("Fika client already present in {}", install_dir.display());
         return Ok(());
     }
 
+    // If the server is running a known Fika version and we already have the
+    // client installed, check whether the installed version matches.  We
+    // store the installed version in a marker file next to the DLL.
+    if fika_present {
+        if let Some(ref target) = server_fika_version {
+            let marker = install_dir.join("BepInEx/plugins/Fika/.fika-client-version");
+            let installed = std::fs::read_to_string(&marker).unwrap_or_default();
+            if installed.trim() == target.as_str() {
+                debug!("Fika client v{target} already matches server");
+                return Ok(());
+            }
+            info!(
+                "Fika client version mismatch (installed: {}, server: {target}) — updating",
+                if installed.trim().is_empty() {
+                    "unknown"
+                } else {
+                    installed.trim()
+                }
+            );
+            // Remove the old client so we can install the matching version
+            let fika_dir = install_dir.join("BepInEx/plugins/Fika");
+            if let Err(e) = std::fs::remove_dir_all(&fika_dir) {
+                warn!("Failed to remove old Fika client: {e}");
+            }
+        }
+    }
+
     info!(
-        "Fika client not found in {}. Downloading from Forge...",
+        "Fika client not found or outdated in {}. Resolving version...",
         install_dir.display()
     );
 
-    // Find a compatible version for the current SPT version
-    let versions = forge
-        .get_versions(FIKA_CLIENT_FORGE_ID, Some(spt_version))
-        .await
-        .context("failed to query Forge for Fika client versions")?;
+    // Try Forge first, fall back to GitHub releases if the server's version
+    // isn't on Forge (common when the container image auto-updates Fika).
+    let (download_url, resolved_version) =
+        resolve_fika_client_download(forge, spt_version, server_fika_version.as_deref()).await?;
 
-    let version = versions
-        .into_iter()
-        .max_by_key(|v| v.id)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no Fika client version found for SPT {spt_version} on Forge (mod ID {FIKA_CLIENT_FORGE_ID})"
-            )
-        })?;
+    info!("Downloading Fika client v{resolved_version}");
 
-    let download_url = version.link.as_deref().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Fika client version {} has no download link",
-            version.version
-        )
-    })?;
-
-    info!(
-        "Downloading Fika client v{} for SPT {spt_version}",
-        version.version
-    );
-
-    // Download to a temp file, then extract
     let tmp_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
     forge
-        .download_file(download_url, tmp_file.path())
+        .download_file(&download_url, tmp_file.path())
         .await
         .context("failed to download Fika client archive")?;
 
     crate::spt::mods::extract_mod(tmp_file.path(), install_dir)
         .context("failed to extract Fika client archive")?;
 
+    let marker = install_dir.join("BepInEx/plugins/Fika/.fika-client-version");
+    let _ = std::fs::write(&marker, &resolved_version);
+
     info!(
-        "Fika client v{} installed to {}",
-        version.version,
+        "Fika client v{resolved_version} installed to {}",
         install_dir.display()
     );
     Ok(())
 }
 
+const FIKA_CLIENT_GITHUB_REPO: &str = "project-fika/Fika-Plugin";
 const FIKA_HEADLESS_GITHUB_REPO: &str = "project-fika/Fika-Headless";
+
+async fn resolve_fika_client_download(
+    forge: &ForgeClient,
+    spt_version: &str,
+    server_fika_version: Option<&str>,
+) -> Result<(String, String)> {
+    // Try Forge first
+    if let Ok(versions) = forge
+        .get_versions(FIKA_CLIENT_FORGE_ID, Some(spt_version))
+        .await
+    {
+        let matched = if let Some(target) = server_fika_version {
+            versions
+                .iter()
+                .find(|v| v.version == target)
+                .or_else(|| versions.iter().max_by_key(|v| v.id))
+        } else {
+            versions.iter().max_by_key(|v| v.id)
+        };
+
+        if let Some(v) = matched {
+            let version_matches_server =
+                server_fika_version.map(|t| v.version == t).unwrap_or(true);
+            if version_matches_server {
+                if let Some(ref url) = v.link {
+                    return Ok((url.clone(), v.version.clone()));
+                }
+            }
+        }
+    }
+
+    // Fall back to GitHub releases if Forge doesn't have the server's version
+    if let Some(target) = server_fika_version {
+        info!("Forge doesn't have Fika v{target}, trying GitHub releases...");
+        let client = reqwest::Client::builder()
+            .user_agent("quartermaster")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .context("failed to build HTTP client")?;
+
+        let release: serde_json::Value = client
+            .get(format!(
+                "https://api.github.com/repos/{FIKA_CLIENT_GITHUB_REPO}/releases/tags/v{target}"
+            ))
+            .send()
+            .await
+            .context("failed to query GitHub for Fika client release")?
+            .error_for_status()
+            .context("GitHub API returned error for Fika v{target}")?
+            .json()
+            .await
+            .context("failed to parse GitHub release response")?;
+
+        let asset = release["assets"]
+            .as_array()
+            .and_then(|a| a.first())
+            .ok_or_else(|| anyhow::anyhow!("Fika v{target} GitHub release has no assets"))?;
+        let url = asset["browser_download_url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Fika v{target} asset has no download URL"))?;
+
+        return Ok((url.to_string(), target.to_string()));
+    }
+
+    bail!("no Fika client version found on Forge or GitHub for SPT {spt_version}")
+}
 
 /// Check if the Fika.Headless plugin is present in the install directory.
 ///
@@ -514,7 +601,7 @@ pub async fn converge(
     // Scale up or down
     if current_count < desired_count {
         // Ensure the Fika client mod is installed before creating containers
-        ensure_fika_client(forge, &headless_config.install_dir, spt_version).await?;
+        ensure_fika_client(forge, &headless_config.install_dir, spt_version, spt_client).await?;
         ensure_fika_headless(forge, &headless_config.install_dir).await?;
 
         ensure_clients(
@@ -555,10 +642,12 @@ pub async fn converge(
 async fn await_server_ready(spt_client: &SptClient, timeout_secs: u64) -> bool {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     loop {
-        if let Ok(result) = spt_client.ping().await {
-            if result.ok {
-                return true;
-            }
+        // Check loaded mods, not just ping — the server responds to ping
+        // before all mods are loaded and endpoints are ready. Headless
+        // clients that connect too early hit Connection refused on
+        // endpoints that BepInEx patches depend on.
+        if spt_client.loaded_server_mods().await.is_ok() {
+            return true;
         }
         if tokio::time::Instant::now() >= deadline {
             return false;
@@ -769,22 +858,16 @@ async fn create_client_container(
         );
     }
 
-    // SERVER_URL / SERVER_PORT are what the headless image reads to connect.
-    // When the server binds 0.0.0.0, use host.containers.internal so the
-    // headless container can reach the host's network stack via Podman DNS.
-    let server_host = config
-        .server_host
-        .as_deref()
-        .unwrap_or("host.containers.internal");
-    let server_url = match server_host {
-        "0.0.0.0" | "127.0.0.1" | "localhost" => "host.containers.internal",
+    // Route headless clients through quma's HTTPS proxy so we get raid
+    // tracking, metrics, and mod-sync interception. When the web server
+    // binds a wildcard/loopback address, use host.containers.internal so
+    // the container can reach the host's network stack via Podman DNS.
+    let proxy_host = match config.web_bind.as_str() {
+        "0.0.0.0" | "127.0.0.1" | "localhost" | "" => "host.containers.internal",
         other => other,
     };
-    env.push(("SERVER_URL".to_string(), server_url.to_string()));
-    env.push((
-        "SERVER_PORT".to_string(),
-        config.server_port.unwrap_or(6969).to_string(),
-    ));
+    env.push(("SERVER_URL".to_string(), proxy_host.to_string()));
+    env.push(("SERVER_PORT".to_string(), config.web_port.to_string()));
 
     // Labels
     let labels = vec![
