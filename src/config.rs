@@ -687,6 +687,12 @@ pub struct Config {
 
     #[serde(default = "default_leaderboard_min_raids")]
     pub leaderboard_min_raids: u32,
+
+    #[serde(default)]
+    pub external_url: Option<String>,
+
+    #[serde(default)]
+    pub server_name: Option<String>,
 }
 
 impl Default for Config {
@@ -715,6 +721,8 @@ impl Default for Config {
             proxy_enabled: true,
             snapshots_enabled: true,
             leaderboard_min_raids: 5,
+            external_url: None,
+            server_name: None,
         }
     }
 }
@@ -857,6 +865,8 @@ impl Config {
         env_override!(str: self.backup.backup_dir, "QUMA_BACKUP_DIR");
         env_override!(parse: self.backup.max_backups, "QUMA_MAX_BACKUPS", u32);
         env_override!(bool: self.backup.require_backup, "QUMA_REQUIRE_BACKUP");
+        env_override!(opt_str: self.external_url, "QUMA_EXTERNAL_URL");
+        env_override!(opt_str: self.server_name, "QUMA_SERVER_NAME");
     }
 
     /// If `session_secret` is empty, generate a random 48-character alphanumeric secret.
