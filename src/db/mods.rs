@@ -282,6 +282,31 @@ impl Database {
         rows.collect()
     }
 
+    pub fn get_files_for_forge_ids(
+        &self,
+        forge_ids: &[i64],
+    ) -> rusqlite::Result<Vec<InstalledFile>> {
+        if forge_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: String = forge_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT f.id, f.mod_id, f.file_path, f.file_hash, f.file_size, f.source
+             FROM installed_files f
+             JOIN installed_mods m ON f.mod_id = m.id
+             WHERE m.forge_mod_id IN ({placeholders})
+             AND m.disabled = 0
+             ORDER BY f.file_path"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = forge_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        let rows = stmt.query_map(params.as_slice(), row_to_installed_file)?;
+        rows.collect()
+    }
+
     pub fn delete_files_for_mod(&self, mod_id: i64) -> rusqlite::Result<usize> {
         self.conn.execute(
             "DELETE FROM installed_files WHERE mod_id = ?1",

@@ -7,6 +7,7 @@ pub enum InviteError {
     NotFound,
     AlreadyUsed,
     Expired,
+    #[allow(dead_code)] // Field is accessed through Display impl, but clippy doesn't see it
     Db(rusqlite::Error),
 }
 

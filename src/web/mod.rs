@@ -140,6 +140,11 @@ pub fn configure_app(
                 web::resource("/join")
                     .wrap(Governor::new(&governor_conf))
                     .route(web::get().to(handlers::join::join_page)),
+            )
+            .service(
+                web::resource("/join/mods.zip")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::join::mod_archive)),
             );
     } else {
         // Same routes without rate limiting (for tests)
@@ -155,7 +160,8 @@ pub fn configure_app(
                 "/reset-password",
                 web::post().to(handlers::auth::reset_password_submit),
             )
-            .route("/join", web::get().to(handlers::join::join_page));
+            .route("/join", web::get().to(handlers::join::join_page))
+            .route("/join/mods.zip", web::get().to(handlers::join::mod_archive));
     }
 
     // Build the API scope

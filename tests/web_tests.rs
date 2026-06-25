@@ -81,3 +81,22 @@ async fn join_page_has_referrer_policy_header() {
         "no-referrer"
     );
 }
+
+#[actix_web::test]
+async fn mod_archive_requires_invite_code() {
+    let mut app = TestAppBuilder::new().build().await;
+
+    let resp = app.get("/quma/join/mods.zip").await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[actix_web::test]
+async fn mod_archive_returns_503_when_no_mods_installed() {
+    let mut app = TestAppBuilder::new()
+        .with_invite("quma-testcode1", None)
+        .build()
+        .await;
+
+    let resp = app.get("/quma/join/mods.zip?code=quma-testcode1").await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
