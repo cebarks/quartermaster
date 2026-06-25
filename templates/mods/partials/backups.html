@@ -1,7 +1,7 @@
 <div class="card" id="backups">
     <h3>Backups</h3>
     {% if can_update %}
-    <form method="post" action="/quma/mods/{{ mod_db_id }}/backup" style="margin-bottom: 1rem;">
+    <form method="post" action="/quma/mods/{{ mod_db_id }}/backup" style="margin-bottom: 1rem; display: inline-block;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-sm btn-outline">Backup Now</button>
     </form>
