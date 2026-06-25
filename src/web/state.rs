@@ -36,7 +36,6 @@ pub struct AppState {
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
     pub modsync_installed: AtomicBool,
-    #[allow(dead_code)]
     pub svm: Option<Arc<parking_lot::RwLock<SvmManager>>>,
     pub svm_installed: AtomicBool,
     pub server_transition: Arc<Mutex<Option<String>>>,
