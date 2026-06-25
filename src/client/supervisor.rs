@@ -193,6 +193,7 @@ impl ClientSupervisor {
             health: ClientHealth::Down,
             restarting: false,
             consecutive_failures: 0,
+            first_seen: Utc::now(),
         });
 
         // Check container status
@@ -243,8 +244,17 @@ impl ClientSupervisor {
         // Compute health
         state.health = compute_health(container_running, state.fika_status.clone(), server_up);
 
-        // Update failure count
-        if state.health == ClientHealth::Down || state.health == ClientHealth::Degraded {
+        // Grace period: don't count failures for 3 minutes after first seeing a
+        // client — wine boot + BepInEx init takes ~90s, and during that time
+        // Fika API returns nothing, which would otherwise trigger GivenUp.
+        let in_grace_period = Utc::now()
+            .signed_duration_since(state.first_seen)
+            .num_seconds()
+            < 180;
+
+        if in_grace_period {
+            // Don't accumulate failures during startup
+        } else if state.health == ClientHealth::Down || state.health == ClientHealth::Degraded {
             state.consecutive_failures += 1;
         } else {
             state.consecutive_failures = 0;
@@ -259,17 +269,24 @@ impl ClientSupervisor {
     }
 
     fn should_restart(&self, state: &ClientState) -> bool {
-        // Don't restart if already restarting
         if state.restarting {
             return false;
         }
 
-        // Don't restart if given up
         if state.health == ClientHealth::GivenUp {
             return false;
         }
 
-        // Restart if down or degraded and under attempt limit
+        // Don't restart during startup grace period — wine boot + BepInEx
+        // init takes ~90s, and the client will appear degraded until then.
+        let in_grace_period = Utc::now()
+            .signed_duration_since(state.first_seen)
+            .num_seconds()
+            < 180;
+        if in_grace_period {
+            return false;
+        }
+
         (state.health == ClientHealth::Down || state.health == ClientHealth::Degraded)
             && state.consecutive_failures <= self.headless_config.max_restart_attempts
     }
@@ -310,6 +327,7 @@ async fn restart_client_task(
             if result.is_ok() {
                 s.restart_count += 1;
                 s.last_restart = Some(Utc::now());
+                s.first_seen = Utc::now();
             }
         }
     }
