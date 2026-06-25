@@ -128,6 +128,78 @@ pub async fn ensure_fika_client(
     Ok(())
 }
 
+const FIKA_HEADLESS_GITHUB_REPO: &str = "project-fika/Fika-Headless";
+
+/// Check if the Fika.Headless plugin is present in the install directory.
+///
+/// This is a separate plugin from Fika.Core — it implements the headless idle
+/// loop that keeps the game running and ready to host raids.
+fn is_fika_headless_present(install_dir: &Path) -> bool {
+    install_dir
+        .join("BepInEx/plugins/Fika/Fika.Headless.dll")
+        .is_file()
+}
+
+/// Ensure the Fika.Headless plugin is installed in the headless install directory.
+///
+/// Unlike Fika.Core (which is on Forge), Fika.Headless is distributed via GitHub
+/// releases at project-fika/Fika-Headless. This function fetches the latest release,
+/// downloads the zip, and extracts it.
+async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result<()> {
+    if is_fika_headless_present(install_dir) {
+        debug!("Fika.Headless already present in {}", install_dir.display());
+        return Ok(());
+    }
+
+    info!(
+        "Fika.Headless not found in {}. Downloading from GitHub...",
+        install_dir.display()
+    );
+
+    // Query GitHub API for the latest release
+    let client = reqwest::Client::builder()
+        .user_agent("quartermaster")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("failed to build HTTP client")?;
+
+    let release: serde_json::Value = client
+        .get(format!(
+            "https://api.github.com/repos/{FIKA_HEADLESS_GITHUB_REPO}/releases/latest"
+        ))
+        .send()
+        .await
+        .context("failed to query GitHub for Fika.Headless releases")?
+        .error_for_status()
+        .context("GitHub API returned error")?
+        .json()
+        .await
+        .context("failed to parse GitHub release response")?;
+
+    let tag = release["tag_name"].as_str().unwrap_or("unknown");
+    let asset = release["assets"]
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or_else(|| anyhow::anyhow!("Fika.Headless latest release has no assets"))?;
+    let download_url = asset["browser_download_url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Fika.Headless asset has no download URL"))?;
+
+    info!("Downloading Fika.Headless {tag}...");
+
+    let tmp_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
+    forge
+        .download_file(download_url, tmp_file.path())
+        .await
+        .context("failed to download Fika.Headless archive")?;
+
+    crate::spt::mods::extract_mod(tmp_file.path(), install_dir)
+        .context("failed to extract Fika.Headless archive")?;
+
+    info!("Fika.Headless {tag} installed to {}", install_dir.display());
+    Ok(())
+}
+
 /// Discover new profile IDs that appeared after a baseline snapshot.
 ///
 /// Compares the current set of .json files in the profiles directory against a baseline
@@ -443,6 +515,7 @@ pub async fn converge(
     if current_count < desired_count {
         // Ensure the Fika client mod is installed before creating containers
         ensure_fika_client(forge, &headless_config.install_dir, spt_version).await?;
+        ensure_fika_headless(forge, &headless_config.install_dir).await?;
 
         ensure_clients(
             container_mgr,
