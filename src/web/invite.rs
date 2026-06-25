@@ -17,7 +17,7 @@ impl std::fmt::Display for InviteError {
             InviteError::NotFound => write!(f, "Invalid invite code"),
             InviteError::AlreadyUsed => write!(f, "This invite code has already been used"),
             InviteError::Expired => write!(f, "This invite code has expired"),
-            InviteError::Db(e) => write!(f, "Database error: {e}"),
+            InviteError::Db(_) => write!(f, "An internal error occurred. Please try again."),
         }
     }
 }
@@ -39,7 +39,10 @@ pub fn validate_invite_code(db: &Database, code: &str) -> Result<InviteCode, Inv
 
     let invite = db
         .get_invite(code)
-        .map_err(InviteError::Db)?
+        .map_err(|e| {
+            tracing::error!(error = %e, "database error looking up invite code");
+            InviteError::Db(e)
+        })?
         .ok_or(InviteError::NotFound)?;
 
     if invite.used_by.is_some() {
