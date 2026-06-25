@@ -14,16 +14,6 @@ use crate::web::error::WebError;
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
-fn is_invite_expired(expires_at: Option<&str>) -> bool {
-    let Some(exp) = expires_at else {
-        return false;
-    };
-    match chrono::DateTime::parse_from_rfc3339(exp) {
-        Ok(dt) => dt < chrono::Utc::now(),
-        Err(_) => exp < chrono::Utc::now().to_rfc3339().as_str(),
-    }
-}
-
 fn build_user_profiles(
     users: &[User],
     spt_dir: &std::path::Path,
@@ -105,7 +95,7 @@ impl InviteView {
     fn from_db(ic: InviteCodeWithUsers) -> Self {
         let status = if ic.invite.used_by.is_some() {
             "used"
-        } else if is_invite_expired(ic.invite.expires_at.as_deref()) {
+        } else if crate::web::invite::is_invite_expired(ic.invite.expires_at.as_deref()) {
             "expired"
         } else {
             "available"
