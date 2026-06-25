@@ -159,7 +159,10 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         None
     };
 
-    crate::web::start_server(crate::web::ServerContext {
+    let on_exit = config.on_exit.clone();
+    let teardown_mgr = container_mgr.clone();
+
+    let server_future = crate::web::start_server(crate::web::ServerContext {
         config,
         config_path,
         db,
@@ -173,6 +176,77 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         converging,
         fika_installed,
         modsync_installed,
-    })
-    .await
+    });
+
+    // Actix-web handles SIGINT/SIGTERM internally. For SIGHUP, we race
+    // the server future against the signal — dropping the future triggers
+    // actix's cleanup. When on_exit is Nothing, skip the signal listener
+    // entirely so there's zero overhead.
+    let server_result = if on_exit != crate::config::OnExit::Nothing {
+        let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+            .expect("failed to register SIGHUP handler");
+        tokio::select! {
+            result = server_future => result,
+            _ = sighup.recv() => {
+                tracing::info!("received SIGHUP, shutting down");
+                Ok(())
+            }
+        }
+    } else {
+        server_future.await
+    };
+
+    if let Some(ref mgr) = teardown_mgr {
+        teardown_containers(mgr, &on_exit).await;
+    }
+
+    server_result
+}
+
+async fn teardown_containers(
+    container_mgr: &crate::container::ContainerManager,
+    on_exit: &crate::config::OnExit,
+) {
+    use crate::config::OnExit;
+
+    if *on_exit == OnExit::Nothing {
+        return;
+    }
+
+    tracing::info!(mode = %on_exit, "tearing down managed containers");
+
+    let containers = match container_mgr
+        .detect_containers_by_label("managed-by", "quma")
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to discover managed containers for teardown");
+            return;
+        }
+    };
+
+    if containers.is_empty() {
+        tracing::debug!("no managed containers found");
+        return;
+    }
+
+    for name in &containers {
+        let result = match on_exit {
+            OnExit::Stop => {
+                tracing::info!(container = %name, "stopping container");
+                container_mgr.stop(name).await
+            }
+            OnExit::Remove => {
+                tracing::info!(container = %name, "removing container");
+                container_mgr.remove_container(name).await
+            }
+            OnExit::Nothing => return,
+        };
+        if let Err(e) = result {
+            tracing::warn!(container = %name, error = %e, "container teardown failed");
+        }
+    }
+
+    tracing::info!(count = containers.len(), "container teardown complete");
 }
