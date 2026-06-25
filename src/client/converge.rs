@@ -647,20 +647,24 @@ async fn create_client_container(
 
     // Build volume mounts
     let mut volumes = vec![
-        // SPT install directory (read-only)
+        // Game client directory — mounted read-write because the headless image
+        // entrypoint writes wine.log, BepInEx logs, etc. directly into this tree.
         VolumeMount {
             host_path: headless_config.install_dir.clone(),
             container_path: "/opt/tarkov".to_string(),
-            read_only: true,
+            read_only: false,
             selinux: SelinuxLabel::Shared,
         },
     ];
 
-    // Add overlay as read-write mount for isolated paths
-    if !effective_paths.is_empty() {
+    // Mount each isolated path from the overlay on top of the base install,
+    // so per-client config/state shadows the shared copy.
+    for isolated_path in effective_paths {
+        let overlay_subdir = overlay_dir.join(isolated_path);
+        let container_subdir = format!("/opt/tarkov/{isolated_path}");
         volumes.push(VolumeMount {
-            host_path: overlay_dir,
-            container_path: "/opt/tarkov-overlay".to_string(),
+            host_path: overlay_subdir,
+            container_path: container_subdir,
             read_only: false,
             selinux: SelinuxLabel::Shared,
         });
@@ -687,13 +691,22 @@ async fn create_client_container(
         );
     }
 
-    // Add SPT server host/port if configured
-    if let Some(ref host) = config.server_host {
-        env.push(("SPT_SERVER_HOST".to_string(), host.clone()));
-    }
-    if let Some(port) = config.server_port {
-        env.push(("SPT_SERVER_PORT".to_string(), port.to_string()));
-    }
+    // SERVER_URL / SERVER_PORT are what the headless image reads to connect.
+    // When the server binds 0.0.0.0, use host.containers.internal so the
+    // headless container can reach the host's network stack via Podman DNS.
+    let server_host = config
+        .server_host
+        .as_deref()
+        .unwrap_or("host.containers.internal");
+    let server_url = match server_host {
+        "0.0.0.0" | "127.0.0.1" | "localhost" => "host.containers.internal",
+        other => other,
+    };
+    env.push(("SERVER_URL".to_string(), server_url.to_string()));
+    env.push((
+        "SERVER_PORT".to_string(),
+        config.server_port.unwrap_or(6969).to_string(),
+    ));
 
     // Labels
     let labels = vec![
