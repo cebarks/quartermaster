@@ -3,6 +3,7 @@ use actix_web::web::{Data, Form, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
+use crate::client::ClientState;
 use crate::config::{
     Config, ConsoleLogConfig, FileLogConfig, HeadlessConfig, LogFormat, LoggingConfig,
     RestartPolicy, RotationPolicy, WebLogConfig,
@@ -42,6 +43,9 @@ struct SettingsTemplate {
     file_rotation: String,
     restart_policy: String,
     has_forge_token: bool,
+    headless_clients: Vec<ClientState>,
+    headless_converging: bool,
+    headless_target_count: u32,
 }
 
 pub async fn settings_page(
@@ -77,6 +81,17 @@ pub async fn settings_page(
 
     let has_forge_token = config.forge_token.is_some();
 
+    let headless_clients = match &state.client_states {
+        Some(states) => states.read().await.clone(),
+        None => vec![],
+    };
+    let headless_converging = state.converging.load(std::sync::atomic::Ordering::Relaxed);
+    let headless_target_count = config
+        .headless
+        .as_ref()
+        .map(|h| h.client_count())
+        .unwrap_or(0);
+
     let tmpl = SettingsTemplate {
         user,
         flash,
@@ -89,6 +104,9 @@ pub async fn settings_page(
         file_rotation,
         restart_policy,
         has_forge_token,
+        headless_clients,
+        headless_converging,
+        headless_target_count,
     };
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
