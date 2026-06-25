@@ -660,6 +660,10 @@ async fn create_client_container(
     // Mount each isolated path from the overlay on top of the base install,
     // so per-client config/state shadows the shared copy.
     for isolated_path in effective_paths {
+        let p = std::path::Path::new(isolated_path);
+        if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
+            bail!("isolated_path contains traversal sequence: {isolated_path:?}");
+        }
         let overlay_subdir = overlay_dir.join(isolated_path);
         let container_subdir = format!("/opt/tarkov/{isolated_path}");
         volumes.push(VolumeMount {
