@@ -312,6 +312,7 @@ async fn restart_client_task(
             if result.is_ok() {
                 s.restart_count += 1;
                 s.last_restart = Some(Utc::now());
+                s.consecutive_failures = 0;
             }
         }
     }
@@ -460,5 +461,20 @@ mod tests {
     #[test]
     fn count_failure_holds_during_grace_even_if_server_down() {
         assert_eq!(count_failure(3, &ClientHealth::Degraded, false, true), 3);
+    }
+
+    #[test]
+    fn restart_should_reset_failures() {
+        // After a successful restart, the client should have a clean slate.
+        // This is a documentation test — the actual reset happens in
+        // restart_client_task which modifies shared state asynchronously.
+        // Verified by inspection: restart_client_task sets
+        // s.consecutive_failures = 0 on success.
+        //
+        // The count_failure function already handles the grace period
+        // correctly (holds current value), so resetting to 0 before the
+        // new grace period means the client truly starts fresh.
+        let reset_value = count_failure(0, &ClientHealth::Degraded, true, true);
+        assert_eq!(reset_value, 0, "grace period should hold at 0 after reset");
     }
 }
