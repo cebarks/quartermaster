@@ -3,6 +3,19 @@ mod common;
 use actix_web::http::StatusCode;
 use common::TestAppBuilder;
 
+// Static assets must be served without authentication so the login page can load CSS/JS
+#[actix_web::test]
+async fn assets_served_without_auth() {
+    let mut app = TestAppBuilder::new().build().await;
+
+    let resp = app.get("/quma/assets/style.css").await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "static assets must not require auth"
+    );
+}
+
 // Logs tests
 #[actix_web::test]
 async fn logs_page_requires_auth() {

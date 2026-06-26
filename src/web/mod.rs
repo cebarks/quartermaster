@@ -110,8 +110,10 @@ pub fn configure_app(
                 .cookie_secure(tls_enabled)
                 .build(),
         )
-        // Static assets (public, before auth scope to avoid shadowing)
-        .route("/assets/{path:.*}", web::get().to(serve_asset))
+        // Static assets in their own scope — the explicit "/assets" prefix is
+        // more specific than the catch-all web::scope("") that carries auth
+        // middleware, so actix matches this first and serves files publicly.
+        .service(web::scope("/assets").route("/{path:.*}", web::get().to(serve_asset)))
         // Auth routes (public)
         .route("/login", web::get().to(handlers::auth::login_page))
         .route("/logout", web::post().to(handlers::auth::logout));
