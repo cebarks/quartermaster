@@ -441,17 +441,21 @@ fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
 
 /// Set up overlay directory for a client, copying isolated paths from the install directory.
 ///
-/// Creates `<spt_dir>/clients/<index>/` and recursively copies any paths from `isolated_paths`
-/// that don't already exist in the overlay. This preserves user customizations in the overlay
-/// while ensuring new isolated paths are populated.
+/// Creates `<install_dir>/.quma/clients/<index>/` and recursively copies any paths from
+/// `isolated_paths` that don't already exist in the overlay. This preserves user
+/// customizations in the overlay while ensuring new isolated paths are populated.
+///
+/// Overlays live under `install_dir` (the game client directory) rather than `spt_dir`
+/// (the SPT server data directory) because the SPT server container mounts all of
+/// `spt_dir` and its entrypoint chowns the tree recursively — a wine-prefix dir
+/// with different ownership causes the server to crash on startup.
 pub fn setup_client_overlay(
-    spt_dir: &Path,
-    index: u32,
     install_dir: &Path,
+    index: u32,
     isolated_paths: &[String],
     base_udp_port: u16,
 ) -> Result<()> {
-    let overlay_dir = spt_dir.join("clients").join(index.to_string());
+    let overlay_dir = install_dir.join(".quma/clients").join(index.to_string());
 
     let wine_prefix_dir = overlay_dir.join("wine-prefix");
     if !wine_prefix_dir.exists() {
@@ -723,9 +727,8 @@ pub async fn converge(
         let index = (i + 1) as u32;
         let effective_paths = headless_config.effective_isolated_paths(i);
         setup_client_overlay(
-            spt_dir,
-            index,
             &headless_config.install_dir,
+            index,
             &effective_paths,
             headless_config.base_udp_port,
         )?;
@@ -821,7 +824,6 @@ async fn ensure_clients(
             container_mgr,
             headless_config,
             config,
-            spt_dir,
             i,
             profile_id,
             &effective_paths,
@@ -895,20 +897,21 @@ async fn create_client_container(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
     config: &Config,
-    spt_dir: &Path,
     index: u32,
     profile_id: Option<String>,
     effective_paths: &[String],
     ntsync_available: bool,
 ) -> Result<()> {
     let name = client_container_name(index);
-    let overlay_dir = spt_dir.join("clients").join(index.to_string());
+    let overlay_dir = headless_config
+        .install_dir
+        .join(".quma/clients")
+        .join(index.to_string());
 
     // Set up overlay directory first
     setup_client_overlay(
-        spt_dir,
-        index,
         &headless_config.install_dir,
+        index,
         effective_paths,
         headless_config.base_udp_port,
     )?;
@@ -1096,22 +1099,14 @@ mod tests {
     #[test]
     fn setup_client_overlay_copies_isolated_paths() {
         let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path().join("spt");
         let install_dir = tmp.path().join("install");
 
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
         std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
 
-        setup_client_overlay(
-            &spt_dir,
-            1,
-            &install_dir,
-            &["BepInEx/config".to_string()],
-            25565,
-        )
-        .unwrap();
+        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
 
-        let overlay_file = spt_dir.join("clients/1/BepInEx/config/test.cfg");
+        let overlay_file = install_dir.join(".quma/clients/1/BepInEx/config/test.cfg");
         assert!(overlay_file.exists());
         assert_eq!(std::fs::read_to_string(overlay_file).unwrap(), "key=value");
     }
@@ -1131,21 +1126,13 @@ mod tests {
     #[test]
     fn setup_client_overlay_creates_wine_prefix_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path().join("spt");
         let install_dir = tmp.path().join("install");
 
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
 
-        setup_client_overlay(
-            &spt_dir,
-            1,
-            &install_dir,
-            &["BepInEx/config".to_string()],
-            25565,
-        )
-        .unwrap();
+        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
 
-        let wine_prefix_dir = spt_dir.join("clients/1/wine-prefix");
+        let wine_prefix_dir = install_dir.join(".quma/clients/1/wine-prefix");
         assert!(wine_prefix_dir.exists());
         assert!(wine_prefix_dir.is_dir());
     }
@@ -1162,36 +1149,31 @@ mod tests {
     #[test]
     fn update_overlay_copies_new_paths() {
         let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path().join("spt");
         let install_dir = tmp.path().join("install");
 
         // Existing overlay from initial setup
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
         std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
-        setup_client_overlay(
-            &spt_dir,
-            1,
-            &install_dir,
-            &["BepInEx/config".to_string()],
-            25565,
-        )
-        .unwrap();
+        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
 
         // Now add a new isolated path
         std::fs::create_dir_all(install_dir.join("BepInEx/cache")).unwrap();
         std::fs::write(install_dir.join("BepInEx/cache/data.bin"), "cached").unwrap();
         setup_client_overlay(
-            &spt_dir,
-            1,
             &install_dir,
+            1,
             &["BepInEx/config".to_string(), "BepInEx/cache".to_string()],
             25565,
         )
         .unwrap();
 
         // Both paths should exist in overlay
-        assert!(spt_dir.join("clients/1/BepInEx/config/test.cfg").exists());
-        assert!(spt_dir.join("clients/1/BepInEx/cache/data.bin").exists());
+        assert!(install_dir
+            .join(".quma/clients/1/BepInEx/config/test.cfg")
+            .exists());
+        assert!(install_dir
+            .join(".quma/clients/1/BepInEx/cache/data.bin")
+            .exists());
     }
 
     #[test]
