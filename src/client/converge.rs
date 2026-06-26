@@ -499,10 +499,46 @@ pub fn setup_client_overlay(
     let port = client_port(base_udp_port, index);
     write_fika_udp_port(&overlay_dir, port)?;
 
+    // Stub out GPU-specific DLLs that crash in headless (no-GPU) containers.
+    // DLSSImporter.dll dereferences a null pointer when no GPU is present,
+    // which hangs Wine's crash handler and prevents the game from starting.
+    stub_gpu_dlls(install_dir, &overlay_dir)?;
+
     debug!(
         "Set up overlay for client {index} at {}",
         overlay_dir.display()
     );
+    Ok(())
+}
+
+/// Replace GPU-specific DLLs with empty stubs in the overlay so Unity
+/// skips them at load time instead of crashing in headless containers.
+fn stub_gpu_dlls(install_dir: &Path, overlay_dir: &Path) -> Result<()> {
+    let gpu_dlls = ["EscapeFromTarkov_Data/Plugins/x86_64/DLSSImporter.dll"];
+
+    for rel_path in &gpu_dlls {
+        let src = install_dir.join(rel_path);
+        if !src.exists() {
+            continue;
+        }
+
+        let dst = overlay_dir.join(rel_path);
+        if dst.exists() {
+            continue;
+        }
+
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create dir {}", parent.display()))?;
+        }
+
+        // Write a zero-byte stub — Unity will fail to load it as a
+        // native plugin and log a warning instead of crashing.
+        std::fs::write(&dst, b"").with_context(|| format!("failed to stub {}", dst.display()))?;
+
+        debug!("Stubbed GPU DLL for headless: {rel_path}");
+    }
+
     Ok(())
 }
 
@@ -912,6 +948,19 @@ async fn create_client_container(
         read_only: false,
         selinux: SelinuxLabel::Private,
     });
+
+    // Mount stubbed GPU DLLs over the originals so headless clients
+    // don't crash from missing GPU hardware.
+    let gpu_stub = overlay_dir.join("EscapeFromTarkov_Data/Plugins/x86_64/DLSSImporter.dll");
+    if gpu_stub.exists() {
+        volumes.push(VolumeMount {
+            host_path: gpu_stub,
+            container_path: "/opt/tarkov/EscapeFromTarkov_Data/Plugins/x86_64/DLSSImporter.dll"
+                .to_string(),
+            read_only: true,
+            selinux: SelinuxLabel::Shared,
+        });
+    }
 
     // Environment variables
     let mut env = vec![

@@ -85,7 +85,7 @@ ENV DISPLAY=:99
 # WINEDEBUG=-all prevents Wine from spamming fixme/warn lines.
 # mscoree=d disables Wine's .NET/Mono — BepInEx brings its own runtime.
 ENV WINEDEBUG=-all
-ENV WINEDLLOVERRIDES=mscoree=d
+ENV WINEDLLOVERRIDES="mscoree=d;winhttp=n,b"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
