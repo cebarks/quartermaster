@@ -16,6 +16,26 @@ async fn assets_served_without_auth() {
     );
 }
 
+// Browsers reject stylesheets/scripts without the correct Content-Type header
+#[actix_web::test]
+async fn assets_have_correct_content_type() {
+    let mut app = TestAppBuilder::new().build().await;
+
+    let resp = app.get("/quma/assets/style.css").await;
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .expect("missing Content-Type on CSS");
+    assert_eq!(ct, "text/css; charset=utf-8");
+
+    let resp = app.get("/quma/assets/htmx.min.js").await;
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .expect("missing Content-Type on JS");
+    assert_eq!(ct, "application/javascript; charset=utf-8");
+}
+
 // Logs tests
 #[actix_web::test]
 async fn logs_page_requires_auth() {

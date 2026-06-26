@@ -23,8 +23,7 @@ use actix_session::SessionMiddleware;
 use actix_web::cookie::time::Duration as CookieDuration;
 use actix_web::cookie::Key;
 use actix_web::web;
-use actix_web::{middleware, App, Either, HttpResponse, HttpServer, Responder};
-use actix_web_rust_embed_responder::IntoResponse;
+use actix_web::{middleware, App, HttpResponse, HttpServer};
 use anyhow::{Context, Result};
 use rust_embed::RustEmbed;
 
@@ -44,10 +43,27 @@ use state::AppState;
 #[folder = "src/assets/"]
 struct Assets;
 
-async fn serve_asset(path: web::Path<String>) -> impl Responder {
+fn content_type_for(path: &str) -> &'static str {
+    match path.rsplit('.').next() {
+        Some("css") => "text/css; charset=utf-8",
+        Some("js") => "application/javascript; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn serve_asset(path: web::Path<String>) -> HttpResponse {
     match Assets::get(&path) {
-        Some(file) => Either::Left(file.into_response()),
-        None => Either::Right(HttpResponse::NotFound().body("asset not found")),
+        Some(file) => HttpResponse::Ok()
+            .content_type(content_type_for(&path))
+            .insert_header(("Cache-Control", "no-cache"))
+            .body(file.data.into_owned()),
+        None => HttpResponse::NotFound().body("asset not found"),
     }
 }
 
