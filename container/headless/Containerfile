@@ -1,7 +1,8 @@
 FROM registry.fedoraproject.org/fedora-minimal:44
 
 RUN microdnf install -y --nodocs \
-    wine-core \
+    wine \
+    wine-core.i686 \
     xorg-x11-server-Xvfb \
     xdpyinfo \
     winetricks \

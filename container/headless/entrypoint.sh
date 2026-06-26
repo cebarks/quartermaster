@@ -9,18 +9,7 @@ for var in PROFILE_ID SERVER_URL SERVER_PORT UDP_PORT; do
     fi
 done
 
-# Initialize Wine prefix on first boot
-if [ ! -f "$WINEPREFIX/system.reg" ]; then
-    echo "Initializing Wine prefix at $WINEPREFIX..."
-    wineboot --update
-    echo "Installing vcrun2019..."
-    winetricks -q vcrun2019 || { echo "ERROR: Failed to install vcrun2019" >&2; exit 1; }
-    echo "Installing dotnetdesktop8..."
-    winetricks -q dotnetdesktop8 || { echo "ERROR: Failed to install dotnetdesktop8" >&2; exit 1; }
-    echo "Wine prefix initialized."
-fi
-
-# Start Xvfb
+# Start Xvfb — needed by wineboot, winetricks, and the game client
 Xvfb :99 -screen 0 1024x768x24 -nolisten tcp &
 XVFB_PID=$!
 
@@ -31,6 +20,17 @@ for i in $(seq 1 10); do
     fi
     sleep 0.5
 done
+
+# Initialize Wine prefix on first boot
+if [ ! -f "$WINEPREFIX/system.reg" ]; then
+    echo "Initializing Wine prefix at $WINEPREFIX..."
+    wineboot --update
+    echo "Installing vcrun2019..."
+    winetricks -q vcrun2019 || { echo "ERROR: Failed to install vcrun2019" >&2; exit 1; }
+    echo "Installing dotnetdesktop8..."
+    winetricks -q dotnetdesktop8 || { echo "ERROR: Failed to install dotnetdesktop8" >&2; exit 1; }
+    echo "Wine prefix initialized."
+fi
 
 # Tail BepInEx logs to stdout if the log file exists (or will exist)
 if [ -d "/opt/tarkov/BepInEx" ]; then
