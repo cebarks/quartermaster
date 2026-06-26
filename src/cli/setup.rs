@@ -307,6 +307,7 @@ fn create_container_opts(
             start_interval: None,
         }),
         devices: vec![],
+        security_opt: vec![],
     }
 }
 

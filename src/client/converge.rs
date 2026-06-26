@@ -963,6 +963,12 @@ async fn create_client_container(
         });
     }
 
+    let security_opt = if devices.is_empty() {
+        vec![]
+    } else {
+        vec!["label=disable".to_string()]
+    };
+
     // Create the container
     let opts = CreateContainerOpts {
         name: name.clone(),
@@ -974,6 +980,7 @@ async fn create_client_container(
         user: None,
         healthcheck: None,
         devices,
+        security_opt,
     };
 
     let container_id = container_mgr.create_container(opts).await?;

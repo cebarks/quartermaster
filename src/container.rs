@@ -107,6 +107,7 @@ pub struct CreateContainerOpts {
     pub user: Option<String>,
     pub healthcheck: Option<HealthConfig>,
     pub devices: Vec<DeviceMapping>,
+    pub security_opt: Vec<String>,
 }
 
 impl CreateContainerOpts {
@@ -301,6 +302,11 @@ impl ContainerManager {
                     Some(port_bindings)
                 },
                 devices,
+                security_opt: if opts.security_opt.is_empty() {
+                    None
+                } else {
+                    Some(opts.security_opt.clone())
+                },
                 ..Default::default()
             }),
             ..Default::default()
@@ -437,6 +443,7 @@ mod tests {
             user: None,
             healthcheck: None,
             devices: vec![],
+            security_opt: vec![],
         };
         let labels = opts.all_labels();
         assert!(labels.iter().any(|(k, v)| k == "managed-by" && v == "quma"));
@@ -454,6 +461,7 @@ mod tests {
             user: None,
             healthcheck: None,
             devices: vec![],
+            security_opt: vec![],
         };
         assert!(opts.devices.is_empty());
     }
