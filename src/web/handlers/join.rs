@@ -317,6 +317,7 @@ set -euo pipefail
 SERVER_NAME='{server_name}'
 SERVER_URL='{external_url}'
 ARCHIVE_URL='{external_url}/quma/join/mods.zip?code={code}'
+LAUNCHER_CONFIG='SPT/user/launcher/config.json'
 
 echo "=== Quartermaster Bootstrap ==="
 echo "Setting up client for: $SERVER_NAME"
@@ -346,14 +347,32 @@ curl -sSL -o "$TMPFILE" "$ARCHIVE_URL"
 echo "Extracting mods..."
 unzip -o "$TMPFILE" -d .
 
+# Configure launcher server address
+if [ -f "$LAUNCHER_CONFIG" ]; then
+    if command -v python3 &>/dev/null; then
+        python3 -c "
+import json, sys
+with open(sys.argv[1]) as f: cfg = json.load(f)
+cfg.setdefault('Server', {{}})['Url'] = sys.argv[2]
+with open(sys.argv[1], 'w') as f: json.dump(cfg, f, indent=2)
+" "$LAUNCHER_CONFIG" "$SERVER_URL"
+        echo "Launcher configured: server address set to $SERVER_URL"
+    else
+        echo "NOTE: python3 not found — set the server address manually in SPT Launcher:"
+        echo "  $SERVER_URL"
+    fi
+else
+    echo "NOTE: Launcher config not found at $LAUNCHER_CONFIG"
+    echo "  Launch SPT once, then re-run this script, or set the server address manually:"
+    echo "  $SERVER_URL"
+fi
+
 echo ""
 echo "=== Setup Complete ==="
-echo "Server address: $SERVER_URL"
 echo ""
 echo "Next steps:"
-echo "  1. Open SPT Launcher and set the server address to: $SERVER_URL"
-echo "  2. Launch the game and connect"
-echo "  3. After connecting, register at: $SERVER_URL/quma/register?code={code}"
+echo "  1. Launch SPT and connect"
+echo "  2. After connecting, register at: $SERVER_URL/quma/register?code={code}"
 "#
     )
 }
@@ -369,6 +388,7 @@ fn generate_powershell_script(server_name: &str, external_url: &str, code: &str)
 $ServerName = '{server_name}'
 $ServerUrl = '{external_url}'
 $ArchiveUrl = '{external_url}/quma/join/mods.zip?code={code}'
+$LauncherConfig = 'SPT\user\launcher\config.json'
 
 Write-Host "=== Quartermaster Bootstrap ==="
 Write-Host "Setting up client for: $ServerName"
@@ -390,14 +410,27 @@ try {{
     Write-Host "Extracting mods..."
     Expand-Archive -Path $TmpFile -DestinationPath . -Force
 
+    # Configure launcher server address
+    if (Test-Path $LauncherConfig) {{
+        $cfg = Get-Content $LauncherConfig -Raw | ConvertFrom-Json
+        if (-not $cfg.Server) {{
+            $cfg | Add-Member -NotePropertyName 'Server' -NotePropertyValue ([PSCustomObject]@{{}})
+        }}
+        $cfg.Server.Url = $ServerUrl
+        $cfg | ConvertTo-Json -Depth 10 | Set-Content $LauncherConfig -Encoding UTF8
+        Write-Host "Launcher configured: server address set to $ServerUrl" -ForegroundColor Green
+    }} else {{
+        Write-Host "NOTE: Launcher config not found at $LauncherConfig" -ForegroundColor Yellow
+        Write-Host "  Launch SPT once, then re-run this script, or set the server address manually:"
+        Write-Host "  $ServerUrl"
+    }}
+
     Write-Host ""
     Write-Host "=== Setup Complete ===" -ForegroundColor Green
-    Write-Host "Server address: $ServerUrl"
     Write-Host ""
     Write-Host "Next steps:"
-    Write-Host "  1. Open SPT Launcher and set the server address to: $ServerUrl"
-    Write-Host "  2. Launch the game and connect"
-    Write-Host "  3. After connecting, register at: $ServerUrl/quma/register?code={code}"
+    Write-Host "  1. Launch SPT and connect"
+    Write-Host "  2. After connecting, register at: $ServerUrl/quma/register?code={code}"
 }} finally {{
     if (Test-Path $TmpFile) {{ Remove-Item $TmpFile -Force }}
 }}
