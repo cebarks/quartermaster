@@ -337,15 +337,16 @@ impl Database {
     }
 
     pub fn count_client_syncable_mods(&self) -> rusqlite::Result<usize> {
-        let count: i64 = self.conn.query_row(
+        use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID, NARCONET_FORGE_MOD_ID};
+        let sql = format!(
             "SELECT COUNT(DISTINCT m.id) FROM installed_mods m
              JOIN installed_files f ON f.mod_id = m.id
              WHERE f.file_path LIKE 'BepInEx/%'
              AND m.disabled = 0
-             AND m.forge_mod_id NOT IN (2441, 2326, 2357)",
-            [],
-            |row| row.get(0),
-        )?;
+             AND m.forge_mod_id NOT IN ({}, {}, {})",
+            NARCONET_FORGE_MOD_ID, FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID
+        );
+        let count: i64 = self.conn.query_row(&sql, [], |row| row.get(0))?;
         Ok(count as usize)
     }
 

@@ -413,9 +413,10 @@ try {{
     if (Test-Path $LauncherConfig) {{
         $cfg = Get-Content $LauncherConfig -Raw | ConvertFrom-Json
         if (-not $cfg.Server) {{
-            $cfg | Add-Member -NotePropertyName 'Server' -NotePropertyValue ([PSCustomObject]@{{}})
+            $cfg | Add-Member -NotePropertyName 'Server' -NotePropertyValue ([PSCustomObject]@{{Url=$ServerUrl}})
+        }} else {{
+            $cfg.Server | Add-Member -NotePropertyName 'Url' -NotePropertyValue $ServerUrl -Force
         }}
-        $cfg.Server.Url = $ServerUrl
         $cfg | ConvertTo-Json -Depth 10 | Set-Content $LauncherConfig -Encoding UTF8
         Write-Host "Launcher configured: server address set to $ServerUrl" -ForegroundColor Green
     }} else {{

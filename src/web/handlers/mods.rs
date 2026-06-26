@@ -24,10 +24,9 @@ mod filters {
 
 // -- Constants --
 
-const INFRASTRUCTURE_FORGE_IDS: &[i64] = &[
-    2326, // Project Fika (client)
-    2357, // Project Fika - Server
-];
+use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID};
+
+const INFRASTRUCTURE_FORGE_IDS: &[i64] = &[FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID];
 
 fn is_infrastructure_mod(forge_mod_id: i64) -> bool {
     INFRASTRUCTURE_FORGE_IDS.contains(&forge_mod_id)
@@ -754,14 +753,12 @@ pub async fn install_mod(
         }
     };
 
-    const FIKA_FORGE_MOD_ID: i64 = 2326;
-
     // Check Fika compatibility if Fika is installed
     {
         let db = state.db.clone();
         let fika_installed = web::block(move || {
             let db = db.lock();
-            Ok::<_, anyhow::Error>(db.get_mod_by_forge_id(FIKA_FORGE_MOD_ID)?.is_some())
+            Ok::<_, anyhow::Error>(db.get_mod_by_forge_id(FIKA_CLIENT_FORGE_ID)?.is_some())
         })
         .await
         .map_err(WebError::from)?

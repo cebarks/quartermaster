@@ -492,6 +492,7 @@ pub fn is_fika_installed(spt_dir: &Path) -> bool {
 
 pub const NARCONET_FORGE_MOD_ID: i64 = 2441;
 pub const FIKA_CLIENT_FORGE_ID: i64 = 2326;
+pub const FIKA_SERVER_FORGE_ID: i64 = 2357;
 
 pub fn find_narconet_dir(spt_dir: &Path) -> Option<PathBuf> {
     let mods_dir = spt_dir.join("SPT/user/mods");

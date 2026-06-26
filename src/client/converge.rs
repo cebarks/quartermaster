@@ -14,8 +14,7 @@ use tracing::{debug, info, warn};
 const MANAGED_BY_LABEL: &str = "quma.managed-by";
 const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 
-/// Forge mod ID for the Fika client mod (https://forge.sp-tarkov.com/mod/2326)
-const FIKA_CLIENT_FORGE_ID: i64 = 2326;
+use crate::config::FIKA_CLIENT_FORGE_ID;
 
 /// Edit the headless amount in fika.jsonc using targeted text replacement to preserve comments.
 ///
