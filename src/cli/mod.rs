@@ -38,6 +38,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub log_level: Option<String>,
 
+    /// Console log format (compact, full, json)
+    #[arg(long, global = true)]
+    pub log_format: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }

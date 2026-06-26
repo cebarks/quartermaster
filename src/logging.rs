@@ -16,7 +16,7 @@ use tracing_subscriber::reload;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 
-use crate::config::{LogFormat, LoggingConfig, RotationPolicy};
+use crate::config::{ConsoleFormat, FileFormat, LoggingConfig, RotationPolicy};
 
 // ---------------------------------------------------------------------------
 // LogEntry — the structured log record shared via broadcast + ring buffer
@@ -205,8 +205,12 @@ impl ReloadHandles {
         // Update console layer
         if config.console.enabled {
             let layer: BoxedConsole = match config.console.format {
-                LogFormat::Json => Box::new(fmt::layer().json().with_writer(std::io::stderr)),
-                LogFormat::Text => Box::new(fmt::layer().with_writer(std::io::stderr)),
+                ConsoleFormat::Json => Box::new(fmt::layer().json().with_writer(std::io::stderr)),
+                ConsoleFormat::Full => Box::new(fmt::layer().with_writer(std::io::stderr)),
+                ConsoleFormat::Compact => {
+                    // Placeholder: use Full format until CompactFormatter is implemented in Task 2
+                    Box::new(fmt::layer().with_writer(std::io::stderr))
+                }
             };
             let _ = self.console_handle.reload(layer);
         } else {
@@ -371,8 +375,8 @@ fn build_file_layer(
             let appender = tracing_appender::rolling::daily(dir, filename);
             let (non_blocking, guard) = tracing_appender::non_blocking(appender);
             let layer: Box<dyn Layer<S2> + Send + Sync> = match config.format {
-                LogFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
-                LogFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
+                FileFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
+                FileFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
             };
             (layer, guard)
         }
@@ -386,8 +390,8 @@ fn build_file_layer(
             .expect("failed to create rolling file appender");
             let (non_blocking, guard) = tracing_appender::non_blocking(appender);
             let layer: Box<dyn Layer<S2> + Send + Sync> = match config.format {
-                LogFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
-                LogFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
+                FileFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
+                FileFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
             };
             (layer, guard)
         }
@@ -401,8 +405,8 @@ fn build_file_layer(
             .expect("failed to create file appender");
             let (non_blocking, guard) = tracing_appender::non_blocking(appender);
             let layer: Box<dyn Layer<S2> + Send + Sync> = match config.format {
-                LogFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
-                LogFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
+                FileFormat::Json => Box::new(fmt::layer().json().with_writer(non_blocking)),
+                FileFormat::Text => Box::new(fmt::layer().with_writer(non_blocking)),
             };
             (layer, guard)
         }

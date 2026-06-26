@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use super::Cli;
-use crate::config::{is_fika_installed, Config};
+use crate::config::{self, is_fika_installed, Config};
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging;
@@ -32,7 +32,15 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     // Reconfigure logging now that config is loaded
     let filter =
         logging::resolve_log_filter(&config.logging, cli.verbose, cli.log_level.as_deref());
-    reload_handles.reconfigure(&config.logging, &filter, Some(&spt_dir));
+
+    let mut logging_config = config.logging.clone();
+    if let Some(ref fmt) = cli.log_format {
+        if let Ok(format) = fmt.parse::<config::ConsoleFormat>() {
+            logging_config.console.format = format;
+        }
+    }
+
+    reload_handles.reconfigure(&logging_config, &filter, Some(&spt_dir));
 
     config.ensure_session_secret();
     config

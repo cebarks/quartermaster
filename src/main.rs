@@ -31,7 +31,15 @@ fn init_context(cli: &Cli, handles: &logging::ReloadHandles) -> Result<cli::comm
     let ctx = cli::common::resolve_context(cli)?;
     let filter =
         logging::resolve_log_filter(&ctx.config.logging, cli.verbose, cli.log_level.as_deref());
-    handles.reconfigure(&ctx.config.logging, &filter, Some(&ctx.spt_dir));
+
+    let mut logging_config = ctx.config.logging.clone();
+    if let Some(ref fmt) = cli.log_format {
+        if let Ok(format) = fmt.parse::<config::ConsoleFormat>() {
+            logging_config.console.format = format;
+        }
+    }
+
+    handles.reconfigure(&logging_config, &filter, Some(&ctx.spt_dir));
     Ok(ctx)
 }
 

@@ -93,29 +93,62 @@ fn default_max_backups() -> u32 {
     3
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum LogFormat {
-    Text,
+pub enum ConsoleFormat {
+    #[default]
+    Compact,
+    #[serde(alias = "text")]
+    Full,
     Json,
 }
 
-impl std::fmt::Display for LogFormat {
+impl std::fmt::Display for ConsoleFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LogFormat::Text => write!(f, "text"),
-            LogFormat::Json => write!(f, "json"),
+            ConsoleFormat::Compact => write!(f, "compact"),
+            ConsoleFormat::Full => write!(f, "full"),
+            ConsoleFormat::Json => write!(f, "json"),
         }
     }
 }
 
-impl std::str::FromStr for LogFormat {
+impl std::str::FromStr for ConsoleFormat {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self> {
         match s {
-            "text" => Ok(LogFormat::Text),
-            "json" => Ok(LogFormat::Json),
-            _ => bail!("unknown log format: {s}"),
+            "compact" => Ok(ConsoleFormat::Compact),
+            "full" | "text" => Ok(ConsoleFormat::Full),
+            "json" => Ok(ConsoleFormat::Json),
+            _ => bail!("unknown console format: {s}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileFormat {
+    Text,
+    #[default]
+    Json,
+}
+
+impl std::fmt::Display for FileFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FileFormat::Text => write!(f, "text"),
+            FileFormat::Json => write!(f, "json"),
+        }
+    }
+}
+
+impl std::str::FromStr for FileFormat {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "text" => Ok(FileFormat::Text),
+            "json" => Ok(FileFormat::Json),
+            _ => bail!("unknown file format: {s} (valid: text, json)"),
         }
     }
 }
@@ -158,20 +191,20 @@ fn default_console_enabled() -> bool {
     true
 }
 
-fn default_log_format_text() -> LogFormat {
-    LogFormat::Text
-}
-
-fn default_log_format_json() -> LogFormat {
-    LogFormat::Json
+fn default_file_enabled() -> bool {
+    true
 }
 
 fn default_file_path() -> String {
-    "quartermaster.log".to_string()
+    "logs/quartermaster.log".to_string()
+}
+
+fn default_file_level() -> String {
+    "debug".to_string()
 }
 
 fn default_rotation() -> RotationPolicy {
-    RotationPolicy::None
+    RotationPolicy::Daily
 }
 
 fn default_max_size_mb() -> u64 {
@@ -179,11 +212,23 @@ fn default_max_size_mb() -> u64 {
 }
 
 fn default_max_files() -> usize {
-    5
+    7
 }
 
 fn default_buffer_size() -> usize {
     1000
+}
+
+fn default_web_level() -> String {
+    "info".to_string()
+}
+
+fn default_retention_days() -> u64 {
+    7
+}
+
+fn default_max_entries() -> u64 {
+    100_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -563,27 +608,29 @@ pub fn is_svm_installed(spt_dir: &Path) -> bool {
 pub struct ConsoleLogConfig {
     #[serde(default = "default_console_enabled")]
     pub enabled: bool,
-    #[serde(default = "default_log_format_text")]
-    pub format: LogFormat,
+    #[serde(default)]
+    pub format: ConsoleFormat,
 }
 
 impl Default for ConsoleLogConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            format: LogFormat::Text,
+            format: ConsoleFormat::Compact,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileLogConfig {
-    #[serde(default)]
+    #[serde(default = "default_file_enabled")]
     pub enabled: bool,
     #[serde(default = "default_file_path")]
     pub path: String,
-    #[serde(default = "default_log_format_json")]
-    pub format: LogFormat,
+    #[serde(default)]
+    pub format: FileFormat,
+    #[serde(default = "default_file_level")]
+    pub level: String,
     #[serde(default = "default_rotation")]
     pub rotation: RotationPolicy,
     #[serde(default = "default_max_size_mb")]
@@ -595,12 +642,13 @@ pub struct FileLogConfig {
 impl Default for FileLogConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            path: "quartermaster.log".to_string(),
-            format: LogFormat::Json,
-            rotation: RotationPolicy::None,
+            enabled: true,
+            path: "logs/quartermaster.log".to_string(),
+            format: FileFormat::Json,
+            level: "debug".to_string(),
+            rotation: RotationPolicy::Daily,
             max_size_mb: 10,
-            max_files: 5,
+            max_files: 7,
         }
     }
 }
@@ -609,11 +657,22 @@ impl Default for FileLogConfig {
 pub struct WebLogConfig {
     #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
+    #[serde(default = "default_web_level")]
+    pub level: String,
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u64,
+    #[serde(default = "default_max_entries")]
+    pub max_entries: u64,
 }
 
 impl Default for WebLogConfig {
     fn default() -> Self {
-        Self { buffer_size: 1000 }
+        Self {
+            buffer_size: 1000,
+            level: "info".to_string(),
+            retention_days: 7,
+            max_entries: 100_000,
+        }
     }
 }
 
@@ -893,6 +952,12 @@ impl Config {
         env_override!(str: self.logging.level, "QUMA_LOG_LEVEL");
         env_override!(str: self.logging.file.path, "QUMA_LOG_FILE_PATH");
         env_override!(bool: self.logging.file.enabled, "QUMA_LOG_FILE_ENABLED");
+        env_override!(str: self.logging.file.level, "QUMA_LOG_FILE_LEVEL");
+        if let Ok(val) = std::env::var("QUMA_LOG_CONSOLE_FORMAT") {
+            if let Ok(fmt) = val.parse::<ConsoleFormat>() {
+                self.logging.console.format = fmt;
+            }
+        }
         env_override!(parse: self.headless.get_or_insert_with(HeadlessConfig::default).restart_policy, "QUMA_HEADLESS_RESTART_POLICY", RestartPolicy);
         env_override!(path: self.headless.get_or_insert_with(HeadlessConfig::default).install_dir, "QUMA_HEADLESS_INSTALL_DIR");
         env_override!(bool: self.tls_enabled, "QUMA_TLS_ENABLED");
@@ -1141,14 +1206,18 @@ web_port = 3000
         assert_eq!(config.logging, LoggingConfig::default());
         assert_eq!(config.logging.level, "info");
         assert!(config.logging.console.enabled);
-        assert_eq!(config.logging.console.format, LogFormat::Text);
-        assert!(!config.logging.file.enabled);
-        assert_eq!(config.logging.file.path, "quartermaster.log");
-        assert_eq!(config.logging.file.format, LogFormat::Json);
-        assert_eq!(config.logging.file.rotation, RotationPolicy::None);
+        assert_eq!(config.logging.console.format, ConsoleFormat::Compact);
+        assert!(config.logging.file.enabled);
+        assert_eq!(config.logging.file.path, "logs/quartermaster.log");
+        assert_eq!(config.logging.file.format, FileFormat::Json);
+        assert_eq!(config.logging.file.level, "debug");
+        assert_eq!(config.logging.file.rotation, RotationPolicy::Daily);
         assert_eq!(config.logging.file.max_size_mb, 10);
-        assert_eq!(config.logging.file.max_files, 5);
+        assert_eq!(config.logging.file.max_files, 7);
         assert_eq!(config.logging.web.buffer_size, 1000);
+        assert_eq!(config.logging.web.level, "info");
+        assert_eq!(config.logging.web.retention_days, 7);
+        assert_eq!(config.logging.web.max_entries, 100_000);
     }
 
     #[test]
@@ -1165,24 +1234,32 @@ format = "json"
 enabled = true
 path = "/var/log/quma.log"
 format = "text"
+level = "trace"
 rotation = "size"
 max_size_mb = 50
 max_files = 10
 
 [logging.web]
 buffer_size = 5000
+level = "warn"
+retention_days = 14
+max_entries = 200000
 "#;
         let config: Config = toml::from_str(toml_str).expect("should parse");
         assert_eq!(config.logging.level, "debug");
         assert!(!config.logging.console.enabled);
-        assert_eq!(config.logging.console.format, LogFormat::Json);
+        assert_eq!(config.logging.console.format, ConsoleFormat::Json);
         assert!(config.logging.file.enabled);
         assert_eq!(config.logging.file.path, "/var/log/quma.log");
-        assert_eq!(config.logging.file.format, LogFormat::Text);
+        assert_eq!(config.logging.file.format, FileFormat::Text);
+        assert_eq!(config.logging.file.level, "trace");
         assert_eq!(config.logging.file.rotation, RotationPolicy::Size);
         assert_eq!(config.logging.file.max_size_mb, 50);
         assert_eq!(config.logging.file.max_files, 10);
         assert_eq!(config.logging.web.buffer_size, 5000);
+        assert_eq!(config.logging.web.level, "warn");
+        assert_eq!(config.logging.web.retention_days, 14);
+        assert_eq!(config.logging.web.max_entries, 200_000);
     }
 
     #[test]
@@ -1824,5 +1901,67 @@ silent = true
         assert_eq!("stop".parse::<OnExit>().unwrap(), OnExit::Stop);
         assert_eq!("remove".parse::<OnExit>().unwrap(), OnExit::Remove);
         assert!("invalid".parse::<OnExit>().is_err());
+    }
+}
+
+#[cfg(test)]
+mod logging_config_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn console_format_round_trips() {
+        assert_eq!(
+            "compact".parse::<ConsoleFormat>().unwrap(),
+            ConsoleFormat::Compact
+        );
+        assert_eq!(
+            "full".parse::<ConsoleFormat>().unwrap(),
+            ConsoleFormat::Full
+        );
+        assert_eq!(
+            "json".parse::<ConsoleFormat>().unwrap(),
+            ConsoleFormat::Json
+        );
+        assert_eq!(ConsoleFormat::Compact.to_string(), "compact");
+    }
+
+    #[test]
+    fn file_format_round_trips() {
+        assert_eq!("text".parse::<FileFormat>().unwrap(), FileFormat::Text);
+        assert_eq!("json".parse::<FileFormat>().unwrap(), FileFormat::Json);
+        assert!(FileFormat::from_str("compact").is_err());
+    }
+
+    #[test]
+    fn console_format_rejects_invalid() {
+        assert!("compact".parse::<FileFormat>().is_err());
+    }
+
+    #[test]
+    fn new_defaults_correct() {
+        let config = LoggingConfig::default();
+        assert_eq!(config.console.format, ConsoleFormat::Compact);
+        assert_eq!(config.file.path, "logs/quartermaster.log");
+        assert_eq!(config.file.rotation, RotationPolicy::Daily);
+        assert_eq!(config.file.max_files, 7);
+        assert_eq!(config.file.level, "debug");
+        assert_eq!(config.web.level, "info");
+        assert_eq!(config.web.retention_days, 7);
+        assert_eq!(config.web.max_entries, 100_000);
+    }
+
+    #[test]
+    fn legacy_text_format_deserializes_to_full() {
+        let toml_str = r#"
+[logging]
+level = "info"
+
+[logging.console]
+enabled = true
+format = "text"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.logging.console.format, ConsoleFormat::Full);
     }
 }

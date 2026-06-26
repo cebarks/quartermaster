@@ -5,8 +5,8 @@ use askama::Template;
 
 use crate::client::ClientState;
 use crate::config::{
-    Config, ConsoleLogConfig, FileLogConfig, HeadlessConfig, LogFormat, LoggingConfig,
-    RestartPolicy, RotationPolicy, WebLogConfig,
+    Config, ConsoleFormat, ConsoleLogConfig, FileFormat, FileLogConfig, HeadlessConfig,
+    LoggingConfig, RestartPolicy, RotationPolicy, WebLogConfig,
 };
 use crate::db::rbac::Permission;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
@@ -160,10 +160,14 @@ pub struct LoggingSettingsForm {
     file_enabled: Option<String>,
     file_path: String,
     file_format: String,
+    file_level: String,
     file_rotation: String,
     file_max_size_mb: u64,
     file_max_files: usize,
     web_buffer_size: usize,
+    web_level: String,
+    web_retention_days: u64,
+    web_max_entries: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -390,18 +394,25 @@ pub async fn save_logging_settings(
         level: form.log_level.trim().to_string(),
         console: ConsoleLogConfig {
             enabled: form.console_enabled.is_some(),
-            format: form.console_format.parse().unwrap_or(LogFormat::Text),
+            format: form
+                .console_format
+                .parse()
+                .unwrap_or(ConsoleFormat::Compact),
         },
         file: FileLogConfig {
             enabled: form.file_enabled.is_some(),
             path: form.file_path.trim().to_string(),
-            format: form.file_format.parse().unwrap_or(LogFormat::Json),
-            rotation: form.file_rotation.parse().unwrap_or(RotationPolicy::None),
+            format: form.file_format.parse().unwrap_or(FileFormat::Json),
+            level: form.file_level.trim().to_string(),
+            rotation: form.file_rotation.parse().unwrap_or(RotationPolicy::Daily),
             max_size_mb: form.file_max_size_mb,
             max_files: form.file_max_files,
         },
         web: WebLogConfig {
             buffer_size: form.web_buffer_size,
+            level: form.web_level.trim().to_string(),
+            retention_days: form.web_retention_days,
+            max_entries: form.web_max_entries,
         },
     };
 
