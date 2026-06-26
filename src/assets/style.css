@@ -398,3 +398,51 @@ th a.sortable:hover {
 th a.sortable.active {
     color: var(--accent);
 }
+
+/* Code blocks */
+pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.8rem;
+    font-size: 0.85rem;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+}
+pre code {
+    font-family: monospace;
+    white-space: pre;
+}
+
+/* Join page details / summary */
+.join-page details {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 0.5rem;
+}
+.join-page details[open] {
+    background: rgba(0,0,0,0.15);
+}
+.join-page details summary {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    list-style: none;
+}
+.join-page details summary::-webkit-details-marker { display: none; }
+.join-page details summary::before {
+    content: "▸ ";
+    display: inline;
+}
+.join-page details[open] summary::before {
+    content: "▾ ";
+}
+.join-page details summary:hover { color: var(--text); }
+.join-page details > :not(summary) {
+    padding: 0 0.75rem;
+}
+.join-page details > :last-child {
+    padding-bottom: 0.75rem;
+}

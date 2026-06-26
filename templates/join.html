@@ -11,8 +11,13 @@
         <span class="brand">Quartermaster</span>
     </nav>
     <main>
-    <div class="card auth-card" style="max-width: 640px; margin: 2rem auto;">
-        <h2>Join {{ server_name }}</h2>
+    <div class="join-page" style="max-width: 540px; margin: 2rem auto;">
+        <h1 style="border-bottom: none; text-align: center; margin-bottom: 0.25rem;">Join {{ server_name }}</h1>
+        <p class="text-muted text-sm" style="text-align: center; margin-bottom: 1.5rem;">
+            SPT {{ spt_version }}
+            {% if fika_installed %} · Fika{% endif %}
+            {% if mod_count > 0 %} · {{ mod_count }} synced mod{% if mod_count != 1 %}s{% endif %}{% endif %}
+        </p>
 
         {% if let Some(error) = error %}
         <div class="alert alert-error">{{ error }}</div>
@@ -24,42 +29,41 @@
         </div>
         {% endif %}
 
-        <div class="server-info" style="margin-bottom: 1.5rem;">
-            <p><strong>SPT Version:</strong> {{ spt_version }}</p>
-            <p><strong>Fika:</strong> {% if fika_installed %}Installed{% else %}Not installed{% endif %}</p>
-            <p><strong>Synced Mods:</strong> {{ mod_count }}</p>
+        <div class="card" style="margin-bottom: 1rem;">
+            <h2>1. Set Up Your Client</h2>
+            <p class="text-muted text-sm" style="margin-bottom: 0.75rem;">Run from your SPT installation directory:</p>
+
+            <details open>
+                <summary>Linux / macOS</summary>
+                <pre><code>curl -sSL '{{ external_url }}/quma/join/bootstrap.sh?code={{ code }}' | bash</code></pre>
+                <p class="text-sm text-muted">Or <a href="/quma/join/bootstrap.sh?code={{ code }}">download the script</a> and run it manually.</p>
+            </details>
+
+            <details>
+                <summary>Windows (PowerShell)</summary>
+                <pre><code>irm '{{ external_url }}/quma/join/bootstrap.ps1?code={{ code }}' | iex</code></pre>
+                <p class="text-sm text-muted">Or <a href="/quma/join/bootstrap.ps1?code={{ code }}">download the script</a> and run it manually.</p>
+            </details>
+
+            <details>
+                <summary>Manual Setup</summary>
+                <ol style="padding-left: 1.25rem; line-height: 2;">
+                    <li>Download the <a href="/quma/join/mods.zip?code={{ code }}">mod archive</a></li>
+                    <li>Extract into your SPT directory (overwrite if prompted)</li>
+                </ol>
+            </details>
         </div>
 
-        <h3>Step 1: Set Up Your Client</h3>
-        <p>Run this from your SPT installation directory:</p>
+        <div class="card" style="margin-bottom: 1rem;">
+            <h2>2. Connect</h2>
+            <p>Set the server address in SPT Launcher to:</p>
+            <pre><code>{{ external_url }}</code></pre>
+        </div>
 
-        <details open>
-            <summary><strong>Linux / macOS</strong></summary>
-            <pre><code>curl -sSL '{{ external_url }}/quma/join/bootstrap.sh?code={{ code }}' | bash</code></pre>
-            <p>Or <a href="/quma/join/bootstrap.sh?code={{ code }}">download the script</a> and run it manually.</p>
-        </details>
-
-        <details>
-            <summary><strong>Windows (PowerShell)</strong></summary>
-            <pre><code>irm '{{ external_url }}/quma/join/bootstrap.ps1?code={{ code }}' | iex</code></pre>
-            <p>Or <a href="/quma/join/bootstrap.ps1?code={{ code }}">download the script</a> and run it manually.</p>
-        </details>
-
-        <details>
-            <summary><strong>Manual Setup</strong></summary>
-            <ol>
-                <li>Download the <a href="/quma/join/mods.zip?code={{ code }}">mod archive</a></li>
-                <li>Extract it into your SPT installation directory (overwrite if prompted)</li>
-            </ol>
-        </details>
-
-        <h3>Step 2: Connect</h3>
-        <p>Open the SPT Launcher, set the server address to:</p>
-        <pre><code>{{ external_url }}</code></pre>
-        <p>Launch the game and connect.</p>
-
-        <h3>Step 3: Register Your Account</h3>
-        <p>After connecting for the first time, <a href="/quma/register?code={{ code }}">register your account</a> to access the dashboard.</p>
+        <div class="card">
+            <h2>3. Register</h2>
+            <p>After connecting, <a href="/quma/register?code={{ code }}">register your account</a> to access the dashboard.</p>
+        </div>
 
         {% endif %}
     </div>
