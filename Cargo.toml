@@ -77,7 +77,6 @@ askama = "0.16"
 
 # Static asset embedding
 rust-embed = "8"
-actix-web-rust-embed-responder = "2.4"
 
 # Password hashing
 argon2 = "0.5"
