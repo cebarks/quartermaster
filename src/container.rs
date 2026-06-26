@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bollard::models::{
-    ContainerCreateBody, ContainerInspectResponse, HealthConfig, HostConfig, PortBinding,
+    ContainerCreateBody, ContainerInspectResponse, DeviceMapping, HealthConfig, HostConfig,
+    PortBinding,
 };
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
@@ -106,6 +107,7 @@ pub struct CreateContainerOpts {
     pub labels: Vec<(String, String)>,
     pub user: Option<String>,
     pub healthcheck: Option<HealthConfig>,
+    pub devices: Vec<DeviceMapping>,
 }
 
 impl CreateContainerOpts {
@@ -267,6 +269,12 @@ impl ContainerManager {
             );
         }
 
+        let devices = if opts.devices.is_empty() {
+            None
+        } else {
+            Some(opts.devices.clone())
+        };
+
         let body = ContainerCreateBody {
             image: Some(opts.image.clone()),
             env: Some(env),
@@ -280,6 +288,7 @@ impl ContainerManager {
                 } else {
                     Some(port_bindings)
                 },
+                devices,
                 ..Default::default()
             }),
             ..Default::default()
@@ -415,9 +424,26 @@ mod tests {
             labels: vec![("custom".to_string(), "value".to_string())],
             user: None,
             healthcheck: None,
+            devices: vec![],
         };
         let labels = opts.all_labels();
         assert!(labels.iter().any(|(k, v)| k == "managed-by" && v == "quma"));
+    }
+
+    #[test]
+    fn create_container_opts_devices_default_empty() {
+        let opts = CreateContainerOpts {
+            name: "test".to_string(),
+            image: "test:latest".to_string(),
+            env: vec![],
+            volumes: vec![],
+            ports: vec![],
+            labels: vec![],
+            user: None,
+            healthcheck: None,
+            devices: vec![],
+        };
+        assert!(opts.devices.is_empty());
     }
 
     #[test]

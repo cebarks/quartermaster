@@ -306,6 +306,7 @@ fn create_container_opts(
             start_period: Some(120_000_000_000), // 120s - SPT server takes a while to boot
             start_interval: None,
         }),
+        devices: vec![],
     }
 }
 

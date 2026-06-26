@@ -885,6 +885,7 @@ async fn create_client_container(
         labels,
         user: None,
         healthcheck: None,
+        devices: vec![],
     };
 
     let container_id = container_mgr.create_container(opts).await?;
