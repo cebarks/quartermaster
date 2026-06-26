@@ -4,10 +4,9 @@ use serde::Serialize;
 use super::common::{find_unmanaged_mod_dirs, truncate_str, CliContext};
 use crate::config::is_modsync_installed;
 
-const INFRASTRUCTURE_FORGE_IDS: &[i64] = &[
-    2326, // Project Fika (client)
-    2357, // Project Fika - Server
-];
+use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID};
+
+const INFRASTRUCTURE_FORGE_IDS: &[i64] = &[FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID];
 
 #[derive(Serialize)]
 struct ModEntry {

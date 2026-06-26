@@ -3,6 +3,7 @@ use actix_web::web::{self, Data, Form, Html, Path, Query};
 use actix_web::HttpRequest;
 use askama::Template;
 
+use crate::config::FIKA_CLIENT_FORGE_ID;
 use crate::db::rbac::Permission;
 use crate::db::requests::{ModRequestView, VoteComment};
 use crate::forge::models::FikaCompat;
@@ -602,12 +603,13 @@ pub async fn resolve_request(
                 let version = versions.last().expect("checked non-empty above");
 
                 // Fika compatibility check (same pattern as install_mod)
-                const FIKA_FORGE_MOD_ID: i64 = 2326;
                 {
                     let db = state.db.clone();
                     let fika_installed = web::block(move || {
                         let db = db.lock();
-                        Ok::<_, anyhow::Error>(db.get_mod_by_forge_id(FIKA_FORGE_MOD_ID)?.is_some())
+                        Ok::<_, anyhow::Error>(
+                            db.get_mod_by_forge_id(FIKA_CLIENT_FORGE_ID)?.is_some(),
+                        )
                     })
                     .await
                     .map_err(WebError::from)?

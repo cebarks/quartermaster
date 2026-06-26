@@ -117,6 +117,7 @@ struct InvitesPartialTemplate {
     invites: Vec<InviteView>,
     csrf_token: String,
     highlight_code: Option<String>,
+    external_url: Option<String>,
 }
 
 #[derive(Template)]
@@ -479,11 +480,13 @@ pub async fn admin_invites(
     .map_err(WebError::from)?;
 
     let invites: Vec<InviteView> = db_invites.into_iter().map(InviteView::from_db).collect();
+    let external_url = state.config.read().external_url.clone();
 
     let tmpl = InvitesPartialTemplate {
         invites,
         csrf_token,
         highlight_code: None,
+        external_url,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -532,11 +535,13 @@ pub async fn create_invite(
     .map_err(WebError::from)?;
 
     let invites: Vec<InviteView> = db_invites.into_iter().map(InviteView::from_db).collect();
+    let external_url = state.config.read().external_url.clone();
 
     let tmpl = InvitesPartialTemplate {
         invites,
         csrf_token,
         highlight_code: Some(code),
+        external_url,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
