@@ -226,7 +226,7 @@ fn default_base_udp_port() -> u16 {
     25565
 }
 fn default_headless_image() -> String {
-    "ghcr.io/zhliau/fika-headless-docker:latest".to_string()
+    "quma-headless:latest".to_string()
 }
 fn default_isolated_paths() -> Vec<String> {
     vec!["BepInEx/config".to_string()]
@@ -1297,7 +1297,7 @@ install_dir = "/opt/fika"
         assert_eq!(headless.max_restart_attempts, 5);
         assert_eq!(headless.restart_backoff_cap, 300);
         assert_eq!(headless.base_udp_port, 25565);
-        assert_eq!(headless.image, "ghcr.io/zhliau/fika-headless-docker:latest");
+        assert_eq!(headless.image, "quma-headless:latest");
         assert_eq!(headless.isolated_paths, vec!["BepInEx/config".to_string()]);
     }
 

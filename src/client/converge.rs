@@ -1,9 +1,12 @@
 use crate::config::{Config, HeadlessConfig};
-use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
+use crate::container::{
+    ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
+};
 use crate::forge::client::ForgeClient;
 use crate::spt::profiles;
 use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
+use bollard::models::DeviceMapping;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -414,6 +417,17 @@ pub fn setup_client_overlay(
 ) -> Result<()> {
     let overlay_dir = spt_dir.join("clients").join(index.to_string());
 
+    let wine_prefix_dir = overlay_dir.join("wine-prefix");
+    if !wine_prefix_dir.exists() {
+        std::fs::create_dir_all(&wine_prefix_dir).with_context(|| {
+            format!(
+                "failed to create wine-prefix dir {}",
+                wine_prefix_dir.display()
+            )
+        })?;
+        debug!("Created wine-prefix directory for client {index}");
+    }
+
     for isolated_path in isolated_paths {
         let src = install_dir.join(isolated_path);
         let dst = overlay_dir.join(isolated_path);
@@ -566,6 +580,14 @@ pub async fn converge(
         c.store(false, Ordering::Release);
     });
 
+    let ntsync_available = std::path::Path::new("/dev/ntsync").exists();
+    if !ntsync_available {
+        tracing::warn!(
+            "ntsync not available — headless clients will run with degraded performance. \
+             Run `sudo modprobe ntsync` or upgrade to kernel 6.14+."
+        );
+    }
+
     let desired_count = headless_config.client_count();
     info!("Starting convergence: desired count = {desired_count}");
 
@@ -612,6 +634,7 @@ pub async fn converge(
             spt_client,
             current_count,
             desired_count,
+            ntsync_available,
         )
         .await?;
     } else if current_count > desired_count {
@@ -657,6 +680,7 @@ async fn await_server_ready(spt_client: &SptClient, timeout_secs: u64) -> bool {
 }
 
 /// Ensure containers exist from current_count up to desired_count.
+#[allow(clippy::too_many_arguments)]
 async fn ensure_clients(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
@@ -665,6 +689,7 @@ async fn ensure_clients(
     spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
+    ntsync_available: bool,
 ) -> Result<()> {
     info!("Ensuring clients: {current_count} → {desired_count}");
 
@@ -724,6 +749,7 @@ async fn ensure_clients(
             i,
             profile_id,
             &effective_paths,
+            ntsync_available,
         )
         .await?;
     }
@@ -788,6 +814,7 @@ async fn remove_excess_clients(
 ///
 /// `effective_paths` is the merged list of global `isolated_paths` + per-client
 /// `extra_isolated_paths`, computed by the caller via `HeadlessConfig::effective_isolated_paths`.
+#[allow(clippy::too_many_arguments)]
 async fn create_client_container(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
@@ -796,6 +823,7 @@ async fn create_client_container(
     index: u32,
     profile_id: Option<String>,
     effective_paths: &[String],
+    ntsync_available: bool,
 ) -> Result<()> {
     let name = client_container_name(index);
     let overlay_dir = spt_dir.join("clients").join(index.to_string());
@@ -837,16 +865,22 @@ async fn create_client_container(
         });
     }
 
+    volumes.push(VolumeMount {
+        host_path: overlay_dir.join("wine-prefix"),
+        container_path: "/wine-prefix".to_string(),
+        read_only: false,
+        selinux: SelinuxLabel::Private,
+    });
+
     // Environment variables
     let mut env = vec![
-        ("HEADLESS_INDEX".to_string(), index.to_string()),
         (
             "UDP_PORT".to_string(),
             client_port(headless_config.base_udp_port, index).to_string(),
         ),
+        ("WINEPREFIX".to_string(), "/wine-prefix".to_string()),
     ];
 
-    // Add PROFILE_ID for Fika API correlation
     if let Some(ref pid) = profile_id {
         env.push(("PROFILE_ID".to_string(), pid.clone()));
         info!("Assigning profile {pid} to client {index}");
@@ -858,10 +892,7 @@ async fn create_client_container(
         );
     }
 
-    // Route headless clients through quma's HTTPS proxy so we get raid
-    // tracking, metrics, and mod-sync interception. When the web server
-    // binds a wildcard/loopback address, use host.containers.internal so
-    // the container can reach the host's network stack via Podman DNS.
+    // Route through quma's HTTPS proxy
     let proxy_host = match config.web_bind.as_str() {
         "0.0.0.0" | "127.0.0.1" | "localhost" | "" => "host.containers.internal",
         other => other,
@@ -875,17 +906,33 @@ async fn create_client_container(
         ("quma.client.index".to_string(), index.to_string()),
     ];
 
+    let udp_port = client_port(headless_config.base_udp_port, index);
+    let ports = vec![PortMapping {
+        host_port: udp_port,
+        container_port: udp_port,
+        protocol: Protocol::Udp,
+    }];
+
+    let mut devices = vec![];
+    if ntsync_available {
+        devices.push(DeviceMapping {
+            path_on_host: Some("/dev/ntsync".to_string()),
+            path_in_container: Some("/dev/ntsync".to_string()),
+            cgroup_permissions: Some("rwm".to_string()),
+        });
+    }
+
     // Create the container
     let opts = CreateContainerOpts {
         name: name.clone(),
         image: headless_config.image.clone(),
         env,
         volumes,
-        ports: vec![],
+        ports,
         labels,
         user: None,
         healthcheck: None,
-        devices: vec![],
+        devices,
     };
 
     let container_id = container_mgr.create_container(opts).await?;
@@ -975,6 +1022,21 @@ mod tests {
     fn client_udp_port() {
         assert_eq!(client_port(25565, 1), 25565);
         assert_eq!(client_port(25565, 3), 25567);
+    }
+
+    #[test]
+    fn setup_client_overlay_creates_wine_prefix_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path().join("spt");
+        let install_dir = tmp.path().join("install");
+
+        std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
+
+        setup_client_overlay(&spt_dir, 1, &install_dir, &["BepInEx/config".to_string()]).unwrap();
+
+        let wine_prefix_dir = spt_dir.join("clients/1/wine-prefix");
+        assert!(wine_prefix_dir.exists());
+        assert!(wine_prefix_dir.is_dir());
     }
 
     #[test]
