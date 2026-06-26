@@ -139,6 +139,18 @@ impl ClientSupervisor {
             state_lock.retain(|s| states.iter().any(|ns| ns.index == s.index));
         }
 
+        // Cancel watchers for removed clients
+        {
+            let mut handles = self.watcher_handles.write().await;
+            handles.retain(|idx, token| {
+                let still_exists = states.iter().any(|s| s.index == *idx);
+                if !still_exists {
+                    token.cancel();
+                }
+                still_exists
+            });
+        }
+
         // Spawn exit watchers for running containers that don't have one yet
         for state in &states {
             if state.container_status == ContainerStatus::Running {
@@ -464,6 +476,7 @@ async fn exit_watcher_loop(
                     s.restart_count += 1;
                     s.last_restart = Some(Utc::now());
                     s.first_seen = Utc::now();
+                    s.restarting = false;
                     if is_clean_exit {
                         s.consecutive_failures = 0;
                     }
