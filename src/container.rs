@@ -10,7 +10,7 @@ use bollard::models::{
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
     LogsOptionsBuilder, RemoveContainerOptionsBuilder, StartContainerOptions,
-    StopContainerOptionsBuilder,
+    StopContainerOptionsBuilder, WaitContainerOptions,
 };
 use bollard::Docker;
 use futures_util::Stream;
@@ -232,6 +232,19 @@ impl ContainerManager {
                     .build(),
             ),
         )
+    }
+
+    /// Watch a container for exit. Returns a stream that yields a single
+    /// `ContainerWaitResponse` when the container stops (exit code 0) or an
+    /// `Error::DockerContainerWaitError` for non-zero exits (bollard converts
+    /// non-zero codes into errors). Callers should match both variants.
+    pub fn wait_container(
+        &self,
+        container: &str,
+    ) -> impl Stream<Item = Result<bollard::models::ContainerWaitResponse, bollard::errors::Error>>
+    {
+        self.docker
+            .wait_container(container, None::<WaitContainerOptions>)
     }
 
     pub async fn pull_image(&self, image: &str) -> Result<()> {
