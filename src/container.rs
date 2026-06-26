@@ -76,7 +76,6 @@ impl VolumeMount {
 #[derive(Debug, Clone)]
 pub enum Protocol {
     Tcp,
-    #[allow(dead_code)]
     Udp,
 }
 
