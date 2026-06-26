@@ -42,11 +42,14 @@ WORKDIR /build
 RUN curl -fsSL "https://dl.winehq.org/wine/source/11.0/wine-${WINE_VERSION}.tar.xz" \
     | tar xJ --strip-components=1
 
-# Wine 11 WoW64 build — single binary that handles both 64-bit and 32-bit.
+# Wine 11 WoW64 build — both 32-bit and 64-bit PE support in one tree.
+# --enable-archs=i386,x86_64 builds a 64-bit wine binary that can run
+# both 32-bit and 64-bit Windows executables (EFT is 64-bit).
 # MinGW cross-compilers build the PE DLLs (kernel32.dll etc.).
 # ntsync is auto-detected from the kernel header we installed.
 RUN ./configure \
     --prefix=/usr/local \
+    --enable-archs=i386,x86_64 \
     --with-x \
     --with-freetype \
     --with-gnutls \
