@@ -1,0 +1,23 @@
+FROM registry.fedoraproject.org/fedora-minimal:44
+
+RUN microdnf install -y --nodocs \
+    wine-core \
+    xorg-x11-server-Xvfb \
+    xdpyinfo \
+    winetricks \
+    cabextract \
+    tini \
+    && microdnf clean all
+
+ENV WINEPREFIX=/wine-prefix
+ENV WINEARCH=win64
+ENV DISPLAY=:99
+ENV WINEDEBUG=-all
+# Suppress Wine debug output — without this, Wine spams hundreds of
+# fixme/warn lines that drown out the BepInEx logs we tail to stdout.
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/entrypoint.sh"]
