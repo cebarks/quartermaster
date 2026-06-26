@@ -118,6 +118,8 @@ pub struct WebSettingsForm {
     csrf_token: String,
     web_bind: String,
     web_port: u16,
+    external_url: String,
+    server_name: String,
     tls_enabled: Option<String>,
     tls_cert: String,
     tls_key: String,
@@ -207,6 +209,8 @@ pub async fn save_web_settings(
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     config.web_bind = form.web_bind.trim().to_string();
     config.web_port = form.web_port;
+    config.external_url = non_empty_opt(&form.external_url);
+    config.server_name = non_empty_opt(&form.server_name);
     config.tls_enabled = tls_on;
     config.tls_cert = if cert.is_empty() {
         None
