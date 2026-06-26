@@ -1,7 +1,7 @@
 use actix_web::{web, HttpResponse};
 use askama::Template;
 
-use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID, NARCONET_FORGE_MOD_ID};
+use crate::config::{FIKA_CLIENT_FORGE_ID, NARCONET_FORGE_MOD_ID};
 use crate::web::error::WebError;
 use crate::web::invite::validate_invite_code;
 use crate::web::state::AppState;
@@ -11,7 +11,6 @@ const DEFAULT_SERVER_NAME: &str = "SPT Server";
 const BOOTSTRAP_FORGE_IDS: &[i64] = &[
     NARCONET_FORGE_MOD_ID, // 2441
     FIKA_CLIENT_FORGE_ID,  // 2326
-    FIKA_SERVER_FORGE_ID,  // 2357
 ];
 
 #[derive(Debug, serde::Deserialize)]
