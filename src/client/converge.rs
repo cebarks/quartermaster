@@ -404,6 +404,41 @@ async fn select_profiles_for_assignment(
     assignments
 }
 
+/// Write the UDP port into the Fika client config file in a per-client overlay.
+///
+/// The Fika client reads its P2P port from `BepInEx/config/com.fika.core.cfg`
+/// under the `[Network]` section, `Port = <value>`. This function uses regex
+/// replacement to update the port value while preserving comments and formatting.
+///
+/// If the config file doesn't exist yet (overlay was just created), this is a no-op —
+/// the config will be populated when Fika runs for the first time.
+fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
+    let cfg_path = overlay_dir.join("BepInEx/config/com.fika.core.cfg");
+    if !cfg_path.exists() {
+        debug!(
+            "Fika config not found at {}, skipping UDP port write",
+            cfg_path.display()
+        );
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&cfg_path)
+        .with_context(|| format!("failed to read {}", cfg_path.display()))?;
+
+    let re = regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex");
+    if !re.is_match(&content) {
+        debug!("No Port setting found in {}, skipping", cfg_path.display());
+        return Ok(());
+    }
+
+    let updated = re.replace(&content, format!("${{1}}{port}")).to_string();
+    std::fs::write(&cfg_path, &updated)
+        .with_context(|| format!("failed to write {}", cfg_path.display()))?;
+
+    debug!("Set UDP port to {port} in {}", cfg_path.display());
+    Ok(())
+}
+
 /// Set up overlay directory for a client, copying isolated paths from the install directory.
 ///
 /// Creates `<spt_dir>/clients/<index>/` and recursively copies any paths from `isolated_paths`
@@ -414,6 +449,7 @@ pub fn setup_client_overlay(
     index: u32,
     install_dir: &Path,
     isolated_paths: &[String],
+    base_udp_port: u16,
 ) -> Result<()> {
     let overlay_dir = spt_dir.join("clients").join(index.to_string());
 
@@ -459,6 +495,9 @@ pub fn setup_client_overlay(
             );
         }
     }
+
+    let port = client_port(base_udp_port, index);
+    write_fika_udp_port(&overlay_dir, port)?;
 
     debug!(
         "Set up overlay for client {index} at {}",
@@ -652,6 +691,7 @@ pub async fn converge(
             index,
             &headless_config.install_dir,
             &effective_paths,
+            headless_config.base_udp_port,
         )?;
     }
 
@@ -834,6 +874,7 @@ async fn create_client_container(
         index,
         &headless_config.install_dir,
         effective_paths,
+        headless_config.base_udp_port,
     )?;
 
     // Build volume mounts
@@ -1005,7 +1046,14 @@ mod tests {
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
         std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
 
-        setup_client_overlay(&spt_dir, 1, &install_dir, &["BepInEx/config".to_string()]).unwrap();
+        setup_client_overlay(
+            &spt_dir,
+            1,
+            &install_dir,
+            &["BepInEx/config".to_string()],
+            25565,
+        )
+        .unwrap();
 
         let overlay_file = spt_dir.join("clients/1/BepInEx/config/test.cfg");
         assert!(overlay_file.exists());
@@ -1032,7 +1080,14 @@ mod tests {
 
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
 
-        setup_client_overlay(&spt_dir, 1, &install_dir, &["BepInEx/config".to_string()]).unwrap();
+        setup_client_overlay(
+            &spt_dir,
+            1,
+            &install_dir,
+            &["BepInEx/config".to_string()],
+            25565,
+        )
+        .unwrap();
 
         let wine_prefix_dir = spt_dir.join("clients/1/wine-prefix");
         assert!(wine_prefix_dir.exists());
@@ -1057,7 +1112,14 @@ mod tests {
         // Existing overlay from initial setup
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
         std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
-        setup_client_overlay(&spt_dir, 1, &install_dir, &["BepInEx/config".to_string()]).unwrap();
+        setup_client_overlay(
+            &spt_dir,
+            1,
+            &install_dir,
+            &["BepInEx/config".to_string()],
+            25565,
+        )
+        .unwrap();
 
         // Now add a new isolated path
         std::fs::create_dir_all(install_dir.join("BepInEx/cache")).unwrap();
@@ -1067,6 +1129,7 @@ mod tests {
             1,
             &install_dir,
             &["BepInEx/config".to_string(), "BepInEx/cache".to_string()],
+            25565,
         )
         .unwrap();
 
@@ -1131,5 +1194,33 @@ mod tests {
         std::fs::write(plugins.join("Fika.Compat.dll"), b"compat mod").unwrap();
 
         assert!(!is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn write_fika_udp_port_updates_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join("BepInEx/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let cfg_path = config_dir.join("com.fika.core.cfg");
+        std::fs::write(
+            &cfg_path,
+            "[Network]\n\n## Port\n# Setting type: UInt16\n# Default value: 25565\nPort = 25565\n",
+        )
+        .unwrap();
+
+        write_fika_udp_port(tmp.path(), 25567).unwrap();
+
+        let content = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(content.contains("Port = 25567"));
+        assert!(!content.contains("Port = 25565"));
+    }
+
+    #[test]
+    fn write_fika_udp_port_no_config_file_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No config file exists — should not error, just skip
+        let result = write_fika_udp_port(tmp.path(), 25567);
+        assert!(result.is_ok());
     }
 }
