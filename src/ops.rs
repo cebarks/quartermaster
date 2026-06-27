@@ -223,29 +223,43 @@ pub fn remove_mod_by_id(
     Ok(())
 }
 
+/// A runtime-generated file discovered on disk but not in the original mod archive.
+struct RuntimeFile {
+    relative_path: String,
+    hash: String,
+    size: i64,
+}
+
 /// Scan a mod's directories on disk and record any files not already tracked
 /// as runtime-generated files (source = 'runtime').
+///
+/// Splits work into three phases to minimise the time the DB mutex is held:
+/// 1. Brief lock to read currently-tracked file paths.
+/// 2. No lock — recursive filesystem scan + streaming SHA-256 hashing.
+/// 3. Brief lock to batch-insert discovered files inside a transaction.
 pub fn scan_and_record_runtime_files(
     db: &std::sync::Arc<parking_lot::Mutex<Database>>,
     mod_db_id: i64,
     spt_dir: &Path,
 ) -> Result<()> {
-    let db = db.lock();
-    let tracked = db.get_files_for_mod(mod_db_id)?;
-    let tracked_paths: std::collections::HashSet<&str> =
-        tracked.iter().map(|f| f.file_path.as_str()).collect();
+    // Phase 1: Read tracked paths (brief DB lock)
+    let tracked_paths: std::collections::HashSet<String> = {
+        let db = db.lock();
+        let tracked = db.get_files_for_mod(mod_db_id)?;
+        tracked.into_iter().map(|f| f.file_path).collect()
+    };
 
     // Determine which top-level directories this mod occupies
     let mut mod_dirs: std::collections::HashSet<std::path::PathBuf> =
         std::collections::HashSet::new();
-    for file in &tracked {
-        let p = Path::new(&file.file_path);
+    for file_path in &tracked_paths {
+        let p = Path::new(file_path);
         // For SPT/user/mods/ModName/... take first 4 components
         // For BepInEx/plugins/ModName/... take first 3 components
-        let parts: Vec<&str> = file.file_path.split('/').collect();
-        let dir = if file.file_path.starts_with("SPT/") && parts.len() >= 4 {
+        let parts: Vec<&str> = file_path.split('/').collect();
+        let dir = if file_path.starts_with("SPT/") && parts.len() >= 4 {
             format!("{}/{}/{}/{}", parts[0], parts[1], parts[2], parts[3])
-        } else if file.file_path.starts_with("BepInEx/") && parts.len() >= 3 {
+        } else if file_path.starts_with("BepInEx/") && parts.len() >= 3 {
             format!("{}/{}/{}", parts[0], parts[1], parts[2])
         } else if let Some(parent) = p.parent() {
             parent.to_string_lossy().to_string()
@@ -261,12 +275,35 @@ pub fn scan_and_record_runtime_files(
         "scanning for runtime files"
     );
 
-    // Scan each directory for untracked files
+    // Phase 2: Filesystem scan + streaming hash (NO lock held)
+    let mut runtime_files = Vec::new();
     for dir in &mod_dirs {
         if !dir.is_dir() {
             continue;
         }
-        scan_runtime_recursive(dir, spt_dir, mod_db_id, &tracked_paths, &db)?;
+        scan_runtime_recursive(dir, spt_dir, &tracked_paths, &mut runtime_files)?;
+    }
+
+    // Phase 3: Batch insert (brief DB lock)
+    if !runtime_files.is_empty() {
+        let db = db.lock();
+        let tx = db.begin_transaction()?;
+        for file in &runtime_files {
+            if let Err(e) = db.insert_file_with_source(
+                mod_db_id,
+                &file.relative_path,
+                Some(&file.hash),
+                Some(file.size),
+                "runtime",
+            ) {
+                tracing::warn!(
+                    path = %file.relative_path,
+                    error = %e,
+                    "failed to record runtime file"
+                );
+            }
+        }
+        tx.commit()?;
     }
 
     Ok(())
@@ -275,31 +312,38 @@ pub fn scan_and_record_runtime_files(
 fn scan_runtime_recursive(
     dir: &Path,
     spt_root: &Path,
-    mod_db_id: i64,
-    tracked: &std::collections::HashSet<&str>,
-    db: &Database,
+    tracked: &std::collections::HashSet<String>,
+    results: &mut Vec<RuntimeFile>,
 ) -> Result<()> {
     let entries = std::fs::read_dir(dir)?;
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            scan_runtime_recursive(&path, spt_root, mod_db_id, tracked, db)?;
+            scan_runtime_recursive(&path, spt_root, tracked, results)?;
         } else if let Ok(relative) = path.strip_prefix(spt_root) {
-            let rel_str = relative.to_string_lossy();
-            if !tracked.contains(rel_str.as_ref()) {
+            let rel_str = relative.to_string_lossy().to_string();
+            if !tracked.contains(&rel_str) {
                 tracing::trace!(path = %rel_str, "recording runtime file");
-                let content = std::fs::read(&path).unwrap_or_default();
-                let hash = crate::spt::mods::compute_hash_public(&content);
-                let size = content.len() as i64;
-                if let Err(e) = db.insert_file_with_source(
-                    mod_db_id,
-                    &rel_str,
-                    Some(&hash),
-                    Some(size),
-                    "runtime",
-                ) {
-                    tracing::warn!(path = %path.display(), error = %e, "failed to record runtime file");
+                // Use streaming hash to avoid loading entire files into memory
+                match crate::spt::mods::compute_file_hash(&path) {
+                    Ok(hash) => {
+                        let size = std::fs::metadata(&path)
+                            .map(|m| m.len() as i64)
+                            .unwrap_or(0);
+                        results.push(RuntimeFile {
+                            relative_path: rel_str,
+                            hash,
+                            size,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            error = %e,
+                            "skipping unreadable runtime file"
+                        );
+                    }
                 }
             }
         }
