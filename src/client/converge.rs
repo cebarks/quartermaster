@@ -1,9 +1,12 @@
 use crate::config::{Config, HeadlessConfig};
-use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
+use crate::container::{
+    ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
+};
 use crate::forge::client::ForgeClient;
 use crate::spt::profiles;
 use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
+use bollard::models::DeviceMapping;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -400,18 +403,69 @@ async fn select_profiles_for_assignment(
     assignments
 }
 
+/// Write the UDP port into the Fika client config file in a per-client overlay.
+///
+/// The Fika client reads its P2P port from `BepInEx/config/com.fika.core.cfg`
+/// under the `[Network]` section, `Port = <value>`. This function uses regex
+/// replacement to update the port value while preserving comments and formatting.
+///
+/// If the config file doesn't exist yet (overlay was just created), this is a no-op —
+/// the config will be populated when Fika runs for the first time.
+fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
+    let cfg_path = overlay_dir.join("BepInEx/config/com.fika.core.cfg");
+    if !cfg_path.exists() {
+        debug!(
+            "Fika config not found at {}, skipping UDP port write",
+            cfg_path.display()
+        );
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&cfg_path)
+        .with_context(|| format!("failed to read {}", cfg_path.display()))?;
+
+    let re = regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex");
+    if !re.is_match(&content) {
+        debug!("No Port setting found in {}, skipping", cfg_path.display());
+        return Ok(());
+    }
+
+    let updated = re.replace(&content, format!("${{1}}{port}")).to_string();
+    std::fs::write(&cfg_path, &updated)
+        .with_context(|| format!("failed to write {}", cfg_path.display()))?;
+
+    debug!("Set UDP port to {port} in {}", cfg_path.display());
+    Ok(())
+}
+
 /// Set up overlay directory for a client, copying isolated paths from the install directory.
 ///
-/// Creates `<spt_dir>/clients/<index>/` and recursively copies any paths from `isolated_paths`
-/// that don't already exist in the overlay. This preserves user customizations in the overlay
-/// while ensuring new isolated paths are populated.
+/// Creates `<install_dir>/.quma/clients/<index>/` and recursively copies any paths from
+/// `isolated_paths` that don't already exist in the overlay. This preserves user
+/// customizations in the overlay while ensuring new isolated paths are populated.
+///
+/// Overlays live under `install_dir` (the game client directory) rather than `spt_dir`
+/// (the SPT server data directory) because the SPT server container mounts all of
+/// `spt_dir` and its entrypoint chowns the tree recursively — a wine-prefix dir
+/// with different ownership causes the server to crash on startup.
 pub fn setup_client_overlay(
-    spt_dir: &Path,
-    index: u32,
     install_dir: &Path,
+    index: u32,
     isolated_paths: &[String],
+    base_udp_port: u16,
 ) -> Result<()> {
-    let overlay_dir = spt_dir.join("clients").join(index.to_string());
+    let overlay_dir = install_dir.join(".quma/clients").join(index.to_string());
+
+    let wine_prefix_dir = overlay_dir.join("wine-prefix");
+    if !wine_prefix_dir.exists() {
+        std::fs::create_dir_all(&wine_prefix_dir).with_context(|| {
+            format!(
+                "failed to create wine-prefix dir {}",
+                wine_prefix_dir.display()
+            )
+        })?;
+        debug!("Created wine-prefix directory for client {index}");
+    }
 
     for isolated_path in isolated_paths {
         let src = install_dir.join(isolated_path);
@@ -445,10 +499,49 @@ pub fn setup_client_overlay(
         }
     }
 
+    let port = client_port(base_udp_port, index);
+    write_fika_udp_port(&overlay_dir, port)?;
+
+    // Stub out GPU-specific DLLs that crash in headless (no-GPU) containers.
+    // DLSSImporter.dll dereferences a null pointer when no GPU is present,
+    // which hangs Wine's crash handler and prevents the game from starting.
+    stub_gpu_dlls(install_dir, &overlay_dir)?;
+
     debug!(
         "Set up overlay for client {index} at {}",
         overlay_dir.display()
     );
+    Ok(())
+}
+
+/// Replace GPU-specific DLLs with empty stubs in the overlay so Unity
+/// skips them at load time instead of crashing in headless containers.
+fn stub_gpu_dlls(install_dir: &Path, overlay_dir: &Path) -> Result<()> {
+    let gpu_dlls = ["EscapeFromTarkov_Data/Plugins/x86_64/DLSSImporter.dll"];
+
+    for rel_path in &gpu_dlls {
+        let src = install_dir.join(rel_path);
+        if !src.exists() {
+            continue;
+        }
+
+        let dst = overlay_dir.join(rel_path);
+        if dst.exists() {
+            continue;
+        }
+
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create dir {}", parent.display()))?;
+        }
+
+        // Write a zero-byte stub — Unity will fail to load it as a
+        // native plugin and log a warning instead of crashing.
+        std::fs::write(&dst, b"").with_context(|| format!("failed to stub {}", dst.display()))?;
+
+        debug!("Stubbed GPU DLL for headless: {rel_path}");
+    }
+
     Ok(())
 }
 
@@ -565,6 +658,14 @@ pub async fn converge(
         c.store(false, Ordering::Release);
     });
 
+    let ntsync_available = std::path::Path::new("/dev/ntsync").exists();
+    if !ntsync_available {
+        tracing::warn!(
+            "ntsync not available — headless clients will run with degraded performance. \
+             Run `sudo modprobe ntsync` or upgrade to kernel 6.14+."
+        );
+    }
+
     let desired_count = headless_config.client_count();
     info!("Starting convergence: desired count = {desired_count}");
 
@@ -611,6 +712,7 @@ pub async fn converge(
             spt_client,
             current_count,
             desired_count,
+            ntsync_available,
         )
         .await?;
     } else if current_count > desired_count {
@@ -624,10 +726,10 @@ pub async fn converge(
         let index = (i + 1) as u32;
         let effective_paths = headless_config.effective_isolated_paths(i);
         setup_client_overlay(
-            spt_dir,
-            index,
             &headless_config.install_dir,
+            index,
             &effective_paths,
+            headless_config.base_udp_port,
         )?;
     }
 
@@ -656,6 +758,7 @@ async fn await_server_ready(spt_client: &SptClient, timeout_secs: u64) -> bool {
 }
 
 /// Ensure containers exist from current_count up to desired_count.
+#[allow(clippy::too_many_arguments)]
 async fn ensure_clients(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
@@ -664,6 +767,7 @@ async fn ensure_clients(
     spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
+    ntsync_available: bool,
 ) -> Result<()> {
     info!("Ensuring clients: {current_count} → {desired_count}");
 
@@ -719,10 +823,10 @@ async fn ensure_clients(
             container_mgr,
             headless_config,
             config,
-            spt_dir,
             i,
             profile_id,
             &effective_paths,
+            ntsync_available,
         )
         .await?;
     }
@@ -787,24 +891,28 @@ async fn remove_excess_clients(
 ///
 /// `effective_paths` is the merged list of global `isolated_paths` + per-client
 /// `extra_isolated_paths`, computed by the caller via `HeadlessConfig::effective_isolated_paths`.
+#[allow(clippy::too_many_arguments)]
 async fn create_client_container(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
     config: &Config,
-    spt_dir: &Path,
     index: u32,
     profile_id: Option<String>,
     effective_paths: &[String],
+    ntsync_available: bool,
 ) -> Result<()> {
     let name = client_container_name(index);
-    let overlay_dir = spt_dir.join("clients").join(index.to_string());
+    let overlay_dir = headless_config
+        .install_dir
+        .join(".quma/clients")
+        .join(index.to_string());
 
     // Set up overlay directory first
     setup_client_overlay(
-        spt_dir,
-        index,
         &headless_config.install_dir,
+        index,
         effective_paths,
+        headless_config.base_udp_port,
     )?;
 
     // Build volume mounts
@@ -836,16 +944,35 @@ async fn create_client_container(
         });
     }
 
+    volumes.push(VolumeMount {
+        host_path: overlay_dir.join("wine-prefix"),
+        container_path: "/wine-prefix".to_string(),
+        read_only: false,
+        selinux: SelinuxLabel::Private,
+    });
+
+    // Mount stubbed GPU DLLs over the originals so headless clients
+    // don't crash from missing GPU hardware.
+    let gpu_stub = overlay_dir.join("EscapeFromTarkov_Data/Plugins/x86_64/DLSSImporter.dll");
+    if gpu_stub.exists() {
+        volumes.push(VolumeMount {
+            host_path: gpu_stub,
+            container_path: "/opt/tarkov/EscapeFromTarkov_Data/Plugins/x86_64/DLSSImporter.dll"
+                .to_string(),
+            read_only: true,
+            selinux: SelinuxLabel::Shared,
+        });
+    }
+
     // Environment variables
     let mut env = vec![
-        ("HEADLESS_INDEX".to_string(), index.to_string()),
         (
             "UDP_PORT".to_string(),
             client_port(headless_config.base_udp_port, index).to_string(),
         ),
+        ("WINEPREFIX".to_string(), "/wine-prefix".to_string()),
     ];
 
-    // Add PROFILE_ID for Fika API correlation
     if let Some(ref pid) = profile_id {
         env.push(("PROFILE_ID".to_string(), pid.clone()));
         info!("Assigning profile {pid} to client {index}");
@@ -857,10 +984,7 @@ async fn create_client_container(
         );
     }
 
-    // Route headless clients through quma's HTTPS proxy so we get raid
-    // tracking, metrics, and mod-sync interception. When the web server
-    // binds a wildcard/loopback address, use host.containers.internal so
-    // the container can reach the host's network stack via Podman DNS.
+    // Route through quma's HTTPS proxy
     let proxy_host = match config.web_bind.as_str() {
         "0.0.0.0" | "127.0.0.1" | "localhost" | "" => "host.containers.internal",
         other => other,
@@ -874,16 +998,40 @@ async fn create_client_container(
         ("quma.client.index".to_string(), index.to_string()),
     ];
 
+    let udp_port = client_port(headless_config.base_udp_port, index);
+    let ports = vec![PortMapping {
+        host_port: udp_port,
+        container_port: udp_port,
+        protocol: Protocol::Udp,
+    }];
+
+    let mut devices = vec![];
+    if ntsync_available {
+        devices.push(DeviceMapping {
+            path_on_host: Some("/dev/ntsync".to_string()),
+            path_in_container: Some("/dev/ntsync".to_string()),
+            cgroup_permissions: Some("rwm".to_string()),
+        });
+    }
+
+    let security_opt = if devices.is_empty() {
+        vec![]
+    } else {
+        vec!["label=disable".to_string()]
+    };
+
     // Create the container
     let opts = CreateContainerOpts {
         name: name.clone(),
         image: headless_config.image.clone(),
         env,
         volumes,
-        ports: vec![],
+        ports,
         labels,
         user: None,
         healthcheck: None,
+        devices,
+        security_opt,
     };
 
     let container_id = container_mgr.create_container(opts).await?;
@@ -950,15 +1098,14 @@ mod tests {
     #[test]
     fn setup_client_overlay_copies_isolated_paths() {
         let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path().join("spt");
         let install_dir = tmp.path().join("install");
 
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
         std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
 
-        setup_client_overlay(&spt_dir, 1, &install_dir, &["BepInEx/config".to_string()]).unwrap();
+        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
 
-        let overlay_file = spt_dir.join("clients/1/BepInEx/config/test.cfg");
+        let overlay_file = install_dir.join(".quma/clients/1/BepInEx/config/test.cfg");
         assert!(overlay_file.exists());
         assert_eq!(std::fs::read_to_string(overlay_file).unwrap(), "key=value");
     }
@@ -976,6 +1123,20 @@ mod tests {
     }
 
     #[test]
+    fn setup_client_overlay_creates_wine_prefix_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let install_dir = tmp.path().join("install");
+
+        std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
+
+        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
+
+        let wine_prefix_dir = install_dir.join(".quma/clients/1/wine-prefix");
+        assert!(wine_prefix_dir.exists());
+        assert!(wine_prefix_dir.is_dir());
+    }
+
+    #[test]
     fn container_name_collision_detected() {
         let managed = vec!["fika-headless-1".to_string()];
         let all_matching_name = vec!["fika-headless-1".to_string(), "fika-headless-2".to_string()];
@@ -987,28 +1148,31 @@ mod tests {
     #[test]
     fn update_overlay_copies_new_paths() {
         let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path().join("spt");
         let install_dir = tmp.path().join("install");
 
         // Existing overlay from initial setup
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
         std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
-        setup_client_overlay(&spt_dir, 1, &install_dir, &["BepInEx/config".to_string()]).unwrap();
+        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
 
         // Now add a new isolated path
         std::fs::create_dir_all(install_dir.join("BepInEx/cache")).unwrap();
         std::fs::write(install_dir.join("BepInEx/cache/data.bin"), "cached").unwrap();
         setup_client_overlay(
-            &spt_dir,
-            1,
             &install_dir,
+            1,
             &["BepInEx/config".to_string(), "BepInEx/cache".to_string()],
+            25565,
         )
         .unwrap();
 
         // Both paths should exist in overlay
-        assert!(spt_dir.join("clients/1/BepInEx/config/test.cfg").exists());
-        assert!(spt_dir.join("clients/1/BepInEx/cache/data.bin").exists());
+        assert!(install_dir
+            .join(".quma/clients/1/BepInEx/config/test.cfg")
+            .exists());
+        assert!(install_dir
+            .join(".quma/clients/1/BepInEx/cache/data.bin")
+            .exists());
     }
 
     #[test]
@@ -1067,5 +1231,33 @@ mod tests {
         std::fs::write(plugins.join("Fika.Compat.dll"), b"compat mod").unwrap();
 
         assert!(!is_fika_client_present(tmp.path()));
+    }
+
+    #[test]
+    fn write_fika_udp_port_updates_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join("BepInEx/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let cfg_path = config_dir.join("com.fika.core.cfg");
+        std::fs::write(
+            &cfg_path,
+            "[Network]\n\n## Port\n# Setting type: UInt16\n# Default value: 25565\nPort = 25565\n",
+        )
+        .unwrap();
+
+        write_fika_udp_port(tmp.path(), 25567).unwrap();
+
+        let content = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(content.contains("Port = 25567"));
+        assert!(!content.contains("Port = 25565"));
+    }
+
+    #[test]
+    fn write_fika_udp_port_no_config_file_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No config file exists — should not error, just skip
+        let result = write_fika_udp_port(tmp.path(), 25567);
+        assert!(result.is_ok());
     }
 }

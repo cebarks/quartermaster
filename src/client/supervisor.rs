@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use futures_util::StreamExt;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio::time::interval;
@@ -22,6 +24,7 @@ pub struct ClientSupervisor {
     cancel_token: CancellationToken,
     state: Arc<RwLock<Vec<ClientState>>>,
     tick_interval: Duration,
+    watcher_handles: Arc<RwLock<HashMap<u32, CancellationToken>>>,
 }
 
 impl ClientSupervisor {
@@ -41,6 +44,7 @@ impl ClientSupervisor {
             cancel_token,
             state,
             tick_interval: Duration::from_secs(15),
+            watcher_handles: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -62,6 +66,11 @@ impl ClientSupervisor {
             tokio::select! {
                 _ = self.cancel_token.cancelled() => {
                     tracing::info!("ClientSupervisor shutting down");
+                    // Cancel all exit watchers
+                    let handles = self.watcher_handles.read().await;
+                    for (_, token) in handles.iter() {
+                        token.cancel();
+                    }
                     break;
                 }
                 _ = ticker.tick() => {
@@ -119,7 +128,8 @@ impl ClientSupervisor {
                     existing.cpu_percent = new_state.cpu_percent;
                     existing.memory_mb = new_state.memory_mb;
                     existing.health = new_state.health.clone();
-                    existing.consecutive_failures = new_state.consecutive_failures;
+                    // NOTE: consecutive_failures and first_seen are owned by
+                    // exit watchers — do NOT overwrite them here.
                 } else {
                     // New client, add it
                     state_lock.push(new_state.clone());
@@ -129,36 +139,35 @@ impl ClientSupervisor {
             state_lock.retain(|s| states.iter().any(|ns| ns.index == s.index));
         }
 
-        // Handle auto-restart for clients that need it
-        if self.headless_config.restart_policy == RestartPolicy::Auto && server_up {
-            for state in &states {
-                if self.should_restart(state) {
-                    // Mark as restarting before spawning
-                    {
-                        let mut state_lock = self.state.write().await;
-                        if let Some(s) = state_lock.iter_mut().find(|s| s.index == state.index) {
-                            s.restarting = true;
-                        }
-                    }
+        // Cancel watchers for removed clients
+        {
+            let mut handles = self.watcher_handles.write().await;
+            handles.retain(|idx, token| {
+                let still_exists = states.iter().any(|s| s.index == *idx);
+                if !still_exists {
+                    token.cancel();
+                }
+                still_exists
+            });
+        }
 
-                    let container_mgr = self.container_mgr.clone();
-                    let shared_state = Arc::clone(&self.state);
-                    let container_name = state.container_name.clone();
-                    let index = state.index;
-                    let failures = state.consecutive_failures;
-                    let backoff_cap = self.headless_config.restart_backoff_cap;
-
-                    tokio::spawn(async move {
-                        restart_client_task(
-                            container_mgr,
-                            shared_state,
-                            container_name,
-                            index,
-                            failures,
-                            backoff_cap,
-                        )
-                        .await;
-                    });
+        // Spawn exit watchers for running containers that don't have one yet
+        for state in &states {
+            if state.container_status == ContainerStatus::Running {
+                let has_watcher = self.watcher_handles.read().await.contains_key(&state.index);
+                if !has_watcher {
+                    ClientSupervisor::spawn_exit_watcher(
+                        self.container_mgr.clone(),
+                        Arc::clone(&self.state),
+                        Arc::clone(&self.watcher_handles),
+                        state.index,
+                        state.container_name.clone(),
+                        self.headless_config.restart_policy.clone(),
+                        self.headless_config.max_restart_attempts,
+                        self.headless_config.restart_backoff_cap,
+                        self.cancel_token.clone(),
+                    )
+                    .await;
                 }
             }
         }
@@ -244,21 +253,8 @@ impl ClientSupervisor {
         // Compute health
         state.health = compute_health(container_running, state.fika_status.clone(), server_up);
 
-        // Grace period: don't count failures for 3 minutes after first seeing a
-        // client — wine boot + BepInEx init takes ~90s, and during that time
-        // Fika API returns nothing, which would otherwise trigger GivenUp.
-        let in_grace_period = Utc::now()
-            .signed_duration_since(state.first_seen)
-            .num_seconds()
-            < 180;
-
-        if in_grace_period {
-            // Don't accumulate failures during startup
-        } else if state.health == ClientHealth::Down || state.health == ClientHealth::Degraded {
-            state.consecutive_failures += 1;
-        } else {
-            state.consecutive_failures = 0;
-        }
+        // consecutive_failures is managed exclusively by exit watchers —
+        // check_client only reads the value to detect GivenUp state.
 
         // Check if given up
         if state.consecutive_failures > self.headless_config.max_restart_attempts {
@@ -268,72 +264,236 @@ impl ClientSupervisor {
         Ok(state)
     }
 
-    fn should_restart(&self, state: &ClientState) -> bool {
-        if state.restarting {
-            return false;
+    #[allow(clippy::too_many_arguments)]
+    async fn spawn_exit_watcher(
+        container_mgr: ContainerManager,
+        state: Arc<RwLock<Vec<ClientState>>>,
+        watcher_handles: Arc<RwLock<HashMap<u32, CancellationToken>>>,
+        index: u32,
+        container_name: String,
+        restart_policy: RestartPolicy,
+        max_restart_attempts: u32,
+        backoff_cap: u64,
+        cancel_token: CancellationToken,
+    ) {
+        // Child token: cancelled when either the supervisor shuts down
+        // (cancel_token) or this specific watcher is replaced/removed.
+        let watcher_cancel = cancel_token.child_token();
+
+        // Register this watcher, cancelling any previous one for the same index
+        {
+            let mut handles = watcher_handles.write().await;
+            if let Some(old) = handles.insert(index, watcher_cancel.clone()) {
+                old.cancel();
+            }
         }
 
-        if state.health == ClientHealth::GivenUp {
-            return false;
-        }
+        let watcher_cancel_clone = watcher_cancel.clone();
+        let container_mgr_clone = container_mgr.clone();
+        let state_clone = Arc::clone(&state);
+        let watcher_handles_clone = Arc::clone(&watcher_handles);
 
-        // Don't restart during startup grace period — wine boot + BepInEx
-        // init takes ~90s, and the client will appear degraded until then.
-        let in_grace_period = Utc::now()
-            .signed_duration_since(state.first_seen)
-            .num_seconds()
-            < 180;
-        if in_grace_period {
-            return false;
-        }
-
-        (state.health == ClientHealth::Down || state.health == ClientHealth::Degraded)
-            && state.consecutive_failures <= self.headless_config.max_restart_attempts
+        tokio::spawn(async move {
+            exit_watcher_loop(
+                container_mgr_clone,
+                state_clone,
+                watcher_handles_clone,
+                index,
+                container_name,
+                restart_policy,
+                max_restart_attempts,
+                backoff_cap,
+                watcher_cancel_clone,
+            )
+            .await;
+        });
     }
 }
 
-async fn restart_client_task(
+#[allow(clippy::too_many_arguments)]
+async fn exit_watcher_loop(
     container_mgr: ContainerManager,
     state: Arc<RwLock<Vec<ClientState>>>,
-    container_name: String,
+    watcher_handles: Arc<RwLock<HashMap<u32, CancellationToken>>>,
     index: u32,
-    consecutive_failures: u32,
+    container_name: String,
+    restart_policy: RestartPolicy,
+    max_restart_attempts: u32,
     backoff_cap: u64,
+    cancel_token: CancellationToken,
 ) {
-    // Ensure restarting flag is cleared even on panic
-    let _guard = scopeguard::guard((state.clone(), index), |(state, index)| {
-        tokio::spawn(async move {
+    let mut retry_delay = Duration::from_secs(1);
+    let max_retry_delay = Duration::from_secs(30);
+
+    loop {
+        // Watch the container for exit
+        let mut stream = container_mgr.wait_container(&container_name);
+
+        let wait_result = tokio::select! {
+            _ = cancel_token.cancelled() => {
+                tracing::debug!(container = %container_name, "Exit watcher cancelled");
+                // Clean up our handle
+                watcher_handles.write().await.remove(&index);
+                return;
+            }
+            result = stream.next() => result,
+        };
+
+        // Classify the result into (exit_code, is_clean_exit) or a transient
+        // stream error that warrants a retry.
+        //
+        // Bollard quirk: `wait_container` converts non-zero exit codes into
+        // `Err(DockerContainerWaitError { code, error })`, so `Ok(response)`
+        // only fires for exit code 0.
+        let (exit_code, is_clean_exit) = match wait_result {
+            Some(Ok(response)) => {
+                // Clean exit (code 0)
+                retry_delay = Duration::from_secs(1);
+                let code = response.status_code;
+                tracing::info!(
+                    container = %container_name,
+                    exit_code = code,
+                    "Container exited cleanly"
+                );
+                (code, true)
+            }
+            Some(Err(bollard::errors::Error::DockerContainerWaitError { code, error })) => {
+                // Non-zero exit — this is a crash, not a stream error
+                retry_delay = Duration::from_secs(1);
+                tracing::info!(
+                    container = %container_name,
+                    exit_code = code,
+                    error = %error,
+                    "Container crashed"
+                );
+                (code, false)
+            }
+            Some(Err(e)) => {
+                // Transient stream error (socket drop, etc.) — retry with backoff
+                tracing::warn!(
+                    container = %container_name,
+                    error = %e,
+                    "Exit watcher stream error, retrying in {:?}",
+                    retry_delay
+                );
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = (retry_delay * 2).min(max_retry_delay);
+                continue;
+            }
+            None => {
+                // Stream ended without a result — unexpected
+                tracing::warn!(
+                    container = %container_name,
+                    "Exit watcher stream ended unexpectedly"
+                );
+                watcher_handles.write().await.remove(&index);
+                return;
+            }
+        };
+
+        // Update state with exit info
+        let should_restart = {
             let mut state_lock = state.write().await;
             if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
-                s.restarting = false;
+                s.container_status = ContainerStatus::Stopped;
+                s.health = ClientHealth::Down;
+
+                if !is_clean_exit {
+                    let in_grace_period =
+                        Utc::now().signed_duration_since(s.first_seen).num_seconds() < 180;
+                    if !in_grace_period {
+                        s.consecutive_failures += 1;
+                    }
+                }
+
+                if s.consecutive_failures > max_restart_attempts {
+                    s.health = ClientHealth::GivenUp;
+                }
+
+                restart_policy == RestartPolicy::Auto
+                    && s.health != ClientHealth::GivenUp
+                    && s.consecutive_failures <= max_restart_attempts
+            } else {
+                false
             }
-        });
-    });
+        };
 
-    let delay = backoff_duration(consecutive_failures, backoff_cap);
-    tracing::info!(
-        container = %container_name,
-        delay_secs = delay.as_secs(),
-        failures = consecutive_failures,
-        "Backing off before restart"
-    );
-    tokio::time::sleep(delay).await;
+        if !should_restart {
+            tracing::info!(
+                container = %container_name,
+                exit_code,
+                "Not restarting (policy={restart_policy}, or given up)"
+            );
+            watcher_handles.write().await.remove(&index);
+            return;
+        }
 
-    let result = container_mgr.restart(&container_name).await;
-
-    {
-        let mut state_lock = state.write().await;
-        if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
-            if result.is_ok() {
-                s.restart_count += 1;
-                s.last_restart = Some(Utc::now());
-                s.first_seen = Utc::now();
+        // Mark as restarting
+        {
+            let mut state_lock = state.write().await;
+            if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
+                s.restarting = true;
             }
         }
-    }
 
-    if let Err(e) = result {
-        tracing::error!(container = %container_name, error = %e, "Failed to restart client");
+        // Get failure count for backoff calculation
+        let failures = {
+            let state_lock = state.read().await;
+            state_lock
+                .iter()
+                .find(|s| s.index == index)
+                .map(|s| s.consecutive_failures)
+                .unwrap_or(0)
+        };
+
+        let _guard = scopeguard::guard((state.clone(), index), |(state, index)| {
+            tokio::spawn(async move {
+                let mut state_lock = state.write().await;
+                if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
+                    s.restarting = false;
+                }
+            });
+        });
+
+        // Apply backoff for crash restarts
+        if !is_clean_exit && failures > 0 {
+            let delay = backoff_duration(failures, backoff_cap);
+            tracing::info!(
+                container = %container_name,
+                delay_secs = delay.as_secs(),
+                failures,
+                "Backing off before restart"
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        // Start the already-stopped container (don't use restart() —
+        // calling stop() on an exited container errors with 304)
+        match container_mgr.start(&container_name).await {
+            Ok(()) => {
+                let mut state_lock = state.write().await;
+                if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
+                    s.restart_count += 1;
+                    s.last_restart = Some(Utc::now());
+                    s.first_seen = Utc::now();
+                    s.restarting = false;
+                    if is_clean_exit {
+                        s.consecutive_failures = 0;
+                    }
+                }
+                tracing::info!(container = %container_name, "Restarted successfully");
+                // Continue loop to watch again
+            }
+            Err(e) => {
+                tracing::error!(
+                    container = %container_name,
+                    error = %e,
+                    "Failed to restart"
+                );
+                watcher_handles.write().await.remove(&index);
+                return;
+            }
+        }
     }
 }
 

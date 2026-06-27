@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bollard::models::{
-    ContainerCreateBody, ContainerInspectResponse, HealthConfig, HostConfig, PortBinding,
+    ContainerCreateBody, ContainerInspectResponse, DeviceMapping, HealthConfig, HostConfig,
+    PortBinding,
 };
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
     LogsOptionsBuilder, RemoveContainerOptionsBuilder, StartContainerOptions,
-    StopContainerOptionsBuilder,
+    StopContainerOptionsBuilder, WaitContainerOptions,
 };
 use bollard::Docker;
 use futures_util::Stream;
@@ -75,7 +76,6 @@ impl VolumeMount {
 #[derive(Debug, Clone)]
 pub enum Protocol {
     Tcp,
-    #[allow(dead_code)]
     Udp,
 }
 
@@ -106,6 +106,8 @@ pub struct CreateContainerOpts {
     pub labels: Vec<(String, String)>,
     pub user: Option<String>,
     pub healthcheck: Option<HealthConfig>,
+    pub devices: Vec<DeviceMapping>,
+    pub security_opt: Vec<String>,
 }
 
 impl CreateContainerOpts {
@@ -232,6 +234,19 @@ impl ContainerManager {
         )
     }
 
+    /// Watch a container for exit. Returns a stream that yields a single
+    /// `ContainerWaitResponse` when the container stops (exit code 0) or an
+    /// `Error::DockerContainerWaitError` for non-zero exits (bollard converts
+    /// non-zero codes into errors). Callers should match both variants.
+    pub fn wait_container(
+        &self,
+        container: &str,
+    ) -> impl Stream<Item = Result<bollard::models::ContainerWaitResponse, bollard::errors::Error>>
+    {
+        self.docker
+            .wait_container(container, None::<WaitContainerOptions>)
+    }
+
     pub async fn pull_image(&self, image: &str) -> Result<()> {
         tracing::info!(image, "pulling container image");
         use futures_util::TryStreamExt;
@@ -267,6 +282,12 @@ impl ContainerManager {
             );
         }
 
+        let devices = if opts.devices.is_empty() {
+            None
+        } else {
+            Some(opts.devices.clone())
+        };
+
         let body = ContainerCreateBody {
             image: Some(opts.image.clone()),
             env: Some(env),
@@ -279,6 +300,12 @@ impl ContainerManager {
                     None
                 } else {
                     Some(port_bindings)
+                },
+                devices,
+                security_opt: if opts.security_opt.is_empty() {
+                    None
+                } else {
+                    Some(opts.security_opt.clone())
                 },
                 ..Default::default()
             }),
@@ -415,9 +442,28 @@ mod tests {
             labels: vec![("custom".to_string(), "value".to_string())],
             user: None,
             healthcheck: None,
+            devices: vec![],
+            security_opt: vec![],
         };
         let labels = opts.all_labels();
         assert!(labels.iter().any(|(k, v)| k == "managed-by" && v == "quma"));
+    }
+
+    #[test]
+    fn create_container_opts_devices_default_empty() {
+        let opts = CreateContainerOpts {
+            name: "test".to_string(),
+            image: "test:latest".to_string(),
+            env: vec![],
+            volumes: vec![],
+            ports: vec![],
+            labels: vec![],
+            user: None,
+            healthcheck: None,
+            devices: vec![],
+            security_opt: vec![],
+        };
+        assert!(opts.devices.is_empty());
     }
 
     #[test]

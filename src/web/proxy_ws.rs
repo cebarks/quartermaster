@@ -35,13 +35,50 @@ pub async fn ws_proxy_handler(
     let path_owned = path.to_string();
     let state_clone = state.clone();
 
+    // Build an upstream WebSocket request that carries the client's non-WS headers
+    // so SPT/Fika can authenticate the connection (e.g. Cookie header for session ID).
+    // We start from tungstenite's IntoClientRequest to get proper WS upgrade headers
+    // (Connection, Upgrade, Sec-WebSocket-Key, etc.), then layer on the client headers.
+    use tungstenite::client::IntoClientRequest;
+    let mut upstream_request = upstream_url
+        .clone()
+        .into_client_request()
+        .expect("valid upstream WS URI");
+    {
+        let ws_header_names: std::collections::HashSet<&str> = [
+            "host",
+            "connection",
+            "upgrade",
+            "sec-websocket-key",
+            "sec-websocket-version",
+            "sec-websocket-extensions",
+            "sec-websocket-protocol",
+        ]
+        .into_iter()
+        .collect();
+
+        let headers = upstream_request.headers_mut();
+        for (name, value) in req.headers() {
+            let name_lower = name.as_str().to_lowercase();
+            if ws_header_names.contains(name_lower.as_str()) {
+                continue;
+            }
+            if let (Ok(hn), Ok(hv)) = (
+                tungstenite::http::header::HeaderName::from_bytes(name.as_str().as_bytes()),
+                tungstenite::http::header::HeaderValue::from_bytes(value.as_bytes()),
+            ) {
+                headers.insert(hn, hv);
+            }
+        }
+    }
+
     actix_web::rt::spawn(async move {
         state_clone.proxy_metrics.increment_ws_connections();
 
         let connector = tokio_tungstenite::Connector::Rustls(Arc::new(insecure_tls_config()));
 
         let ws_result = tokio_tungstenite::connect_async_tls_with_config(
-            &upstream_url,
+            upstream_request,
             None,
             false,
             Some(connector),
