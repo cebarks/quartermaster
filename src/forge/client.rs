@@ -183,7 +183,7 @@ impl ForgeClient {
         };
         match (origin(url), origin(&self.base_url)) {
             (Some(a), Some(b)) => a == b,
-            _ => true,
+            _ => false,
         }
     }
 
@@ -775,6 +775,21 @@ mod tests {
         assert!(v.fika_compatibility.is_none());
         assert!(v.spt_version.is_none());
         assert!(v.dependencies.is_none());
+    }
+
+    #[test]
+    fn is_forge_url_returns_false_on_parse_failure() {
+        let client =
+            ForgeClient::with_base_url("https://forge.sp-tarkov.com/api/v0".into(), None).unwrap();
+
+        // Unparseable URL should return false (don't leak auth token)
+        assert!(!client.is_forge_url("not a url at all"));
+
+        // Valid URL on different host should return false
+        assert!(!client.is_forge_url("https://github.com/some/file.zip"));
+
+        // Valid URL on same host should return true
+        assert!(client.is_forge_url("https://forge.sp-tarkov.com/api/v0/files/download.zip"));
     }
 
     #[tokio::test]

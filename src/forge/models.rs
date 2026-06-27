@@ -6,6 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// and as a string enum on version objects ("compatible"/"incompatible"/"unknown").
 /// Custom deserialization handles both representations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum FikaCompat {
     Compatible,
     Incompatible,
@@ -248,6 +249,33 @@ mod tests {
         }"#;
         let v: ForgeVersion = serde_json::from_str(json).unwrap();
         assert_eq!(v.fika_compatibility, Some(FikaCompat::Unknown));
+    }
+
+    #[test]
+    fn fika_compat_serialization_round_trips() {
+        // Serialize each variant and verify lowercase output
+        let compat = FikaCompat::Compatible;
+        let json = serde_json::to_string(&compat).unwrap();
+        assert_eq!(json, r#""compatible""#);
+
+        let incompat = FikaCompat::Incompatible;
+        let json = serde_json::to_string(&incompat).unwrap();
+        assert_eq!(json, r#""incompatible""#);
+
+        let unknown = FikaCompat::Unknown;
+        let json = serde_json::to_string(&unknown).unwrap();
+        assert_eq!(json, r#""unknown""#);
+
+        // Round-trip: serialize then deserialize back
+        for variant in [
+            FikaCompat::Compatible,
+            FikaCompat::Incompatible,
+            FikaCompat::Unknown,
+        ] {
+            let serialized = serde_json::to_string(&variant).unwrap();
+            let deserialized: FikaCompat = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(variant, deserialized);
+        }
     }
 
     #[test]
