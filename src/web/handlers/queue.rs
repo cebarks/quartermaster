@@ -102,17 +102,6 @@ pub async fn apply_queue(
             .finish());
     }
 
-    if state.tasks.has_active() {
-        set_flash(
-            &session,
-            "Queue is already being applied. Please wait.",
-            FlashType::Warning,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods#queue"))
-            .finish());
-    }
-
     let db = state.db.clone();
     let ops = web::block(move || {
         let db = db.lock();
@@ -122,9 +111,23 @@ pub async fn apply_queue(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let task_id = state
-        .tasks
-        .start("Applying queue", &format!("{} operations", ops.len()), 0);
+    let task_id = match state.tasks.start_if_no_active(
+        "Applying queue",
+        &format!("{} operations", ops.len()),
+        0,
+    ) {
+        Some(id) => id,
+        None => {
+            set_flash(
+                &session,
+                "Queue is already being applied. Please wait.",
+                FlashType::Warning,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods#queue"))
+                .finish());
+        }
+    };
     let tasks = state.tasks.clone();
     let state_clone = state.clone();
 

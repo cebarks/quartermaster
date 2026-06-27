@@ -76,6 +76,7 @@ impl TaskTracker {
         let _ = inner.events_tx.send(event);
     }
 
+    #[allow(dead_code)] // Useful read-only query; handlers now use start_if_not_running
     pub fn has_running_for_mod(&self, forge_mod_id: i64) -> bool {
         let inner = self.inner.lock();
         inner
@@ -84,6 +85,7 @@ impl TaskTracker {
             .any(|t| t.forge_mod_id == forge_mod_id && t.status.is_running())
     }
 
+    #[allow(dead_code)] // Non-atomic version; handlers now use start_if_not_running
     pub fn start(&self, action: &str, mod_name: &str, forge_mod_id: i64) -> u64 {
         let mut inner = self.inner.lock();
         let id = inner.next_id;
@@ -147,6 +149,67 @@ impl TaskTracker {
         self.inner.lock().tasks.remove(&id);
     }
 
+    /// Atomically check whether any task is running for `forge_mod_id` and, if
+    /// not, start a new one.  Returns `Some(task_id)` on success, `None` if a
+    /// task for that mod is already in progress.
+    pub fn start_if_not_running(
+        &self,
+        action: &str,
+        mod_name: &str,
+        forge_mod_id: i64,
+    ) -> Option<u64> {
+        let mut inner = self.inner.lock();
+        let already_running = inner
+            .tasks
+            .values()
+            .any(|t| t.forge_mod_id == forge_mod_id && t.status.is_running());
+        if already_running {
+            return None;
+        }
+
+        let id = inner.next_id;
+        inner.next_id += 1;
+        let info = TaskInfo {
+            status: TaskStatus::Running {
+                message: format!("{} {}...", action, mod_name),
+            },
+            forge_mod_id,
+        };
+        inner.tasks.insert(id, info);
+        Self::send_event(&inner, ServerEvent::TaskChanged);
+        Some(id)
+    }
+
+    /// Atomically check whether *any* task is currently running and, if not,
+    /// start a new one.  Returns `Some(task_id)` on success, `None` if any
+    /// task is active.  Intended for bulk operations (e.g. "update all",
+    /// "apply queue") that must not overlap with other work.
+    pub fn start_if_no_active(
+        &self,
+        action: &str,
+        mod_name: &str,
+        forge_mod_id: i64,
+    ) -> Option<u64> {
+        let mut inner = self.inner.lock();
+        let any_running = inner.tasks.values().any(|t| t.status.is_running());
+        if any_running {
+            return None;
+        }
+
+        let id = inner.next_id;
+        inner.next_id += 1;
+        let info = TaskInfo {
+            status: TaskStatus::Running {
+                message: format!("{} {}...", action, mod_name),
+            },
+            forge_mod_id,
+        };
+        inner.tasks.insert(id, info);
+        Self::send_event(&inner, ServerEvent::TaskChanged);
+        Some(id)
+    }
+
+    #[allow(dead_code)] // Useful read-only query; handlers now use start_if_no_active
     pub fn has_active(&self) -> bool {
         self.inner
             .lock()
@@ -170,5 +233,88 @@ impl TaskTracker {
                 inner.tasks.remove(id);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::broadcast;
+
+    fn make_tracker() -> TaskTracker {
+        let (tx, _rx) = broadcast::channel(16);
+        TaskTracker::new(tx)
+    }
+
+    #[test]
+    fn start_if_not_running_returns_some_then_none_for_same_mod() {
+        let tracker = make_tracker();
+        let first = tracker.start_if_not_running("Installing", "TestMod", 42);
+        assert!(first.is_some(), "first call should return Some(task_id)");
+
+        let second = tracker.start_if_not_running("Installing", "TestMod", 42);
+        assert!(
+            second.is_none(),
+            "second call for same mod should return None"
+        );
+    }
+
+    #[test]
+    fn start_if_not_running_allows_different_mods() {
+        let tracker = make_tracker();
+        let first = tracker.start_if_not_running("Installing", "ModA", 1);
+        assert!(first.is_some());
+
+        let second = tracker.start_if_not_running("Installing", "ModB", 2);
+        assert!(second.is_some(), "different mod_id should be allowed");
+    }
+
+    #[test]
+    fn start_if_no_active_returns_none_when_task_running() {
+        let tracker = make_tracker();
+        // Start a task for some mod so there is an active task.
+        let _id = tracker.start("Installing", "SomeMod", 99);
+
+        let result = tracker.start_if_no_active("Update All", "bulk", 0);
+        assert!(
+            result.is_none(),
+            "should return None when any task is active"
+        );
+    }
+
+    #[test]
+    fn start_if_no_active_returns_some_when_idle() {
+        let tracker = make_tracker();
+        let result = tracker.start_if_no_active("Update All", "bulk", 0);
+        assert!(
+            result.is_some(),
+            "should return Some when no tasks are active"
+        );
+    }
+
+    #[test]
+    fn start_if_not_running_allows_restart_after_complete() {
+        let tracker = make_tracker();
+        let task_id = tracker
+            .start_if_not_running("Installing", "TestMod", 42)
+            .expect("first start should succeed");
+
+        tracker.complete(task_id, "done".to_string());
+
+        let second = tracker.start_if_not_running("Installing", "TestMod", 42);
+        assert!(second.is_some(), "should allow restarting after completion");
+    }
+
+    #[test]
+    fn start_if_not_running_allows_restart_after_failure() {
+        let tracker = make_tracker();
+        let task_id = tracker
+            .start_if_not_running("Installing", "TestMod", 42)
+            .expect("first start should succeed");
+
+        tracker.fail(task_id, "error".to_string());
+
+        let second = tracker.start_if_not_running("Installing", "TestMod", 42);
+        assert!(second.is_some(), "should allow restarting after failure");
     }
 }

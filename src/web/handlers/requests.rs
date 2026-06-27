@@ -657,128 +657,143 @@ pub async fn resolve_request(
                 }
 
                 // Prevent duplicate installs
-                if state.tasks.has_running_for_mod(forge_mod_id) {
-                    message += " (install already in progress)";
-                } else {
-                    let config = state.config_cloned();
-                    let should_queue = crate::queue::should_queue(
-                        &config,
-                        false,
-                        &state.spt_dir,
-                        state.container_mgr.as_deref(),
-                    )
+                let config = state.config_cloned();
+                let should_queue = crate::queue::should_queue(
+                    &config,
+                    false,
+                    &state.spt_dir,
+                    state.container_mgr.as_deref(),
+                )
+                .await
+                .unwrap_or(false);
+
+                if should_queue {
+                    // Atomic check+insert to prevent duplicate queue entries
+                    let db = state.db.clone();
+                    let mod_name = request.mod_name.clone();
+                    let version_id = version.id;
+                    let username = user.username.clone();
+                    let already_queued = web::block(move || {
+                        let db = db.lock();
+                        if db
+                            .has_pending_op(forge_mod_id, crate::db::users::QueueAction::Install)?
+                        {
+                            return Ok::<bool, rusqlite::Error>(true);
+                        }
+                        db.insert_pending_op(
+                            crate::db::users::QueueAction::Install,
+                            forge_mod_id,
+                            Some(version_id),
+                            &mod_name,
+                            None,
+                            Some(&username),
+                        )?;
+                        Ok(false)
+                    })
                     .await
-                    .unwrap_or(false);
+                    .map_err(WebError::from)?
+                    .map_err(WebError::from)?;
 
-                    if should_queue {
-                        let db = state.db.clone();
-                        let mod_name = request.mod_name.clone();
-                        let version_id = version.id;
-                        let username = user.username.clone();
-                        web::block(move || {
-                            let db = db.lock();
-                            db.insert_pending_op(
-                                crate::db::users::QueueAction::Install,
-                                forge_mod_id,
-                                Some(version_id),
-                                &mod_name,
-                                None,
-                                Some(&username),
-                            )
-                        })
-                        .await
-                        .map_err(WebError::from)?
-                        .map_err(WebError::from)?;
-                        message = "Approved and queued for install.".to_string();
+                    if already_queued {
+                        message = "Approved (already queued for install).".to_string();
                     } else {
-                        // Direct install via async task (same pattern as mods::install_mod)
-                        let task_id =
-                            state
-                                .tasks
-                                .start("Installing", &request.mod_name, forge_mod_id);
-                        let tasks = state.tasks.clone();
-                        let forge = state.forge.clone();
-                        let spt_dir = state.spt_dir.clone();
-                        let db = state.db.clone();
-                        let version = version.clone();
-                        let mod_name = request.mod_name.clone();
-                        let mod_slug = request.mod_slug.clone();
-                        let update_cache = state.update_cache.clone();
+                        message = "Approved and queued for install.".to_string();
+                    }
+                } else {
+                    // Direct install — atomic check+start to prevent TOCTOU race
+                    match state.tasks.start_if_not_running(
+                        "Installing",
+                        &request.mod_name,
+                        forge_mod_id,
+                    ) {
+                        Some(task_id) => {
+                            let tasks = state.tasks.clone();
+                            let forge = state.forge.clone();
+                            let spt_dir = state.spt_dir.clone();
+                            let db = state.db.clone();
+                            let version = version.clone();
+                            let mod_name = request.mod_name.clone();
+                            let mod_slug = request.mod_slug.clone();
+                            let update_cache = state.update_cache.clone();
 
-                        tokio::spawn(async move {
-                            let result = async {
-                                let link = version.link.as_deref().ok_or_else(|| {
-                                    anyhow::anyhow!("version has no download link")
-                                })?;
-                                let tmp_dir = tempfile::tempdir()?;
-                                let archive_path = tmp_dir.path().join("mod.zip");
-                                forge.download_file(link, &archive_path).await?;
+                            tokio::spawn(async move {
+                                let result = async {
+                                    let link = version.link.as_deref().ok_or_else(|| {
+                                        anyhow::anyhow!("version has no download link")
+                                    })?;
+                                    let tmp_dir = tempfile::tempdir()?;
+                                    let archive_path = tmp_dir.path().join("mod.zip");
+                                    forge.download_file(link, &archive_path).await?;
 
-                                let spt_dir2 = spt_dir.clone();
-                                let extracted = actix_web::web::block(move || {
-                                    crate::spt::mods::extract_mod(&archive_path, &spt_dir2)
-                                })
-                                .await??;
+                                    let spt_dir2 = spt_dir.clone();
+                                    let extracted = actix_web::web::block(move || {
+                                        crate::spt::mods::extract_mod(&archive_path, &spt_dir2)
+                                    })
+                                    .await??;
 
-                                let version_id = version.id;
-                                let version_str = version.version.clone();
-                                let spt_dir2 = spt_dir.clone();
-                                let db2 = db.clone();
-                                let db_id = actix_web::web::block(move || {
-                                    let db = db.lock();
-                                    let tx = db.begin_transaction()?;
-                                    let db_id = db.insert_mod(
-                                        forge_mod_id,
-                                        version_id,
-                                        &mod_name,
-                                        mod_slug.as_deref(),
-                                        &version_str,
-                                    )?;
-                                    for file in &extracted {
-                                        db.insert_file(
-                                            db_id,
-                                            &file.path,
-                                            Some(&file.hash),
-                                            Some(file.size as i64),
+                                    let version_id = version.id;
+                                    let version_str = version.version.clone();
+                                    let spt_dir2 = spt_dir.clone();
+                                    let db2 = db.clone();
+                                    let db_id = actix_web::web::block(move || {
+                                        let db = db.lock();
+                                        let tx = db.begin_transaction()?;
+                                        let db_id = db.insert_mod(
+                                            forge_mod_id,
+                                            version_id,
+                                            &mod_name,
+                                            mod_slug.as_deref(),
+                                            &version_str,
                                         )?;
-                                    }
-                                    tx.commit()?;
-                                    Ok::<_, anyhow::Error>(db_id)
-                                })
-                                .await??;
+                                        for file in &extracted {
+                                            db.insert_file(
+                                                db_id,
+                                                &file.path,
+                                                Some(&file.hash),
+                                                Some(file.size as i64),
+                                            )?;
+                                        }
+                                        tx.commit()?;
+                                        Ok::<_, anyhow::Error>(db_id)
+                                    })
+                                    .await??;
 
-                                let _ = actix_web::web::block(move || {
-                                    crate::ops::scan_and_record_runtime_files(
-                                        &db2, db_id, &spt_dir2,
-                                    )
-                                })
+                                    let _ = actix_web::web::block(move || {
+                                        crate::ops::scan_and_record_runtime_files(
+                                            &db2, db_id, &spt_dir2,
+                                        )
+                                    })
+                                    .await;
+
+                                    Ok::<_, anyhow::Error>(())
+                                }
                                 .await;
 
-                                Ok::<_, anyhow::Error>(())
-                            }
-                            .await;
-
-                            match result {
-                                Ok(()) => {
-                                    tracing::info!(
-                                        forge_mod_id,
-                                        "mod installed via request approval"
-                                    );
-                                    update_cache.invalidate();
-                                    tasks.complete(
-                                        task_id,
-                                        "Mod installed successfully".to_string(),
-                                    );
+                                match result {
+                                    Ok(()) => {
+                                        tracing::info!(
+                                            forge_mod_id,
+                                            "mod installed via request approval"
+                                        );
+                                        update_cache.invalidate();
+                                        tasks.complete(
+                                            task_id,
+                                            "Mod installed successfully".to_string(),
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(forge_mod_id, error = %e, "install from request approval failed");
+                                        tasks.fail(task_id, format!("Install failed: {e}"));
+                                    }
                                 }
-                                Err(e) => {
-                                    tracing::error!(forge_mod_id, error = %e, "install from request approval failed");
-                                    tasks.fail(task_id, format!("Install failed: {e}"));
-                                }
-                            }
-                        });
-                        message = "Approved and installing now.".to_string();
+                            });
+                            message = "Approved and installing now.".to_string();
+                        }
+                        None => {
+                            message += " (install already in progress)";
+                        }
                     }
-                } // close has_running_for_mod else
+                }
             }
             Ok(_) => {
                 message = format!(
