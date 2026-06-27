@@ -342,6 +342,37 @@ fn find_loose_files<'a>(file_paths: &'a [String], top_dirs: &[String]) -> Vec<&'
         .collect()
 }
 
+/// Undo a list of completed renames in reverse order (dst -> src).
+fn undo_renames(completed: &[(PathBuf, PathBuf)]) {
+    for (src, dst) in completed.iter().rev() {
+        if let Err(undo_err) = std::fs::rename(dst, src) {
+            tracing::error!(
+                from = %dst.display(),
+                to = %src.display(),
+                error = %undo_err,
+                "CRITICAL: failed to undo rename during rollback"
+            );
+        }
+    }
+}
+
+/// Perform a batch of filesystem renames, returning the completed renames.
+/// On failure, automatically undoes all completed renames before returning the error.
+fn rename_batch(renames: &[(PathBuf, PathBuf)]) -> Result<Vec<(PathBuf, PathBuf)>> {
+    let mut completed: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for (src, dst) in renames {
+        if src.exists() {
+            if let Err(e) = std::fs::rename(src, dst) {
+                undo_renames(&completed);
+                return Err(e).with_context(|| format!("failed to rename {}", src.display()));
+            }
+            completed.push((src.clone(), dst.clone()));
+            tracing::debug!(from = %src.display(), to = %dst.display(), "renamed");
+        }
+    }
+    Ok(completed)
+}
+
 /// Disable a mod by renaming its top-level directories and loose files with
 /// a `.disabled` suffix, updating file paths in the database, and marking
 /// the mod as disabled.
@@ -361,36 +392,16 @@ pub fn disable_mod(
     let files = db.get_files_for_mod(mod_db_id)?;
     let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
     let top_dirs = find_top_level_mod_dirs(&file_paths);
+    let loose = find_loose_files(&file_paths, &top_dirs);
 
     tracing::info!(mod_db_id, name = %mod_info.name, "disabling mod");
 
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_disable")?;
 
-    // Rename top-level directories
-    for dir in &top_dirs {
-        let src = spt_dir.join(dir);
-        let dst = spt_dir.join(format!("{dir}.disabled"));
-        if src.exists() {
-            std::fs::rename(&src, &dst)
-                .with_context(|| format!("failed to rename {}", src.display()))?;
-            tracing::debug!(from = %src.display(), to = %dst.display(), "renamed directory");
-        }
-    }
-
-    // Rename loose files (individual DLLs etc. not inside a mod directory)
-    let loose = find_loose_files(&file_paths, &top_dirs);
-    for loose_path in &loose {
-        let src = spt_dir.join(loose_path);
-        let dst = spt_dir.join(format!("{loose_path}.disabled"));
-        if src.exists() {
-            std::fs::rename(&src, &dst)
-                .with_context(|| format!("failed to rename {}", src.display()))?;
-            tracing::debug!(from = %src.display(), to = %dst.display(), "renamed loose file");
-        }
-    }
+    // Begin transaction: update DB first, then filesystem
+    let tx = db.begin_transaction()?;
 
     // Update file paths in the database
-    let tx = db.begin_transaction()?;
     for file in &files {
         let new_path = if let Some(matching_dir) = top_dirs
             .iter()
@@ -407,7 +418,28 @@ pub fn disable_mod(
     }
 
     db.set_mod_disabled(mod_db_id, true)?;
-    tx.commit()?;
+
+    // Build rename list and perform filesystem renames
+    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for dir in &top_dirs {
+        let src = spt_dir.join(dir);
+        let dst = spt_dir.join(format!("{dir}.disabled"));
+        renames.push((src, dst));
+    }
+    for loose_path in &loose {
+        let src = spt_dir.join(loose_path);
+        let dst = spt_dir.join(format!("{loose_path}.disabled"));
+        renames.push((src, dst));
+    }
+
+    let completed = rename_batch(&renames)?;
+
+    // Commit transaction -- undo renames if commit fails
+    if let Err(e) = tx.commit() {
+        undo_renames(&completed);
+        return Err(e.into());
+    }
+
     tracing::info!(mod_db_id, name = %mod_info.name, "mod disabled");
     Ok(())
 }
@@ -431,46 +463,16 @@ pub fn enable_mod(
     let files = db.get_files_for_mod(mod_db_id)?;
     let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
     let top_dirs = find_top_level_mod_dirs(&file_paths);
+    let loose = find_loose_files(&file_paths, &top_dirs);
 
     tracing::info!(mod_db_id, name = %mod_info.name, "enabling mod");
 
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_enable")?;
 
-    // Rename top-level directories (strip .disabled suffix)
-    for dir in &top_dirs {
-        if dir.ends_with(".disabled") {
-            let restored = dir
-                .strip_suffix(".disabled")
-                .expect("checked by ends_with above");
-            let src = spt_dir.join(dir);
-            let dst = spt_dir.join(restored);
-            if src.exists() {
-                std::fs::rename(&src, &dst)
-                    .with_context(|| format!("failed to rename {}", src.display()))?;
-                tracing::debug!(from = %src.display(), to = %dst.display(), "restored directory");
-            }
-        }
-    }
-
-    // Rename loose files (strip .disabled suffix)
-    let loose = find_loose_files(&file_paths, &top_dirs);
-    for loose_path in &loose {
-        if loose_path.ends_with(".disabled") {
-            let restored = loose_path
-                .strip_suffix(".disabled")
-                .expect("checked by ends_with above");
-            let src = spt_dir.join(loose_path);
-            let dst = spt_dir.join(restored);
-            if src.exists() {
-                std::fs::rename(&src, &dst)
-                    .with_context(|| format!("failed to rename {}", src.display()))?;
-                tracing::debug!(from = %src.display(), to = %dst.display(), "restored loose file");
-            }
-        }
-    }
+    // Begin transaction: update DB first, then filesystem
+    let tx = db.begin_transaction()?;
 
     // Update file paths in the database (strip .disabled from paths)
-    let tx = db.begin_transaction()?;
     for file in &files {
         let new_path = if let Some(matching_dir) = top_dirs
             .iter()
@@ -497,7 +499,38 @@ pub fn enable_mod(
     }
 
     db.set_mod_disabled(mod_db_id, false)?;
-    tx.commit()?;
+
+    // Build rename list and perform filesystem renames (strip .disabled suffix)
+    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for dir in &top_dirs {
+        if dir.ends_with(".disabled") {
+            let restored = dir
+                .strip_suffix(".disabled")
+                .expect("checked by ends_with above");
+            let src = spt_dir.join(dir);
+            let dst = spt_dir.join(restored);
+            renames.push((src, dst));
+        }
+    }
+    for loose_path in &loose {
+        if loose_path.ends_with(".disabled") {
+            let restored = loose_path
+                .strip_suffix(".disabled")
+                .expect("checked by ends_with above");
+            let src = spt_dir.join(loose_path);
+            let dst = spt_dir.join(restored);
+            renames.push((src, dst));
+        }
+    }
+
+    let completed = rename_batch(&renames)?;
+
+    // Commit transaction -- undo renames if commit fails
+    if let Err(e) = tx.commit() {
+        undo_renames(&completed);
+        return Err(e.into());
+    }
+
     tracing::info!(mod_db_id, name = %mod_info.name, "mod enabled");
     Ok(())
 }
