@@ -13,23 +13,28 @@
 <div id="tab-app" class="tab-panel">
     <div class="log-controls">
         <div class="log-controls-left">
-            <button id="app-follow-btn" class="btn btn-sm btn-outline">Follow</button>
+            <button id="app-live-toggle" class="btn btn-sm btn-outline active">Live</button>
             <button id="app-refresh-btn" class="btn btn-sm btn-outline">Refresh</button>
             <button id="app-clear-btn" class="btn btn-sm btn-outline">Clear</button>
         </div>
         <div class="log-controls-right">
             <span class="log-filter-group">
-                <button class="log-level-btn active" data-level="error">Error</button>
-                <button class="log-level-btn active" data-level="warn">Warn</button>
-                <button class="log-level-btn active" data-level="info">Info</button>
-                <button class="log-level-btn" data-level="debug">Debug</button>
-                <button class="log-level-btn" data-level="trace">Trace</button>
+                <button class="log-level-btn active" data-level="ERROR"><span class="level-label">ERROR</span> <span class="count">0</span></button>
+                <button class="log-level-btn active" data-level="WARN"><span class="level-label">WARN</span> <span class="count">0</span></button>
+                <button class="log-level-btn active" data-level="INFO"><span class="level-label">INFO</span> <span class="count">0</span></button>
+                <button class="log-level-btn" data-level="DEBUG"><span class="level-label">DEBUG</span> <span class="count">0</span></button>
+                <button class="log-level-btn" data-level="TRACE"><span class="level-label">TRACE</span> <span class="count">0</span></button>
             </span>
-            <input type="text" id="app-search" class="log-search" placeholder="Search...">
+            <input type="text" id="app-search" class="log-search" placeholder="Search messages...">
+            <input type="text" id="app-target-filter" class="log-search" placeholder="Filter by target...">
         </div>
     </div>
-    <div id="app-log-container" class="log-container">
-        <div class="empty-state"><p>Loading...</p></div>
+    <div id="app-log-wrapper" style="position:relative">
+        <button id="load-older" class="btn btn-sm" style="display:none; margin-bottom: 0.5rem; width: 100%;">Load older...</button>
+        <div id="app-log-container" class="log-container">
+            <div class="empty-state"><p>Loading...</p></div>
+        </div>
+        <button id="jump-to-latest" class="btn btn-sm btn-accent" style="display:none; position: absolute; bottom: 1rem; right: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.4);">Jump to latest ↓</button>
     </div>
 </div>
 
@@ -64,113 +69,300 @@
 
     // --- App Logs ---
     const appContainer = document.getElementById('app-log-container');
-    const appFollowBtn = document.getElementById('app-follow-btn');
+    const appLiveToggle = document.getElementById('app-live-toggle');
     const appRefreshBtn = document.getElementById('app-refresh-btn');
     const appClearBtn = document.getElementById('app-clear-btn');
     const appSearch = document.getElementById('app-search');
-    let appFollowing = false;
+    const appTargetFilter = document.getElementById('app-target-filter');
+    const loadOlderBtn = document.getElementById('load-older');
+    const jumpToLatestBtn = document.getElementById('jump-to-latest');
+
+    let liveMode = true;
     let appEventSource = null;
-    const activeLevels = new Set(['error', 'warn', 'info']);
+    let activeLevels = new Set(['ERROR', 'WARN', 'INFO']);
+    let oldestId = null;
+    let hasMore = false;
+    let searchDebounce = null;
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatTimestamp(ts) {
+        const date = new Date(ts);
+        const h = String(date.getHours()).padStart(2, '0');
+        const m = String(date.getMinutes()).padStart(2, '0');
+        const s = String(date.getSeconds()).padStart(2, '0');
+        const ms = String(date.getMilliseconds()).padStart(3, '0');
+        return `${h}:${m}:${s}.${ms}`;
+    }
 
     function levelClass(level) {
-        const l = level.toLowerCase();
-        if (l === 'error') return 'log-error';
-        if (l === 'warn') return 'log-warn';
-        if (l === 'debug') return 'log-debug';
-        if (l === 'trace') return 'log-trace';
+        const l = level.toUpperCase();
+        if (l === 'ERROR') return 'log-error';
+        if (l === 'WARN') return 'log-warn';
+        if (l === 'DEBUG') return 'log-debug';
+        if (l === 'TRACE') return 'log-trace';
         return '';
     }
 
-    function formatFields(fields) {
-        return Object.entries(fields || {}).map(([k,v]) => k + '=' + v).join(' ');
-    }
-
     function renderAppEntry(entry) {
-        const div = document.createElement('div');
-        div.className = 'log-entry ' + levelClass(entry.level);
-        div.dataset.level = entry.level.toLowerCase();
-        const ts = new Date(entry.timestamp).toLocaleTimeString();
-        const tsSpan = document.createElement('span');
-        tsSpan.className = 'log-ts';
-        tsSpan.textContent = ts;
-        const lvlSpan = document.createElement('span');
-        lvlSpan.className = 'log-level';
-        lvlSpan.textContent = entry.level;
-        const tgtSpan = document.createElement('span');
-        tgtSpan.className = 'log-target';
-        tgtSpan.textContent = entry.target;
-        div.appendChild(tsSpan);
-        div.appendChild(document.createTextNode(' '));
-        div.appendChild(lvlSpan);
-        div.appendChild(document.createTextNode(' '));
-        div.appendChild(tgtSpan);
-        div.appendChild(document.createTextNode(' ' + entry.message));
-        const fieldsStr = formatFields(entry.fields);
-        if (fieldsStr) {
-            const fSpan = document.createElement('span');
-            fSpan.className = 'log-fields';
-            fSpan.textContent = fieldsStr;
-            div.appendChild(document.createTextNode(' '));
-            div.appendChild(fSpan);
+        const row = document.createElement('div');
+        row.className = 'log-entry ' + levelClass(entry.level);
+        row.dataset.level = entry.level.toUpperCase();
+        row.dataset.id = entry.id;
+
+        const summary = document.createElement('div');
+        summary.className = 'log-summary';
+
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'log-ts';
+        timeSpan.textContent = formatTimestamp(entry.timestamp);
+
+        const levelSpan = document.createElement('span');
+        levelSpan.className = 'log-level';
+        levelSpan.textContent = entry.level.padEnd(5);
+
+        const messageSpan = document.createElement('span');
+        messageSpan.className = 'log-message';
+        messageSpan.textContent = entry.message;
+
+        summary.appendChild(timeSpan);
+        summary.appendChild(document.createTextNode(' '));
+        summary.appendChild(levelSpan);
+        summary.appendChild(document.createTextNode(' '));
+        summary.appendChild(messageSpan);
+
+        row.appendChild(summary);
+
+        // Expandable detail section
+        if (entry.fields || entry.target) {
+            summary.style.cursor = 'pointer';
+            const detail = document.createElement('div');
+            detail.className = 'log-detail';
+            detail.style.display = 'none';
+
+            let detailHtml = `<div class="log-target-detail">target: <span style="color: var(--text-muted);">${escapeHtml(entry.target)}</span></div>`;
+
+            if (entry.fields) {
+                try {
+                    const fields = typeof entry.fields === 'string' ? JSON.parse(entry.fields) : entry.fields;
+                    if (fields && Object.keys(fields).length > 0) {
+                        detailHtml += '<div class="log-fields-detail">';
+                        for (const [k, v] of Object.entries(fields)) {
+                            detailHtml += `<div><span style="color: #61afef;">${escapeHtml(k)}</span>=<span style="color: var(--text);">${escapeHtml(String(v))}</span></div>`;
+                        }
+                        detailHtml += '</div>';
+                    }
+                } catch(e) {
+                    console.error('Failed to parse fields:', e);
+                }
+            }
+
+            detail.innerHTML = detailHtml;
+            row.appendChild(detail);
+
+            summary.addEventListener('click', () => {
+                detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+            });
         }
-        return div;
+
+        // Client-side level visibility
+        if (!activeLevels.has(entry.level.toUpperCase())) {
+            row.style.display = 'none';
+        }
+
+        return row;
     }
 
-    function applyFilters() {
-        const search = appSearch.value.toLowerCase();
+    async function fetchLogs(opts = {}) {
+        const params = new URLSearchParams();
+        if (opts.before) params.set('before', opts.before);
+        if (opts.limit) params.set('limit', opts.limit);
+
+        const searchVal = appSearch.value.trim();
+        if (searchVal) params.set('q', searchVal);
+
+        const targetVal = appTargetFilter.value.trim();
+        if (targetVal) params.set('target', targetVal);
+
+        const resp = await fetch(`/quma/api/logs/app?${params}`);
+        const data = await resp.json();
+        return data; // { entries: [...], has_more: bool }
+    }
+
+    async function fetchCounts() {
+        try {
+            const resp = await fetch('/quma/api/logs/app/count');
+            const counts = await resp.json();
+
+            document.querySelectorAll('.log-level-btn').forEach(btn => {
+                const level = btn.dataset.level;
+                const countSpan = btn.querySelector('.count');
+                if (countSpan && counts[level] !== undefined) {
+                    countSpan.textContent = counts[level];
+                }
+            });
+        } catch (e) {
+            console.error('Failed to fetch counts:', e);
+        }
+    }
+
+    async function loadInitialLogs() {
+        try {
+            const data = await fetchLogs({ limit: 100 });
+            appContainer.innerHTML = '';
+
+            if (data.entries.length === 0) {
+                appContainer.innerHTML = '<div class="empty-state"><p>No log entries</p></div>';
+                oldestId = null;
+                hasMore = false;
+            } else {
+                data.entries.forEach(entry => {
+                    appContainer.appendChild(renderAppEntry(entry));
+                });
+                oldestId = data.entries[data.entries.length - 1].id;
+                hasMore = data.has_more;
+            }
+
+            loadOlderBtn.style.display = hasMore ? 'block' : 'none';
+            appContainer.scrollTop = appContainer.scrollHeight;
+        } catch (e) {
+            console.error('Failed to load logs:', e);
+            appContainer.innerHTML = '<div class="empty-state"><p>Error loading logs</p></div>';
+        }
+    }
+
+    async function loadOlderLogs() {
+        if (!oldestId || !hasMore) return;
+
+        try {
+            const data = await fetchLogs({ before: oldestId, limit: 50 });
+
+            if (data.entries.length > 0) {
+                // Prepend entries
+                const firstEntry = appContainer.querySelector('.log-entry');
+                data.entries.forEach(entry => {
+                    const row = renderAppEntry(entry);
+                    if (firstEntry) {
+                        appContainer.insertBefore(row, firstEntry);
+                    } else {
+                        appContainer.appendChild(row);
+                    }
+                });
+
+                oldestId = data.entries[data.entries.length - 1].id;
+                hasMore = data.has_more;
+                loadOlderBtn.style.display = hasMore ? 'block' : 'none';
+            } else {
+                hasMore = false;
+                loadOlderBtn.style.display = 'none';
+            }
+        } catch (e) {
+            console.error('Failed to load older logs:', e);
+        }
+    }
+
+    function applyLevelFilters() {
         appContainer.querySelectorAll('.log-entry').forEach(el => {
-            const matchesLevel = activeLevels.has(el.dataset.level);
-            const matchesSearch = !search || el.textContent.toLowerCase().includes(search);
-            el.style.display = (matchesLevel && matchesSearch) ? '' : 'none';
+            const level = el.dataset.level;
+            const visible = activeLevels.has(level);
+            el.style.display = visible ? '' : 'none';
         });
     }
 
-    function loadAppLogs() {
-        fetch('/quma/api/logs/app?limit=100')
-            .then(r => r.json())
-            .then(entries => {
-                appContainer.innerHTML = '';
-                entries.forEach(e => appContainer.appendChild(renderAppEntry(e)));
-                if (entries.length === 0) {
-                    appContainer.innerHTML = '<div class="empty-state"><p>No log entries</p></div>';
-                }
-                applyFilters();
-                appContainer.scrollTop = appContainer.scrollHeight;
-            });
+    function isScrolledToBottom() {
+        const threshold = 100;
+        return appContainer.scrollHeight - appContainer.scrollTop - appContainer.clientHeight < threshold;
     }
 
-    function startAppFollow() {
-        if (appEventSource) return;
-        appFollowing = true;
-        appFollowBtn.classList.add('active');
+    function updateScrollIndicators() {
+        if (isScrolledToBottom()) {
+            jumpToLatestBtn.style.display = 'none';
+        } else {
+            jumpToLatestBtn.style.display = 'block';
+        }
+    }
+
+    function connectSSE() {
+        if (appEventSource) appEventSource.close();
         appEventSource = new EventSource('/quma/api/logs/app/stream');
-        appEventSource.onmessage = function(e) {
-            const entry = JSON.parse(e.data);
-            appContainer.appendChild(renderAppEntry(entry));
-            applyFilters();
-            appContainer.scrollTop = appContainer.scrollHeight;
+        appEventSource.onmessage = (event) => {
+            if (!liveMode) return;
+            try {
+                const entry = JSON.parse(event.data);
+                const atBottom = isScrolledToBottom();
+                const row = renderAppEntry(entry);
+                appContainer.appendChild(row);
+
+                if (atBottom) {
+                    row.scrollIntoView({ block: 'end', behavior: 'smooth' });
+                }
+                updateScrollIndicators();
+            } catch(e) {
+                console.error('SSE parse error:', e);
+            }
         };
-        appEventSource.onerror = function() {
-            stopAppFollow();
+        appEventSource.onerror = () => {
+            console.error('SSE connection error');
         };
     }
 
-    function stopAppFollow() {
+    function stopSSE() {
         if (appEventSource) {
             appEventSource.close();
             appEventSource = null;
         }
-        appFollowing = false;
-        appFollowBtn.classList.remove('active');
     }
 
-    appFollowBtn.addEventListener('click', () => {
-        if (appFollowing) stopAppFollow();
-        else startAppFollow();
+    // Event listeners
+    appLiveToggle.addEventListener('click', () => {
+        liveMode = !liveMode;
+        if (liveMode) {
+            appLiveToggle.classList.add('active');
+            connectSSE();
+        } else {
+            appLiveToggle.classList.remove('active');
+            stopSSE();
+        }
     });
-    appRefreshBtn.addEventListener('click', loadAppLogs);
-    appClearBtn.addEventListener('click', () => { appContainer.innerHTML = ''; });
-    appSearch.addEventListener('input', applyFilters);
+
+    appRefreshBtn.addEventListener('click', () => {
+        loadInitialLogs();
+        fetchCounts();
+    });
+
+    appClearBtn.addEventListener('click', () => {
+        appContainer.innerHTML = '';
+        oldestId = null;
+        hasMore = false;
+        loadOlderBtn.style.display = 'none';
+    });
+
+    appSearch.addEventListener('input', () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+            loadInitialLogs();
+        }, 300);
+    });
+
+    appTargetFilter.addEventListener('input', () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+            loadInitialLogs();
+        }, 300);
+    });
+
+    loadOlderBtn.addEventListener('click', loadOlderLogs);
+
+    jumpToLatestBtn.addEventListener('click', () => {
+        appContainer.scrollTop = appContainer.scrollHeight;
+        updateScrollIndicators();
+    });
+
+    appContainer.addEventListener('scroll', updateScrollIndicators);
 
     // Level filter buttons
     document.querySelectorAll('.log-level-btn').forEach(btn => {
@@ -183,13 +375,16 @@
                 activeLevels.add(level);
                 btn.classList.add('active');
             }
-            applyFilters();
+            applyLevelFilters();
         });
     });
 
-    loadAppLogs();
+    // Initialize
+    loadInitialLogs();
+    fetchCounts();
+    connectSSE();
 
-    // --- Server Logs ---
+    // --- Server Logs (unchanged) ---
     const serverContainer = document.getElementById('server-log-container');
     const serverFollowBtn = document.getElementById('server-follow-btn');
     const serverRefreshBtn = document.getElementById('server-refresh-btn');
@@ -209,7 +404,6 @@
     ];
 
     function ansiToHtml(raw) {
-        // HTML-escape first
         let s = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         let result = '';
         let open = 0;

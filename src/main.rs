@@ -29,20 +29,28 @@ use cli::{Cli, Command};
 /// Resolve context and reconfigure logging for commands that need an SPT directory.
 fn init_context(cli: &Cli, handles: &logging::ReloadHandles) -> Result<cli::common::CliContext> {
     let ctx = cli::common::resolve_context(cli)?;
+
+    let mut logging_config = ctx.config.logging.clone();
+    logging_config.file.enabled = false; // CLI commands don't file-log
+    if let Some(ref fmt) = cli.log_format {
+        if let Ok(format) = fmt.parse::<config::ConsoleFormat>() {
+            logging_config.console.format = format;
+        }
+    }
+
     let filter =
-        logging::resolve_log_filter(&ctx.config.logging, cli.verbose, cli.log_level.as_deref());
-    handles.reconfigure(&ctx.config.logging, &filter, Some(&ctx.spt_dir));
+        logging::resolve_log_filter(&logging_config, cli.verbose, cli.log_level.as_deref());
+    handles.reconfigure(&logging_config, &filter, Some(&ctx.spt_dir));
     Ok(ctx)
 }
 
 /// Apply CLI verbosity to default logging config (for commands that run before config exists).
 fn init_early_logging(cli: &Cli, handles: &logging::ReloadHandles) {
-    let filter = logging::resolve_log_filter(
-        &config::LoggingConfig::default(),
-        cli.verbose,
-        cli.log_level.as_deref(),
-    );
-    handles.reconfigure(&config::LoggingConfig::default(), &filter, None);
+    let mut logging_config = config::LoggingConfig::default();
+    logging_config.file.enabled = false; // CLI commands don't file-log
+    let filter =
+        logging::resolve_log_filter(&logging_config, cli.verbose, cli.log_level.as_deref());
+    handles.reconfigure(&logging_config, &filter, None);
 }
 
 #[tokio::main]
@@ -56,7 +64,7 @@ async fn main() -> Result<()> {
 
     // For non-serve commands, use default buffer size
     let log_broadcast = Arc::new(logging::LogBroadcast::new(1000));
-    let reload_handles = logging::init_subscriber(&log_broadcast);
+    let reload_handles = logging::init_subscriber(&log_broadcast, None);
 
     match &cli.command {
         Command::Setup {

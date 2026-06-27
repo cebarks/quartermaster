@@ -6,9 +6,10 @@ use actix_web::web::{Data, Html, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use actix_web_lab::sse;
 use askama::Template;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 
+use crate::db::logs::{LogQuery as DbLogQuery, StoredLogEntry};
 use crate::db::rbac::Permission;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
@@ -16,25 +17,82 @@ use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
+// Query struct for server (podman) logs — simple limit-only
 #[derive(Deserialize)]
-pub struct LogQuery {
+pub struct ServerLogQuery {
     limit: Option<usize>,
 }
 
+// Query struct for app logs — supports filtering and cursor pagination
+#[derive(Deserialize)]
+pub struct AppLogQuery {
+    level: Option<String>,
+    target: Option<String>,
+    q: Option<String>,
+    before: Option<i64>,
+    limit: Option<usize>,
+}
+
+// Response for app logs JSON endpoint
+#[derive(Serialize)]
+pub struct AppLogResponse {
+    entries: Vec<StoredLogEntry>,
+    has_more: bool,
+}
+
 // ---------------------------------------------------------------------------
-// App log endpoints — backed by the in-process LogBroadcast ring buffer
+// App log endpoints — backed by SQLite database with server-side filtering
 // ---------------------------------------------------------------------------
 
 pub async fn app_logs_json(
     state: Data<AppState>,
     req: HttpRequest,
-    query: Query<LogQuery>,
+    query: Query<AppLogQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ServerLogs)?;
-    let limit = query.limit.unwrap_or(100).min(10000);
-    let entries = state.log_broadcast.recent(limit);
-    Ok(HttpResponse::Ok().json(entries))
+
+    let limit = query.limit.unwrap_or(100).min(1000);
+    let db_query = DbLogQuery {
+        level: query.level.clone(),
+        target: query.target.clone(),
+        search: query.q.clone(),
+        before: query.before,
+        limit: limit + 1, // fetch one extra to detect has_more
+    };
+
+    let db = state.db.clone();
+    let mut entries = actix_web::web::block(move || {
+        let db = db.lock();
+        db.query_logs(&db_query)
+    })
+    .await
+    .map_err(|e| WebError::Internal(anyhow::anyhow!("{e}")))?
+    .map_err(WebError::from)?;
+
+    let has_more = entries.len() > limit;
+    entries.truncate(limit);
+
+    Ok(HttpResponse::Ok().json(AppLogResponse { entries, has_more }))
+}
+
+pub async fn app_logs_count(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ServerLogs)?;
+
+    let db = state.db.clone();
+    let counts = actix_web::web::block(move || {
+        let db = db.lock();
+        db.log_counts_by_level()
+    })
+    .await
+    .map_err(|e| WebError::Internal(anyhow::anyhow!("{e}")))?
+    .map_err(WebError::from)?;
+
+    Ok(HttpResponse::Ok().json(counts))
 }
 
 pub async fn app_logs_stream(
@@ -72,7 +130,7 @@ pub async fn app_logs_stream(
 pub async fn server_logs_json(
     state: Data<AppState>,
     req: HttpRequest,
-    query: Query<LogQuery>,
+    query: Query<ServerLogQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ServerLogs)?;

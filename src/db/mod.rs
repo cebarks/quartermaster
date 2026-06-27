@@ -1,4 +1,5 @@
 pub mod backups;
+pub mod logs;
 pub mod mods;
 pub mod raids;
 pub mod rbac;

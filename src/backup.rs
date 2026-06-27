@@ -264,7 +264,7 @@ pub fn auto_backup_mod(
             if config.backup.require_backup {
                 Err(e).with_context(|| "auto-backup failed and require_backup is enabled")
             } else {
-                tracing::warn!(mod_db_id, error = %e, "auto-backup failed, continuing");
+                tracing::warn!(mod_db_id, err = %e, "auto-backup failed, continuing");
                 Ok(())
             }
         }
@@ -367,7 +367,7 @@ pub fn restore_mod_backup(
     );
 
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(error = %e, "failed to regenerate NarcoNet config after restore");
+        tracing::warn!(err = %e, "failed to regenerate NarcoNet config after restore");
     }
 
     Ok(())
@@ -487,7 +487,7 @@ pub fn restore_full_backup(
     tracing::info!(backup_db_id, "full backup restored");
 
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(error = %e, "failed to regenerate NarcoNet config after full restore");
+        tracing::warn!(err = %e, "failed to regenerate NarcoNet config after full restore");
     }
 
     Ok(())

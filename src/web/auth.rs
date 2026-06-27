@@ -104,7 +104,7 @@ pub async fn auth_middleware(
     let user_id: Option<i64> = match session.get("user_id") {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!(error = %e, "session deserialization failed");
+            tracing::warn!(err = %e, "session deserialization failed");
             None
         }
     };
@@ -152,12 +152,12 @@ pub async fn auth_middleware(
             return Ok(req.into_response(redirect_login()).map_into_boxed_body());
         }
         Ok(Err(e)) => {
-            tracing::warn!(user_id, error = %e, "auth DB query failed");
+            tracing::warn!(user_id, err = %e, "auth DB query failed");
             let response = HttpResponse::ServiceUnavailable().finish();
             return Ok(req.into_response(response).map_into_boxed_body());
         }
         Err(e) => {
-            tracing::warn!(user_id, error = %e, "auth DB query failed");
+            tracing::warn!(user_id, err = %e, "auth DB query failed");
             let response = HttpResponse::ServiceUnavailable().finish();
             return Ok(req.into_response(response).map_into_boxed_body());
         }
@@ -192,7 +192,7 @@ pub async fn auth_middleware(
     let cached_role = session.get::<String>("role").unwrap_or(None);
     if cached_role.as_deref() != Some(&session_user.role_name) {
         if let Err(e) = set_session_user(&session, &session_user) {
-            tracing::debug!(user_id, error = %e, "failed to update session cookie");
+            tracing::debug!(user_id, err = %e, "failed to update session cookie");
         }
     }
     req.extensions_mut().insert(session_user);

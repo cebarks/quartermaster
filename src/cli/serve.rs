@@ -2,9 +2,11 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use parking_lot::Mutex;
+use tokio::sync::mpsc;
 
 use super::Cli;
-use crate::config::{is_fika_installed, Config};
+use crate::config::{self, is_fika_installed, Config};
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::logging;
@@ -27,12 +29,25 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     // Create LogBroadcast with configured buffer size
     let log_broadcast = Arc::new(logging::LogBroadcast::new(config.logging.web.buffer_size));
-    let reload_handles = logging::init_subscriber(&log_broadcast);
+
+    // Step 1: create mpsc channel before subscriber
+    let (log_tx, log_rx) = mpsc::unbounded_channel();
+
+    // Step 2: init subscriber with sender
+    let reload_handles = logging::init_subscriber(&log_broadcast, Some(log_tx));
 
     // Reconfigure logging now that config is loaded
     let filter =
         logging::resolve_log_filter(&config.logging, cli.verbose, cli.log_level.as_deref());
-    reload_handles.reconfigure(&config.logging, &filter, Some(&spt_dir));
+
+    let mut logging_config = config.logging.clone();
+    if let Some(ref fmt) = cli.log_format {
+        if let Ok(format) = fmt.parse::<config::ConsoleFormat>() {
+            logging_config.console.format = format;
+        }
+    }
+
+    reload_handles.reconfigure(&logging_config, &filter, Some(&spt_dir));
 
     config.ensure_session_secret();
     config
@@ -43,7 +58,16 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
 
-    if !db.admin_exists()? {
+    // Step 3: spawn LogWriter after DB is available
+    let db_arc = Arc::new(Mutex::new(db));
+    let (_log_writer_handle, log_writer_shutdown) = crate::logging::writer::spawn(
+        Arc::clone(&db_arc),
+        log_rx,
+        config.logging.web.retention_days,
+        config.logging.web.max_entries,
+    );
+
+    if !db_arc.lock().admin_exists()? {
         anyhow::bail!("No admin user exists. Run `quma setup` first to create an admin account.");
     }
 
@@ -62,11 +86,11 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         Ok(false) => {
                             tracing::info!(container, "auto-starting server container");
                             if let Err(e) = mgr.start(container).await {
-                                tracing::warn!(container, error = %e, "failed to auto-start server container — web UI will start anyway");
+                                tracing::warn!(container, err = %e, "failed to auto-start server container — web UI will start anyway");
                             }
                         }
                         Err(e) => {
-                            tracing::warn!(container, error = %e, "failed to check container status — skipping auto-start");
+                            tracing::warn!(container, err = %e, "failed to check container status — skipping auto-start");
                         }
                     }
                 }
@@ -75,7 +99,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
             Some(mgr)
         }
         Err(e) => {
-            tracing::warn!(error = %e, "failed to connect to Podman — container features disabled");
+            tracing::warn!(err = %e, "failed to connect to Podman — container features disabled");
             None
         }
     };
@@ -86,7 +110,8 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     // Auto-install Fika client mod if Fika is installed but the client plugin isn't tracked
     if fika_installed
-        && db
+        && db_arc
+            .lock()
             .get_mod_by_forge_id(crate::config::FIKA_CLIENT_FORGE_ID)?
             .is_none()
     {
@@ -95,7 +120,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         tracing::info!("Fika detected but client mod not installed — auto-installing");
         if let Err(e) = auto_install_bootstrap_mod(
             &forge,
-            &db,
+            &db_arc,
             &spt_dir,
             &config,
             crate::config::FIKA_CLIENT_FORGE_ID,
@@ -103,7 +128,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         )
         .await
         {
-            tracing::warn!(error = %e, "failed to auto-install Fika client — bootstrap zip may be incomplete");
+            tracing::warn!(err = %e, "failed to auto-install Fika client — bootstrap zip may be incomplete");
         }
     }
 
@@ -116,7 +141,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
             if let Some(ref container_mgr_arc) = container_mgr {
                 // Validate headless config
                 if let Err(e) = headless_config.validate(&config, &spt_dir) {
-                    tracing::error!(error = %e, "Invalid headless configuration — supervisor not started");
+                    tracing::error!(err = %e, "Invalid headless configuration — supervisor not started");
                     None
                 } else {
                     // Resolve SPT server address
@@ -124,7 +149,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
                         Ok(client) => client,
                         Err(e) => {
-                            tracing::error!(error = %e, "Failed to create SPT client — supervisor not started");
+                            tracing::error!(err = %e, "Failed to create SPT client — supervisor not started");
                             return Err(e);
                         }
                     };
@@ -147,7 +172,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                     .await;
 
                     if let Err(e) = converge_result {
-                        tracing::error!(error = %e, "Initial convergence failed — supervisor not started");
+                        tracing::error!(err = %e, "Initial convergence failed — supervisor not started");
                         None
                     } else {
                         // Create and spawn supervisor
@@ -189,7 +214,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     let server_future = crate::web::start_server(crate::web::ServerContext {
         config,
         config_path,
-        db,
+        db: db_arc,
         forge,
         spt_dir,
         spt_info,
@@ -220,6 +245,9 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         server_future.await
     };
 
+    // Shutdown log writer before tearing down containers
+    log_writer_shutdown.shutdown().await;
+
     if let Some(ref mgr) = teardown_mgr {
         teardown_containers(mgr, &on_exit).await;
     }
@@ -245,7 +273,7 @@ async fn teardown_containers(
     {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!(error = %e, "failed to discover managed containers for teardown");
+            tracing::error!(err = %e, "failed to discover managed containers for teardown");
             return;
         }
     };
@@ -268,7 +296,7 @@ async fn teardown_containers(
             OnExit::Nothing => return,
         };
         if let Err(e) = result {
-            tracing::warn!(container = %name, error = %e, "container teardown failed");
+            tracing::warn!(container = %name, err = %e, "container teardown failed");
         }
     }
 
@@ -277,7 +305,7 @@ async fn teardown_containers(
 
 async fn auto_install_bootstrap_mod(
     forge: &ForgeClient,
-    db: &Database,
+    db: &Arc<Mutex<Database>>,
     spt_dir: &std::path::Path,
     config: &Config,
     forge_mod_id: i64,
@@ -300,7 +328,7 @@ async fn auto_install_bootstrap_mod(
         )
     })?;
 
-    crate::cli::install::download_and_install(
+    crate::cli::install::download_and_install_with_arc(
         forge,
         db,
         spt_dir,
@@ -316,6 +344,6 @@ async fn auto_install_bootstrap_mod(
     )
     .await?;
 
-    tracing::info!(name = %forge_mod.name, version = %version.version, "auto-installed bootstrap mod");
+    tracing::info!(mod_name = %forge_mod.name, version = %version.version, "auto-installed bootstrap mod");
     Ok(())
 }

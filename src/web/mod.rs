@@ -25,6 +25,7 @@ use actix_web::cookie::Key;
 use actix_web::web;
 use actix_web::{middleware, App, HttpResponse, HttpServer};
 use anyhow::{Context, Result};
+use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 
 use actix_governor::{Governor, GovernorConfigBuilder};
@@ -71,7 +72,7 @@ async fn serve_asset(path: web::Path<String>) -> HttpResponse {
 pub struct ServerContext {
     pub config: Config,
     pub config_path: std::path::PathBuf,
-    pub db: Database,
+    pub db: Arc<Mutex<Database>>,
     pub forge: ForgeClient,
     pub spt_dir: std::path::PathBuf,
     pub spt_info: SptInfo,
@@ -280,6 +281,10 @@ pub fn configure_app(
             web::post().to(handlers::tasks::dismiss_task),
         )
         .route("/logs/app", web::get().to(handlers::logs::app_logs_json))
+        .route(
+            "/logs/app/count",
+            web::get().to(handlers::logs::app_logs_count),
+        )
         .route(
             "/logs/app/stream",
             web::get().to(handlers::logs::app_logs_stream),
@@ -641,11 +646,12 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
     let game_data = Arc::new(GameData::load(&spt_dir).unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "failed to load SPT game data, lookups will return raw IDs");
+        tracing::warn!(err = %e, "failed to load SPT game data, lookups will return raw IDs");
         GameData::load_empty()
     }));
 
-    let db_arc = Arc::new(parking_lot::Mutex::new(db));
+    // db is already Arc<Mutex<Database>> from serve.rs
+    let db_arc = db;
 
     // Recover any interrupted async mod updates from a previous crash
     if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &spt_dir) {
@@ -655,7 +661,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     // Regenerate NarcoNet config on startup to ensure consistency
     if modsync_installed && config.modsync.is_some() {
         if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
-            tracing::warn!(error = %e, "failed to regenerate NarcoNet config on startup");
+            tracing::warn!(err = %e, "failed to regenerate NarcoNet config on startup");
         }
     }
 

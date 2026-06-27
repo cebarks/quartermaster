@@ -370,6 +370,63 @@ pub async fn download_and_install(
     Ok(db_id)
 }
 
+/// Variant of `download_and_install` that accepts an Arc<Mutex<Database>>.
+///
+/// This is used by async contexts (like `serve.rs` bootstrap installer) where the
+/// database is wrapped in Arc<Mutex> for shared access. The mutex is only locked
+/// for the synchronous DB operations, not held across the async download.
+pub async fn download_and_install_with_arc(
+    forge: &ForgeClient,
+    db: &std::sync::Arc<parking_lot::Mutex<Database>>,
+    spt_dir: &Path,
+    config: &Config,
+    params: &ModInstallParams<'_>,
+) -> Result<i64> {
+    let ModInstallParams {
+        forge_mod_id,
+        forge_version_id,
+        download_url,
+        name,
+        slug,
+        version,
+    } = params;
+
+    let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
+    let archive_path = tmp_dir.path().join("mod.zip");
+    println!("  Downloading {}...", name);
+    forge.download_file(download_url, &archive_path).await?;
+
+    let mod_type = detect_mod_type(&archive_path)?;
+    if mod_type == ModType::Ambiguous {
+        println!(
+            "  Warning: could not determine mod type for {}. Extracting as-is.",
+            name
+        );
+    }
+
+    println!("  Extracting...");
+    // Lock the mutex only for the synchronous DB operation
+    let db_id = {
+        let db_guard = db.lock();
+        crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+            db: &db_guard,
+            spt_dir,
+            config,
+            forge_mod_id: *forge_mod_id,
+            version_id: *forge_version_id,
+            name,
+            slug: *slug,
+            version,
+            archive_path: &archive_path,
+        })?
+    }; // MutexGuard dropped here
+
+    let file_count = db.lock().get_files_for_mod(db_id)?.len();
+    println!("  Extracted {} files", file_count);
+
+    Ok(db_id)
+}
+
 /// Download, extract, and record a single mod in the database.
 /// Skips installation if the mod is already present.
 pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>) -> Result<i64> {

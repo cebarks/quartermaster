@@ -206,14 +206,14 @@ impl GameData {
             let contents = match std::fs::read_to_string(&base_path) {
                 Ok(c) => c,
                 Err(e) => {
-                    tracing::warn!(trader_id, error = %e, "failed to read trader base.json");
+                    tracing::warn!(trader_id, err = %e, "failed to read trader base.json");
                     continue;
                 }
             };
             let base: TraderBase = match serde_json::from_str(&contents) {
                 Ok(b) => b,
                 Err(e) => {
-                    tracing::warn!(trader_id, error = %e, "failed to parse trader base.json");
+                    tracing::warn!(trader_id, err = %e, "failed to parse trader base.json");
                     continue;
                 }
             };

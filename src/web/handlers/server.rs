@@ -63,7 +63,7 @@ pub async fn start_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     if let Err(e) = mgr.start(&container).await {
-        tracing::error!(container, error = %e, "failed to start server");
+        tracing::error!(container, err = %e, "failed to start server");
         set_flash(
             &session,
             &format!("Failed to start server: {e}"),
@@ -105,7 +105,7 @@ pub async fn stop_server(
     let _ = state.events.send(ServerEvent::ServerTransition);
 
     if let Err(e) = mgr.stop(&container).await {
-        tracing::error!(container, error = %e, "failed to stop server");
+        tracing::error!(container, err = %e, "failed to stop server");
         set_flash(
             &session,
             &format!("Failed to stop server: {e}"),
@@ -145,7 +145,7 @@ pub async fn restart_server(
 
     // Stop first
     if let Err(e) = mgr.stop(&container).await {
-        tracing::error!(container, error = %e, "failed to stop server for restart");
+        tracing::error!(container, err = %e, "failed to stop server for restart");
         set_flash(
             &session,
             &format!("Failed to stop server: {e}"),
@@ -195,7 +195,7 @@ pub async fn restart_server(
 
     // Start
     if let Err(e) = mgr.start(&container).await {
-        tracing::error!(container, error = %e, "failed to start server after restart");
+        tracing::error!(container, err = %e, "failed to start server after restart");
         set_flash(
             &session,
             &format!("Server stopped but failed to start: {e}"),

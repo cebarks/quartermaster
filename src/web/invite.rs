@@ -41,7 +41,7 @@ pub fn validate_invite_code(db: &Database, code: &str) -> Result<InviteCode, Inv
     let invite = db
         .get_invite(code)
         .map_err(|e| {
-            tracing::error!(error = %e, "database error looking up invite code");
+            tracing::error!(err = %e, "database error looking up invite code");
             InviteError::Db(e)
         })?
         .ok_or(InviteError::NotFound)?;

@@ -14,7 +14,7 @@ pub fn get_or_create_token(session: &Session) -> String {
         .map(char::from)
         .collect();
     if let Err(e) = session.insert(CSRF_SESSION_KEY, &token) {
-        tracing::warn!(error = %e, "failed to insert CSRF token into session");
+        tracing::warn!(err = %e, "failed to insert CSRF token into session");
     }
     token
 }

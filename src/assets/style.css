@@ -299,15 +299,31 @@ main > h1 { border-bottom: 1px solid var(--border); }
 .log-level-btn { padding: 0.2rem 0.5rem; border: 1px solid var(--border); background: transparent; cursor: pointer; font-size: 0.75rem; border-radius: 3px; color: var(--text-muted); }
 .log-level-btn.active { background: var(--bg-card); font-weight: bold; color: var(--text); }
 
-.log-container { font-family: monospace; font-size: 0.85rem; max-height: 70vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem; background: var(--bg); }
-.log-entry { white-space: pre-wrap; word-break: break-all; padding: 1px 0; }
-.log-ts { color: var(--text-muted); }
+.log-container { font-family: monospace; font-size: 0.85rem; max-height: 70vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem; background: var(--bg); scroll-behavior: smooth; }
+.log-entry { white-space: pre-wrap; word-break: break-all; padding: 2px 0; border-bottom: 1px solid rgba(42, 42, 74, 0.3); }
+.log-entry:hover { background: rgba(255, 255, 255, 0.02); }
+.log-summary { display: flex; gap: 8px; align-items: baseline; }
+.log-ts { color: var(--text-muted); white-space: nowrap; font-size: 0.8em; min-width: 80px; }
 .log-level { font-weight: bold; min-width: 5ch; display: inline-block; }
+.log-message { flex: 1; color: var(--text); }
 .log-target { color: var(--text-muted); }
 .log-fields { color: var(--text-muted); font-size: 0.8em; }
 .log-error { color: #e74c3c; }
+.log-error .log-level { color: #e74c3c; }
 .log-warn { color: #f39c12; }
+.log-warn .log-level { color: #f39c12; }
 .log-debug, .log-trace { color: var(--text-muted); }
+.log-debug .log-level, .log-trace .log-level { color: var(--text-muted); }
+
+/* Expandable log details */
+.log-detail { padding: 4px 8px 8px 96px; background: rgba(255, 255, 255, 0.02); font-size: 0.85em; margin-top: 2px; border-left: 2px solid var(--border); }
+.log-target-detail { color: var(--text-muted); margin-bottom: 4px; }
+.log-fields-detail { font-family: monospace; }
+.log-fields-detail > div { padding: 1px 0; }
+
+/* Level badge counts */
+.log-level-btn .count { opacity: 0.6; font-size: 0.7em; margin-left: 4px; }
+.log-level-btn .level-label { font-weight: inherit; }
 
 /* Admin panel */
 .tab-bar { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 1rem; }

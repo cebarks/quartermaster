@@ -16,7 +16,10 @@ clippy:
 fmt:
     cargo fmt
 
-lint: fmt clippy
+check-logging:
+    ./scripts/check-logging.sh
+
+lint: fmt clippy check-logging
 
 run *ARGS:
     cargo run -- {{ARGS}}

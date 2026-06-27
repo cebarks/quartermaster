@@ -712,7 +712,7 @@ pub async fn install_mod(
     {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!(mod_id, error = %e, "failed to fetch versions");
+            tracing::warn!(mod_id, err = %e, "failed to fetch versions");
             set_flash(
                 &session,
                 "Could not fetch mod versions. Please try again.",
@@ -741,7 +741,7 @@ pub async fn install_mod(
     let mod_info = match state.forge.get_mod(mod_id, false).await {
         Ok(m) => m,
         Err(e) => {
-            tracing::warn!(mod_id, error = %e, "failed to fetch mod info");
+            tracing::warn!(mod_id, err = %e, "failed to fetch mod info");
             set_flash(
                 &session,
                 "Could not fetch mod info from Forge. Please try again.",
@@ -973,7 +973,7 @@ pub async fn install_mod(
                 tasks.complete(task_id, "Mod installed successfully".to_string());
             }
             Err(e) => {
-                tracing::error!(mod_id, error = %e, "mod install failed");
+                tracing::error!(mod_id, err = %e, "mod install failed");
                 tasks.fail(task_id, format!("Install failed: {e}"));
             }
         }
@@ -1151,7 +1151,7 @@ pub async fn update_mod(
                 tasks.complete(task_id, "Mod updated successfully".to_string());
             }
             Err(e) => {
-                tracing::error!(mod_db_id, error = %e, "mod update failed");
+                tracing::error!(mod_db_id, err = %e, "mod update failed");
                 tasks.fail(task_id, format!("Update failed: {e}"));
             }
         }
@@ -1479,7 +1479,7 @@ pub async fn update_all_mods(
 
             match result {
                 Ok(()) => success_count += 1,
-                Err(e) => tracing::error!(mod_db_id, error = %e, "update failed during update-all"),
+                Err(e) => tracing::error!(mod_db_id, err = %e, "update failed during update-all"),
             }
         }
 

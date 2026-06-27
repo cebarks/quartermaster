@@ -226,7 +226,7 @@ pub async fn save_settings(
         .save(&state.config_path)
         .map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
     drop(_guard);
 
@@ -612,7 +612,7 @@ pub async fn save_groups(
     }
     config.save(&state.config_path).map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
     drop(_guard);
 
@@ -940,7 +940,7 @@ pub async fn save_mods(
     }
     config.save(&state.config_path).map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
     drop(_guard);
 

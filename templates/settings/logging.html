@@ -25,7 +25,8 @@
         <div class="form-group">
             <label for="console_format">Format</label>
             <select id="console_format" name="console_format">
-                <option value="text"{% if console_format == "text" %} selected{% endif %}>text</option>
+                <option value="compact"{% if console_format == "compact" %} selected{% endif %}>compact</option>
+                <option value="full"{% if console_format == "full" %} selected{% endif %}>full</option>
                 <option value="json"{% if console_format == "json" %} selected{% endif %}>json</option>
             </select>
         </div>
@@ -48,6 +49,17 @@
             <select id="file_format" name="file_format">
                 <option value="text"{% if file_format == "text" %} selected{% endif %}>text</option>
                 <option value="json"{% if file_format == "json" %} selected{% endif %}>json</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="file_level">Level</label>
+            <select id="file_level" name="file_level">
+                <option value="trace"{% if config.logging.file.level == "trace" %} selected{% endif %}>trace</option>
+                <option value="debug"{% if config.logging.file.level == "debug" %} selected{% endif %}>debug</option>
+                <option value="info"{% if config.logging.file.level == "info" %} selected{% endif %}>info</option>
+                <option value="warn"{% if config.logging.file.level == "warn" %} selected{% endif %}>warn</option>
+                <option value="error"{% if config.logging.file.level == "error" %} selected{% endif %}>error</option>
             </select>
         </div>
 
@@ -77,6 +89,27 @@
         <div class="form-group">
             <label for="web_buffer_size">Buffer Size</label>
             <input type="number" id="web_buffer_size" name="web_buffer_size" value="{{ config.logging.web.buffer_size }}" min="1">
+        </div>
+
+        <div class="form-group">
+            <label for="web_level">Level</label>
+            <select id="web_level" name="web_level">
+                <option value="trace"{% if config.logging.web.level == "trace" %} selected{% endif %}>trace</option>
+                <option value="debug"{% if config.logging.web.level == "debug" %} selected{% endif %}>debug</option>
+                <option value="info"{% if config.logging.web.level == "info" %} selected{% endif %}>info</option>
+                <option value="warn"{% if config.logging.web.level == "warn" %} selected{% endif %}>warn</option>
+                <option value="error"{% if config.logging.web.level == "error" %} selected{% endif %}>error</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="web_retention_days">Retention Days</label>
+            <input type="number" id="web_retention_days" name="web_retention_days" value="{{ config.logging.web.retention_days }}" min="1">
+        </div>
+
+        <div class="form-group">
+            <label for="web_max_entries">Max Entries</label>
+            <input type="number" id="web_max_entries" name="web_max_entries" value="{{ config.logging.web.max_entries }}" min="1">
         </div>
     </div>
 
