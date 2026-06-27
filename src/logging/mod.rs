@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::field::{Field, Visit};
 use tracing::Subscriber;
+use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::reload;
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 
 use crate::config::{ConsoleFormat, FileFormat, LoggingConfig, RotationPolicy};
@@ -170,6 +170,115 @@ impl<S: Subscriber> Layer<S> for BroadcastLayer {
 }
 
 // ---------------------------------------------------------------------------
+// LevelFilterLayer — wraps an inner layer, filtering events by level
+// ---------------------------------------------------------------------------
+//
+// This provides per-layer level filtering without using `Filtered<L, F, S>`,
+// which breaks after `reload()` because `FilterId` is only assigned once at
+// subscriber registration. Instead, we check the event level in `on_event()`
+// and delegate all other `Layer` trait methods unconditionally.
+
+struct LevelFilterLayer<L> {
+    inner: L,
+    max_level: tracing::Level,
+}
+
+impl<S, L> Layer<S> for LevelFilterLayer<L>
+where
+    S: Subscriber,
+    L: Layer<S>,
+{
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {
+        if event.metadata().level() <= &self.max_level {
+            self.inner.on_event(event, ctx);
+        }
+    }
+
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        ctx: Context<'_, S>,
+    ) {
+        self.inner.on_new_span(attrs, id, ctx);
+    }
+
+    fn on_record(
+        &self,
+        span: &tracing::span::Id,
+        values: &tracing::span::Record<'_>,
+        ctx: Context<'_, S>,
+    ) {
+        self.inner.on_record(span, values, ctx);
+    }
+
+    fn on_enter(&self, id: &tracing::span::Id, ctx: Context<'_, S>) {
+        self.inner.on_enter(id, ctx);
+    }
+
+    fn on_exit(&self, id: &tracing::span::Id, ctx: Context<'_, S>) {
+        self.inner.on_exit(id, ctx);
+    }
+
+    fn on_close(&self, id: tracing::span::Id, ctx: Context<'_, S>) {
+        self.inner.on_close(id, ctx);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Floor filter computation — union of all layer needs
+// ---------------------------------------------------------------------------
+
+/// Compute the global floor `Targets` filter that allows through events at the
+/// most permissive level required by any active output layer. Each layer then
+/// independently checks its own threshold in `LevelFilterLayer::on_event()`.
+fn compute_floor_filter(config: &LoggingConfig, console_filter_str: &str) -> Targets {
+    let console_level = parse_most_permissive_level(console_filter_str);
+    let file_level = if config.file.enabled {
+        parse_level_str(&config.file.level).unwrap_or(tracing::Level::DEBUG)
+    } else {
+        tracing::Level::ERROR // disabled layer doesn't need floor events
+    };
+    let web_level = parse_level_str(&config.web.level).unwrap_or(tracing::Level::INFO);
+
+    let floor = most_permissive(&[console_level, file_level, web_level]);
+
+    // quartermaster crate always gets at least debug in the floor so that
+    // file/web layers can capture crate-level debug even when console is info
+    let qm_floor = most_permissive(&[floor, tracing::Level::DEBUG]);
+
+    Targets::new()
+        .with_default(floor)
+        .with_target("quartermaster", qm_floor)
+}
+
+fn parse_level_str(s: &str) -> Option<tracing::Level> {
+    s.parse::<tracing::Level>().ok()
+}
+
+/// Return the most permissive (most verbose) level in the slice.
+/// tracing::Level ordering: ERROR < WARN < INFO < DEBUG < TRACE (greater = more verbose).
+fn most_permissive(levels: &[tracing::Level]) -> tracing::Level {
+    levels.iter().copied().max().unwrap_or(tracing::Level::INFO)
+}
+
+/// Parse a comma-separated filter string (like "info,quartermaster=debug") and
+/// return the most permissive level mentioned anywhere in it.
+fn parse_most_permissive_level(filter_str: &str) -> tracing::Level {
+    let mut most = tracing::Level::ERROR;
+    for part in filter_str.split(',') {
+        let part = part.trim();
+        let level_str = part.split_once('=').map(|(_, l)| l).unwrap_or(part);
+        if let Ok(level) = level_str.parse::<tracing::Level>() {
+            if level > most {
+                most = level;
+            }
+        }
+    }
+    most
+}
+
+// ---------------------------------------------------------------------------
 // ReloadHandles — holds reload handles for runtime reconfiguration
 // ---------------------------------------------------------------------------
 
@@ -177,21 +286,23 @@ impl<S: Subscriber> Layer<S> for BroadcastLayer {
 // subscriber type `S` at the point where its layer was inserted:
 //
 //   Registry
-//     + reload::Layer<EnvFilter>          → S0 = Registry
-//     + reload::Layer<BoxedConsole>       → S1 = Layered<reload::Layer<EnvFilter, S0>, S0>
+//     + reload::Layer<Targets>            → S0 = Registry
+//     + reload::Layer<BoxedConsole>       → S1 = Layered<reload::Layer<Targets, S0>, S0>
 //     + reload::Layer<Option<BoxedFile>>  → S2 = Layered<reload::Layer<BoxedConsole, S1>, S1>
 //     + BroadcastLayer                   → (not reloadable)
 //
-// We define type aliases for each subscriber level to keep handle types correct.
+// The global Targets filter is the "floor" — set to the most permissive level
+// needed by any active output layer. Each output layer then independently
+// checks event level via LevelFilterLayer.
 
 type S0 = tracing_subscriber::Registry;
-type S1 = tracing_subscriber::layer::Layered<reload::Layer<EnvFilter, S0>, S0>;
+type S1 = tracing_subscriber::layer::Layered<reload::Layer<Targets, S0>, S0>;
 type BoxedConsole = Box<dyn Layer<S1> + Send + Sync>;
 type S2 = tracing_subscriber::layer::Layered<reload::Layer<BoxedConsole, S1>, S1>;
 type BoxedFile = Option<Box<dyn Layer<S2> + Send + Sync>>;
 
 pub struct ReloadHandles {
-    filter_handle: reload::Handle<EnvFilter, S0>,
+    filter_handle: reload::Handle<Targets, S0>,
     console_handle: reload::Handle<BoxedConsole, S1>,
     file_handle: reload::Handle<BoxedFile, S2>,
     // Store the file worker guard to prevent premature flush/drop
@@ -200,26 +311,35 @@ pub struct ReloadHandles {
 
 impl ReloadHandles {
     pub fn reconfigure(&self, config: &LoggingConfig, filter_str: &str, spt_dir: Option<&Path>) {
-        // Update filter
-        if let Ok(new_filter) = EnvFilter::try_new(filter_str) {
-            let _ = self.filter_handle.reload(new_filter);
-        }
+        // Update global floor filter to the most permissive level any layer needs
+        let floor = compute_floor_filter(config, filter_str);
+        let _ = self.filter_handle.reload(floor);
 
-        // Update console layer
+        // Parse console level for per-layer filtering
+        let console_level = parse_most_permissive_level(filter_str);
+
+        // Update console layer (with per-layer level filtering)
         if config.console.enabled {
             let layer: BoxedConsole = match config.console.format {
-                ConsoleFormat::Json => Box::new(fmt::layer().json().with_writer(std::io::stderr)),
-                ConsoleFormat::Full => Box::new(fmt::layer().with_writer(std::io::stderr)),
+                ConsoleFormat::Json => Box::new(LevelFilterLayer {
+                    inner: fmt::layer().json().with_writer(std::io::stderr),
+                    max_level: console_level,
+                }),
+                ConsoleFormat::Full => Box::new(LevelFilterLayer {
+                    inner: fmt::layer().with_writer(std::io::stderr),
+                    max_level: console_level,
+                }),
                 ConsoleFormat::Compact => {
                     let formatter = compact::CompactFormatter {
                         use_ansi: std::io::stderr().is_terminal(),
                     };
-                    Box::new(
-                        fmt::layer()
+                    Box::new(LevelFilterLayer {
+                        inner: fmt::layer()
                             .event_format(formatter)
                             .with_writer(std::io::stderr)
                             .with_ansi(false), // formatter handles its own color
-                    )
+                        max_level: console_level,
+                    })
                 }
             };
             let _ = self.console_handle.reload(layer);
@@ -229,18 +349,16 @@ impl ReloadHandles {
             let _ = self.console_handle.reload(layer);
         }
 
-        // Update file layer
+        // Update file layer (with per-layer level filtering)
         if config.file.enabled {
-            let file_path = if Path::new(&config.file.path).is_absolute() {
-                std::path::PathBuf::from(&config.file.path)
-            } else {
-                spt_dir
-                    .map(|d| d.join(&config.file.path))
-                    .unwrap_or_else(|| std::path::PathBuf::from(&config.file.path))
-            };
-
+            let file_path = resolve_file_path(&config.file.path, spt_dir);
+            let file_level = parse_level_str(&config.file.level).unwrap_or(tracing::Level::DEBUG);
             let (file_layer, guard) = build_file_layer(&config.file, &file_path);
-            let _ = self.file_handle.reload(Some(file_layer));
+            let filtered: BoxedFile = Some(Box::new(LevelFilterLayer {
+                inner: file_layer,
+                max_level: file_level,
+            }));
+            let _ = self.file_handle.reload(filtered);
             // Store the new guard, dropping the old one (if any)
             *self.file_guard.lock().expect("mutex poisoned") = Some(guard);
         } else {
@@ -251,24 +369,38 @@ impl ReloadHandles {
     }
 }
 
+fn resolve_file_path(path: &str, spt_dir: Option<&Path>) -> std::path::PathBuf {
+    if Path::new(path).is_absolute() {
+        std::path::PathBuf::from(path)
+    } else {
+        spt_dir
+            .map(|d| d.join(path))
+            .unwrap_or_else(|| std::path::PathBuf::from(path))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // init_subscriber — bootstrap the layered subscriber with reload handles
 // ---------------------------------------------------------------------------
 
 pub fn init_subscriber(log_broadcast: &Arc<LogBroadcast>) -> ReloadHandles {
-    // Default filter: before config loads we use a sensible baseline.
-    let filter = EnvFilter::new("info,quartermaster=debug");
-    let (filter_layer, filter_handle) = reload::Layer::new(filter);
+    // Default floor filter: before config loads we use a sensible baseline.
+    // This will be replaced by compute_floor_filter() on first reconfigure().
+    let floor = Targets::new()
+        .with_default(tracing::Level::INFO)
+        .with_target("quartermaster", tracing::Level::DEBUG);
+    let (floor_layer, filter_handle) = reload::Layer::new(floor);
 
-    // Console layer (default: compact format)
-    let console_layer: BoxedConsole = Box::new(
-        fmt::layer()
+    // Console layer (default: compact format, info level)
+    let console_layer: BoxedConsole = Box::new(LevelFilterLayer {
+        inner: fmt::layer()
             .event_format(compact::CompactFormatter {
                 use_ansi: std::io::stderr().is_terminal(),
             })
             .with_writer(std::io::stderr)
             .with_ansi(false),
-    );
+        max_level: tracing::Level::INFO,
+    });
     let (console_reload, console_handle) = reload::Layer::new(console_layer);
 
     // File layer (default: disabled / None)
@@ -279,7 +411,7 @@ pub fn init_subscriber(log_broadcast: &Arc<LogBroadcast>) -> ReloadHandles {
     let broadcast_layer = BroadcastLayer::new(Arc::clone(log_broadcast));
 
     tracing_subscriber::registry()
-        .with(filter_layer)
+        .with(floor_layer)
         .with(console_reload)
         .with(file_reload)
         .with(broadcast_layer)
@@ -297,8 +429,8 @@ pub fn init_subscriber(log_broadcast: &Arc<LogBroadcast>) -> ReloadHandles {
 /// Used in tests where the global subscriber may already be set.
 #[allow(dead_code)]
 pub fn init_reload_handles_only() -> ReloadHandles {
-    let filter = EnvFilter::new("info");
-    let (_filter_layer, filter_handle) = reload::Layer::new(filter);
+    let floor = Targets::new().with_default(tracing::Level::INFO);
+    let (_floor_layer, filter_handle) = reload::Layer::new(floor);
     let console_layer: BoxedConsole = Box::new(fmt::layer().with_writer(std::io::stderr));
     let (_console_reload, console_handle) = reload::Layer::new(console_layer);
     let file_layer: BoxedFile = None;
@@ -315,7 +447,7 @@ pub fn init_reload_handles_only() -> ReloadHandles {
 // resolve_log_filter — priority chain for log filter string
 // ---------------------------------------------------------------------------
 
-/// Resolve the effective EnvFilter string from the priority chain:
+/// Resolve the effective log filter string from the priority chain:
 /// 1. --log-level CLI flag (highest)
 /// 2. -v / -vv CLI flags
 /// 3. QUMA_LOG_LEVEL env var (already applied to config by apply_env_overrides)
@@ -648,7 +780,7 @@ mod tests {
     fn broadcast_layer_captures_multiple_levels() {
         let lb = Arc::new(LogBroadcast::new(100));
         let layer = BroadcastLayer::new(Arc::clone(&lb));
-        let filter = tracing_subscriber::EnvFilter::new("trace");
+        let filter = Targets::new().with_default(tracing::Level::TRACE);
 
         let subscriber = tracing_subscriber::registry().with(filter).with(layer);
         let _guard = tracing::subscriber::set_default(subscriber);
@@ -662,5 +794,100 @@ mod tests {
         assert_eq!(recent[0].level, "ERROR");
         assert_eq!(recent[1].level, "WARN");
         assert_eq!(recent[2].level, "DEBUG");
+    }
+
+    // --- Floor filter computation tests ---
+
+    #[test]
+    fn compute_floor_filter_uses_most_permissive() {
+        // console=info, file=debug (enabled), web=info → floor should be debug
+        let config = LoggingConfig {
+            level: "info".to_string(),
+            file: crate::config::FileLogConfig {
+                enabled: true,
+                level: "debug".to_string(),
+                ..crate::config::FileLogConfig::default()
+            },
+            web: crate::config::WebLogConfig {
+                level: "info".to_string(),
+                ..crate::config::WebLogConfig::default()
+            },
+            ..LoggingConfig::default()
+        };
+        let floor = compute_floor_filter(&config, "info,quartermaster=debug");
+        // Floor should allow debug-level events through (file needs them)
+        assert!(floor.would_enable("quartermaster::ops", &tracing::Level::DEBUG));
+        assert!(floor.would_enable("some_crate", &tracing::Level::INFO));
+    }
+
+    #[test]
+    fn compute_floor_filter_file_disabled() {
+        // console=info, file disabled (level=debug ignored), web=info → floor = info
+        let config = LoggingConfig {
+            level: "info".to_string(),
+            file: crate::config::FileLogConfig {
+                enabled: false,
+                level: "debug".to_string(),
+                ..crate::config::FileLogConfig::default()
+            },
+            web: crate::config::WebLogConfig {
+                level: "info".to_string(),
+                ..crate::config::WebLogConfig::default()
+            },
+            ..LoggingConfig::default()
+        };
+        let floor = compute_floor_filter(&config, "info");
+        // Floor should be info for non-quartermaster targets
+        assert!(floor.would_enable("some_crate", &tracing::Level::INFO));
+        assert!(!floor.would_enable("some_crate", &tracing::Level::DEBUG));
+        // quartermaster still gets debug in the floor (hardcoded minimum)
+        assert!(floor.would_enable("quartermaster::ops", &tracing::Level::DEBUG));
+    }
+
+    #[test]
+    fn compute_floor_filter_trace_console() {
+        // console=trace → floor should be trace everywhere
+        let config = LoggingConfig {
+            level: "trace".to_string(),
+            file: crate::config::FileLogConfig {
+                enabled: false,
+                ..crate::config::FileLogConfig::default()
+            },
+            ..LoggingConfig::default()
+        };
+        let floor = compute_floor_filter(&config, "trace");
+        assert!(floor.would_enable("some_crate", &tracing::Level::TRACE));
+        assert!(floor.would_enable("quartermaster", &tracing::Level::TRACE));
+    }
+
+    // --- Helper function tests ---
+
+    #[test]
+    fn parse_most_permissive_level_picks_lowest() {
+        assert_eq!(
+            parse_most_permissive_level("info,quartermaster=debug"),
+            tracing::Level::DEBUG
+        );
+        assert_eq!(
+            parse_most_permissive_level("warn,hyper=error"),
+            tracing::Level::WARN
+        );
+        assert_eq!(parse_most_permissive_level("trace"), tracing::Level::TRACE);
+    }
+
+    #[test]
+    fn most_permissive_returns_min_level() {
+        assert_eq!(
+            most_permissive(&[tracing::Level::INFO, tracing::Level::DEBUG]),
+            tracing::Level::DEBUG
+        );
+        assert_eq!(
+            most_permissive(&[
+                tracing::Level::ERROR,
+                tracing::Level::WARN,
+                tracing::Level::TRACE
+            ]),
+            tracing::Level::TRACE
+        );
     }
 }
