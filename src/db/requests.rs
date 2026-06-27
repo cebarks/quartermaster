@@ -42,6 +42,7 @@ pub struct ModRequestView {
     pub comment_count: i64,
     pub current_user_vote: Option<bool>,
     pub resolver_username: Option<String>,
+    pub is_installed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -88,12 +89,14 @@ impl Database {
                 COALESCE(SUM(CASE WHEN v.upvote = 0 THEN 1 ELSE 0 END), 0) AS downvote_count,
                 COALESCE(SUM(CASE WHEN v.comment IS NOT NULL AND v.comment != '' THEN 1 ELSE 0 END), 0) AS comment_count,
                 cv.upvote AS current_user_vote,
-                ru.username AS resolver_username
+                ru.username AS resolver_username,
+                (im.id IS NOT NULL) AS is_installed
             FROM mod_requests r
             JOIN users u ON r.user_id = u.id
             LEFT JOIN mod_request_votes v ON r.id = v.request_id
             LEFT JOIN mod_request_votes cv ON r.id = cv.request_id AND cv.user_id = ?1
             LEFT JOIN users ru ON r.resolved_by = ru.id
+            LEFT JOIN installed_mods im ON r.forge_mod_id = im.forge_mod_id
         ";
 
         let (query, do_filter) = match status {
@@ -230,6 +233,16 @@ impl Database {
             .optional()
     }
 
+    pub fn list_approved_uninstalled_request_ids(&self) -> rusqlite::Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT r.id FROM mod_requests r
+             LEFT JOIN installed_mods im ON r.forge_mod_id = im.forge_mod_id
+             WHERE r.status = 'approved' AND im.id IS NULL",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect()
+    }
+
     pub fn list_vote_comments(&self, request_id: i64) -> rusqlite::Result<Vec<VoteComment>> {
         let mut stmt = self.conn.prepare(
             "SELECT u.username, v.upvote, v.comment, v.created_at
@@ -297,5 +310,6 @@ fn row_to_request_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModRequestVi
         comment_count: row.get(17)?,
         current_user_vote: row.get::<_, Option<i32>>(18)?.map(|v| v != 0),
         resolver_username: row.get(19)?,
+        is_installed: row.get::<_, i32>(20)? != 0,
     })
 }

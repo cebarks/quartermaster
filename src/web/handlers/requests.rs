@@ -5,7 +5,7 @@ use askama::Template;
 
 use crate::config::FIKA_CLIENT_FORGE_ID;
 use crate::db::rbac::Permission;
-use crate::db::requests::{ModRequestView, VoteComment};
+use crate::db::requests::{ModRequest, ModRequestView, VoteComment};
 use crate::forge::models::FikaCompat;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::csrf;
@@ -60,6 +60,7 @@ struct RequestsTabTemplate {
     requests: Vec<ModRequestView>,
     active_filter: String,
     csrf_token: String,
+    has_uninstalled_approved: bool,
 }
 
 #[derive(Template)]
@@ -149,6 +150,206 @@ fn is_cache_stale(forge_cached_at: &str, ttl_secs: u64) -> bool {
     }
 }
 
+// TODO(debt): this duplicates install logic from mods::install_mod — extract a shared helper
+async fn trigger_install_for_request(
+    state: &Data<AppState>,
+    request: &ModRequest,
+    user: &SessionUser,
+) -> Result<String, String> {
+    let forge_mod_id = request.forge_mod_id;
+
+    let versions = state
+        .forge
+        .get_versions(forge_mod_id, Some(&state.spt_info.spt_version))
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "failed to fetch versions for request install");
+            "Could not fetch versions for install.".to_string()
+        })?;
+
+    if versions.is_empty() {
+        return Err(format!(
+            "No compatible version found for SPT {}.",
+            state.spt_info.spt_version
+        ));
+    }
+
+    let version = versions.last().expect("checked non-empty above");
+    let mut message = String::new();
+
+    {
+        let db = state.db.clone();
+        let fika_installed = web::block(move || {
+            let db = db.lock();
+            Ok::<_, anyhow::Error>(db.get_mod_by_forge_id(FIKA_CLIENT_FORGE_ID)?.is_some())
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+
+        if fika_installed {
+            match &version.fika_compatibility {
+                Some(FikaCompat::Incompatible) => {
+                    message = format!(
+                        "Warning: {} v{} is marked as Fika INCOMPATIBLE. ",
+                        request.mod_name, version.version
+                    );
+                }
+                Some(FikaCompat::Unknown) => {
+                    message = format!(
+                        "Note: Fika compatibility for {} v{} is unknown. ",
+                        request.mod_name, version.version
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if state.tasks.has_running_for_mod(forge_mod_id) {
+        message += "Install already in progress.";
+        return Ok(message);
+    }
+
+    let config = state.config_cloned();
+    let should_queue = crate::queue::should_queue(
+        &config,
+        false,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
+
+    if should_queue {
+        let db = state.db.clone();
+        let mod_name = request.mod_name.clone();
+        let version_id = version.id;
+        let username = user.username.clone();
+        web::block(move || {
+            let db = db.lock();
+            db.insert_pending_op(
+                crate::db::users::QueueAction::Install,
+                forge_mod_id,
+                Some(version_id),
+                &mod_name,
+                None,
+                Some(&username),
+            )
+        })
+        .await
+        .map_err(|e| format!("Failed to queue install: {e}"))
+        .and_then(|r| r.map_err(|e| format!("Failed to queue install: {e}")))?;
+        message += "Queued for install.";
+    } else {
+        let task_id = state
+            .tasks
+            .start("Installing", &request.mod_name, forge_mod_id);
+        let tasks = state.tasks.clone();
+        let forge = state.forge.clone();
+        let spt_dir = state.spt_dir.clone();
+        let db = state.db.clone();
+        let version = version.clone();
+        let mod_name = request.mod_name.clone();
+        let mod_slug = request.mod_slug.clone();
+        let update_cache = state.update_cache.clone();
+        let state_clone = state.clone().into_inner();
+        let config = config.clone();
+
+        tokio::spawn(async move {
+            let result = async {
+                let link = version
+                    .link
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+                let tmp_dir = tempfile::tempdir()?;
+                let archive_path = tmp_dir.path().join("mod.zip");
+                forge.download_file(link, &archive_path).await?;
+
+                let spt_dir2 = spt_dir.clone();
+                let extracted = actix_web::web::block(move || {
+                    crate::spt::mods::extract_mod(&archive_path, &spt_dir2)
+                })
+                .await??;
+
+                let version_id = version.id;
+                let version_str = version.version.clone();
+                let spt_dir2 = spt_dir.clone();
+                let spt_dir3 = spt_dir.clone();
+                let db2 = db.clone();
+                let db3 = db.clone();
+                let config2 = config.clone();
+                let db_id = actix_web::web::block(move || {
+                    let db = db.lock();
+                    let tx = db.begin_transaction()?;
+                    let db_id = db.insert_mod(
+                        forge_mod_id,
+                        version_id,
+                        &mod_name,
+                        mod_slug.as_deref(),
+                        &version_str,
+                    )?;
+                    for file in &extracted {
+                        db.insert_file(
+                            db_id,
+                            &file.path,
+                            Some(&file.hash),
+                            Some(file.size as i64),
+                        )?;
+                    }
+                    tx.commit()?;
+                    Ok::<_, anyhow::Error>(db_id)
+                })
+                .await??;
+
+                let _ = actix_web::web::block(move || {
+                    crate::ops::scan_and_record_runtime_files(&db2, db_id, &spt_dir2)
+                })
+                .await;
+
+                let _ = actix_web::web::block(move || {
+                    let db = db3.lock();
+                    crate::modsync::regenerate_if_enabled(&spt_dir3, &config2, &db)
+                })
+                .await;
+
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+
+            match result {
+                Ok(()) => {
+                    tracing::info!(forge_mod_id, "mod installed from request");
+                    update_cache.invalidate();
+                    state_clone.modsync_installed.store(
+                        crate::config::is_modsync_installed(&spt_dir),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    if forge_mod_id == 236 {
+                        state_clone
+                            .svm_installed
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                        if let Some(ref svm_lock) = state_clone.svm {
+                            if let Some(mgr) = crate::svm::SvmManager::detect(&spt_dir) {
+                                *svm_lock.write() = mgr;
+                            }
+                        }
+                        tracing::info!("SVM installed via request — config editor reinitialized");
+                    }
+                    tasks.complete(task_id, "Mod installed successfully".to_string());
+                }
+                Err(e) => {
+                    tracing::error!(forge_mod_id, error = %e, "install from request failed");
+                    tasks.fail(task_id, format!("Install failed: {e}"));
+                }
+            }
+        });
+        message += "Installing now.";
+    }
+    Ok(message)
+}
+
 // -- Handlers --
 
 pub async fn requests_tab(
@@ -227,11 +428,15 @@ pub async fn requests_tab(
         }
     }
 
+    let has_uninstalled_approved = requests
+        .iter()
+        .any(|r| r.request.status == "approved" && !r.is_installed);
     let tmpl = RequestsTabTemplate {
         user,
         requests,
         active_filter: filter,
         csrf_token,
+        has_uninstalled_approved,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -382,6 +587,7 @@ pub async fn create_request(
         requests,
         active_filter: "pending".to_string(),
         csrf_token,
+        has_uninstalled_approved: false,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -578,7 +784,6 @@ pub async fn resolve_request(
         "Request rejected.".to_string()
     };
 
-    // Install-on-approve
     if action == "approve" && form.install.as_deref() == Some("true") {
         let request = web::block({
             let db = db.clone();
@@ -592,180 +797,9 @@ pub async fn resolve_request(
         .map_err(WebError::from)?
         .ok_or(WebError::NotFound)?;
 
-        let forge_mod_id = request.forge_mod_id;
-
-        match state
-            .forge
-            .get_versions(forge_mod_id, Some(&state.spt_info.spt_version))
-            .await
-        {
-            Ok(versions) if !versions.is_empty() => {
-                let version = versions.last().expect("checked non-empty above");
-
-                // Fika compatibility check (same pattern as install_mod)
-                {
-                    let db = state.db.clone();
-                    let fika_installed = web::block(move || {
-                        let db = db.lock();
-                        Ok::<_, anyhow::Error>(
-                            db.get_mod_by_forge_id(FIKA_CLIENT_FORGE_ID)?.is_some(),
-                        )
-                    })
-                    .await
-                    .map_err(WebError::from)?
-                    .map_err(WebError::from)?;
-
-                    if fika_installed {
-                        match &version.fika_compatibility {
-                            Some(FikaCompat::Incompatible) => {
-                                message = format!(
-                                    "Approved. Warning: {} v{} is marked as Fika INCOMPATIBLE.",
-                                    request.mod_name, version.version
-                                );
-                            }
-                            Some(FikaCompat::Unknown) => {
-                                message = format!(
-                                    "Approved. Note: Fika compatibility for {} v{} is unknown.",
-                                    request.mod_name, version.version
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                // Prevent duplicate installs
-                if state.tasks.has_running_for_mod(forge_mod_id) {
-                    message += " (install already in progress)";
-                } else {
-                    let config = state.config_cloned();
-                    let should_queue = crate::queue::should_queue(
-                        &config,
-                        false,
-                        &state.spt_dir,
-                        state.container_mgr.as_deref(),
-                    )
-                    .await
-                    .unwrap_or(false);
-
-                    if should_queue {
-                        let db = state.db.clone();
-                        let mod_name = request.mod_name.clone();
-                        let version_id = version.id;
-                        let username = user.username.clone();
-                        web::block(move || {
-                            let db = db.lock();
-                            db.insert_pending_op(
-                                crate::db::users::QueueAction::Install,
-                                forge_mod_id,
-                                Some(version_id),
-                                &mod_name,
-                                None,
-                                Some(&username),
-                            )
-                        })
-                        .await
-                        .map_err(WebError::from)?
-                        .map_err(WebError::from)?;
-                        message = "Approved and queued for install.".to_string();
-                    } else {
-                        // Direct install via async task (same pattern as mods::install_mod)
-                        let task_id =
-                            state
-                                .tasks
-                                .start("Installing", &request.mod_name, forge_mod_id);
-                        let tasks = state.tasks.clone();
-                        let forge = state.forge.clone();
-                        let spt_dir = state.spt_dir.clone();
-                        let db = state.db.clone();
-                        let version = version.clone();
-                        let mod_name = request.mod_name.clone();
-                        let mod_slug = request.mod_slug.clone();
-                        let update_cache = state.update_cache.clone();
-
-                        tokio::spawn(async move {
-                            let result = async {
-                                let link = version.link.as_deref().ok_or_else(|| {
-                                    anyhow::anyhow!("version has no download link")
-                                })?;
-                                let tmp_dir = tempfile::tempdir()?;
-                                let archive_path = tmp_dir.path().join("mod.zip");
-                                forge.download_file(link, &archive_path).await?;
-
-                                let spt_dir2 = spt_dir.clone();
-                                let extracted = actix_web::web::block(move || {
-                                    crate::spt::mods::extract_mod(&archive_path, &spt_dir2)
-                                })
-                                .await??;
-
-                                let version_id = version.id;
-                                let version_str = version.version.clone();
-                                let spt_dir2 = spt_dir.clone();
-                                let db2 = db.clone();
-                                let db_id = actix_web::web::block(move || {
-                                    let db = db.lock();
-                                    let db_id = db.insert_mod(
-                                        forge_mod_id,
-                                        version_id,
-                                        &mod_name,
-                                        mod_slug.as_deref(),
-                                        &version_str,
-                                    )?;
-                                    for file in &extracted {
-                                        db.insert_file(
-                                            db_id,
-                                            &file.path,
-                                            Some(&file.hash),
-                                            Some(file.size as i64),
-                                        )?;
-                                    }
-                                    Ok::<_, anyhow::Error>(db_id)
-                                })
-                                .await??;
-
-                                let _ = actix_web::web::block(move || {
-                                    crate::ops::scan_and_record_runtime_files(
-                                        &db2, db_id, &spt_dir2,
-                                    )
-                                })
-                                .await;
-
-                                Ok::<_, anyhow::Error>(())
-                            }
-                            .await;
-
-                            match result {
-                                Ok(()) => {
-                                    tracing::info!(
-                                        forge_mod_id,
-                                        "mod installed via request approval"
-                                    );
-                                    update_cache.invalidate();
-                                    tasks.complete(
-                                        task_id,
-                                        "Mod installed successfully".to_string(),
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::error!(forge_mod_id, error = %e, "install from request approval failed");
-                                    tasks.fail(task_id, format!("Install failed: {e}"));
-                                }
-                            }
-                        });
-                        message = "Approved and installing now.".to_string();
-                    }
-                } // close has_running_for_mod else
-            }
-            Ok(_) => {
-                message = format!(
-                    "Approved but no compatible version found for SPT {}.",
-                    state.spt_info.spt_version
-                );
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to fetch versions for install-on-approve");
-                message = "Approved. Could not fetch versions for auto-install.".to_string();
-            }
+        match trigger_install_for_request(&state, &request, &user).await {
+            Ok(msg) => message = format!("Approved. {msg}"),
+            Err(msg) => message = format!("Approved. {msg}"),
         }
     }
 
@@ -793,6 +827,173 @@ pub async fn resolve_request(
         message: Some(message),
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn install_from_request(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+    form: Form<csrf::CsrfForm>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
+    if !csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let request_id = path.into_inner();
+    let db = state.db.clone();
+    let request = web::block({
+        let db = db.clone();
+        move || {
+            let db = db.lock();
+            db.get_mod_request(request_id)
+        }
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?
+    .ok_or(WebError::NotFound)?;
+
+    if request.status != "approved" {
+        return Err(
+            WebError::BadRequest("Only approved requests can be installed.".to_string()).into(),
+        );
+    }
+
+    let already_installed = web::block({
+        let db = db.clone();
+        let forge_mod_id = request.forge_mod_id;
+        move || {
+            let db = db.lock();
+            Ok::<_, anyhow::Error>(db.get_mod_by_forge_id(forge_mod_id)?.is_some())
+        }
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    if already_installed {
+        return Err(WebError::BadRequest("This mod is already installed.".to_string()).into());
+    }
+
+    let message = match trigger_install_for_request(&state, &request, &user).await {
+        Ok(msg) | Err(msg) => msg,
+    };
+
+    let user_id = user.user_id;
+    let views = web::block(move || {
+        let db = db.lock();
+        db.list_mod_requests(None, user_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let rv = views
+        .into_iter()
+        .find(|v| v.request.id == request_id)
+        .ok_or(WebError::NotFound)?;
+
+    let csrf_token = csrf::get_or_create_token(&session);
+    let tmpl = RequestCardTemplate {
+        user,
+        r: rv,
+        csrf_token,
+        message: Some(message),
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn install_all_approved(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<csrf::CsrfForm>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
+    if !csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let db = state.db.clone();
+    let request_ids = web::block({
+        let db = db.clone();
+        move || {
+            let db = db.lock();
+            db.list_approved_uninstalled_request_ids()
+        }
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let mut installed = 0usize;
+    let mut failed = 0usize;
+    for rid in &request_ids {
+        let request = web::block({
+            let db = db.clone();
+            let rid = *rid;
+            move || {
+                let db = db.lock();
+                db.get_mod_request(rid)
+            }
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if let Some(request) = request {
+            if trigger_install_for_request(&state, &request, &user)
+                .await
+                .is_ok()
+            {
+                installed += 1;
+            } else {
+                failed += 1;
+            }
+        }
+    }
+
+    let message = if request_ids.is_empty() {
+        "No approved mods to install.".to_string()
+    } else if failed == 0 {
+        format!("{installed} mod(s) queued/installing.")
+    } else {
+        format!("{installed} mod(s) queued/installing, {failed} failed.")
+    };
+
+    let csrf_token = csrf::get_or_create_token(&session);
+    let user_id = user.user_id;
+    let requests = web::block(move || {
+        let db = db.lock();
+        db.list_mod_requests(Some("approved"), user_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let has_uninstalled_approved = requests.iter().any(|r| !r.is_installed);
+    let tmpl = RequestsTabTemplate {
+        user,
+        requests,
+        active_filter: "approved".to_string(),
+        csrf_token,
+        has_uninstalled_approved,
+    };
+
+    let toast_class = if failed > 0 {
+        "toast-warning"
+    } else {
+        "toast-success"
+    };
+    let mut html = tmpl.render().map_err(WebError::from)?;
+    html = format!(
+        "<div class=\"toast {toast_class}\" style=\"margin-bottom:0.5rem\">{message}</div>{html}"
+    );
+    Ok(Html::new(html))
 }
 
 #[cfg(test)]
