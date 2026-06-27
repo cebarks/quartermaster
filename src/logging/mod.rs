@@ -277,8 +277,9 @@ fn most_permissive(levels: &[tracing::Level]) -> tracing::Level {
     levels.iter().copied().max().unwrap_or(tracing::Level::INFO)
 }
 
-/// Parse a comma-separated filter string (like "info,quartermaster=debug") and
-/// return the most permissive level mentioned anywhere in it.
+/// Parse a comma-separated filter string and return the most permissive level
+/// mentioned anywhere (including per-target directives). Used for the floor
+/// filter which needs to pass events from ALL targets.
 fn parse_most_permissive_level(filter_str: &str) -> tracing::Level {
     let mut most = tracing::Level::ERROR;
     for part in filter_str.split(',') {
@@ -291,6 +292,22 @@ fn parse_most_permissive_level(filter_str: &str) -> tracing::Level {
         }
     }
     most
+}
+
+/// Parse a comma-separated filter string and return only the DEFAULT level
+/// (directives without a target= prefix). Per-target directives like
+/// "quartermaster=debug" are ignored. Used for the console LevelFilterLayer
+/// which should show INFO for all crates even when specific crates have DEBUG.
+fn parse_default_level(filter_str: &str) -> tracing::Level {
+    for part in filter_str.split(',') {
+        let part = part.trim();
+        if !part.contains('=') {
+            if let Ok(level) = part.parse::<tracing::Level>() {
+                return level;
+            }
+        }
+    }
+    tracing::Level::INFO
 }
 
 // ---------------------------------------------------------------------------
@@ -330,8 +347,9 @@ impl ReloadHandles {
         let floor = compute_floor_filter(config, filter_str);
         let _ = self.filter_handle.reload(floor);
 
-        // Parse console level for per-layer filtering
-        let console_level = parse_most_permissive_level(filter_str);
+        // Console level uses only the default level from the filter string,
+        // not per-target directives. "info,quartermaster=debug" → console at INFO.
+        let console_level = parse_default_level(filter_str);
 
         // Update console layer (with per-layer level filtering)
         if config.console.enabled {
