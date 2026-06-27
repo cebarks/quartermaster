@@ -95,6 +95,9 @@ pub enum Command {
         /// Bypass queue and apply immediately
         #[arg(long)]
         force: bool,
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
     },
 
     /// List installed mods
