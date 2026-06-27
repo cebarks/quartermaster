@@ -318,8 +318,13 @@ fn scan_runtime_recursive(
     let entries = std::fs::read_dir(dir)?;
     for entry in entries {
         let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            tracing::debug!(path = %entry.path().display(), "skipping symlink during runtime scan");
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             scan_runtime_recursive(&path, spt_root, tracked, results)?;
         } else if let Ok(relative) = path.strip_prefix(spt_root) {
             let rel_str = relative.to_string_lossy().to_string();

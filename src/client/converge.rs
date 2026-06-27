@@ -545,7 +545,8 @@ fn stub_gpu_dlls(install_dir: &Path, overlay_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Recursively copy a directory.
+/// Recursively copy a directory. Symlinks are skipped to prevent cycles
+/// and avoid copying sensitive files outside the intended tree.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)
         .with_context(|| format!("failed to create dir {}", dst.display()))?;
@@ -554,10 +555,16 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         std::fs::read_dir(src).with_context(|| format!("failed to read dir {}", src.display()))?
     {
         let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            tracing::debug!(path = %entry.path().display(), "skipping symlink during directory copy");
+            continue;
+        }
+
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
-        if src_path.is_dir() {
+        if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             std::fs::copy(&src_path, &dst_path)?;

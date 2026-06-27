@@ -554,6 +554,10 @@ fn compute_hash(data: &[u8]) -> String {
 }
 
 /// Recursively scan a directory, collecting file paths relative to `spt_root`.
+///
+/// Symlinks are skipped entirely to prevent infinite recursion (directory
+/// symlinks creating cycles) and to avoid following file symlinks to
+/// sensitive paths outside the SPT directory.
 fn scan_dir_recursive(dir: &Path, spt_root: &Path, out: &mut Vec<String>) -> Result<()> {
     let entries = fs::read_dir(dir)
         .with_context(|| format!("failed to read directory: {}", dir.display()))?;
@@ -561,9 +565,17 @@ fn scan_dir_recursive(dir: &Path, spt_root: &Path, out: &mut Vec<String>) -> Res
     for entry in entries {
         let entry = entry
             .with_context(|| format!("failed to read directory entry in: {}", dir.display()))?;
-        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("failed to get file type for: {}", entry.path().display()))?;
 
-        if path.is_dir() {
+        if file_type.is_symlink() {
+            tracing::debug!(path = %entry.path().display(), "skipping symlink during directory scan");
+            continue;
+        }
+
+        let path = entry.path();
+        if file_type.is_dir() {
             scan_dir_recursive(&path, spt_root, out)?;
         } else {
             let relative = path
@@ -810,6 +822,37 @@ mod tests {
         assert!(
             files.contains(&"SPT/user/mods/TestMod/package.json".to_string()),
             "should find server mod package.json: {files:?}"
+        );
+    }
+
+    #[test]
+    fn scan_skips_symlinks() {
+        let tmp_dir = TempDir::new().unwrap();
+        let root = tmp_dir.path();
+
+        // Create a real mod file
+        let server_dir = root.join("SPT/user/mods/RealMod");
+        fs::create_dir_all(&server_dir).unwrap();
+        fs::write(server_dir.join("package.json"), b"{}").unwrap();
+
+        // Create a symlink that would cause infinite recursion (points back to root)
+        let symlink_dir = root.join("SPT/user/mods/SymlinkMod");
+        std::os::unix::fs::symlink(root, &symlink_dir).unwrap();
+
+        // Create a file symlink pointing outside the tree
+        let file_symlink = server_dir.join("sneaky_link");
+        std::os::unix::fs::symlink("/etc/hostname", &file_symlink).unwrap();
+
+        // scan_mod_directories should complete without hanging and skip symlinks
+        let files = scan_mod_directories(root).unwrap();
+        assert_eq!(
+            files.len(),
+            1,
+            "should only find the real file, not symlinks: {files:?}"
+        );
+        assert!(
+            files.contains(&"SPT/user/mods/RealMod/package.json".to_string()),
+            "should find real mod file: {files:?}"
         );
     }
 

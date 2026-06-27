@@ -495,15 +495,21 @@ pub fn restore_full_backup(
 
 /// Copy an entire backup subtree into spt_dir, preserving relative paths.
 /// Used as a fallback for legacy backups that lack a manifest.
+/// Symlinks are skipped to prevent cycles and avoid copying sensitive files.
 fn copy_backup_subtree(src_root: &Path, dst_root: &Path) -> Result<()> {
     for entry in std::fs::read_dir(src_root)? {
         let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            tracing::debug!(path = %entry.path().display(), "skipping symlink during backup restore");
+            continue;
+        }
         let path = entry.path();
         let relative = path
             .strip_prefix(src_root)
             .context("failed to compute relative path")?;
         let dst = dst_root.join(relative);
-        if path.is_dir() {
+        if file_type.is_dir() {
             std::fs::create_dir_all(&dst)?;
             copy_backup_subtree(&path, dst_root)?;
         } else {
@@ -518,6 +524,7 @@ fn copy_backup_subtree(src_root: &Path, dst_root: &Path) -> Result<()> {
 
 /// Recursively copy files from a backup directory tree into the SPT directory,
 /// recording each file in the database.
+/// Symlinks are skipped to prevent cycles and avoid copying sensitive files.
 fn copy_backup_tree_and_record(
     db: &crate::db::Database,
     spt_dir: &Path,
@@ -528,8 +535,13 @@ fn copy_backup_tree_and_record(
 ) -> Result<()> {
     for entry in std::fs::read_dir(current_dir)? {
         let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            tracing::debug!(path = %entry.path().display(), "skipping symlink during backup restore");
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             copy_backup_tree_and_record(db, spt_dir, &path, backup_root, mod_db_id, count)?;
         } else {
             let relative = path.strip_prefix(backup_root)?;
