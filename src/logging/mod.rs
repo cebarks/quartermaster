@@ -7,7 +7,7 @@ use parking_lot::RwLock;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tracing::field::{Field, Visit};
 use tracing::Subscriber;
 use tracing_subscriber::filter::Targets;
@@ -20,6 +20,7 @@ use tracing_subscriber::Layer;
 use crate::config::{ConsoleFormat, FileFormat, LoggingConfig, RotationPolicy};
 
 mod compact;
+pub mod writer;
 
 // ---------------------------------------------------------------------------
 // LogEntry — the structured log record shared via broadcast + ring buffer
@@ -143,11 +144,20 @@ impl Visit for FieldVisitor {
 
 pub struct BroadcastLayer {
     broadcast: Arc<LogBroadcast>,
+    db_sender: Option<mpsc::UnboundedSender<LogEntry>>,
 }
 
 impl BroadcastLayer {
     pub fn new(broadcast: Arc<LogBroadcast>) -> Self {
-        Self { broadcast }
+        Self {
+            broadcast,
+            db_sender: None,
+        }
+    }
+
+    pub fn with_db_sender(mut self, sender: mpsc::UnboundedSender<LogEntry>) -> Self {
+        self.db_sender = Some(sender);
+        self
     }
 }
 
@@ -165,7 +175,11 @@ impl<S: Subscriber> Layer<S> for BroadcastLayer {
             fields: visitor.fields,
         };
 
-        self.broadcast.send(entry);
+        self.broadcast.send(entry.clone());
+
+        if let Some(ref sender) = self.db_sender {
+            let _ = sender.send(entry);
+        }
     }
 }
 
@@ -383,7 +397,10 @@ fn resolve_file_path(path: &str, spt_dir: Option<&Path>) -> std::path::PathBuf {
 // init_subscriber — bootstrap the layered subscriber with reload handles
 // ---------------------------------------------------------------------------
 
-pub fn init_subscriber(log_broadcast: &Arc<LogBroadcast>) -> ReloadHandles {
+pub fn init_subscriber(
+    log_broadcast: &Arc<LogBroadcast>,
+    db_sender: Option<mpsc::UnboundedSender<LogEntry>>,
+) -> ReloadHandles {
     // Default floor filter: before config loads we use a sensible baseline.
     // This will be replaced by compute_floor_filter() on first reconfigure().
     let floor = Targets::new()
@@ -408,7 +425,10 @@ pub fn init_subscriber(log_broadcast: &Arc<LogBroadcast>) -> ReloadHandles {
     let (file_reload, file_handle) = reload::Layer::new(file_layer);
 
     // Broadcast layer — always active, feeds the web UI ring buffer
-    let broadcast_layer = BroadcastLayer::new(Arc::clone(log_broadcast));
+    let mut broadcast_layer = BroadcastLayer::new(Arc::clone(log_broadcast));
+    if let Some(sender) = db_sender {
+        broadcast_layer = broadcast_layer.with_db_sender(sender);
+    }
 
     tracing_subscriber::registry()
         .with(floor_layer)

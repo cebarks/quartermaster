@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
 
     // For non-serve commands, use default buffer size
     let log_broadcast = Arc::new(logging::LogBroadcast::new(1000));
-    let reload_handles = logging::init_subscriber(&log_broadcast);
+    let reload_handles = logging::init_subscriber(&log_broadcast, None);
 
     match &cli.command {
         Command::Setup {

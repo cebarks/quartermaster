@@ -25,6 +25,7 @@ use actix_web::cookie::Key;
 use actix_web::web;
 use actix_web::{middleware, App, HttpResponse, HttpServer};
 use anyhow::{Context, Result};
+use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 
 use actix_governor::{Governor, GovernorConfigBuilder};
@@ -71,7 +72,7 @@ async fn serve_asset(path: web::Path<String>) -> HttpResponse {
 pub struct ServerContext {
     pub config: Config,
     pub config_path: std::path::PathBuf,
-    pub db: Database,
+    pub db: Arc<Mutex<Database>>,
     pub forge: ForgeClient,
     pub spt_dir: std::path::PathBuf,
     pub spt_info: SptInfo,
@@ -645,7 +646,8 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         GameData::load_empty()
     }));
 
-    let db_arc = Arc::new(parking_lot::Mutex::new(db));
+    // db is already Arc<Mutex<Database>> from serve.rs
+    let db_arc = db;
 
     // Recover any interrupted async mod updates from a previous crash
     if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &spt_dir) {
