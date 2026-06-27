@@ -487,7 +487,7 @@ async fn exit_watcher_loop(
             Err(e) => {
                 tracing::error!(
                     container = %container_name,
-                    error = %e,
+                    err = %e,
                     "Failed to restart"
                 );
                 watcher_handles.write().await.remove(&index);

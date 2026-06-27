@@ -28,7 +28,7 @@ pub async fn ws_proxy_handler(
 
     let (response, mut client_session, mut client_stream) =
         actix_ws::handle(&req, body).map_err(|e| {
-            tracing::error!(error = %e, "failed to accept WebSocket");
+            tracing::error!(err = %e, "failed to accept WebSocket");
             actix_web::error::ErrorBadRequest("WebSocket handshake failed")
         })?;
 
@@ -88,7 +88,7 @@ pub async fn ws_proxy_handler(
         let (upstream_ws, _) = match ws_result {
             Ok(conn) => conn,
             Err(e) => {
-                tracing::error!(error = %e, url = %upstream_url, "failed to connect WebSocket upstream");
+                tracing::error!(err = %e, url = %upstream_url, "failed to connect WebSocket upstream");
                 let _ = client_session.close(None).await;
                 state_clone.proxy_metrics.decrement_ws_connections();
                 return;

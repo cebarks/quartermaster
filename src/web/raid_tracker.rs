@@ -150,7 +150,7 @@ pub fn handle_raid_start(
     let start_req: RaidStartRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
         Err(e) => {
-            tracing::warn!(error = %e, profile_id = %spt_profile_id, "failed to parse raid start request");
+            tracing::warn!(err = %e, profile_id = %spt_profile_id, "failed to parse raid start request");
             return;
         }
     };
@@ -185,14 +185,14 @@ pub fn handle_raid_start(
             return;
         }
         Err(e) => {
-            tracing::warn!(error = %e, profile_id = %spt_profile_id, "failed to query user by profile ID");
+            tracing::warn!(err = %e, profile_id = %spt_profile_id, "failed to query user by profile ID");
             return;
         }
     };
 
     // Close any orphaned raids for this profile
     if let Err(e) = db_lock.close_orphaned_raids(&spt_profile_id) {
-        tracing::warn!(error = %e, profile_id = %spt_profile_id, "failed to close orphaned raids");
+        tracing::warn!(err = %e, profile_id = %spt_profile_id, "failed to close orphaned raids");
     }
 
     // Insert raid row
@@ -211,7 +211,7 @@ pub fn handle_raid_start(
     ) {
         Ok(id) => id,
         Err(e) => {
-            tracing::warn!(error = %e, profile_id = %spt_profile_id, "failed to insert raid");
+            tracing::warn!(err = %e, profile_id = %spt_profile_id, "failed to insert raid");
             return;
         }
     };
@@ -219,7 +219,7 @@ pub fn handle_raid_start(
     // Store compressed "before" profile snapshot (best-effort, not transactional with raid insert)
     if let Some(ref compressed) = compressed_snapshot {
         if let Err(e) = db_lock.insert_raid_snapshot(raid_id, "before", compressed) {
-            tracing::warn!(error = %e, raid_id, "failed to store before profile snapshot");
+            tracing::warn!(err = %e, raid_id, "failed to store before profile snapshot");
         }
     }
 
@@ -249,7 +249,7 @@ pub fn handle_raid_end(
     let end_req: RaidEndRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
         Err(e) => {
-            tracing::warn!(error = %e, profile_id = %spt_profile_id, "failed to parse raid end request");
+            tracing::warn!(err = %e, profile_id = %spt_profile_id, "failed to parse raid end request");
             return;
         }
     };
@@ -264,7 +264,7 @@ pub fn handle_raid_end(
             return;
         }
         Err(e) => {
-            tracing::warn!(error = %e, profile_id = %spt_profile_id, "failed to query open raid");
+            tracing::warn!(err = %e, profile_id = %spt_profile_id, "failed to query open raid");
             return;
         }
     };
@@ -315,7 +315,7 @@ pub fn handle_raid_end(
         level_after,
         &new_victims,
     ) {
-        tracing::warn!(error = %e, raid_id = open_raid.id, "failed to finish raid");
+        tracing::warn!(err = %e, raid_id = open_raid.id, "failed to finish raid");
         return;
     }
 
@@ -324,7 +324,7 @@ pub fn handle_raid_end(
         if let Ok(json_bytes) = serde_json::to_vec(&end_req.results.profile) {
             if let Ok(compressed) = compress_snapshot(&json_bytes) {
                 if let Err(e) = db_lock.insert_raid_snapshot(open_raid.id, "after", &compressed) {
-                    tracing::warn!(error = %e, raid_id = open_raid.id, "failed to store after profile snapshot");
+                    tracing::warn!(err = %e, raid_id = open_raid.id, "failed to store after profile snapshot");
                 }
             }
         }

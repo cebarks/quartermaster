@@ -133,7 +133,7 @@ pub async fn client_restart(
     };
 
     if let Err(e) = mgr.restart(&container_name).await {
-        tracing::error!(container = %container_name, error = %e, "failed to restart client");
+        tracing::error!(container = %container_name, err = %e, "failed to restart client");
         set_flash(
             &session,
             &format!("Failed to restart client {index}: {e}"),
@@ -209,7 +209,7 @@ pub async fn client_stop(
     };
 
     if let Err(e) = mgr.stop(&container_name).await {
-        tracing::error!(container = %container_name, error = %e, "failed to stop client");
+        tracing::error!(container = %container_name, err = %e, "failed to stop client");
         set_flash(
             &session,
             &format!("Failed to stop client {index}: {e}"),
@@ -285,7 +285,7 @@ pub async fn client_start(
     };
 
     if let Err(e) = mgr.start(&container_name).await {
-        tracing::error!(container = %container_name, error = %e, "failed to start client");
+        tracing::error!(container = %container_name, err = %e, "failed to start client");
         set_flash(
             &session,
             &format!("Failed to start client {index}: {e}"),
@@ -459,7 +459,7 @@ pub async fn client_scale(
         .await;
 
         if let Err(e) = result {
-            tracing::error!(error = %e, "Client convergence failed during scale operation");
+            tracing::error!(err = %e, "Client convergence failed during scale operation");
         } else {
             tracing::info!(target_count = target, "Client scaling completed");
 
@@ -479,13 +479,13 @@ pub async fn client_scale(
                         }
                     }
                     if let Err(e) = fresh_config.save(&config_path) {
-                        tracing::error!(error = %e, "Failed to save updated headless config");
+                        tracing::error!(err = %e, "Failed to save updated headless config");
                     } else {
                         *config_handle.write() = fresh_config;
                     }
                 }
                 Err(e) => {
-                    tracing::error!(error = %e, "Failed to reload config for persisting headless changes");
+                    tracing::error!(err = %e, "Failed to reload config for persisting headless changes");
                 }
             }
         }
@@ -602,14 +602,14 @@ pub async fn client_create(
                         .push(crate::config::HeadlessClientDef::default());
                 }
                 if let Err(e) = fresh_config.save(&config_path) {
-                    tracing::error!(error = %e, "Failed to save new client to config");
+                    tracing::error!(err = %e, "Failed to save new client to config");
                     return;
                 } else {
                     *config_handle.write() = fresh_config;
                 }
             }
             Err(e) => {
-                tracing::error!(error = %e, "Failed to reload config for adding client");
+                tracing::error!(err = %e, "Failed to reload config for adding client");
                 return;
             }
         }
@@ -627,7 +627,7 @@ pub async fn client_create(
         .await;
 
         if let Err(e) = result {
-            tracing::error!(error = %e, "Convergence failed after creating client");
+            tracing::error!(err = %e, "Convergence failed after creating client");
         } else {
             tracing::info!(count = new_count, "Client created successfully");
         }
@@ -754,11 +754,11 @@ pub async fn client_delete(
         let container_name = crate::client::converge::client_container_name(index);
         if let Ok(true) = mgr_clone.is_running(&container_name).await {
             if let Err(e) = mgr_clone.stop(&container_name).await {
-                tracing::warn!(error = %e, container = %container_name, "failed to stop container before delete");
+                tracing::warn!(err = %e, container = %container_name, "failed to stop container before delete");
             }
         }
         if let Err(e) = mgr_clone.remove_container(&container_name).await {
-            tracing::warn!(error = %e, container = %container_name, "failed to remove container (may not exist)");
+            tracing::warn!(err = %e, container = %container_name, "failed to remove container (may not exist)");
         }
 
         // Persist
@@ -770,14 +770,14 @@ pub async fn client_delete(
                     }
                 }
                 if let Err(e) = fresh_config.save(&config_path) {
-                    tracing::error!(error = %e, "Failed to save config after deleting client");
+                    tracing::error!(err = %e, "Failed to save config after deleting client");
                     return;
                 } else {
                     *config_handle.write() = fresh_config;
                 }
             }
             Err(e) => {
-                tracing::error!(error = %e, "Failed to reload config for deleting client");
+                tracing::error!(err = %e, "Failed to reload config for deleting client");
                 return;
             }
         }
@@ -795,7 +795,7 @@ pub async fn client_delete(
         .await;
 
         if let Err(e) = result {
-            tracing::error!(error = %e, "Convergence failed after deleting client");
+            tracing::error!(err = %e, "Convergence failed after deleting client");
         } else {
             tracing::info!(deleted_index = index, "Client deleted successfully");
         }

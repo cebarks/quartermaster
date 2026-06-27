@@ -34,9 +34,9 @@ pub struct InstallRequest<'a> {
 
 pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     tracing::info!(
-        req.name,
-        req.forge_mod_id,
-        req.version,
+        mod_name = req.name,
+        mod_id = req.forge_mod_id,
+        version = req.version,
         "installing mod from archive"
     );
 
@@ -72,7 +72,7 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         "mod installed, files recorded"
     );
     if let Err(e) = crate::modsync::regenerate_if_enabled(req.spt_dir, req.config, req.db) {
-        tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
+        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
     Ok(db_id)
 }
@@ -86,7 +86,11 @@ pub fn update_mod_from_archive(
     version_str: &str,
     archive_path: &Path,
 ) -> Result<()> {
-    tracing::info!(mod_db_id, version_str, "updating mod from archive");
+    tracing::info!(
+        mod_db_id,
+        version = version_str,
+        "updating mod from archive"
+    );
     let staging_dir = tempfile::tempdir()?;
     let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
 
@@ -129,7 +133,7 @@ pub fn update_mod_from_archive(
     db.update_mod(mod_db_id, version_id, version_str)?;
     tx.commit()?;
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
+        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
     Ok(())
 }
@@ -444,7 +448,7 @@ pub fn remove_mod_by_id(
                 }
                 if changed {
                     if let Err(e) = cfg.save(&config_path) {
-                        tracing::warn!(error = %e, "failed to clean up group membership after mod removal");
+                        tracing::warn!(err = %e, "failed to clean up group membership after mod removal");
                     }
                 }
             }
@@ -452,7 +456,7 @@ pub fn remove_mod_by_id(
     }
 
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(error = %e, "failed to regenerate NarcoNet config");
+        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
     Ok(())
 }
@@ -579,7 +583,7 @@ fn scan_runtime_recursive(
                     Err(e) => {
                         tracing::warn!(
                             path = %path.display(),
-                            error = %e,
+                            err = %e,
                             "skipping unreadable runtime file"
                         );
                     }
@@ -677,7 +681,7 @@ pub fn disable_mod(
     let top_dirs = find_top_level_mod_dirs(&file_paths);
     let loose = find_loose_files(&file_paths, &top_dirs);
 
-    tracing::info!(mod_db_id, name = %mod_info.name, "disabling mod");
+    tracing::info!(mod_db_id, mod_name = %mod_info.name, "disabling mod");
 
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_disable")?;
 
@@ -723,7 +727,7 @@ pub fn disable_mod(
         return Err(e.into());
     }
 
-    tracing::info!(mod_db_id, name = %mod_info.name, "mod disabled");
+    tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod disabled");
     Ok(())
 }
 
@@ -748,7 +752,7 @@ pub fn enable_mod(
     let top_dirs = find_top_level_mod_dirs(&file_paths);
     let loose = find_loose_files(&file_paths, &top_dirs);
 
-    tracing::info!(mod_db_id, name = %mod_info.name, "enabling mod");
+    tracing::info!(mod_db_id, mod_name = %mod_info.name, "enabling mod");
 
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_enable")?;
 
@@ -814,7 +818,7 @@ pub fn enable_mod(
         return Err(e.into());
     }
 
-    tracing::info!(mod_db_id, name = %mod_info.name, "mod enabled");
+    tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod enabled");
     Ok(())
 }
 

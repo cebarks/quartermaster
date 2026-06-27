@@ -230,7 +230,7 @@ pub async fn save_web_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
 
     set_flash(
@@ -278,7 +278,7 @@ pub async fn save_server_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
 
     set_flash(&session, "Server settings saved", FlashType::Success);
@@ -307,7 +307,7 @@ pub async fn save_queue_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
 
     set_flash(&session, "Queue settings saved", FlashType::Success);
@@ -359,7 +359,7 @@ pub async fn save_forge_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
 
     set_flash(&session, "Forge settings saved", FlashType::Success);
@@ -418,7 +418,7 @@ pub async fn save_logging_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
 
     let filter = crate::logging::resolve_log_filter(&config.logging, 0, None);
@@ -486,7 +486,7 @@ pub async fn save_headless_settings(
 
     config.save(&state.config_path).map_err(WebError::from)?;
     if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(error = %e, "failed to refresh in-memory config after save");
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
 
     set_flash(&session, "Headless settings saved", FlashType::Success);

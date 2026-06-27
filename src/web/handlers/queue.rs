@@ -161,7 +161,7 @@ pub async fn apply_queue(
                     {
                         tracing::error!(
                             mod_name = %op.mod_name,
-                            error = %e,
+                            err = %e,
                             "failed to delete pending op after successful apply"
                         );
                         failures.push(format!(
@@ -174,7 +174,7 @@ pub async fn apply_queue(
                     tracing::error!(
                         action = %op.action,
                         mod_name = %op.mod_name,
-                        error = %e,
+                        err = %e,
                         "queue apply failed"
                     );
                     failures.push(format!("{}: {}", op.mod_name, e));

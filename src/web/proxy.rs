@@ -70,7 +70,7 @@ pub async fn proxy_handler(
 
     // Convert actix-web Method to reqwest Method
     let method = reqwest::Method::from_bytes(req.method().as_str().as_bytes()).map_err(|e| {
-        tracing::error!(error = %e, method = %req.method(), "invalid HTTP method");
+        tracing::error!(err = %e, method = %req.method(), "invalid HTTP method");
         actix_web::error::ErrorBadRequest("invalid HTTP method")
     })?;
 
@@ -191,7 +191,7 @@ pub async fn proxy_handler(
                     "proxy"
                 );
             } else {
-                tracing::info!(
+                tracing::debug!(
                     client_ip = %client_ip,
                     method = %req.method(),
                     path = %req.path(),
@@ -230,7 +230,7 @@ pub async fn proxy_handler(
             tracing::error!(
                 method = %req.method(),
                 path = %req.path(),
-                error = %e,
+                err = %e,
                 latency_ms,
                 "proxy upstream unreachable"
             );
@@ -253,7 +253,7 @@ fn handle_player_registration(
     let entries = match std::fs::read_dir(&profiles_dir) {
         Ok(e) => e,
         Err(e) => {
-            tracing::warn!(error = %e, "failed to read profiles directory for new user detection");
+            tracing::warn!(err = %e, "failed to read profiles directory for new user detection");
             return;
         }
     };
@@ -296,7 +296,7 @@ fn handle_player_registration(
             Ok(Some(_)) => continue,
             Ok(None) => {}
             Err(e) => {
-                tracing::warn!(error = %e, profile_id = %profile_id, "failed to check for existing user");
+                tracing::warn!(err = %e, profile_id = %profile_id, "failed to check for existing user");
                 continue;
             }
         }
@@ -312,7 +312,7 @@ fn handle_player_registration(
                 let _ = events.send(crate::web::sse::ServerEvent::PlayerRegistered);
             }
             Err(e) => {
-                tracing::warn!(error = %e, username = %username, "failed to auto-create user");
+                tracing::warn!(err = %e, username = %username, "failed to auto-create user");
             }
         }
     }

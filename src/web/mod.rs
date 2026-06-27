@@ -646,7 +646,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
     let game_data = Arc::new(GameData::load(&spt_dir).unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "failed to load SPT game data, lookups will return raw IDs");
+        tracing::warn!(err = %e, "failed to load SPT game data, lookups will return raw IDs");
         GameData::load_empty()
     }));
 
@@ -661,7 +661,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     // Regenerate NarcoNet config on startup to ensure consistency
     if modsync_installed && config.modsync.is_some() {
         if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
-            tracing::warn!(error = %e, "failed to regenerate NarcoNet config on startup");
+            tracing::warn!(err = %e, "failed to regenerate NarcoNet config on startup");
         }
     }
 

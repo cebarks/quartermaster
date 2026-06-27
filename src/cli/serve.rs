@@ -86,11 +86,11 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         Ok(false) => {
                             tracing::info!(container, "auto-starting server container");
                             if let Err(e) = mgr.start(container).await {
-                                tracing::warn!(container, error = %e, "failed to auto-start server container — web UI will start anyway");
+                                tracing::warn!(container, err = %e, "failed to auto-start server container — web UI will start anyway");
                             }
                         }
                         Err(e) => {
-                            tracing::warn!(container, error = %e, "failed to check container status — skipping auto-start");
+                            tracing::warn!(container, err = %e, "failed to check container status — skipping auto-start");
                         }
                     }
                 }
@@ -99,7 +99,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
             Some(mgr)
         }
         Err(e) => {
-            tracing::warn!(error = %e, "failed to connect to Podman — container features disabled");
+            tracing::warn!(err = %e, "failed to connect to Podman — container features disabled");
             None
         }
     };
@@ -128,7 +128,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         )
         .await
         {
-            tracing::warn!(error = %e, "failed to auto-install Fika client — bootstrap zip may be incomplete");
+            tracing::warn!(err = %e, "failed to auto-install Fika client — bootstrap zip may be incomplete");
         }
     }
 
@@ -141,7 +141,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
             if let Some(ref container_mgr_arc) = container_mgr {
                 // Validate headless config
                 if let Err(e) = headless_config.validate(&config, &spt_dir) {
-                    tracing::error!(error = %e, "Invalid headless configuration — supervisor not started");
+                    tracing::error!(err = %e, "Invalid headless configuration — supervisor not started");
                     None
                 } else {
                     // Resolve SPT server address
@@ -149,7 +149,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
                         Ok(client) => client,
                         Err(e) => {
-                            tracing::error!(error = %e, "Failed to create SPT client — supervisor not started");
+                            tracing::error!(err = %e, "Failed to create SPT client — supervisor not started");
                             return Err(e);
                         }
                     };
@@ -172,7 +172,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                     .await;
 
                     if let Err(e) = converge_result {
-                        tracing::error!(error = %e, "Initial convergence failed — supervisor not started");
+                        tracing::error!(err = %e, "Initial convergence failed — supervisor not started");
                         None
                     } else {
                         // Create and spawn supervisor
@@ -273,7 +273,7 @@ async fn teardown_containers(
     {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!(error = %e, "failed to discover managed containers for teardown");
+            tracing::error!(err = %e, "failed to discover managed containers for teardown");
             return;
         }
     };
@@ -296,7 +296,7 @@ async fn teardown_containers(
             OnExit::Nothing => return,
         };
         if let Err(e) = result {
-            tracing::warn!(container = %name, error = %e, "container teardown failed");
+            tracing::warn!(container = %name, err = %e, "container teardown failed");
         }
     }
 
@@ -344,6 +344,6 @@ async fn auto_install_bootstrap_mod(
     )
     .await?;
 
-    tracing::info!(name = %forge_mod.name, version = %version.version, "auto-installed bootstrap mod");
+    tracing::info!(mod_name = %forge_mod.name, version = %version.version, "auto-installed bootstrap mod");
     Ok(())
 }

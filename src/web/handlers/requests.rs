@@ -233,7 +233,7 @@ pub async fn requests_tab(
                         Err(e) => {
                             tracing::warn!(
                                 forge_mod_id,
-                                error = %e,
+                                err = %e,
                                 "failed to refresh Forge cache for mod request"
                             );
                         }
@@ -782,7 +782,7 @@ pub async fn resolve_request(
                                         );
                                     }
                                     Err(e) => {
-                                        tracing::error!(forge_mod_id, error = %e, "install from request approval failed");
+                                        tracing::error!(forge_mod_id, err = %e, "install from request approval failed");
                                         tasks.fail(task_id, format!("Install failed: {e}"));
                                     }
                                 }
@@ -802,7 +802,7 @@ pub async fn resolve_request(
                 );
             }
             Err(e) => {
-                tracing::warn!(error = %e, "failed to fetch versions for install-on-approve");
+                tracing::warn!(err = %e, "failed to fetch versions for install-on-approve");
                 message = "Approved. Could not fetch versions for auto-install.".to_string();
             }
         }
