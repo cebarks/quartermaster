@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -17,6 +18,8 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 
 use crate::config::{ConsoleFormat, FileFormat, LoggingConfig, RotationPolicy};
+
+mod compact;
 
 // ---------------------------------------------------------------------------
 // LogEntry — the structured log record shared via broadcast + ring buffer
@@ -208,8 +211,15 @@ impl ReloadHandles {
                 ConsoleFormat::Json => Box::new(fmt::layer().json().with_writer(std::io::stderr)),
                 ConsoleFormat::Full => Box::new(fmt::layer().with_writer(std::io::stderr)),
                 ConsoleFormat::Compact => {
-                    // Placeholder: use Full format until CompactFormatter is implemented in Task 2
-                    Box::new(fmt::layer().with_writer(std::io::stderr))
+                    let formatter = compact::CompactFormatter {
+                        use_ansi: std::io::stderr().is_terminal(),
+                    };
+                    Box::new(
+                        fmt::layer()
+                            .event_format(formatter)
+                            .with_writer(std::io::stderr)
+                            .with_ansi(false), // formatter handles its own color
+                    )
                 }
             };
             let _ = self.console_handle.reload(layer);
@@ -250,8 +260,15 @@ pub fn init_subscriber(log_broadcast: &Arc<LogBroadcast>) -> ReloadHandles {
     let filter = EnvFilter::new("info,quartermaster=debug");
     let (filter_layer, filter_handle) = reload::Layer::new(filter);
 
-    // Console layer (default: text to stderr)
-    let console_layer: BoxedConsole = Box::new(fmt::layer().with_writer(std::io::stderr));
+    // Console layer (default: compact format)
+    let console_layer: BoxedConsole = Box::new(
+        fmt::layer()
+            .event_format(compact::CompactFormatter {
+                use_ansi: std::io::stderr().is_terminal(),
+            })
+            .with_writer(std::io::stderr)
+            .with_ansi(false),
+    );
     let (console_reload, console_handle) = reload::Layer::new(console_layer);
 
     // File layer (default: disabled / None)
