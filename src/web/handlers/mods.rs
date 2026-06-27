@@ -792,6 +792,29 @@ pub async fn install_mod(
         }
     }
 
+    // Check if mod is already installed
+    {
+        let db = state.db.clone();
+        let already_installed = web::block(move || {
+            let db = db.lock();
+            db.get_mod_by_forge_id(mod_id)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if already_installed.is_some() {
+            set_flash(
+                &session,
+                "This mod is already installed",
+                FlashType::Warning,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    }
+
     // Check if the operation should be queued (server running + queue enabled)
     let config = state.config_cloned();
     let should_queue = crate::queue::should_queue(
@@ -807,8 +830,11 @@ pub async fn install_mod(
         let db = state.db.clone();
         let mod_name = mod_info.name.clone();
         let version_id = version.id;
-        web::block(move || {
+        let already_queued = web::block(move || {
             let db = db.lock();
+            if db.has_pending_op(mod_id, crate::db::users::QueueAction::Install)? {
+                return Ok::<bool, rusqlite::Error>(true);
+            }
             db.insert_pending_op(
                 crate::db::users::QueueAction::Install,
                 mod_id,
@@ -816,31 +842,43 @@ pub async fn install_mod(
                 &mod_name,
                 None,
                 None,
-            )
+            )?;
+            Ok(false)
         })
         .await
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
-        set_flash(&session, "Mod queued for install", FlashType::Success);
+        if already_queued {
+            set_flash(
+                &session,
+                "This mod is already queued for install",
+                FlashType::Warning,
+            );
+        } else {
+            set_flash(&session, "Mod queued for install", FlashType::Success);
+        }
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods#queue"))
             .finish());
     }
 
-    // Prevent duplicate installs
-    if state.tasks.has_running_for_mod(mod_id) {
-        set_flash(
-            &session,
-            "This mod is already being installed",
-            FlashType::Warning,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods"))
-            .finish());
-    }
-
-    let task_id = state.tasks.start("Installing", &mod_info.name, mod_id);
+    let task_id = match state
+        .tasks
+        .start_if_not_running("Installing", &mod_info.name, mod_id)
+    {
+        Some(id) => id,
+        None => {
+            set_flash(
+                &session,
+                "This mod is already being installed",
+                FlashType::Warning,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
@@ -1003,8 +1041,11 @@ pub async fn update_mod(
         let mod_name = installed.name.clone();
         let version_id = version.id;
         let forge_mod_id = installed.forge_mod_id;
-        web::block(move || {
+        let already_queued = web::block(move || {
             let db = db.lock();
+            if db.has_pending_op(forge_mod_id, crate::db::users::QueueAction::Update)? {
+                return Ok::<bool, rusqlite::Error>(true);
+            }
             db.insert_pending_op(
                 crate::db::users::QueueAction::Update,
                 forge_mod_id,
@@ -1012,33 +1053,44 @@ pub async fn update_mod(
                 &mod_name,
                 None,
                 None,
-            )
+            )?;
+            Ok(false)
         })
         .await
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
-        set_flash(&session, "Update queued", FlashType::Success);
+        if already_queued {
+            set_flash(
+                &session,
+                "This mod is already queued for update",
+                FlashType::Warning,
+            );
+        } else {
+            set_flash(&session, "Update queued", FlashType::Success);
+        }
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods#queue"))
             .finish());
     }
 
-    // Prevent duplicate updates
-    if state.tasks.has_running_for_mod(installed.forge_mod_id) {
-        set_flash(
-            &session,
-            "This mod is already being updated",
-            FlashType::Warning,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
-            .finish());
-    }
-
-    let task_id = state
-        .tasks
-        .start("Updating", &installed.name, installed.forge_mod_id);
+    let task_id =
+        match state
+            .tasks
+            .start_if_not_running("Updating", &installed.name, installed.forge_mod_id)
+        {
+            Some(id) => id,
+            None => {
+                set_flash(
+                    &session,
+                    "This mod is already being updated",
+                    FlashType::Warning,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
+                    .finish());
+            }
+        };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
@@ -1150,8 +1202,11 @@ pub async fn remove_mod(
         let db = state.db.clone();
         let mod_name = installed.name.clone();
         let forge_mod_id = installed.forge_mod_id;
-        web::block(move || {
+        let already_queued = web::block(move || {
             let db = db.lock();
+            if db.has_pending_op(forge_mod_id, crate::db::users::QueueAction::Remove)? {
+                return Ok::<bool, rusqlite::Error>(true);
+            }
             db.insert_pending_op(
                 crate::db::users::QueueAction::Remove,
                 forge_mod_id,
@@ -1159,13 +1214,22 @@ pub async fn remove_mod(
                 &mod_name,
                 None,
                 None,
-            )
+            )?;
+            Ok(false)
         })
         .await
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
-        set_flash(&session, "Mod queued for removal", FlashType::Success);
+        if already_queued {
+            set_flash(
+                &session,
+                "This mod is already queued for removal",
+                FlashType::Warning,
+            );
+        } else {
+            set_flash(&session, "Mod queued for removal", FlashType::Success);
+        }
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods#queue"))
             .finish());
@@ -1315,14 +1379,19 @@ pub async fn update_all_mods(
         web::block(move || {
             let db = db.lock();
             for update in &results.updates {
-                db.insert_pending_op(
-                    crate::db::users::QueueAction::Update,
+                if !db.has_pending_op(
                     update.current_version.mod_id,
-                    Some(update.recommended_version.id),
-                    &update.current_version.name,
-                    None,
-                    None,
-                )?;
+                    crate::db::users::QueueAction::Update,
+                )? {
+                    db.insert_pending_op(
+                        crate::db::users::QueueAction::Update,
+                        update.current_version.mod_id,
+                        Some(update.recommended_version.id),
+                        &update.current_version.name,
+                        None,
+                        None,
+                    )?;
+                }
             }
             Ok::<_, anyhow::Error>(())
         })
@@ -1336,18 +1405,19 @@ pub async fn update_all_mods(
             .finish());
     }
 
-    if state.tasks.has_active() {
-        set_flash(
-            &session,
-            "Please wait for current operations to finish before updating all",
-            FlashType::Warning,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods"))
-            .finish());
-    }
-
-    let task_id = state.tasks.start("Updating", "all mods", 0);
+    let task_id = match state.tasks.start_if_no_active("Updating", "all mods", 0) {
+        Some(id) => id,
+        None => {
+            set_flash(
+                &session,
+                "Please wait for current operations to finish before updating all",
+                FlashType::Warning,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();

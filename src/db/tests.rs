@@ -999,3 +999,26 @@ fn get_user_by_spt_profile_id_null_profile() {
     let user = db.get_user_by_spt_profile_id("anything").unwrap();
     assert!(user.is_none());
 }
+
+#[test]
+fn has_pending_op_check() {
+    use crate::db::users::QueueAction;
+
+    let db = test_db();
+
+    // No ops exist yet
+    assert!(!db.has_pending_op(42, QueueAction::Install).unwrap());
+
+    // Insert an Install op for forge_mod_id=42
+    db.insert_pending_op(QueueAction::Install, 42, Some(100), "Test Mod", None, None)
+        .unwrap();
+
+    // Same mod_id + action → true
+    assert!(db.has_pending_op(42, QueueAction::Install).unwrap());
+
+    // Different mod_id → false
+    assert!(!db.has_pending_op(99, QueueAction::Install).unwrap());
+
+    // Same mod_id, different action → false
+    assert!(!db.has_pending_op(42, QueueAction::Update).unwrap());
+}

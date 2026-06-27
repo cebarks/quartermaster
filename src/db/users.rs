@@ -386,6 +386,15 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn has_pending_op(&self, forge_mod_id: i64, action: QueueAction) -> rusqlite::Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM pending_operations WHERE forge_mod_id = ?1 AND action = ?2",
+            params![forge_mod_id, action.as_str()],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     pub fn list_pending_ops(&self) -> rusqlite::Result<Vec<PendingOperation>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, action, forge_mod_id, forge_version_id, mod_name, metadata, queued_at, queued_by
