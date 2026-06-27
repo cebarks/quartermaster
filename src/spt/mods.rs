@@ -78,7 +78,7 @@ pub enum ModType {
 }
 
 /// A file that was extracted from a mod archive.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExtractedFile {
     pub path: String,
     pub hash: String,

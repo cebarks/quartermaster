@@ -3,7 +3,10 @@ use rusqlite::Connection;
 /// Ordered list of migration SQL scripts. Each entry corresponds to a
 /// `user_version` bump: index 0 → version 1, index 1 → version 2, etc.
 /// To add a new migration, append a new `include_str!` entry here.
-const MIGRATIONS: &[&str] = &[include_str!("../../migrations/001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/001_initial.sql"),
+    include_str!("../../migrations/002_pending_updates.sql"),
+];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     let current_version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;

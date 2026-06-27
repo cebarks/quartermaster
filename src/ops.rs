@@ -141,6 +141,11 @@ pub fn update_mod_from_archive(
 /// each step into a separate [`actix_web::web::block`] call so the DB mutex is
 /// never held across slow filesystem I/O.
 ///
+/// A `pending_updates` marker row is written to the database *before* any
+/// destructive filesystem work begins. If the process crashes between the
+/// filesystem swap and the final DB commit, [`recover_pending_updates`] will
+/// detect and resolve the inconsistency on the next startup.
+///
 /// `extracted` must be the files already extracted to `staging_path` (e.g. via
 /// [`crate::spt::mods::extract_mod`]).
 #[allow(clippy::too_many_arguments)]
@@ -154,12 +159,18 @@ pub async fn apply_mod_update(
     version_id: i64,
     version_str: String,
 ) -> Result<()> {
-    // Step 1: Read old file paths + auto-backup (brief DB lock)
-    let db_read = db.clone();
+    // Serialize file metadata for the pending_updates marker
+    let new_files_json =
+        serde_json::to_string(&extracted).context("failed to serialize new file paths")?;
+
+    // Step 1: Read old file paths, auto-backup, and write pending marker (brief DB lock)
+    let db_step1 = db.clone();
     let spt_dir_backup = spt_dir.clone();
     let config_backup = config;
-    let old_paths = actix_web::web::block(move || {
-        let db = db_read.lock();
+    let version_str_step1 = version_str.clone();
+    let new_files_json_step1 = new_files_json;
+    let (old_paths, pending_id) = actix_web::web::block(move || {
+        let db = db_step1.lock();
         crate::backup::auto_backup_mod(
             &db,
             &spt_dir_backup,
@@ -168,7 +179,21 @@ pub async fn apply_mod_update(
             "auto_update",
         )?;
         let files = db.get_files_for_mod(mod_db_id)?;
-        Ok::<_, anyhow::Error>(files.into_iter().map(|f| f.file_path).collect::<Vec<_>>())
+        let old_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
+        let old_files_json =
+            serde_json::to_string(&old_paths).context("failed to serialize old file paths")?;
+
+        // Write the pending marker before any destructive filesystem work
+        let pending_id = db.insert_pending_update(
+            mod_db_id,
+            version_id,
+            &version_str_step1,
+            &new_files_json_step1,
+            &old_files_json,
+        )?;
+        tracing::debug!(mod_db_id, pending_id, "pending update marker written");
+
+        Ok::<_, anyhow::Error>((old_paths, pending_id))
     })
     .await??;
 
@@ -201,17 +226,184 @@ pub async fn apply_mod_update(
     })
     .await??;
 
-    // Step 3: DB writes atomically (brief DB lock)
-    actix_web::web::block(move || {
-        let db = db.lock();
+    // Step 3: DB writes atomically + clear pending marker (brief DB lock)
+    let db_step3 = db;
+    let result = actix_web::web::block(move || {
+        let db = db_step3.lock();
         let tx = db.begin_transaction()?;
         db.delete_files_for_mod(mod_db_id)?;
         record_extracted_files(&db, mod_db_id, &extracted)?;
         db.update_mod(mod_db_id, version_id, &version_str)?;
+        db.delete_pending_update(pending_id)?;
         tx.commit()?;
+        tracing::debug!(mod_db_id, pending_id, "pending update marker cleared");
         Ok::<_, anyhow::Error>(())
     })
-    .await??;
+    .await?;
+
+    if let Err(ref e) = result {
+        tracing::error!(
+            mod_db_id,
+            pending_id,
+            error = %e,
+            "INCONSISTENT_STATE: filesystem updated but DB write failed for mod update. \
+             A pending_updates record (id={}) exists — recovery will run on next startup.",
+            pending_id
+        );
+    }
+
+    result
+}
+
+/// Recover from interrupted async mod updates on startup.
+///
+/// Scans the `pending_updates` table for markers left behind by [`apply_mod_update`]
+/// if the process crashed or step 3 failed. For each pending record, inspects the
+/// filesystem to determine whether to complete the update forward or clear the stale
+/// marker.
+///
+/// This should be called once during server startup, before the HTTP server begins
+/// accepting requests.
+pub fn recover_pending_updates(db: &Database, spt_dir: &Path) -> Result<()> {
+    let pending = db.list_pending_updates()?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    tracing::info!(
+        count = pending.len(),
+        "found pending update markers — running recovery"
+    );
+
+    for record in &pending {
+        if let Err(e) = recover_single_update(db, spt_dir, record) {
+            tracing::error!(
+                pending_id = record.id,
+                mod_db_id = record.mod_db_id,
+                error = %e,
+                "failed to recover pending update — manual intervention may be needed"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn recover_single_update(
+    db: &Database,
+    spt_dir: &Path,
+    record: &crate::db::mods::PendingUpdate,
+) -> Result<()> {
+    // Check if the mod row still exists
+    let mod_exists = db.get_mod(record.mod_db_id)?.is_some();
+    if !mod_exists {
+        tracing::warn!(
+            pending_id = record.id,
+            mod_db_id = record.mod_db_id,
+            "cleared orphaned pending update marker (mod row was deleted)"
+        );
+        db.delete_pending_update(record.id)?;
+        return Ok(());
+    }
+
+    // Parse the JSON file lists
+    let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
+        .context("failed to parse new_file_paths JSON from pending_updates")?;
+    let old_paths: Vec<String> = serde_json::from_str(&record.old_file_paths)
+        .context("failed to parse old_file_paths JSON from pending_updates")?;
+
+    // Check how many new files exist on disk with correct hashes
+    let mut new_files_ok = 0usize;
+    for file in &new_files {
+        let path = spt_dir.join(&file.path);
+        if path.exists() {
+            match std::fs::read(&path) {
+                Ok(content) => {
+                    let hash = crate::spt::mods::compute_hash_public(&content);
+                    if hash == file.hash {
+                        new_files_ok += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %file.path,
+                        error = %e,
+                        "recovery: file exists but could not be read"
+                    );
+                }
+            }
+        }
+    }
+
+    // Check how many old files still exist on disk
+    let old_files_exist = old_paths
+        .iter()
+        .filter(|p| spt_dir.join(p).exists())
+        .count();
+
+    let all_new_present = new_files_ok == new_files.len();
+
+    if all_new_present {
+        // All new files present with correct hashes — complete the DB update
+        let tx = db.begin_transaction()?;
+        db.delete_files_for_mod(record.mod_db_id)?;
+        record_extracted_files(db, record.mod_db_id, &new_files)?;
+        db.update_mod(record.mod_db_id, record.version_id, &record.version_str)?;
+        db.delete_pending_update(record.id)?;
+        tx.commit()?;
+        tracing::info!(
+            mod_db_id = record.mod_db_id,
+            pending_id = record.id,
+            version = %record.version_str,
+            "recovered interrupted update: completed DB update"
+        );
+    } else if new_files_ok > 0 && new_files_ok < new_files.len() {
+        // Partial copy — some new files exist but not all. Clean up the
+        // partially-copied new files (only those that don't overlap with old
+        // paths) and clear the marker.
+        let old_set: std::collections::HashSet<&str> =
+            old_paths.iter().map(|p| p.as_str()).collect();
+        for file in &new_files {
+            if !old_set.contains(file.path.as_str()) {
+                let path = spt_dir.join(&file.path);
+                if path.exists() {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        tracing::warn!(
+                            path = %file.path,
+                            error = %e,
+                            "failed to clean up partially-copied file during recovery"
+                        );
+                    }
+                }
+            }
+        }
+        db.delete_pending_update(record.id)?;
+        tracing::warn!(
+            mod_db_id = record.mod_db_id,
+            pending_id = record.id,
+            new_present = new_files_ok,
+            new_total = new_files.len(),
+            "recovered interrupted update: rolled back partial copy. \
+             Restore from backup if mod files are inconsistent."
+        );
+    } else if old_files_exist > 0 {
+        // No new files on disk, old files still present — swap never happened
+        db.delete_pending_update(record.id)?;
+        tracing::info!(
+            mod_db_id = record.mod_db_id,
+            pending_id = record.id,
+            "recovered interrupted update: filesystem unchanged, cleared stale marker"
+        );
+    } else {
+        // Neither old nor new files — ambiguous state
+        db.delete_pending_update(record.id)?;
+        tracing::warn!(
+            mod_db_id = record.mod_db_id,
+            pending_id = record.id,
+            "recovered interrupted update: ambiguous state (no old or new files found). \
+             Restore from backup if needed."
+        );
+    }
 
     Ok(())
 }
@@ -1103,5 +1295,233 @@ mod tests {
         let result = disable_mod(&db, spt_dir.path(), &Config::default(), db_id);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already disabled"));
+    }
+
+    // ── Recovery tests ───────────────────────────────────────────────
+
+    /// Helper: compute the hash the same way the extraction code does.
+    fn hash_content(data: &[u8]) -> String {
+        crate::spt::mods::compute_hash_public(data)
+    }
+
+    #[test]
+    fn recover_completes_update_when_new_files_exist() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // Install v1
+        let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip_v1.path(),
+        })
+        .unwrap();
+
+        // Simulate: filesystem has v2 files, but DB still says v1
+        let v2_content = b"{\"v\":\"2\"}";
+        std::fs::write(
+            spt_dir.path().join("SPT/user/mods/TestMod/package.json"),
+            v2_content,
+        )
+        .unwrap();
+
+        let new_files = vec![ExtractedFile {
+            path: "SPT/user/mods/TestMod/package.json".to_string(),
+            hash: hash_content(v2_content),
+            size: v2_content.len() as u64,
+        }];
+        let old_paths = vec!["SPT/user/mods/TestMod/package.json".to_string()];
+
+        db.insert_pending_update(
+            db_id,
+            300,
+            "2.0.0",
+            &serde_json::to_string(&new_files).unwrap(),
+            &serde_json::to_string(&old_paths).unwrap(),
+        )
+        .unwrap();
+
+        // Run recovery
+        recover_pending_updates(&db, spt_dir.path()).unwrap();
+
+        // DB should now reflect v2
+        let m = db.get_mod(db_id).unwrap().unwrap();
+        assert_eq!(m.version, "2.0.0");
+        assert_eq!(m.forge_version_id, 300);
+
+        // Pending marker should be cleared
+        assert!(db.list_pending_updates().unwrap().is_empty());
+
+        // Files in DB should match new version
+        let files = db.get_files_for_mod(db_id).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].file_hash.as_deref(),
+            Some(hash_content(v2_content).as_str())
+        );
+    }
+
+    #[test]
+    fn recover_clears_marker_when_no_new_files() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // Install v1
+        let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip_v1.path(),
+        })
+        .unwrap();
+
+        // Simulate: pending marker exists, but filesystem still has v1 (swap never happened)
+        let new_files = vec![ExtractedFile {
+            path: "SPT/user/mods/TestMod/new_file.ts".to_string(),
+            hash: hash_content(b"new"),
+            size: 3,
+        }];
+        let old_paths = vec!["SPT/user/mods/TestMod/package.json".to_string()];
+
+        db.insert_pending_update(
+            db_id,
+            300,
+            "2.0.0",
+            &serde_json::to_string(&new_files).unwrap(),
+            &serde_json::to_string(&old_paths).unwrap(),
+        )
+        .unwrap();
+
+        // Run recovery
+        recover_pending_updates(&db, spt_dir.path()).unwrap();
+
+        // DB should still say v1
+        let m = db.get_mod(db_id).unwrap().unwrap();
+        assert_eq!(m.version, "1.0.0");
+
+        // Pending marker should be cleared
+        assert!(db.list_pending_updates().unwrap().is_empty());
+    }
+
+    #[test]
+    fn recover_handles_orphaned_pending_update() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // Insert a pending update for a mod that doesn't exist (id=999)
+        db.insert_pending_update(999, 300, "2.0.0", "[]", "[]")
+            .unwrap();
+
+        // Run recovery — should not error
+        recover_pending_updates(&db, spt_dir.path()).unwrap();
+
+        // Marker should be cleared
+        assert!(db.list_pending_updates().unwrap().is_empty());
+    }
+
+    #[test]
+    fn recover_rolls_back_partial_copy() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // Install v1
+        let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip_v1.path(),
+        })
+        .unwrap();
+
+        // Simulate partial copy: one new file exists, another doesn't
+        let file_a_content = b"new_a";
+        let new_file_a_path = "SPT/user/mods/TestMod/new_a.ts";
+        std::fs::write(spt_dir.path().join(new_file_a_path), file_a_content).unwrap();
+
+        let file_b_content = b"new_b";
+        let new_file_b_path = "SPT/user/mods/TestMod/new_b.ts";
+        // new_b does NOT exist on disk — simulates crash mid-copy
+
+        let new_files = vec![
+            ExtractedFile {
+                path: new_file_a_path.to_string(),
+                hash: hash_content(file_a_content),
+                size: file_a_content.len() as u64,
+            },
+            ExtractedFile {
+                path: new_file_b_path.to_string(),
+                hash: hash_content(file_b_content),
+                size: file_b_content.len() as u64,
+            },
+        ];
+        let old_paths = vec!["SPT/user/mods/TestMod/package.json".to_string()];
+
+        db.insert_pending_update(
+            db_id,
+            300,
+            "2.0.0",
+            &serde_json::to_string(&new_files).unwrap(),
+            &serde_json::to_string(&old_paths).unwrap(),
+        )
+        .unwrap();
+
+        // Run recovery
+        recover_pending_updates(&db, spt_dir.path()).unwrap();
+
+        // The partially-copied new_a.ts (not in old set) should be deleted
+        assert!(!spt_dir.path().join(new_file_a_path).exists());
+
+        // DB should still say v1
+        let m = db.get_mod(db_id).unwrap().unwrap();
+        assert_eq!(m.version, "1.0.0");
+
+        // Pending marker should be cleared
+        assert!(db.list_pending_updates().unwrap().is_empty());
+    }
+
+    #[test]
+    fn recover_noop_when_no_pending_updates() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // Should succeed with nothing to do
+        recover_pending_updates(&db, spt_dir.path()).unwrap();
+        assert!(db.list_pending_updates().unwrap().is_empty());
+    }
+
+    #[test]
+    fn duplicate_pending_update_for_same_mod_is_rejected() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+
+        // First insert succeeds
+        db.insert_pending_update(mod_id, 300, "2.0.0", "[]", "[]")
+            .unwrap();
+
+        // Second insert for the same mod_db_id should fail (UNIQUE constraint)
+        let result = db.insert_pending_update(mod_id, 400, "3.0.0", "[]", "[]");
+        assert!(result.is_err());
+
+        // Only one record should exist
+        assert_eq!(db.list_pending_updates().unwrap().len(), 1);
     }
 }
