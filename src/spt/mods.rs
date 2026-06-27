@@ -267,7 +267,7 @@ fn extract_mod_zip(
             continue;
         }
 
-        if relative.split('/').any(|c| c == "..") {
+        if relative.split('/').any(|c| c == "..") || relative.split('\\').any(|c| c == "..") {
             anyhow::bail!("archive entry contains path traversal: {raw_name}");
         }
 
@@ -346,6 +346,14 @@ fn extract_mod_7z(
         .for_each_entries(|entry, reader| {
             let raw_name = entry.name().to_string();
 
+            // Reject anti-items — deletion markers used in incremental 7z archives
+            // that should not be extracted as real files
+            if entry.is_anti_item() {
+                return Err(sevenz_rust2::Error::Other(
+                    format!("archive contains anti-item entry: {raw_name}").into(),
+                ));
+            }
+
             let relative = if !prefix.is_empty() && raw_name.starts_with(&prefix) {
                 &raw_name[prefix.len()..]
             } else {
@@ -356,7 +364,7 @@ fn extract_mod_7z(
                 return Ok(true);
             }
 
-            if relative.contains("..") {
+            if relative.split('/').any(|c| c == "..") || relative.split('\\').any(|c| c == "..") {
                 return Err(sevenz_rust2::Error::Other(
                     format!("archive entry contains path traversal: {raw_name}").into(),
                 ));
@@ -1070,5 +1078,75 @@ mod tests {
         assert!(result.is_err());
         let err = format!("{:#}", result.unwrap_err());
         assert!(err.contains("total"), "error should mention total: {err}");
+    }
+
+    #[test]
+    fn sevenz_rejects_path_traversal() {
+        let archive = create_test_7z(&[("SPT/user/mods/../../etc/evil.txt", b"malicious")]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod(archive.path(), tmp_dir.path());
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("path traversal"),
+            "error should mention path traversal: {err}"
+        );
+    }
+
+    #[test]
+    fn sevenz_allows_double_dot_in_filename() {
+        let archive =
+            create_test_7z(&[("SPT/user/mods/TestMod/description..txt", b"has double dots")]);
+        let tmp_dir = TempDir::new().unwrap();
+        let files = extract_mod(archive.path(), tmp_dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].path.contains("description..txt"));
+    }
+
+    #[test]
+    fn zip_allows_double_dot_in_filename() {
+        let zip =
+            create_test_zip(&[("SPT/user/mods/TestMod/description..txt", b"has double dots")]);
+        let tmp_dir = TempDir::new().unwrap();
+        let files = extract_mod(zip.path(), tmp_dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].path.contains("description..txt"));
+    }
+
+    #[test]
+    fn sevenz_rejects_anti_item() {
+        use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = ArchiveWriter::create(tmp.path()).unwrap();
+        let entry = ArchiveEntry {
+            name: "SPT/user/mods/TestMod/deleted.txt".to_string(),
+            is_anti_item: true,
+            ..Default::default()
+        };
+        writer.push_archive_entry::<&[u8]>(entry, None).unwrap();
+        writer.finish().unwrap();
+
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod(tmp.path(), tmp_dir.path());
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("anti-item"),
+            "error should mention anti-item: {err}"
+        );
+    }
+
+    #[test]
+    fn sevenz_rejects_backslash_path_traversal() {
+        let archive = create_test_7z(&[("SPT\\user\\mods\\..\\..\\etc\\evil.txt", b"malicious")]);
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod(archive.path(), tmp_dir.path());
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("path traversal"),
+            "error should mention path traversal: {err}"
+        );
     }
 }
