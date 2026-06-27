@@ -82,11 +82,10 @@ pub fn update_mod_from_archive(
         "replacing mod files"
     );
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_update")?;
-    crate::spt::mods::delete_mod_files(spt_dir, &old_paths)?;
 
-    let tx = db.begin_transaction()?;
-    db.delete_files_for_mod(mod_db_id)?;
-
+    // Copy new files first (overwriting any shared with old version), so that
+    // if copying fails mid-way the old files that weren't overwritten remain
+    // intact. This is strictly safer than delete-all-then-copy-all.
     for file in &extracted {
         let src = staging_dir.path().join(&file.path);
         let dst = spt_dir.join(&file.path);
@@ -96,6 +95,20 @@ pub fn update_mod_from_archive(
         std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
     }
 
+    // Delete old files that are NOT in the new file set (stale files only).
+    let new_paths: std::collections::HashSet<&str> =
+        extracted.iter().map(|f| f.path.as_str()).collect();
+    let stale_paths: Vec<String> = old_paths
+        .into_iter()
+        .filter(|p| !new_paths.contains(p.as_str()))
+        .collect();
+    if !stale_paths.is_empty() {
+        tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
+        crate::spt::mods::delete_mod_files(spt_dir, &stale_paths)?;
+    }
+
+    let tx = db.begin_transaction()?;
+    db.delete_files_for_mod(mod_db_id)?;
     record_extracted_files(db, mod_db_id, &extracted)?;
     db.update_mod(mod_db_id, version_id, version_str)?;
     tx.commit()?;
@@ -144,9 +157,10 @@ pub async fn apply_mod_update(
     .await??;
 
     // Step 2: Filesystem swap (no DB lock held)
+    // Copy new files first, then delete stale-only old files. If copying
+    // fails partway, old files that weren't overwritten remain intact.
     let spt_dir_fs = spt_dir.clone();
     let extracted = actix_web::web::block(move || {
-        crate::spt::mods::delete_mod_files(&spt_dir_fs, &old_paths)?;
         for file in &extracted {
             let src = staging_path.join(&file.path);
             let dst = spt_dir_fs.join(&file.path);
@@ -155,6 +169,18 @@ pub async fn apply_mod_update(
             }
             std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
         }
+
+        let new_paths: std::collections::HashSet<&str> =
+            extracted.iter().map(|f| f.path.as_str()).collect();
+        let stale_paths: Vec<String> = old_paths
+            .into_iter()
+            .filter(|p| !new_paths.contains(p.as_str()))
+            .collect();
+        if !stale_paths.is_empty() {
+            tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
+            crate::spt::mods::delete_mod_files(&spt_dir_fs, &stale_paths)?;
+        }
+
         Ok::<_, anyhow::Error>(extracted)
     })
     .await??;
@@ -644,6 +670,90 @@ mod tests {
             std::fs::read_to_string(spt_dir.path().join("SPT/user/mods/TestMod/package.json"))
                 .unwrap();
         assert!(content.contains("\"v\":\"2\""));
+    }
+
+    #[test]
+    fn update_removes_stale_overwrites_shared_adds_new() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // Install v1 with files: old_only.ts (will be stale) and shared.json (will be overwritten)
+        let zip_v1 = create_test_zip(&[
+            ("SPT/user/mods/TestMod/old_only.ts", b"old content"),
+            ("SPT/user/mods/TestMod/shared.json", b"{\"v\":\"1\"}"),
+        ]);
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip_v1.path(),
+        })
+        .unwrap();
+
+        // Verify v1 files exist
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod/old_only.ts")
+            .exists());
+        assert!(spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod/shared.json")
+            .exists());
+
+        // Update to v2 with files: shared.json (overwritten) and new_only.ts (new)
+        let zip_v2 = create_test_zip(&[
+            ("SPT/user/mods/TestMod/shared.json", b"{\"v\":\"2\"}"),
+            ("SPT/user/mods/TestMod/new_only.ts", b"new content"),
+        ]);
+        update_mod_from_archive(
+            &db,
+            spt_dir.path(),
+            &Config::default(),
+            db_id,
+            300,
+            "2.0.0",
+            zip_v2.path(),
+        )
+        .unwrap();
+
+        // Stale file (old_only.ts) should be gone
+        assert!(
+            !spt_dir
+                .path()
+                .join("SPT/user/mods/TestMod/old_only.ts")
+                .exists(),
+            "stale file should be deleted"
+        );
+
+        // Shared file should have new content
+        let shared =
+            std::fs::read_to_string(spt_dir.path().join("SPT/user/mods/TestMod/shared.json"))
+                .unwrap();
+        assert!(
+            shared.contains("\"v\":\"2\""),
+            "shared file should be overwritten with new content"
+        );
+
+        // New file should exist
+        assert!(
+            spt_dir
+                .path()
+                .join("SPT/user/mods/TestMod/new_only.ts")
+                .exists(),
+            "new file should be created"
+        );
+
+        // DB should track exactly the new files
+        let files = db.get_files_for_mod(db_id).unwrap();
+        assert_eq!(files.len(), 2);
+        let paths: Vec<&str> = files.iter().map(|f| f.file_path.as_str()).collect();
+        assert!(paths.contains(&"SPT/user/mods/TestMod/shared.json"));
+        assert!(paths.contains(&"SPT/user/mods/TestMod/new_only.ts"));
     }
 
     #[test]
