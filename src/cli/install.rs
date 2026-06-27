@@ -37,7 +37,15 @@ pub async fn install_with_deps(ctx: &CliContext, forge_mod_id: i64, version_id: 
         })?
         .clone();
 
-    let to_install = resolve_deps(ctx, &forge_mod, &selected).await?;
+    let (to_install, skipped_conflicts) = resolve_deps(ctx, &forge_mod, &selected).await?;
+    if !skipped_conflicts.is_empty() {
+        tracing::warn!(
+            "Skipped {} conflicting dependency(ies) for {}: {}",
+            skipped_conflicts.len(),
+            forge_mod.name,
+            skipped_conflicts.join(", "),
+        );
+    }
     install_deps(ctx, &to_install).await?;
     let db_id = install_main_mod(ctx, &forge_mod, &selected).await?;
     record_dependency_edges(ctx, db_id, &to_install)?;
@@ -77,8 +85,13 @@ pub async fn run(
     let selected_version = pick_version(ctx, &forge_mod, version).await?;
     check_fika_compat(&forge_mod.name, &selected_version)?;
 
-    let to_install = resolve_deps(ctx, &forge_mod, &selected_version).await?;
-    display_install_plan(&forge_mod.name, &selected_version.version, &to_install);
+    let (to_install, skipped_conflicts) = resolve_deps(ctx, &forge_mod, &selected_version).await?;
+    display_install_plan(
+        &forge_mod.name,
+        &selected_version.version,
+        &to_install,
+        &skipped_conflicts,
+    );
 
     if !confirm("Proceed with installation?")? {
         println!("Installation cancelled.");
@@ -173,22 +186,34 @@ async fn resolve_deps(
     ctx: &CliContext,
     forge_mod: &crate::forge::models::ForgeMod,
     selected_version: &ForgeVersion,
-) -> Result<Vec<PendingInstall>> {
+) -> Result<(Vec<PendingInstall>, Vec<String>)> {
     let dep_nodes = ctx
         .forge
         .get_dependencies(&[(forge_mod.id, &selected_version.version)])
         .await?;
 
     let mut to_install = Vec::new();
-    collect_deps_to_install(&dep_nodes, &ctx.db, &mut to_install)?;
-    Ok(to_install)
+    let mut skipped_conflicts = Vec::new();
+    collect_deps_to_install(&dep_nodes, &ctx.db, &mut to_install, &mut skipped_conflicts)?;
+    Ok((to_install, skipped_conflicts))
 }
 
-fn display_install_plan(mod_name: &str, mod_version: &str, deps: &[PendingInstall]) {
+fn display_install_plan(
+    mod_name: &str,
+    mod_version: &str,
+    deps: &[PendingInstall],
+    skipped_conflicts: &[String],
+) {
     println!("\nInstall plan:");
     println!("  {} v{}", mod_name, mod_version);
     for dep in deps {
         println!("  + {} v{} (dependency)", dep.name, dep.version);
+    }
+    if !skipped_conflicts.is_empty() {
+        println!("\n  Skipped (conflicts):");
+        for name in skipped_conflicts {
+            println!("    - {} (marked as conflict by Forge)", name);
+        }
     }
 }
 
@@ -385,8 +410,27 @@ fn collect_deps_to_install(
     nodes: &[DependencyNode],
     db: &crate::db::Database,
     out: &mut Vec<PendingInstall>,
+    skipped_conflicts: &mut Vec<String>,
 ) -> Result<()> {
     for node in nodes {
+        // Check conflicts BEFORE the already-installed check so we always
+        // surface warnings about conflicting mods, even if they're installed.
+        if node.conflict {
+            if db.get_mod_by_forge_id(node.id)?.is_some() {
+                tracing::warn!(
+                    "Dependency '{}' conflicts with this mod and is already installed — you may experience issues",
+                    node.name,
+                );
+            } else {
+                tracing::warn!(
+                    "Skipping dependency '{}' — marked as a conflict by Forge",
+                    node.name,
+                );
+            }
+            skipped_conflicts.push(node.name.clone());
+            continue;
+        }
+
         if db.get_mod_by_forge_id(node.id)?.is_some() {
             continue;
         }
@@ -395,7 +439,7 @@ fn collect_deps_to_install(
         }
 
         // Recurse into children first so deps install before their parents
-        collect_deps_to_install(&node.dependencies, db, out)?;
+        collect_deps_to_install(&node.dependencies, db, out, skipped_conflicts)?;
 
         // Extract version_id and version string from latest_compatible_version
         let (version_id, version) = match &node.latest_compatible_version {
@@ -425,160 +469,204 @@ mod tests {
     use crate::db::Database;
     use crate::forge::models::DependencyNode;
 
+    /// Helper to build a simple `DependencyNode` with minimal boilerplate.
+    fn dep_node(id: i64, name: &str, version_id: i64, ver: &str, conflict: bool) -> DependencyNode {
+        use crate::forge::models::ForgeVersion;
+        DependencyNode {
+            id,
+            name: name.to_string(),
+            slug: None,
+            latest_compatible_version: Some(ForgeVersion {
+                id: version_id,
+                version: ver.to_string(),
+                spt_version: None,
+                link: None,
+                content_length: None,
+                fika_compatibility: None,
+                dependencies: None,
+            }),
+            dependencies: vec![],
+            conflict,
+        }
+    }
+
     #[test]
     fn collect_deps_skips_already_installed() {
-        use crate::forge::models::ForgeVersion;
-
         let db = Database::open_in_memory().unwrap();
         db.insert_mod(10, 20, "AlreadyInstalled", None, "1.0.0")
             .unwrap();
 
-        let nodes = vec![DependencyNode {
-            id: 10,
-            name: "AlreadyInstalled".to_string(),
-            slug: None,
-            latest_compatible_version: Some(ForgeVersion {
-                id: 20,
-                version: "1.0.0".to_string(),
-                spt_version: None,
-                link: None,
-                content_length: None,
-                fika_compatibility: None,
-                dependencies: None,
-            }),
-            dependencies: vec![],
-            conflict: false,
-        }];
+        let nodes = vec![dep_node(10, "AlreadyInstalled", 20, "1.0.0", false)];
 
         let mut out = Vec::new();
-        collect_deps_to_install(&nodes, &db, &mut out).unwrap();
+        let mut skipped = Vec::new();
+        collect_deps_to_install(&nodes, &db, &mut out, &mut skipped).unwrap();
 
         assert!(out.is_empty(), "should skip already-installed deps");
+        assert!(skipped.is_empty());
     }
 
     #[test]
     fn collect_deps_flattens_tree_children_first() {
-        use crate::forge::models::ForgeVersion;
-
         let db = Database::open_in_memory().unwrap();
 
-        let nodes = vec![DependencyNode {
-            id: 10,
-            name: "Parent".to_string(),
-            slug: None,
-            latest_compatible_version: Some(ForgeVersion {
-                id: 20,
-                version: "1.0.0".to_string(),
-                spt_version: None,
-                link: None,
-                content_length: None,
-                fika_compatibility: None,
-                dependencies: None,
-            }),
-            dependencies: vec![DependencyNode {
-                id: 30,
-                name: "Child".to_string(),
-                slug: None,
-                latest_compatible_version: Some(ForgeVersion {
-                    id: 40,
-                    version: "0.5.0".to_string(),
-                    spt_version: None,
-                    link: None,
-                    content_length: None,
-                    fika_compatibility: None,
-                    dependencies: None,
-                }),
-                dependencies: vec![],
-                conflict: false,
-            }],
-            conflict: false,
-        }];
+        let mut parent = dep_node(10, "Parent", 20, "1.0.0", false);
+        parent.dependencies = vec![dep_node(30, "Child", 40, "0.5.0", false)];
+
+        let nodes = vec![parent];
 
         let mut out = Vec::new();
-        collect_deps_to_install(&nodes, &db, &mut out).unwrap();
+        let mut skipped = Vec::new();
+        collect_deps_to_install(&nodes, &db, &mut out, &mut skipped).unwrap();
 
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].mod_id, 30); // Child first (install order)
         assert_eq!(out[1].mod_id, 10); // Parent second
+        assert!(skipped.is_empty());
     }
 
     #[test]
     fn collect_deps_deduplicates() {
-        use crate::forge::models::ForgeVersion;
-
         let db = Database::open_in_memory().unwrap();
 
-        let shared_dep = DependencyNode {
-            id: 99,
-            name: "SharedLib".to_string(),
-            slug: None,
-            latest_compatible_version: Some(ForgeVersion {
-                id: 100,
-                version: "1.0.0".to_string(),
-                spt_version: None,
-                link: None,
-                content_length: None,
-                fika_compatibility: None,
-                dependencies: None,
-            }),
-            dependencies: vec![],
-            conflict: false,
-        };
+        let shared_dep = dep_node(99, "SharedLib", 100, "1.0.0", false);
 
-        let nodes = vec![
-            DependencyNode {
-                id: 10,
-                name: "ModA".to_string(),
-                slug: None,
-                latest_compatible_version: Some(ForgeVersion {
-                    id: 20,
-                    version: "1.0.0".to_string(),
-                    spt_version: None,
-                    link: None,
-                    content_length: None,
-                    fika_compatibility: None,
-                    dependencies: None,
-                }),
-                dependencies: vec![shared_dep.clone()],
-                conflict: false,
-            },
-            DependencyNode {
-                id: 30,
-                name: "ModB".to_string(),
-                slug: None,
-                latest_compatible_version: Some(ForgeVersion {
-                    id: 40,
-                    version: "2.0.0".to_string(),
-                    spt_version: None,
-                    link: None,
-                    content_length: None,
-                    fika_compatibility: None,
-                    dependencies: None,
-                }),
-                dependencies: vec![DependencyNode {
-                    id: 99,
-                    name: "SharedLib".to_string(),
-                    slug: None,
-                    latest_compatible_version: Some(ForgeVersion {
-                        id: 100,
-                        version: "1.0.0".to_string(),
-                        spt_version: None,
-                        link: None,
-                        content_length: None,
-                        fika_compatibility: None,
-                        dependencies: None,
-                    }),
-                    dependencies: vec![],
-                    conflict: false,
-                }],
-                conflict: false,
-            },
-        ];
+        let mut mod_a = dep_node(10, "ModA", 20, "1.0.0", false);
+        mod_a.dependencies = vec![shared_dep.clone()];
+
+        let mut mod_b = dep_node(30, "ModB", 40, "2.0.0", false);
+        mod_b.dependencies = vec![dep_node(99, "SharedLib", 100, "1.0.0", false)];
+
+        let nodes = vec![mod_a, mod_b];
 
         let mut out = Vec::new();
-        collect_deps_to_install(&nodes, &db, &mut out).unwrap();
+        let mut skipped = Vec::new();
+        collect_deps_to_install(&nodes, &db, &mut out, &mut skipped).unwrap();
 
         let shared_count = out.iter().filter(|p| p.mod_id == 99).count();
         assert_eq!(shared_count, 1, "SharedLib should appear only once");
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn collect_deps_skips_conflicts() {
+        let db = Database::open_in_memory().unwrap();
+
+        let nodes = vec![
+            dep_node(10, "GoodDep", 20, "1.0.0", false),
+            dep_node(30, "ConflictingMod", 40, "2.0.0", true),
+        ];
+
+        let mut out = Vec::new();
+        let mut skipped = Vec::new();
+        collect_deps_to_install(&nodes, &db, &mut out, &mut skipped).unwrap();
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].mod_id, 10);
+        assert_eq!(skipped, vec!["ConflictingMod"]);
+    }
+
+    #[test]
+    fn collect_deps_skips_conflict_subtree() {
+        let db = Database::open_in_memory().unwrap();
+
+        let mut conflict_parent = dep_node(10, "ConflictParent", 20, "1.0.0", true);
+        conflict_parent.dependencies = vec![dep_node(30, "ChildOfConflict", 40, "0.5.0", false)];
+
+        let nodes = vec![conflict_parent];
+
+        let mut out = Vec::new();
+        let mut skipped = Vec::new();
+        collect_deps_to_install(&nodes, &db, &mut out, &mut skipped).unwrap();
+
+        assert!(
+            out.is_empty(),
+            "children of conflict should also be skipped"
+        );
+        assert_eq!(skipped, vec!["ConflictParent"]);
+    }
+
+    #[test]
+    fn collect_deps_mixed_conflict_siblings() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Tree:
+        //   Parent (ok)
+        //     ├── ChildA (conflict)
+        //     │     └── Grandchild (ok, but unreachable)
+        //     └── ChildB (ok)
+        let mut child_a = dep_node(20, "ChildA", 21, "1.0.0", true);
+        child_a.dependencies = vec![dep_node(40, "Grandchild", 41, "1.0.0", false)];
+
+        let child_b = dep_node(30, "ChildB", 31, "1.0.0", false);
+
+        let mut parent = dep_node(10, "Parent", 11, "1.0.0", false);
+        parent.dependencies = vec![child_a, child_b];
+
+        let nodes = vec![parent];
+
+        let mut out = Vec::new();
+        let mut skipped = Vec::new();
+        collect_deps_to_install(&nodes, &db, &mut out, &mut skipped).unwrap();
+
+        let installed_ids: Vec<i64> = out.iter().map(|p| p.mod_id).collect();
+        assert_eq!(installed_ids, vec![30, 10], "ChildB then Parent");
+        assert!(
+            !installed_ids.contains(&20),
+            "ChildA (conflict) should not be installed"
+        );
+        assert!(
+            !installed_ids.contains(&40),
+            "Grandchild under conflict should not be installed"
+        );
+        assert_eq!(skipped, vec!["ChildA"]);
+    }
+
+    #[test]
+    fn collect_deps_conflict_already_installed() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(10, 20, "InstalledConflict", None, "1.0.0")
+            .unwrap();
+
+        let nodes = vec![dep_node(10, "InstalledConflict", 20, "1.0.0", true)];
+
+        let mut out = Vec::new();
+        let mut skipped = Vec::new();
+        collect_deps_to_install(&nodes, &db, &mut out, &mut skipped).unwrap();
+
+        // Should still be skipped from install (already installed), but surfaced as a conflict
+        assert!(out.is_empty());
+        assert_eq!(skipped, vec!["InstalledConflict"]);
+    }
+
+    #[test]
+    fn collect_deps_shared_dep_via_conflict_and_nonconflict() {
+        // SharedLib appears under both a conflict subtree (skipped) and a
+        // non-conflict subtree (reachable). It should still be installed.
+        let db = Database::open_in_memory().unwrap();
+
+        let mut conflict_node = dep_node(10, "ConflictMod", 11, "1.0.0", true);
+        conflict_node.dependencies = vec![dep_node(99, "SharedLib", 100, "1.0.0", false)];
+
+        let mut good_node = dep_node(20, "GoodMod", 21, "1.0.0", false);
+        good_node.dependencies = vec![dep_node(99, "SharedLib", 100, "1.0.0", false)];
+
+        let nodes = vec![conflict_node, good_node];
+
+        let mut out = Vec::new();
+        let mut skipped = Vec::new();
+        collect_deps_to_install(&nodes, &db, &mut out, &mut skipped).unwrap();
+
+        let installed_ids: Vec<i64> = out.iter().map(|p| p.mod_id).collect();
+        assert!(
+            installed_ids.contains(&99),
+            "SharedLib should be installed via non-conflict path"
+        );
+        assert!(installed_ids.contains(&20), "GoodMod should be installed");
+        assert!(
+            !installed_ids.contains(&10),
+            "ConflictMod should not be installed"
+        );
+        assert_eq!(skipped, vec!["ConflictMod"]);
     }
 }
