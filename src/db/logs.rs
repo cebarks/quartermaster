@@ -35,7 +35,9 @@ impl super::Database {
                     serde_json::to_string(&entry.fields).ok()
                 };
                 stmt.execute(params![
-                    entry.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    entry
+                        .timestamp
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                     entry.level,
                     entry.target,
                     entry.message,
@@ -114,7 +116,7 @@ impl super::Database {
             let deleted = self.conn.execute(
                 "DELETE FROM log_entries WHERE id IN (
                     SELECT id FROM log_entries
-                    WHERE timestamp < datetime('now', ?1)
+                    WHERE timestamp < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)
                     LIMIT ?2
                 )",
                 params![format!("-{max_age_days} days"), batch_size as i64],
