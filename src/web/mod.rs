@@ -321,6 +321,14 @@ pub fn configure_app(
             "/requests/{id}/resolve",
             web::post().to(handlers::requests::resolve_request),
         )
+        .route(
+            "/requests/install-all",
+            web::post().to(handlers::requests::install_all_approved),
+        )
+        .route(
+            "/requests/{id}/install",
+            web::post().to(handlers::requests::install_from_request),
+        )
         // SVM API routes
         .route(
             "/svm/edit/{section}",

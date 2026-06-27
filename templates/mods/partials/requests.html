@@ -46,6 +46,15 @@
     </form>
 </div>
 
+{% if has_uninstalled_approved && user.can("mods.install") %}
+<div style="margin-bottom:0.5rem">
+    <form hx-post="/quma/api/requests/install-all" hx-target="#mods-tab-content" hx-swap="innerHTML" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-sm btn-primary">Install all approved</button>
+    </form>
+</div>
+{% endif %}
+
 {% if requests.is_empty() %}
 <div class="card">
     <div class="empty-state">
@@ -150,6 +159,19 @@
             <input type="text" name="comment" placeholder="Reason (optional)" style="flex:1;min-width:100px" class="text-sm">
             <button type="submit" class="btn btn-sm btn-danger">Reject</button>
         </form>
+    </div>
+    {% endif %}
+    {% if r.request.status == "approved" && !r.is_installed && user.can("mods.install") %}
+    <div class="mt-1">
+        <form hx-post="/quma/api/requests/{{ r.request.id }}/install" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+              style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-primary">Install</button>
+        </form>
+    </div>
+    {% elif r.request.status == "approved" && r.is_installed %}
+    <div class="mt-1">
+        <span class="text-sm text-muted">Installed</span>
     </div>
     {% endif %}
     <div id="comments-{{ r.request.id }}"></div>
