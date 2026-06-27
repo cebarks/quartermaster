@@ -39,7 +39,12 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         req.version,
         "installing mod from archive"
     );
-    let extracted = crate::spt::mods::extract_mod(req.archive_path, req.spt_dir)?;
+
+    // Extract to a staging directory so files are not left on disk if the DB
+    // transaction fails (mirrors the update path).
+    let staging_dir = tempfile::tempdir()?;
+    let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
+
     let tx = req.db.begin_transaction()?;
     let db_id = req.db.insert_mod(
         req.forge_mod_id,
@@ -50,6 +55,17 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     )?;
     record_extracted_files(req.db, db_id, &extracted)?;
     tx.commit()?;
+
+    // DB committed — now move files from staging to the live directory.
+    for file in &extracted {
+        let src = staging_dir.path().join(&file.path);
+        let dst = req.spt_dir.join(&file.path);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
+    }
+
     tracing::debug!(
         db_id,
         file_count = extracted.len(),
@@ -596,6 +612,57 @@ mod tests {
             .path()
             .join("SPT/user/mods/TestMod/src/mod.ts")
             .exists());
+    }
+
+    #[test]
+    fn install_does_not_leave_orphan_files_on_db_failure() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // First install succeeds
+        let zip1 = create_test_zip(&[("SPT/user/mods/ModA/package.json", b"{\"name\":\"a\"}")]);
+        install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "ModA",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip1.path(),
+        })
+        .unwrap();
+
+        // Second install with the SAME forge_mod_id should fail (UNIQUE constraint)
+        let zip2 = create_test_zip(&[("SPT/user/mods/ModB/package.json", b"{\"name\":\"b\"}")]);
+        let result = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100, // same ID — triggers UNIQUE constraint
+            version_id: 300,
+            name: "ModB",
+            slug: None,
+            version: "2.0.0",
+            archive_path: zip2.path(),
+        });
+        assert!(result.is_err(), "duplicate forge_mod_id should fail");
+
+        // ModB's files should NOT exist on disk (staging was cleaned up)
+        assert!(
+            !spt_dir.path().join("SPT/user/mods/ModB").exists(),
+            "ModB files should not be on disk after failed install"
+        );
+
+        // ModA's files should still be intact
+        assert!(
+            spt_dir
+                .path()
+                .join("SPT/user/mods/ModA/package.json")
+                .exists(),
+            "ModA files should still exist"
+        );
     }
 
     #[test]
