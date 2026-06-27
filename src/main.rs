@@ -99,9 +99,13 @@ async fn main() -> Result<()> {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::update::run(mod_ref.as_deref(), *force, &ctx).await
         }
-        Command::Remove { mod_ref, force } => {
+        Command::Remove {
+            mod_ref,
+            force,
+            yes,
+        } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::remove::run(mod_ref, *force, &ctx).await
+            cli::remove::run(mod_ref, *force, *yes, &ctx).await
         }
         Command::List { json } => {
             let ctx = init_context(&cli, &reload_handles)?;

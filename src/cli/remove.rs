@@ -4,15 +4,23 @@ use anyhow::Result;
 
 use crate::db::mods::InstalledMod;
 
-use super::common::{resolve_installed_mod, CliContext};
+use super::common::{confirm, resolve_installed_mod, CliContext};
 
-pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
+pub async fn run(mod_ref: &str, force: bool, yes: bool, ctx: &CliContext) -> Result<()> {
     let installed = resolve_installed_mod(mod_ref, ctx)?;
 
     // Check if we should queue instead of applying
     if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
         .await?
     {
+        if !yes {
+            let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
+            if !confirm(&format_remove_prompt(&installed.name, file_count))? {
+                println!("Removal cancelled.");
+                return Ok(());
+            }
+        }
+
         ctx.db.insert_pending_op(
             crate::db::users::QueueAction::Remove,
             installed.forge_mod_id,
@@ -28,19 +36,7 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
         return Ok(());
     }
 
-    if force {
-        let running = crate::server_detect::is_server_running(
-            &ctx.config,
-            &ctx.spt_dir,
-            ctx.container_mgr.as_ref(),
-        )
-        .await?;
-        if running {
-            println!(
-                "Warning: applying changes while the server is running may cause instability."
-            );
-        }
-    }
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
 
     let all_dependents = collect_all_reverse_deps(installed.id, ctx)?;
     if !all_dependents.is_empty() {
@@ -52,45 +48,69 @@ pub async fn run(mod_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
             println!("  - {} (v{})", dep.name, dep.version);
         }
 
-        println!("\nOptions:");
-        println!(
-            "  [1] Remove {} only (may break dependents)",
-            installed.name
-        );
-        println!(
-            "  [2] Remove {} and all {} dependents",
-            installed.name,
-            all_dependents.len()
-        );
-        println!("  [3] Cancel");
+        if yes {
+            // --yes skips the interactive menu and removes the target only
+            println!(
+                "Removing {} only (--yes flag, skipping dependents).",
+                installed.name
+            );
+            remove_single_mod(&installed, ctx)?;
+        } else {
+            println!("\nOptions:");
+            println!(
+                "  [1] Remove {} only (may break dependents)",
+                installed.name
+            );
+            println!(
+                "  [2] Remove {} and all {} dependents",
+                installed.name,
+                all_dependents.len()
+            );
+            println!("  [3] Cancel");
 
-        print!("Select [1-3]: ");
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
+            print!("Select [1-3]: ");
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
 
-        match input.trim() {
-            "1" => {
-                remove_single_mod(&installed, ctx)?;
-            }
-            "2" => {
-                // Remove in reverse order (leaves before roots)
-                for dep in all_dependents.iter().rev() {
-                    remove_single_mod(dep, ctx)?;
+            match input.trim() {
+                "1" => {
+                    remove_single_mod(&installed, ctx)?;
                 }
-                remove_single_mod(&installed, ctx)?;
-            }
-            _ => {
-                println!("Cancelled.");
-                return Ok(());
+                "2" => {
+                    // Remove in reverse order (leaves before roots)
+                    for dep in all_dependents.iter().rev() {
+                        remove_single_mod(dep, ctx)?;
+                    }
+                    remove_single_mod(&installed, ctx)?;
+                }
+                _ => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
             }
         }
     } else {
+        if !yes {
+            let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
+            if !confirm(&format_remove_prompt(&installed.name, file_count))? {
+                println!("Removal cancelled.");
+                return Ok(());
+            }
+        }
         remove_single_mod(&installed, ctx)?;
     }
 
     println!("{} removed successfully.", installed.name);
     Ok(())
+}
+
+fn format_remove_prompt(mod_name: &str, file_count: usize) -> String {
+    match file_count {
+        0 => format!("Remove {}?", mod_name),
+        1 => format!("Remove {} (1 file)?", mod_name),
+        n => format!("Remove {} ({} files)?", mod_name, n),
+    }
 }
 
 /// Recursively collect all transitive reverse dependencies of a mod.
