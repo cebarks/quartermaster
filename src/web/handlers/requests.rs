@@ -12,6 +12,22 @@ use crate::web::csrf;
 use crate::web::error::WebError;
 use crate::web::state::AppState;
 
+/// A user-facing error whose message is safe to render in HTML responses.
+///
+/// Wrapping intentional validation messages in this type lets the error-mapping
+/// code distinguish them from unexpected DB/IO errors that must NOT be shown
+/// to the user.
+#[derive(Debug)]
+struct UserFacingError(String);
+
+impl std::fmt::Display for UserFacingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UserFacingError {}
+
 #[allow(unused_imports)]
 mod filters {
     pub use crate::web::template_filters::*;
@@ -344,12 +360,12 @@ pub async fn create_request(
         let db = db.lock();
 
         if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
-            return Err(anyhow::anyhow!("This mod is already installed."));
+            return Err(UserFacingError("This mod is already installed.".into()).into());
         }
         if db.has_pending_request_for_mod(forge_mod_id)? {
-            return Err(anyhow::anyhow!(
-                "A pending request for this mod already exists."
-            ));
+            return Err(
+                UserFacingError("A pending request for this mod already exists.".into()).into(),
+            );
         }
 
         db.create_mod_request(
@@ -365,7 +381,13 @@ pub async fn create_request(
     })
     .await
     .map_err(WebError::from)?
-    .map_err(|e: anyhow::Error| WebError::BadRequest(e.to_string()))?;
+    .map_err(|e: anyhow::Error| {
+        if e.downcast_ref::<UserFacingError>().is_some() {
+            WebError::BadRequest(e.to_string())
+        } else {
+            WebError::Internal(e)
+        }
+    })?;
 
     // Return the updated requests tab
     let db = state.db.clone();
@@ -704,6 +726,7 @@ pub async fn resolve_request(
                                 let db2 = db.clone();
                                 let db_id = actix_web::web::block(move || {
                                     let db = db.lock();
+                                    let tx = db.begin_transaction()?;
                                     let db_id = db.insert_mod(
                                         forge_mod_id,
                                         version_id,
@@ -719,6 +742,7 @@ pub async fn resolve_request(
                                             Some(file.size as i64),
                                         )?;
                                     }
+                                    tx.commit()?;
                                     Ok::<_, anyhow::Error>(db_id)
                                 })
                                 .await??;
