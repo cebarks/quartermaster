@@ -303,7 +303,6 @@ async fn teardown_containers(
     tracing::info!(count = containers.len(), "container teardown complete");
 }
 
-#[allow(clippy::await_holding_lock)]
 async fn auto_install_bootstrap_mod(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
@@ -329,9 +328,9 @@ async fn auto_install_bootstrap_mod(
         )
     })?;
 
-    crate::cli::install::download_and_install(
+    crate::cli::install::download_and_install_with_arc(
         forge,
-        &db.lock(),
+        db,
         spt_dir,
         config,
         &crate::cli::install::ModInstallParams {
