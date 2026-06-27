@@ -70,6 +70,7 @@ impl LogBroadcast {
         self.sender.subscribe()
     }
 
+    #[allow(dead_code)] // Replaced by database-backed log API (Task 5), kept for future use
     pub fn recent(&self, limit: usize) -> Vec<LogEntry> {
         let buf = self.buffer.read();
         let skip = buf.len().saturating_sub(limit);

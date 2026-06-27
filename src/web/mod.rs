@@ -282,6 +282,10 @@ pub fn configure_app(
         )
         .route("/logs/app", web::get().to(handlers::logs::app_logs_json))
         .route(
+            "/logs/app/count",
+            web::get().to(handlers::logs::app_logs_count),
+        )
+        .route(
             "/logs/app/stream",
             web::get().to(handlers::logs::app_logs_stream),
         )
