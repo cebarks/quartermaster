@@ -647,6 +647,11 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
 
     let db_arc = Arc::new(parking_lot::Mutex::new(db));
 
+    // Recover any interrupted async mod updates from a previous crash
+    if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &spt_dir) {
+        tracing::error!(error = %e, "failed to recover pending updates on startup");
+    }
+
     // Regenerate NarcoNet config on startup to ensure consistency
     if modsync_installed && config.modsync.is_some() {
         if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
