@@ -11,8 +11,10 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     for (i, sql) in MIGRATIONS.iter().enumerate() {
         let target_version = (i + 1) as i32;
         if current_version < target_version {
-            conn.execute_batch(sql)?;
-            conn.pragma_update(None, "user_version", target_version)?;
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(sql)?;
+            tx.pragma_update(None, "user_version", target_version)?;
+            tx.commit()?;
         }
     }
 
