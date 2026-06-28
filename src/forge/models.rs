@@ -59,6 +59,7 @@ pub struct SourceCodeLink {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ForgeCategory {
     pub id: i64,
+    #[serde(alias = "title")]
     pub name: String,
     pub slug: String,
     pub color_class: Option<String>,
@@ -685,6 +686,26 @@ mod tests {
         assert_eq!(lic.id, 1);
         assert_eq!(lic.name, "MIT License");
         assert_eq!(lic.short_name, "MIT");
+    }
+
+    #[test]
+    fn deserialize_category_with_title_field() {
+        let json = r#"{
+            "id": 42,
+            "name": "NarcoNet",
+            "category": {
+                "id": 1,
+                "hub_id": 17,
+                "title": "Tools",
+                "slug": "tools",
+                "description": "Various standalone tools"
+            }
+        }"#;
+
+        let m: ForgeMod = serde_json::from_str(json).expect("category with 'title' should work");
+        let cat = m.category.expect("should have category");
+        assert_eq!(cat.name, "Tools");
+        assert_eq!(cat.slug, "tools");
     }
 
     #[test]
