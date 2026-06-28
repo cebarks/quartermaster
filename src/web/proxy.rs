@@ -242,8 +242,10 @@ pub async fn proxy_handler(
                 }
             }
 
-            if let Some(target) = rewrite_target {
-                let external_url = state.config().external_url.clone().unwrap();
+            let external_url_for_rewrite = rewrite_target
+                .as_ref()
+                .and_then(|_| state.config().external_url.clone());
+            if let (Some(target), Some(external_url)) = (rewrite_target, external_url_for_rewrite) {
                 let replacement = match target {
                     BackendRewriteTarget::HttpProxy => extract_host(&external_url),
                     BackendRewriteTarget::DirectTcp => {
