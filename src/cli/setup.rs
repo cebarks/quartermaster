@@ -27,6 +27,7 @@ pub struct SetupArgs {
     pub forge_token: Option<String>,
     pub no_forge_token: bool,
     pub dev: bool,
+    pub container_name: Option<String>,
 }
 
 pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
@@ -58,10 +59,12 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
         }
     };
 
-    let container_name = if args.dev {
-        DEV_CONTAINER_NAME
+    let container_name = if let Some(name) = args.container_name {
+        name
+    } else if args.dev {
+        DEV_CONTAINER_NAME.to_string()
     } else {
-        DEFAULT_CONTAINER_NAME
+        DEFAULT_CONTAINER_NAME.to_string()
     };
 
     let params = ResolvedSetup {
@@ -92,7 +95,7 @@ struct ResolvedSetup {
     install_modsync: bool,
     admin_password: String,
     forge_token: Option<String>,
-    container_name: &'static str,
+    container_name: String,
 }
 
 #[derive(Debug)]
@@ -457,7 +460,7 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     println!("Created {}", p.data_dir.display());
 
     // 2. Check container name available
-    check_container_name_available(mgr, p.container_name).await?;
+    check_container_name_available(mgr, &p.container_name).await?;
 
     // 3. Pull image
     println!("Pulling {}...", SPT_SERVER_IMAGE);
@@ -465,24 +468,24 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     println!("Image pulled.");
 
     // 4. Create container
-    let opts = create_container_opts(&p.data_dir, p.install_fika, p.container_name);
+    let opts = create_container_opts(&p.data_dir, p.install_fika, &p.container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", p.container_name);
 
     // 5. First boot
     println!("\nStarting first boot...");
-    mgr.start(p.container_name).await?;
+    mgr.start(&p.container_name).await?;
 
     // 6. Create config (needed for wait_for_server to resolve address)
     let forge_token_set = p.forge_token.is_some();
-    let (config, _config_path) = create_config(&p.data_dir, p.forge_token, p.container_name, cli)?;
+    let (config, _config_path) = create_config(&p.data_dir, p.forge_token, &p.container_name, cli)?;
 
     // 7. Wait for server
-    wait_for_server(&config, &p.data_dir, p.container_name).await?;
+    wait_for_server(&config, &p.data_dir, &p.container_name).await?;
 
     // 8. Stop server
     println!("\nStopping server after first boot...");
-    mgr.stop(p.container_name).await?;
+    mgr.stop(&p.container_name).await?;
     println!("Server stopped.");
 
     // 9. Create DB and admin
@@ -516,12 +519,12 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
 
     // 1. Detect or create container
     let resolved_container =
-        detect_or_create_container(mgr, &p.data_dir, p.install_fika, p.container_name).await?;
+        detect_or_create_container(mgr, &p.data_dir, p.install_fika, &p.container_name).await?;
 
     // 2. Create config
     let forge_token_set = p.forge_token.is_some();
     let (mut config, config_path) =
-        create_config(&p.data_dir, p.forge_token, p.container_name, cli)?;
+        create_config(&p.data_dir, p.forge_token, &p.container_name, cli)?;
     config.server_container = Some(resolved_container);
     config.save(&config_path)?;
 

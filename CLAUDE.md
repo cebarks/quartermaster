@@ -25,15 +25,25 @@ just changelog-preview  # preview unreleased changes only
 just release-dry-run    # dist build (dry run)
 ```
 
-**Local dev environment** (fake SPT dir at `.dev/`, no real server needed):
+**Local dev environment** (SPT dir at `.dev-server/`, container for the SPT server):
 
 ```bash
-just dev-init       # create a stub SPT directory at .dev/
-just dev-serve      # build & run web UI against .dev/
-just dev-cli <ARGS> # run any quma command against .dev/
-just dev-reset-db   # wipe .dev/ database (keeps config & structure)
-just dev-clean      # remove .dev/ entirely
+just dev-init       # bootstrap dev environment via `quma setup`
+just dev-serve      # build & run web UI against .dev-server/
+just dev-cli <ARGS> # run any quma command against .dev-server/
+just dev-watch      # auto-rebuild and restart on file changes
+just dev-seed       # seed dev database with test data
+just dev-reset-db   # wipe .dev-server/ database (keeps config & structure)
+just dev-clean      # remove .dev-server/ and its container entirely
+just dev-info       # show dev environment settings (port, container, worktree)
 ```
+
+**Worktree-safe parallel dev environments**: The `dev-*` recipes auto-detect git worktrees and derive unique port/container names so multiple agents can work in parallel without conflicts:
+- **Main repo**: port 9190, container `spt-server-dev`
+- **Worktrees**: deterministic port 9191-9289, container `spt-server-<worktree-name>`
+- Override with `QUMA_DEV_PORT` / `QUMA_DEV_CONTAINER` env vars if needed
+- `.dev-server/`, `target/`, and database files are relative paths — already isolated per worktree
+- Run `just dev-info` to check the current settings
 
 Run a single test: `cargo test <test_name>` or `cargo test -p quartermaster <test_name>`
 

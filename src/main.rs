@@ -75,6 +75,7 @@ async fn main() -> Result<()> {
             forge_token,
             no_forge_token,
             dev,
+            container_name,
         } => {
             init_early_logging(&cli, &reload_handles);
             cli::setup::run(
@@ -86,6 +87,7 @@ async fn main() -> Result<()> {
                     forge_token: forge_token.clone(),
                     no_forge_token: *no_forge_token,
                     dev: *dev,
+                    container_name: container_name.clone(),
                 },
                 &cli,
             )
