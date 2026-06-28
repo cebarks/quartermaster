@@ -237,10 +237,11 @@
                 oldestId = null;
                 hasMore = false;
             } else {
+                data.entries.reverse();
                 data.entries.forEach(entry => {
                     appContainer.appendChild(renderAppEntry(entry));
                 });
-                oldestId = data.entries[data.entries.length - 1].id;
+                oldestId = data.entries[0].id;
                 hasMore = data.has_more;
             }
 
@@ -259,7 +260,7 @@
             const data = await fetchLogs({ before: oldestId, limit: 50 });
 
             if (data.entries.length > 0) {
-                // Prepend entries
+                data.entries.reverse();
                 const firstEntry = appContainer.querySelector('.log-entry');
                 data.entries.forEach(entry => {
                     const row = renderAppEntry(entry);
@@ -270,7 +271,7 @@
                     }
                 });
 
-                oldestId = data.entries[data.entries.length - 1].id;
+                oldestId = data.entries[0].id;
                 hasMore = data.has_more;
                 loadOlderBtn.style.display = hasMore ? 'block' : 'none';
             } else {
