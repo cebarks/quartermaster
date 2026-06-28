@@ -37,10 +37,24 @@ fi
 # This check allows known acceptable patterns and focuses on request-handling hot-paths
 echo ""
 echo "--- Checking: info!() in hot-path modules ---"
-# Check for info! calls, excluding known acceptable ones:
-# - WebSocket connection lifecycle (connected/disconnected at lines 61, 140 in proxy_ws.rs)
-# - One-time initialization events (auto-created accounts at line 306 in proxy.rs)
-VIOLATIONS=$(rg -n 'info!\(' src/web/proxy.rs src/web/proxy_ws.rs src/web/sse.rs 2>/dev/null | rg -v 'proxy_ws.rs:(98|177)|proxy.rs:(306|392)' || true)
+# Check for info! calls, excluding known acceptable lifecycle events:
+# - WebSocket connection lifecycle (connected/disconnected)
+# - One-time initialization events (auto-created accounts)
+# Reads each file's info!() blocks and checks if the full invocation contains
+# an excluded message pattern. This handles multi-line macro calls.
+VIOLATIONS=""
+for file in src/web/proxy.rs src/web/proxy_ws.rs src/web/sse.rs; do
+    [ -f "$file" ] || continue
+    # Extract line numbers of info!( calls
+    while IFS=: read -r line_num _; do
+        # Read from that line until the closing );
+        block=$(sed -n "${line_num},/);/p" "$file")
+        if ! echo "$block" | rg -q 'WebSocket proxy (connected|disconnected)|auto-created.*account'; then
+            echo "${file}:${line_num}:$(sed -n "${line_num}p" "$file")"
+            VIOLATIONS="found"
+        fi
+    done < <(rg -n 'info!\(' "$file" 2>/dev/null || true)
+done
 if [ -n "$VIOLATIONS" ]; then
     echo "FAIL: info!() in hot-path modules (should be debug! or trace!):"
     echo "$VIOLATIONS"
