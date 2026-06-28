@@ -94,6 +94,18 @@
                             Reset Password
                         </button>
                     </form>
+                    <form style="display:inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="button" class="btn btn-sm btn-danger"
+                                hx-post="/quma/api/admin/users/{{ u.id }}/delete"
+                                hx-target="#admin-content"
+                                hx-swap="innerHTML"
+                                hx-include="closest form"
+                                hx-confirm="Permanently delete {{ u.username }} and all their associated data (mod requests, votes, raid history)? This cannot be undone."
+                                hx-disabled-elt="this">
+                            Delete
+                        </button>
+                    </form>
                 </div>
                 {% endif %}
             </td>

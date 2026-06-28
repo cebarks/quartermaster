@@ -376,6 +376,14 @@ pub fn configure_app(
                     "/users/{id}/reset-password",
                     web::post().to(handlers::admin::create_reset_token),
                 )
+                .route(
+                    "/users/{id}/delete",
+                    web::post().to(handlers::admin::delete_user),
+                )
+                .route(
+                    "/invites/{id}/delete",
+                    web::post().to(handlers::admin::delete_invite),
+                )
                 .route("/invites", web::post().to(handlers::admin::create_invite))
                 .route("/roles", web::get().to(handlers::admin::admin_roles))
                 .route(

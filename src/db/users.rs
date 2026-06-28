@@ -15,6 +15,20 @@ pub struct User {
     pub password_changed_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteUserResult {
+    Deleted,
+    NotFound,
+    LastAdmin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteInviteResult {
+    Deleted,
+    NotFound,
+    AlreadyUsed,
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // SQL row model
 pub struct InviteCode {
@@ -248,6 +262,31 @@ impl Database {
         )
     }
 
+    pub fn delete_user(&self, user_id: i64) -> rusqlite::Result<DeleteUserResult> {
+        let Some(user) = self.get_user_by_id(user_id)? else {
+            return Ok(DeleteUserResult::NotFound);
+        };
+
+        if !user.disabled {
+            let others = self.count_users_with_permission("users.manage", Some(user_id))?;
+            let has_manage: bool = self.conn.query_row(
+                "SELECT COUNT(*) FROM users u
+                 JOIN roles r ON u.role = r.name
+                 JOIN role_permissions rp ON r.id = rp.role_id
+                 WHERE u.id = ?1 AND rp.permission = 'users.manage' AND u.disabled = 0",
+                params![user_id],
+                |row| Ok(row.get::<_, i64>(0)? > 0),
+            )?;
+            if has_manage && others == 0 {
+                return Ok(DeleteUserResult::LastAdmin);
+            }
+        }
+
+        self.conn
+            .execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
+        Ok(DeleteUserResult::Deleted)
+    }
+
     // ── Invite CRUD ───────────────────────────────────────────────────
 
     pub fn create_invite(
@@ -311,6 +350,26 @@ impl Database {
             })
         })?;
         rows.collect()
+    }
+
+    pub fn delete_invite(&self, invite_id: i64) -> rusqlite::Result<DeleteInviteResult> {
+        let affected = self.conn.execute(
+            "DELETE FROM invite_codes WHERE id = ?1 AND used_by IS NULL",
+            params![invite_id],
+        )?;
+        if affected > 0 {
+            return Ok(DeleteInviteResult::Deleted);
+        }
+        let exists: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM invite_codes WHERE id = ?1",
+            params![invite_id],
+            |row| Ok(row.get::<_, i64>(0)? > 0),
+        )?;
+        if exists {
+            Ok(DeleteInviteResult::AlreadyUsed)
+        } else {
+            Ok(DeleteInviteResult::NotFound)
+        }
     }
 
     // ── Password Reset Token CRUD ────────────────────────────────────
