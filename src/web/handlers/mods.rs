@@ -668,28 +668,28 @@ pub async fn updates_carousel_partial(
     let clamped_index = index % total;
     let (m, u) = updatable[clamped_index];
 
-    // Fetch version details for fika compat and SPT constraint
-    let (fika_compat, spt_version) = match state
+    // Fika compat is already on the cached UpdateRecommendedVersion;
+    // only call get_versions for the SPT version constraint.
+    let fika_compat = u
+        .recommended_version
+        .fika_compatibility
+        .as_ref()
+        .map(|f| match f {
+            FikaCompat::Compatible => "compatible".to_string(),
+            FikaCompat::Incompatible => "incompatible".to_string(),
+            FikaCompat::Unknown => "unknown".to_string(),
+        });
+
+    let spt_version = match state
         .forge
         .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
         .await
     {
-        Ok(versions) => {
-            let target = versions
-                .iter()
-                .find(|v| v.version == u.recommended_version.version);
-            (
-                target
-                    .and_then(|v| v.fika_compatibility.as_ref())
-                    .map(|f| match f {
-                        FikaCompat::Compatible => "compatible".to_string(),
-                        FikaCompat::Incompatible => "incompatible".to_string(),
-                        FikaCompat::Unknown => "unknown".to_string(),
-                    }),
-                target.and_then(|v| v.spt_version.clone()),
-            )
-        }
-        Err(_) => (None, None),
+        Ok(versions) => versions
+            .iter()
+            .find(|v| v.version == u.recommended_version.version)
+            .and_then(|v| v.spt_version.clone()),
+        Err(_) => None,
     };
 
     let entry = UpdatesCarouselEntry {
