@@ -1079,6 +1079,33 @@ fn delete_user_cascades_mod_requests() {
 }
 
 #[test]
+fn delete_user_sets_invite_created_by_null() {
+    use crate::db::users::DeleteUserResult;
+
+    let db = test_db();
+    db.insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .unwrap();
+    let player = db
+        .insert_user("player", Some("p2"), Some("pw"), "player")
+        .unwrap();
+
+    db.create_invite("CODE-BY-PLAYER", Some(player), None)
+        .unwrap();
+
+    let result = db.delete_user(player).unwrap();
+    assert!(matches!(result, DeleteUserResult::Deleted));
+
+    let invite = db
+        .get_invite("CODE-BY-PLAYER")
+        .unwrap()
+        .expect("invite should still exist");
+    assert!(
+        invite.created_by.is_none(),
+        "created_by should be NULL after user deletion"
+    );
+}
+
+#[test]
 fn delete_invite_unused() {
     use crate::db::users::DeleteInviteResult;
 

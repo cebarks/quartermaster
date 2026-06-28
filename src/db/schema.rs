@@ -7,6 +7,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/001_initial.sql"),
     include_str!("../../migrations/002_pending_updates.sql"),
     include_str!("../../migrations/003_log_entries.sql"),
+    include_str!("../../migrations/004_invite_codes_cascade.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
