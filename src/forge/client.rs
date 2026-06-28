@@ -189,7 +189,7 @@ impl ForgeClient {
     }
 
     /// Resolve the dependency tree for a set of (mod_id, version_string) pairs.
-    pub async fn get_dependencies(&self, mods: &[(i64, &str)]) -> Result<Vec<DependencyNode>> {
+    pub async fn get_dependencies(&self, mods: &[(&str, &str)]) -> Result<Vec<DependencyNode>> {
         let url = format!("{}/mods/dependencies", self.base_url);
         let mods_param: String = mods
             .iter()
@@ -571,7 +571,7 @@ mod tests {
             .await;
 
         let client = test_client(&server).await;
-        let deps = client.get_dependencies(&[(42, "1.2.0")]).await.unwrap();
+        let deps = client.get_dependencies(&[("42", "1.2.0")]).await.unwrap();
 
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id, 42);
@@ -585,6 +585,45 @@ mod tests {
         assert_eq!(deps[0].dependencies.len(), 1);
         assert_eq!(deps[0].dependencies[0].name, "CoreLib");
         assert!(!deps[0].dependencies[0].conflict);
+    }
+
+    #[tokio::test]
+    async fn get_dependencies_with_guid() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": [
+                {
+                    "id": 42,
+                    "guid": "com.example.big-brain",
+                    "name": "Big Brain",
+                    "slug": "big-brain",
+                    "latest_compatible_version": {
+                        "id": 100,
+                        "version": "1.2.0"
+                    },
+                    "dependencies": [],
+                    "conflict": false
+                }
+            ]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/mods/dependencies"))
+            .and(query_param("mods", "com.example.big-brain:1.2.0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let deps = client
+            .get_dependencies(&[("com.example.big-brain", "1.2.0")])
+            .await
+            .unwrap();
+
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].name, "Big Brain");
+        assert_eq!(deps[0].guid.as_deref(), Some("com.example.big-brain"));
     }
 
     #[tokio::test]
