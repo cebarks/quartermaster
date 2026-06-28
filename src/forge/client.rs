@@ -87,6 +87,13 @@ impl ForgeClient {
                         .context("Forge API returned error status");
                 }
                 Err(e) => {
+                    if attempt < MAX_RETRIES {
+                        tracing::warn!(
+                            attempt = attempt + 1,
+                            error = %e,
+                            "Forge API request failed, retrying immediately"
+                        );
+                    }
                     last_error = Some(e);
                     if attempt == MAX_RETRIES {
                         break;
