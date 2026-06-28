@@ -51,6 +51,20 @@ build-headless:
 
 dev_dir := ".dev-server"
 
+# Worktree-aware defaults for parallel dev environments.
+# Main repo → port 9190, container "spt-server-dev"
+# Worktree  → deterministic port 9191-9289, container "spt-server-<worktree-name>"
+_wt_name := `cd=$(git rev-parse --git-common-dir 2>/dev/null); gd=$(git rev-parse --git-dir 2>/dev/null); if [ "$cd" != "$gd" ]; then basename "$(git rev-parse --show-toplevel)"; fi`
+dev_port := env("QUMA_DEV_PORT", `cd=$(git rev-parse --git-common-dir 2>/dev/null); gd=$(git rev-parse --git-dir 2>/dev/null); if [ "$cd" != "$gd" ]; then n=$(basename "$(git rev-parse --show-toplevel)"); echo $((9191 + $(printf '%s' "$n" | cksum | cut -d' ' -f1) % 99)); else echo 9190; fi`)
+dev_container := env("QUMA_DEV_CONTAINER", `cd=$(git rev-parse --git-common-dir 2>/dev/null); gd=$(git rev-parse --git-dir 2>/dev/null); if [ "$cd" != "$gd" ]; then echo "spt-server-$(basename "$(git rev-parse --show-toplevel)")"; else echo spt-server-dev; fi`)
+
+# Show dev environment settings for this worktree
+dev-info:
+    @echo "dev_dir:       {{dev_dir}}"
+    @echo "dev_port:      {{dev_port}}"
+    @echo "dev_container: {{dev_container}}"
+    @echo "worktree:      {{_wt_name}}{{if _wt_name == "" { " (main repo)" } else { "" } }}"
+
 # Bootstrap a real SPT dev environment via `quma setup`
 dev-init:
     #!/usr/bin/env bash
@@ -60,15 +74,16 @@ dev-init:
         echo "Run 'just dev-reset-db' to wipe the database, or 'just dev-clean' to start over."
         exit 0
     fi
-    cargo run -- setup "{{dev_dir}}" --no-fika --no-modsync --admin-password devdevdev --no-forge-token --dev
+    cargo run -- setup "{{dev_dir}}" --no-fika --no-modsync --admin-password devdevdev --no-forge-token --dev --container-name "{{dev_container}}"
 
 # Build and run the web server against the dev directory
 dev-serve *ARGS: dev-init
-    QUMA_SPT_DIR="{{dev_dir}}" cargo run -- serve {{ARGS}}
+    @echo "Dev server on port {{dev_port}} (container: {{dev_container}})"
+    QUMA_SPT_DIR="{{dev_dir}}" QUMA_WEB_PORT="{{dev_port}}" cargo run -- serve {{ARGS}}
 
 # Run any quma command against the dev directory
 dev-cli *ARGS: dev-init
-    QUMA_SPT_DIR="{{dev_dir}}" cargo run -- {{ARGS}}
+    QUMA_SPT_DIR="{{dev_dir}}" QUMA_WEB_PORT="{{dev_port}}" cargo run -- {{ARGS}}
 
 # Install development tools (cargo-watch for auto-reload)
 dev-install-tools:
@@ -76,7 +91,8 @@ dev-install-tools:
 
 # Auto-rebuild and restart the dev server on file changes
 dev-watch *ARGS: dev-init
-    QUMA_SPT_DIR="{{dev_dir}}" cargo watch -x 'run -- serve {{ARGS}}' -w src -w templates
+    @echo "Dev server on port {{dev_port}} (container: {{dev_container}})"
+    QUMA_SPT_DIR="{{dev_dir}}" QUMA_WEB_PORT="{{dev_port}}" cargo watch -x 'run -- serve {{ARGS}}' -w src -w templates
 
 # Seed the dev database with test data (wipes and repopulates)
 dev-seed: dev-init
@@ -114,15 +130,16 @@ dev-reset-db:
 dev-clean:
     #!/usr/bin/env bash
     set -euo pipefail
+    container="{{dev_container}}"
     # Stop and remove the dev container if it exists
-    if podman inspect spt-server-dev &>/dev/null 2>&1; then
-        podman stop spt-server-dev 2>/dev/null || true
-        podman rm spt-server-dev
-        echo "Container 'spt-server-dev' removed."
-    elif docker inspect spt-server-dev &>/dev/null 2>&1; then
-        docker stop spt-server-dev 2>/dev/null || true
-        docker rm spt-server-dev
-        echo "Container 'spt-server-dev' removed."
+    if podman inspect "$container" &>/dev/null 2>&1; then
+        podman stop "$container" 2>/dev/null || true
+        podman rm "$container"
+        echo "Container '$container' removed."
+    elif docker inspect "$container" &>/dev/null 2>&1; then
+        docker stop "$container" 2>/dev/null || true
+        docker rm "$container"
+        echo "Container '$container' removed."
     fi
     rm -rf "{{dev_dir}}"
     echo "Dev environment removed."

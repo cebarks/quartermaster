@@ -70,6 +70,9 @@ pub enum Command {
         /// Use a separate container name for development (won't collide with production)
         #[arg(long)]
         dev: bool,
+        /// Override the container name (useful for parallel dev environments)
+        #[arg(long)]
+        container_name: Option<String>,
     },
 
     /// Install a mod and its dependencies

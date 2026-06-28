@@ -43,7 +43,15 @@ just dev-watch      # auto-rebuild & restart dev server on file changes (needs c
 just dev-seed       # seed dev database with test data (wipes & repopulates)
 just dev-reset-db   # wipe .dev-server/ database (keeps config & structure)
 just dev-clean      # remove .dev-server/ and container entirely
+just dev-info       # show dev environment settings (port, container, worktree)
 ```
+
+**Worktree-safe parallel dev environments**: The `dev-*` recipes auto-detect git worktrees and derive unique port/container names so multiple agents can work in parallel without conflicts:
+- **Main repo**: port 9190, container `spt-server-dev`
+- **Worktrees**: deterministic port 9191-9289, container `spt-server-<worktree-name>`
+- Override with `QUMA_DEV_PORT` / `QUMA_DEV_CONTAINER` env vars if needed
+- `.dev-server/`, `target/`, and database files are relative paths — already isolated per worktree
+- Run `just dev-info` to check the current settings
 
 Run a single test: `cargo test <test_name>` or `cargo test -p quartermaster <test_name>`
 
@@ -104,6 +112,10 @@ The SPT server runs HTTPS on port 6969 (default) with a self-signed TLS certific
 - `GET /launcher/server/loadedServerMods` → map of loaded mod metadata
 
 Send `responsecompressed: 0` header to get raw JSON instead of zlib-compressed responses. TLS verification is disabled (self-signed cert).
+
+## Git Workflow
+
+**Always use a worktree for changes.** Never commit directly to main. Use `EnterWorktree` to create an isolated worktree before making any code changes — this keeps main clean and enables parallel work across multiple agents. Use relative paths inside worktrees (never hardcode absolute paths from the main repo). The `dev-*` recipes are worktree-aware and will auto-derive unique ports and container names per worktree.
 
 ## Autonomy — Subagent-Driven Development
 
