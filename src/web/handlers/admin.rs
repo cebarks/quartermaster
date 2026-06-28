@@ -544,6 +544,47 @@ pub async fn link_profile(
 
     let profile_id = form.spt_profile_id.clone().filter(|s| !s.is_empty());
 
+    if let Some(ref aid) = profile_id {
+        if !aid
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(WebError::BadRequest("Invalid profile AID format".to_string()).into());
+        }
+
+        let spt_dir = state.spt_dir.clone();
+        let aid_check = aid.clone();
+        let db_check = state.db.clone();
+        let (exists, already_linked) = web::block(move || {
+            let profile_path = spt_dir
+                .join("SPT/user/profiles")
+                .join(format!("{aid_check}.json"));
+            let exists = profile_path.exists();
+            let db = db_check.lock();
+            let already_linked = db
+                .get_user_by_spt_profile_id(&aid_check)
+                .ok()
+                .flatten()
+                .map(|u| u.id != target_id)
+                .unwrap_or(false);
+            (exists, already_linked)
+        })
+        .await
+        .map_err(WebError::from)?;
+
+        if !exists {
+            return Err(
+                WebError::BadRequest("Profile AID does not exist on disk".to_string()).into(),
+            );
+        }
+        if already_linked {
+            return Err(WebError::BadRequest(
+                "Profile is already linked to another user".to_string(),
+            )
+            .into());
+        }
+    }
+
     let db = state.db.clone();
     let pid = profile_id.clone();
     web::block(move || {
