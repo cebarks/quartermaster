@@ -188,7 +188,8 @@ impl ForgeClient {
         Ok(parsed.data)
     }
 
-    /// Resolve the dependency tree for a set of (mod_id, version_string) pairs.
+    /// Resolve the dependency tree for a set of (identifier, version) pairs.
+    /// The identifier can be a numeric mod ID or a GUID string.
     pub async fn get_dependencies(&self, mods: &[(&str, &str)]) -> Result<Vec<DependencyNode>> {
         let url = format!("{}/mods/dependencies", self.base_url);
         let mods_param: String = mods
