@@ -8,7 +8,7 @@ use crate::db::mods::{
     SortDirection,
 };
 use crate::db::rbac::Permission;
-use crate::forge::models::DependencyNode;
+use crate::forge::models::{DependencyNode, FikaCompat};
 use crate::health::{self, IntegrityHealth};
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
@@ -160,6 +160,37 @@ struct UpdateStatusEntry {
 #[template(path = "mods/partials/update_status.html")]
 struct UpdateStatusTemplate {
     entries: Vec<UpdateStatusEntry>,
+}
+
+struct UpdatesCarouselEntry {
+    db_id: i64,
+    forge_mod_id: i64,
+    name: String,
+    slug: Option<String>,
+    current_version: String,
+    new_version: String,
+    update_reason: String,
+    spt_version: Option<String>,
+    fika_compat: Option<String>,
+    download_size: Option<i64>,
+    csrf_token: String,
+}
+
+#[derive(Template)]
+#[template(path = "mods/partials/updates_carousel.html")]
+struct UpdatesCarouselTemplate {
+    user: SessionUser,
+    entry: Option<UpdatesCarouselEntry>,
+    total: usize,
+    index: usize,
+    prev_index: usize,
+    next_index: usize,
+    csrf_token: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CarouselQuery {
+    index: Option<usize>,
 }
 
 #[derive(Template)]
@@ -534,6 +565,167 @@ pub async fn update_status_partial(
         .collect();
 
     let tmpl = UpdateStatusTemplate { entries };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn updates_carousel_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    query: Query<CarouselQuery>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let index = query.index.unwrap_or(0);
+
+    let db = state.db.clone();
+    let installed = web::block(move || {
+        let db = db.lock();
+        db.list_mods()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    if installed.is_empty() {
+        let tmpl = UpdatesCarouselTemplate {
+            user,
+            entry: None,
+            total: 0,
+            index: 0,
+            prev_index: 0,
+            next_index: 0,
+            csrf_token,
+        };
+        return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+    }
+
+    let updates_data = if let Some(cached) = state.update_cache.get() {
+        cached
+    } else {
+        let check_list: Vec<(i64, String)> = installed
+            .iter()
+            .map(|m| (m.forge_mod_id, m.version.clone()))
+            .collect();
+        match state
+            .forge
+            .check_updates(&check_list, &state.spt_info.spt_version)
+            .await
+        {
+            Ok(data) => {
+                state.update_cache.set(data.clone());
+                data
+            }
+            Err(_) => {
+                let tmpl = UpdatesCarouselTemplate {
+                    user,
+                    entry: None,
+                    total: 0,
+                    index: 0,
+                    prev_index: 0,
+                    next_index: 0,
+                    csrf_token,
+                };
+                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+            }
+        }
+    };
+
+    // Match update entries to installed mods, filtering to those with real updates
+    let mut updatable: Vec<(
+        &crate::db::mods::InstalledMod,
+        &crate::forge::models::UpdateEntry,
+    )> = installed
+        .iter()
+        .filter_map(|m| {
+            updates_data
+                .updates
+                .iter()
+                .find(|u| {
+                    u.current_version.mod_id == m.forge_mod_id
+                        && u.recommended_version.version != m.version
+                })
+                .map(|u| (m, u))
+        })
+        .collect();
+    updatable.sort_by_key(|a| a.0.name.to_lowercase());
+
+    let total = updatable.len();
+
+    if total == 0 {
+        let tmpl = UpdatesCarouselTemplate {
+            user,
+            entry: None,
+            total: 0,
+            index: 0,
+            prev_index: 0,
+            next_index: 0,
+            csrf_token,
+        };
+        return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+    }
+
+    let clamped_index = index % total;
+    let (m, u) = updatable[clamped_index];
+
+    // Fetch version details for fika compat and SPT constraint
+    let (fika_compat, spt_version) = match state
+        .forge
+        .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
+        .await
+    {
+        Ok(versions) => {
+            let target = versions
+                .iter()
+                .find(|v| v.version == u.recommended_version.version);
+            (
+                target
+                    .and_then(|v| v.fika_compatibility.as_ref())
+                    .map(|f| match f {
+                        FikaCompat::Compatible => "compatible".to_string(),
+                        FikaCompat::Incompatible => "incompatible".to_string(),
+                        FikaCompat::Unknown => "unknown".to_string(),
+                    }),
+                target.and_then(|v| v.spt_version.clone()),
+            )
+        }
+        Err(_) => (None, None),
+    };
+
+    let entry = UpdatesCarouselEntry {
+        db_id: m.id,
+        forge_mod_id: m.forge_mod_id,
+        name: m.name.clone(),
+        slug: m.slug.clone(),
+        current_version: m.version.clone(),
+        new_version: u.recommended_version.version.clone(),
+        update_reason: u.update_reason.clone(),
+        spt_version,
+        fika_compat,
+        download_size: u.recommended_version.content_length.map(|s| s as i64),
+        csrf_token: csrf_token.clone(),
+    };
+
+    let prev_index = if clamped_index == 0 {
+        total - 1
+    } else {
+        clamped_index - 1
+    };
+    let next_index = if clamped_index + 1 >= total {
+        0
+    } else {
+        clamped_index + 1
+    };
+
+    let tmpl = UpdatesCarouselTemplate {
+        user,
+        entry: Some(entry),
+        total,
+        index: clamped_index,
+        prev_index,
+        next_index,
+        csrf_token,
+    };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 

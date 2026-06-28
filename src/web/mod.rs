@@ -214,6 +214,10 @@ pub fn configure_app(
             web::get().to(handlers::mods::update_status_partial),
         )
         .route(
+            "/mods/updates-carousel",
+            web::get().to(handlers::mods::updates_carousel_partial),
+        )
+        .route(
             "/mods/list",
             web::get().to(handlers::mods::list_body_partial),
         )
