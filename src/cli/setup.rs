@@ -137,8 +137,8 @@ fn resolve_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf> {
     let path = if let Some(p) = explicit {
         p
     } else {
-        let default = dirs::home_dir()
-            .map(|h| h.join("spt-server"))
+        let default = std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("spt-server"))
             .unwrap_or_else(|| PathBuf::from("./spt-server"));
 
         print!("Where should server data live? [{}]: ", default.display());

@@ -16,6 +16,24 @@ use crate::container::ContainerManager;
 use crate::spt::headless::{EHeadlessStatus, GetHeadlessesResponse};
 use crate::spt::server::SptClient;
 
+struct RestartingGuard {
+    state: Arc<RwLock<Vec<ClientState>>>,
+    index: u32,
+}
+
+impl Drop for RestartingGuard {
+    fn drop(&mut self) {
+        let state = self.state.clone();
+        let index = self.index;
+        tokio::spawn(async move {
+            let mut state_lock = state.write().await;
+            if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
+                s.restarting = false;
+            }
+        });
+    }
+}
+
 pub struct ClientSupervisor {
     container_mgr: ContainerManager,
     spt_client: SptClient,
@@ -476,14 +494,10 @@ async fn exit_watcher_loop(
                 .unwrap_or(0)
         };
 
-        let _guard = scopeguard::guard((state.clone(), index), |(state, index)| {
-            tokio::spawn(async move {
-                let mut state_lock = state.write().await;
-                if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
-                    s.restarting = false;
-                }
-            });
-        });
+        let _guard = RestartingGuard {
+            state: state.clone(),
+            index,
+        };
 
         // Apply backoff for crash restarts
         if !is_clean_exit && failures > 0 {
