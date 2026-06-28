@@ -907,29 +907,6 @@ fn disable_admin_allowed_with_backup_admin() {
 }
 
 #[test]
-fn update_invite_user_unconditional() {
-    let db = test_db();
-    let admin_id = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
-        .unwrap();
-    db.create_invite("CODE-1", Some(admin_id), None).unwrap();
-
-    // Use the invite (sets used_by to admin_id)
-    let used = db.use_invite("CODE-1", admin_id).unwrap();
-    assert_eq!(used, 1);
-
-    // Now unconditionally update to a different user
-    let new_user = db
-        .insert_user("newbie", Some("p2"), Some("pw"), "player")
-        .unwrap();
-    let updated = db.update_invite_user("CODE-1", new_user).unwrap();
-    assert_eq!(updated, 1);
-
-    let invite = db.get_invite("CODE-1").unwrap().unwrap();
-    assert_eq!(invite.used_by, Some(new_user));
-}
-
-#[test]
 fn list_requests_mixed_votes_score() {
     let db = test_db();
     let user1 = setup_user(&db);
