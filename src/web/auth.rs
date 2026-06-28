@@ -14,6 +14,9 @@ use chrono;
 use crate::db::rbac::Permission;
 use crate::web::error::WebError;
 
+pub(crate) const MIN_PASSWORD_LEN: usize = 8;
+pub(crate) const MAX_PASSWORD_LEN: usize = 128;
+
 pub fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();

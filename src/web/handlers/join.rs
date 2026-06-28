@@ -1,7 +1,10 @@
+use actix_session::Session;
+use actix_web::web::Form;
 use actix_web::{web, HttpResponse};
 use askama::Template;
 
 use crate::config::{FIKA_CLIENT_FORGE_ID, NARCONET_FORGE_MOD_ID};
+use crate::web::auth::{hash_password, MAX_PASSWORD_LEN, MIN_PASSWORD_LEN};
 use crate::web::error::WebError;
 use crate::web::invite::validate_invite_code;
 use crate::web::state::AppState;
@@ -13,6 +16,24 @@ const BOOTSTRAP_FORGE_IDS: &[i64] = &[
     FIKA_CLIENT_FORGE_ID,  // 2326
 ];
 
+const SPT_EDITIONS: &[&str] = &[
+    "Standard",
+    "Left Behind",
+    "Prepare for Escape",
+    "Edge of Darkness",
+    "The Unheard Edition",
+];
+
+#[derive(serde::Deserialize)]
+pub struct JoinForm {
+    code: String,
+    username: String,
+    password: String,
+    password_confirm: String,
+    edition: String,
+    csrf_token: String,
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct JoinQuery {
     pub code: Option<String>,
@@ -23,12 +44,12 @@ pub struct JoinQuery {
 struct JoinTemplate {
     server_name: String,
     spt_version: String,
-    external_url: String,
     fika_installed: bool,
-    modsync_installed: bool,
     mod_count: usize,
     code: String,
     error: Option<String>,
+    csrf_token: String,
+    editions: &'static [&'static str],
 }
 
 fn referrer_policy(resp: HttpResponse) -> HttpResponse {
@@ -43,7 +64,9 @@ fn referrer_policy(resp: HttpResponse) -> HttpResponse {
 pub async fn join_page(
     query: web::Query<JoinQuery>,
     state: web::Data<AppState>,
+    session: Session,
 ) -> actix_web::Result<HttpResponse> {
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let code = query.code.clone().unwrap_or_default();
 
     // Validate invite code
@@ -60,14 +83,12 @@ pub async fn join_page(
         let tmpl = JoinTemplate {
             server_name: DEFAULT_SERVER_NAME.to_string(),
             spt_version: state.spt_info.spt_version.clone(),
-            external_url: String::new(),
             fika_installed: state.fika_installed,
-            modsync_installed: state
-                .modsync_installed
-                .load(std::sync::atomic::Ordering::Relaxed),
             mod_count: 0,
             code,
             error: Some(e.to_string()),
+            csrf_token,
+            editions: SPT_EDITIONS,
         };
         return Ok(referrer_policy(
             HttpResponse::BadRequest()
@@ -76,33 +97,15 @@ pub async fn join_page(
         ));
     }
 
-    let (external_url, server_name) = {
+    let server_name = {
         let config = state.config.read();
-        let external_url = match &config.external_url {
-            Some(url) => url.clone(),
-            None => {
-                return Ok(referrer_policy(
-                    HttpResponse::ServiceUnavailable()
-                        .content_type("text/html")
-                        .body(
-                            "Bootstrap not configured: external_url is required in quartermaster.toml",
-                        ),
-                ));
-            }
-        };
-
-        let server_name = config
+        config
             .server_name
             .clone()
-            .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
-        (external_url, server_name)
+            .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string())
     };
 
-    let modsync_installed = state
-        .modsync_installed
-        .load(std::sync::atomic::Ordering::Relaxed);
-
-    // Count client-syncable mods (mods with BepInEx/ files, excluding infrastructure)
+    // Count client-syncable mods
     let db = state.db.clone();
     let mod_count = web::block(move || {
         let db = db.lock();
@@ -115,12 +118,12 @@ pub async fn join_page(
     let tmpl = JoinTemplate {
         server_name,
         spt_version: state.spt_info.spt_version.clone(),
-        external_url,
         fika_installed: state.fika_installed,
-        modsync_installed,
         mod_count,
         code,
         error: None,
+        csrf_token,
+        editions: SPT_EDITIONS,
     };
 
     Ok(referrer_policy(
@@ -128,6 +131,288 @@ pub async fn join_page(
             .content_type("text/html")
             .body(tmpl.render().map_err(WebError::from)?),
     ))
+}
+
+fn render_join_error(
+    msg: &str,
+    code: String,
+    server_name: &str,
+    spt_version: &str,
+    fika_installed: bool,
+    mod_count: usize,
+    csrf_token: String,
+) -> actix_web::Result<HttpResponse> {
+    let tmpl = JoinTemplate {
+        server_name: server_name.to_string(),
+        spt_version: spt_version.to_string(),
+        fika_installed,
+        mod_count,
+        code,
+        error: Some(msg.to_string()),
+        csrf_token,
+        editions: SPT_EDITIONS,
+    };
+    Ok(referrer_policy(
+        HttpResponse::BadRequest()
+            .content_type("text/html")
+            .body(tmpl.render().map_err(WebError::from)?),
+    ))
+}
+
+pub async fn join_submit(
+    form: Form<JoinForm>,
+    state: web::Data<AppState>,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let form = form.into_inner();
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let server_name = {
+        let config = state.config.read();
+        config
+            .server_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string())
+    };
+    let spt_version = state.spt_info.spt_version.clone();
+    let fika_installed = state.fika_installed;
+
+    // Count mods for error re-renders
+    let db = state.db.clone();
+    let mod_count = web::block(move || {
+        let db = db.lock();
+        db.count_client_syncable_mods()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let code = form.code.clone();
+    let render_err = |msg: &str| {
+        render_join_error(
+            msg,
+            code.clone(),
+            &server_name,
+            &spt_version,
+            fika_installed,
+            mod_count,
+            csrf_token.clone(),
+        )
+    };
+
+    // Validate invite code
+    let db = state.db.clone();
+    let code_clone = form.code.clone();
+    let invite_result = web::block(move || {
+        let db = db.lock();
+        validate_invite_code(&db, &code_clone)
+    })
+    .await
+    .map_err(WebError::from)?;
+
+    if let Err(e) = invite_result {
+        return render_err(&e.to_string());
+    }
+
+    // Validate username
+    let username = form.username.trim().to_string();
+    if username.is_empty() || username.len() > 32 {
+        return render_err("Username must be 1-32 characters");
+    }
+    if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return render_err("Username can only contain letters, numbers, and underscores");
+    }
+
+    // Validate password
+    if form.password.len() < MIN_PASSWORD_LEN {
+        return render_err(&format!(
+            "Password must be at least {MIN_PASSWORD_LEN} characters"
+        ));
+    }
+    if form.password.len() > MAX_PASSWORD_LEN {
+        return render_err(&format!(
+            "Password must be at most {MAX_PASSWORD_LEN} characters"
+        ));
+    }
+    if form.password != form.password_confirm {
+        return render_err("Passwords do not match");
+    }
+
+    // Validate edition
+    if !SPT_EDITIONS.contains(&form.edition.as_str()) {
+        return render_err("Invalid edition selection");
+    }
+
+    // Check if username already exists (any state — no claim flow)
+    let db = state.db.clone();
+    let username_clone = username.clone();
+    let existing_user = web::block(move || {
+        let db = db.lock();
+        db.get_user_by_username(&username_clone)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    if existing_user.is_some() {
+        return render_err("Username is already taken");
+    }
+
+    // Create SPT profile via server API
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
+    let spt_client = match crate::spt::server::SptClient::new(&host, port) {
+        Ok(c) => c,
+        Err(_) => {
+            return render_err("Could not connect to the SPT server. Make sure it is running.");
+        }
+    };
+
+    // Generate a random SPT password (nominal auth, not stored)
+    let spt_password: String = {
+        use rand::RngExt;
+        rand::rng()
+            .sample_iter(&rand::distr::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect()
+    };
+
+    // TODO(debt): If this succeeds but the DB transaction below fails, the SPT
+    // profile is orphaned (no Quartermaster account links to it). Harmless but
+    // not recoverable without admin intervention.
+    if let Err(e) = spt_client
+        .register_profile(&username, &spt_password, &form.edition)
+        .await
+    {
+        tracing::warn!(err = %e, username = %username, "SPT profile registration failed");
+        return render_err(
+            "Could not create your SPT profile. Make sure the SPT server is running.",
+        );
+    }
+
+    // Scan profiles directory to find the newly created profile's AID.
+    // Retry a few times — SPT may not have flushed the file to disk yet.
+    let spt_dir = state.spt_dir.clone();
+    let username_for_scan = username.clone();
+    let profile_aid = web::block(move || {
+        for attempt in 0..3 {
+            if let Some(aid) = find_profile_by_username(&spt_dir, &username_for_scan) {
+                return Some(aid);
+            }
+            if attempt < 2 {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        }
+        tracing::warn!(
+            username = %username_for_scan,
+            "profile not found on disk after SPT registration — user will have no linked profile"
+        );
+        None
+    })
+    .await
+    .map_err(WebError::from)?;
+
+    // Hash password
+    let password = form.password.clone();
+    let password_hash = web::block(move || hash_password(&password))
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+    // Create user + consume invite in a single transaction
+    let db = state.db.clone();
+    let code_for_invite = code.clone();
+    let result = web::block(move || {
+        let db = db.lock();
+        let tx = db.begin_transaction()?;
+
+        // Double-check username not taken (race condition guard)
+        if db.get_user_by_username(&username)?.is_some() {
+            // tx rolls back on drop
+            return Ok::<_, rusqlite::Error>(Err("Username is already taken".to_string()));
+        }
+
+        // Create user first so we have a real user_id for the FK on invite_codes.used_by
+        let user_id = db.insert_user(
+            &username,
+            profile_aid.as_deref(),
+            Some(&password_hash),
+            "player",
+        )?;
+
+        let used = db.use_invite(&code_for_invite, user_id)?;
+        if used == 0 {
+            // tx rolls back on drop — removes the user too
+            return Ok(Err("Invite code is invalid or expired".to_string()));
+        }
+
+        tx.commit()?;
+        Ok(Ok(()))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    match result {
+        Ok(()) => {
+            crate::web::flash::set_flash(
+                &session,
+                "Account created — please log in.",
+                crate::web::flash::FlashType::Success,
+            );
+            Ok(referrer_policy(
+                HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/login"))
+                    .finish(),
+            ))
+        }
+        Err(msg) => render_err(&msg),
+    }
+}
+
+/// Scan SPT profiles directory to find a profile by username.
+/// Returns the AID (filename stem) if found.
+fn find_profile_by_username(spt_dir: &std::path::Path, username: &str) -> Option<String> {
+    let profiles_dir = spt_dir.join("SPT/user/profiles");
+    let entries = match std::fs::read_dir(&profiles_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(err = %e, "failed to read profiles directory after registration");
+            return None;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let profile_id = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(id) if path.extension().and_then(|e| e.to_str()) == Some("json") => id.to_string(),
+            _ => continue,
+        };
+
+        let profile_json: serde_json::Value = match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+        {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let profile_username = profile_json
+            .pointer("/info/username")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if profile_username == username {
+            return Some(profile_id);
+        }
+    }
+
+    None
 }
 
 pub async fn mod_archive(
@@ -370,8 +655,7 @@ echo ""
 echo "=== Setup Complete ==="
 echo ""
 echo "Next steps:"
-echo "  1. Launch SPT and connect"
-echo "  2. After connecting, register at: $SERVER_URL/quma/register?code={code}"
+echo "  1. Launch SPT and connect to: $SERVER_URL"
 "#
     )
 }
@@ -429,8 +713,7 @@ try {{
     Write-Host "=== Setup Complete ===" -ForegroundColor Green
     Write-Host ""
     Write-Host "Next steps:"
-    Write-Host "  1. Launch SPT and connect"
-    Write-Host "  2. After connecting, register at: $ServerUrl/quma/register?code={code}"
+    Write-Host "  1. Launch SPT and connect to: $ServerUrl"
 }} finally {{
     if (Test-Path $TmpFile) {{ Remove-Item $TmpFile -Force }}
 }}

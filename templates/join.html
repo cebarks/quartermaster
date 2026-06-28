@@ -1,76 +1,34 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Join — {{ server_name }}</title>
-    <link rel="stylesheet" href="/quma/assets/style.css">
-</head>
-<body>
-    <nav>
-        <span class="brand">Quartermaster</span>
-    </nav>
-    <main>
-    <div class="join-page" style="max-width: 540px; margin: 2rem auto;">
-        <h1 style="border-bottom: none; text-align: center; margin-bottom: 0.25rem;">Join {{ server_name }}</h1>
-        <p class="text-muted text-sm" style="text-align: center; margin-bottom: 1.5rem;">
-            SPT {{ spt_version }}
-            {% if fika_installed %} · Fika{% endif %}
-            {% if mod_count > 0 %} · {{ mod_count }} synced mod{% if mod_count != 1 %}s{% endif %}{% endif %}
-        </p>
-
-        {% if let Some(error) = error %}
-        <div class="alert alert-error">{{ error }}</div>
-        {% else %}
-
-        {% if !modsync_installed %}
-        <div class="alert alert-error">
-            NarcoNet is not installed on this server. The bootstrap script may not fully set up mod syncing.
-        </div>
-        {% endif %}
-
-        <div class="card" style="margin-bottom: 1rem;">
-            <h2>1. Set Up Your Client</h2>
-            <p class="text-muted text-sm" style="margin-bottom: 0.75rem;">Run from your SPT installation directory:</p>
-
-            <details open>
-                <summary>Linux / macOS</summary>
-                <pre><code>curl -sSL '{{ external_url }}/quma/join/bootstrap.sh?code={{ code }}' | bash</code></pre>
-                <p class="text-sm text-muted">Or <a href="/quma/join/bootstrap.sh?code={{ code }}">download the script</a> and run it manually.</p>
-            </details>
-
-            <details>
-                <summary>Windows (PowerShell)</summary>
-                <pre><code>irm '{{ external_url }}/quma/join/bootstrap.ps1?code={{ code }}' | iex</code></pre>
-                <p class="text-sm text-muted">Or <a href="/quma/join/bootstrap.ps1?code={{ code }}">download the script</a> and run it manually.</p>
-            </details>
-
-            <details>
-                <summary>Manual Setup</summary>
-                <ol style="padding-left: 1.25rem; line-height: 2;">
-                    <li>Download the <a href="/quma/join/mods.zip?code={{ code }}">mod archive</a></li>
-                    <li>Extract into your SPT directory (overwrite if prompted)</li>
-                </ol>
-            </details>
-        </div>
-
-        <div class="card" style="margin-bottom: 1rem;">
-            <h2>2. Connect</h2>
-            <p>Launch SPT and connect. The bootstrap script configures the server address automatically.</p>
-            <details>
-                <summary>Set address manually</summary>
-                <p class="text-sm">In SPT Launcher, go to Settings, enable Developer Mode, and set the URL to:</p>
-                <pre><code>{{ external_url }}</code></pre>
-            </details>
-        </div>
-
-        <div class="card">
-            <h2>3. Register</h2>
-            <p>After connecting, <a href="/quma/register?code={{ code }}">register your account</a> to access the dashboard.</p>
-        </div>
-
-        {% endif %}
-    </div>
-    </main>
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}Join — Quartermaster{% endblock %}
+{% block flash %}{% endblock %}
+{% block content %}
+<div class="card auth-card auth-center">
+    <h2>Join {{ server_name }}</h2>
+    <p class="text-muted text-sm" style="text-align: center; margin-bottom: 1rem;">
+        SPT {{ spt_version }}
+        {% if fika_installed %} · Fika{% endif %}
+        {% if mod_count > 0 %} · {{ mod_count }} synced mod{% if mod_count != 1 %}s{% endif %}{% endif %}
+    </p>
+    {% if let Some(error) = error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="/quma/join">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="code" value="{{ code }}">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required autofocus
+               maxlength="32" pattern="[A-Za-z0-9_]+" title="Letters, numbers, and underscores only">
+        <label for="edition">SPT Edition</label>
+        <select id="edition" name="edition" required>
+            {% for edition in editions %}
+            <option value="{{ edition }}">{{ edition }}</option>
+            {% endfor %}
+        </select>
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required minlength="8">
+        <label for="password_confirm">Confirm Password</label>
+        <input type="password" id="password_confirm" name="password_confirm" required minlength="8">
+        <button type="submit" class="btn">Create Account</button>
+    </form>
+</div>
+{% endblock %}

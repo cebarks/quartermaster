@@ -109,6 +109,31 @@ impl SptClient {
             .context("failed to parse headless clients response")
     }
 
+    pub async fn register_profile(
+        &self,
+        username: &str,
+        password: &str,
+        edition: &str,
+    ) -> Result<()> {
+        let body = serde_json::json!({
+            "username": username,
+            "password": password,
+            "edition": edition,
+        });
+
+        self.client
+            .post(format!("{}/launcher/profile/register", self.base_url))
+            .header("responsecompressed", "0")
+            .json(&body)
+            .send()
+            .await
+            .context("failed to reach SPT server for profile registration")?
+            .error_for_status()
+            .context("SPT server rejected profile registration")?;
+
+        Ok(())
+    }
+
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
@@ -135,5 +160,15 @@ mod tests {
     fn spt_client_custom_port() {
         let client = SptClient::new("10.0.0.1", 7070).unwrap();
         assert_eq!(client.base_url(), "https://10.0.0.1:7070");
+    }
+
+    #[test]
+    fn spt_client_register_url() {
+        let client = SptClient::new("192.168.1.10", 6969).unwrap();
+        // Verify the URL that register_profile would target
+        assert_eq!(
+            format!("{}/launcher/profile/register", client.base_url()),
+            "https://192.168.1.10:6969/launcher/profile/register"
+        );
     }
 }

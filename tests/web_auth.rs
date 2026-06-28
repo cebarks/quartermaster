@@ -134,74 +134,6 @@ async fn logout_clears_session() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 }
 
-// ── Register ──────────────────────────────────────────────────────────
-
-#[actix_web::test]
-async fn register_page_without_code_returns_400() {
-    let mut app = TestAppBuilder::new().build().await;
-    let resp = app.get("/quma/register").await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body_bytes = test::read_body(resp).await;
-    let body = String::from_utf8_lossy(&body_bytes);
-    assert!(body.contains("Invite code required"));
-}
-
-#[actix_web::test]
-async fn register_page_invalid_code_returns_400() {
-    let mut app = TestAppBuilder::new().build().await;
-    let resp = app.get("/quma/register?code=invalidcode").await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body_bytes = test::read_body(resp).await;
-    let body = String::from_utf8_lossy(&body_bytes);
-    assert!(body.contains("Invalid invite code"));
-}
-
-#[actix_web::test]
-async fn register_password_too_short() {
-    let mut app = TestAppBuilder::new().build().await;
-
-    // Create invite
-    {
-        let db = app.db.lock();
-        db.create_invite("TESTCODE", None, None).unwrap();
-    }
-
-    let csrf = app.csrf_token_from("/quma/register?code=TESTCODE").await;
-    let form_data = format!(
-        "code=TESTCODE&profile_id=test-profile&password=short&password_confirm=short&csrf_token={}",
-        urlencoding::encode(&csrf)
-    );
-    let resp = app.post_form("/quma/register", &form_data).await;
-
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body_bytes = test::read_body(resp).await;
-    let body = String::from_utf8_lossy(&body_bytes);
-    assert!(body.contains("at least 8 characters"));
-}
-
-#[actix_web::test]
-async fn register_password_mismatch() {
-    let mut app = TestAppBuilder::new().build().await;
-
-    // Create invite
-    {
-        let db = app.db.lock();
-        db.create_invite("TESTCODE", None, None).unwrap();
-    }
-
-    let csrf = app.csrf_token_from("/quma/register?code=TESTCODE").await;
-    let form_data = format!(
-        "code=TESTCODE&profile_id=test-profile&password=password123&password_confirm=different123&csrf_token={}",
-        urlencoding::encode(&csrf)
-    );
-    let resp = app.post_form("/quma/register", &form_data).await;
-
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body_bytes = test::read_body(resp).await;
-    let body = String::from_utf8_lossy(&body_bytes);
-    assert!(body.contains("Passwords do not match"));
-}
-
 // ── Password Reset ────────────────────────────────────────────────────
 
 #[actix_web::test]
@@ -289,4 +221,191 @@ async fn reset_password_submit_changes_password() {
     app.login_as("testuser", "newpass123").await;
     let resp = app.get("/quma/").await;
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+// ── Join (Registration) ──────────────────────────────────────────────
+
+#[actix_web::test]
+async fn join_page_without_code_returns_400() {
+    let mut app = TestAppBuilder::new().build().await;
+    let resp = app.get("/quma/join").await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("Invite code required"));
+}
+
+#[actix_web::test]
+async fn join_page_invalid_code_returns_400() {
+    let mut app = TestAppBuilder::new().build().await;
+    let resp = app.get("/quma/join?code=invalidcode").await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("Invalid invite code"));
+}
+
+#[actix_web::test]
+async fn join_page_valid_code_renders_form() {
+    let mut app = TestAppBuilder::new()
+        .with_invite("TESTJOIN", None)
+        .build()
+        .await;
+    let resp = app.get("/quma/join?code=TESTJOIN").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("TESTJOIN"));
+    assert!(body.contains("edition"));
+    assert!(body.contains("password"));
+    assert!(extract_csrf_token(&body).is_some());
+}
+
+#[actix_web::test]
+async fn join_submit_password_too_short() {
+    let mut app = TestAppBuilder::new()
+        .with_invite("TESTJOIN", None)
+        .build()
+        .await;
+
+    let csrf = app.csrf_token_from("/quma/join?code=TESTJOIN").await;
+    let form_data = format!(
+        "code=TESTJOIN&username=newuser&password=short&password_confirm=short&edition=Standard&csrf_token={}",
+        urlencoding::encode(&csrf)
+    );
+    let resp = app.post_form("/quma/join", &form_data).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("at least 8 characters"));
+}
+
+#[actix_web::test]
+async fn join_submit_password_mismatch() {
+    let mut app = TestAppBuilder::new()
+        .with_invite("TESTJOIN", None)
+        .build()
+        .await;
+
+    let csrf = app.csrf_token_from("/quma/join?code=TESTJOIN").await;
+    let form_data = format!(
+        "code=TESTJOIN&username=newuser&password=password123&password_confirm=different123&edition=Standard&csrf_token={}",
+        urlencoding::encode(&csrf)
+    );
+    let resp = app.post_form("/quma/join", &form_data).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("Passwords do not match"));
+}
+
+#[actix_web::test]
+async fn join_submit_invalid_edition() {
+    let mut app = TestAppBuilder::new()
+        .with_invite("TESTJOIN", None)
+        .build()
+        .await;
+
+    let csrf = app.csrf_token_from("/quma/join?code=TESTJOIN").await;
+    let form_data = format!(
+        "code=TESTJOIN&username=newuser&password=password123&password_confirm=password123&edition=FakeEdition&csrf_token={}",
+        urlencoding::encode(&csrf)
+    );
+    let resp = app.post_form("/quma/join", &form_data).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("Invalid edition"));
+}
+
+#[actix_web::test]
+async fn join_submit_username_taken_active_account() {
+    let mut app = TestAppBuilder::new()
+        .with_user("existinguser", "password123", "player")
+        .with_invite("TESTJOIN", None)
+        .build()
+        .await;
+
+    let csrf = app.csrf_token_from("/quma/join?code=TESTJOIN").await;
+    let form_data = format!(
+        "code=TESTJOIN&username=existinguser&password=password123&password_confirm=password123&edition=Standard&csrf_token={}",
+        urlencoding::encode(&csrf)
+    );
+    let resp = app.post_form("/quma/join", &form_data).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("already taken"));
+}
+
+#[actix_web::test]
+async fn join_submit_username_taken_locked_account() {
+    let mut app = TestAppBuilder::new()
+        .with_invite("TESTJOIN", None)
+        .build()
+        .await;
+
+    // Create a locked account (no password, like the proxy auto-creates)
+    {
+        let db = app.db.lock();
+        db.insert_user("lockeduser", Some("profile-123"), None, "player")
+            .unwrap();
+    }
+
+    let csrf = app.csrf_token_from("/quma/join?code=TESTJOIN").await;
+    let form_data = format!(
+        "code=TESTJOIN&username=lockeduser&password=newpass123&password_confirm=newpass123&edition=Standard&csrf_token={}",
+        urlencoding::encode(&csrf)
+    );
+    let resp = app.post_form("/quma/join", &form_data).await;
+
+    // Locked accounts are also rejected — no claim flow
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("already taken"));
+
+    // Verify invite was NOT consumed
+    {
+        let db = app.db.lock();
+        let invite = db.get_invite("TESTJOIN").unwrap().unwrap();
+        assert!(invite.used_by.is_none());
+    }
+}
+
+#[actix_web::test]
+async fn join_submit_invalid_username_chars() {
+    let mut app = TestAppBuilder::new()
+        .with_invite("TESTJOIN", None)
+        .build()
+        .await;
+
+    let csrf = app.csrf_token_from("/quma/join?code=TESTJOIN").await;
+    let form_data = format!(
+        "code=TESTJOIN&username=bad+user!&password=password123&password_confirm=password123&edition=Standard&csrf_token={}",
+        urlencoding::encode(&csrf)
+    );
+    let resp = app.post_form("/quma/join", &form_data).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body_bytes = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body_bytes);
+    assert!(body.contains("letters, numbers, and underscores"));
+}
+
+#[actix_web::test]
+async fn join_submit_missing_csrf() {
+    let mut app = TestAppBuilder::new()
+        .with_invite("TESTJOIN", None)
+        .build()
+        .await;
+
+    let form_data = "code=TESTJOIN&username=newuser&password=password123&password_confirm=password123&edition=Standard&csrf_token=badtoken";
+    let resp = app.post_form("/quma/join", form_data).await;
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

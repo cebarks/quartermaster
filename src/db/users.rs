@@ -285,15 +285,6 @@ impl Database {
         )
     }
 
-    /// Update an invite code's user_id unconditionally (no IS NULL guard).
-    /// Used after creating a user to replace the temporary 0 with the real user_id.
-    pub fn update_invite_user(&self, code: &str, user_id: i64) -> rusqlite::Result<usize> {
-        self.conn.execute(
-            "UPDATE invite_codes SET used_by = ?1 WHERE code = ?2",
-            params![user_id, code],
-        )
-    }
-
     pub fn list_invite_codes(&self) -> rusqlite::Result<Vec<InviteCodeWithUsers>> {
         let mut stmt = self.conn.prepare(
             "SELECT ic.id, ic.code, ic.created_by, ic.used_by, ic.created_at, ic.used_at, ic.expires_at,

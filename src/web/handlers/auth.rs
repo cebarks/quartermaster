@@ -6,9 +6,9 @@ use subtle::ConstantTimeEq;
 
 use actix_web::HttpRequest;
 
-use crate::spt::profiles::{list_profiles, SptProfile};
 use crate::web::auth::{
-    hash_password, require_auth, set_session_user, verify_password, SessionUser,
+    hash_password, require_auth, set_session_user, verify_password, SessionUser, MAX_PASSWORD_LEN,
+    MIN_PASSWORD_LEN,
 };
 use crate::web::error::WebError;
 use crate::web::nav::NavContext;
@@ -24,15 +24,6 @@ struct LoginTemplate {
     flash: Option<crate::web::flash::FlashMessage>,
 }
 
-#[derive(Template)]
-#[template(path = "register.html")]
-struct RegisterTemplate {
-    error: Option<String>,
-    code: String,
-    profiles: Vec<SptProfile>,
-    csrf_token: String,
-}
-
 // -- Form structs --
 
 #[derive(serde::Deserialize)]
@@ -42,41 +33,7 @@ pub struct LoginForm {
     csrf_token: String,
 }
 
-#[derive(serde::Deserialize)]
-pub struct RegisterForm {
-    code: String,
-    profile_id: String,
-    password: String,
-    password_confirm: String,
-    csrf_token: String,
-}
-
-#[derive(serde::Deserialize)]
-pub struct RegisterQuery {
-    code: Option<String>,
-}
-
-const MIN_PASSWORD_LEN: usize = 8;
-const MAX_PASSWORD_LEN: usize = 128;
-
 // -- Helpers --
-
-fn render_register_error(
-    msg: &str,
-    code: String,
-    profiles: Vec<SptProfile>,
-    csrf_token: String,
-) -> actix_web::Result<HttpResponse> {
-    let tmpl = RegisterTemplate {
-        error: Some(msg.to_string()),
-        code,
-        profiles,
-        csrf_token,
-    };
-    Ok(HttpResponse::BadRequest()
-        .content_type("text/html")
-        .body(tmpl.render().map_err(WebError::from)?))
-}
 
 // -- Handlers --
 
@@ -197,161 +154,6 @@ pub async fn login_submit(
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/"))
         .finish())
-}
-
-pub async fn register_page(
-    query: Query<RegisterQuery>,
-    state: Data<AppState>,
-    session: Session,
-) -> actix_web::Result<HttpResponse> {
-    let csrf_token = crate::web::csrf::get_or_create_token(&session);
-    let code = query.code.clone().unwrap_or_default();
-
-    let db = state.db.clone();
-    let code_clone = code.clone();
-    let invite_result = web::block(move || {
-        let db = db.lock();
-        crate::web::invite::validate_invite_code(&db, &code_clone)
-    })
-    .await
-    .map_err(WebError::from)?;
-
-    if let Err(e) = invite_result {
-        let tmpl = RegisterTemplate {
-            error: Some(e.to_string()),
-            code,
-            profiles: vec![],
-            csrf_token,
-        };
-        return Ok(HttpResponse::BadRequest()
-            .content_type("text/html")
-            .body(tmpl.render().map_err(WebError::from)?));
-    }
-
-    // Validation passed, load profiles
-    let spt_dir = state.spt_dir.clone();
-    let profiles = web::block(move || list_profiles(&spt_dir))
-        .await
-        .map_err(WebError::from)?
-        .unwrap_or_default();
-    let tmpl = RegisterTemplate {
-        error: None,
-        code,
-        profiles,
-        csrf_token,
-    };
-    Ok(HttpResponse::Ok()
-        .content_type("text/html")
-        .body(tmpl.render().map_err(WebError::from)?))
-}
-
-pub async fn register_submit(
-    form: Form<RegisterForm>,
-    state: Data<AppState>,
-    session: Session,
-) -> actix_web::Result<HttpResponse> {
-    let form = form.into_inner();
-
-    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
-        return Err(WebError::Forbidden.into());
-    }
-
-    let csrf_token = crate::web::csrf::get_or_create_token(&session);
-
-    let spt_dir = state.spt_dir.clone();
-    let profiles = web::block(move || list_profiles(&spt_dir))
-        .await
-        .map_err(WebError::from)?
-        .unwrap_or_default();
-
-    if form.password.len() < MIN_PASSWORD_LEN {
-        return render_register_error(
-            &format!("Password must be at least {MIN_PASSWORD_LEN} characters"),
-            form.code,
-            profiles,
-            csrf_token,
-        );
-    }
-
-    if form.password.len() > MAX_PASSWORD_LEN {
-        return render_register_error(
-            &format!("Password must be at most {MAX_PASSWORD_LEN} characters"),
-            form.code,
-            profiles,
-            csrf_token,
-        );
-    }
-
-    if form.password != form.password_confirm {
-        return render_register_error("Passwords do not match", form.code, profiles, csrf_token);
-    }
-
-    if form.profile_id.is_empty() {
-        return render_register_error(
-            "Please select your SPT profile",
-            form.code,
-            profiles,
-            csrf_token,
-        );
-    }
-
-    let profile = profiles.iter().find(|p| p.aid == form.profile_id);
-
-    let username = match profile {
-        Some(p) => p.username.clone(),
-        None => {
-            return render_register_error(
-                "Invalid profile selection",
-                form.code,
-                profiles,
-                csrf_token,
-            );
-        }
-    };
-
-    let password = form.password.clone();
-    let password_hash = web::block(move || hash_password(&password))
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-    let db = state.db.clone();
-    let code = form.code.clone();
-    let profile_id = form.profile_id.clone();
-
-    let result = web::block(move || {
-        let db = db.lock();
-
-        if db.get_user_by_username(&username)?.is_some() {
-            return Ok::<_, rusqlite::Error>(Err(
-                "A user with this profile already exists".to_string()
-            ));
-        }
-
-        // Consume the invite atomically (prevents race with concurrent registrations)
-        let used = db.use_invite(&code, 0)?;
-        if used == 0 {
-            return Ok(Err("Invite code is invalid or expired".to_string()));
-        }
-
-        let user_id =
-            db.insert_user(&username, Some(&profile_id), Some(&password_hash), "player")?;
-
-        // Update the invite to point to the real user_id (no IS NULL guard needed)
-        db.update_invite_user(&code, user_id)?;
-
-        Ok(Ok(user_id))
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
-
-    match result {
-        Ok(_user_id) => Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/login"))
-            .finish()),
-        Err(msg) => render_register_error(&msg, form.code, profiles, csrf_token),
-    }
 }
 
 pub async fn logout(session: Session, form: Form<crate::web::csrf::CsrfForm>) -> HttpResponse {
