@@ -337,18 +337,19 @@ pub async fn join_submit(
             return Ok::<_, rusqlite::Error>(Err("Username is already taken".to_string()));
         }
 
-        let used = db.use_invite(&code_for_invite, 0)?;
-        if used == 0 {
-            return Ok(Err("Invite code is invalid or expired".to_string()));
-        }
-
+        // Create user first so we have a real user_id for the FK on invite_codes.used_by
         let user_id = db.insert_user(
             &username,
             profile_aid.as_deref(),
             Some(&password_hash),
             "player",
         )?;
-        db.update_invite_user(&code_for_invite, user_id)?;
+
+        let used = db.use_invite(&code_for_invite, user_id)?;
+        if used == 0 {
+            // tx rolls back on drop — removes the user too
+            return Ok(Err("Invite code is invalid or expired".to_string()));
+        }
 
         tx.commit()?;
         Ok(Ok(()))
