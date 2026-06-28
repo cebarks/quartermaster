@@ -106,6 +106,7 @@ actix-web-lab = "0.26"
 async-stream = "0.3"
 tokio-stream = "0.1"
 bytestring = "1"
+mini-moka = "0.10.3"
 
 [dev-dependencies]
 assert_cmd = "2"

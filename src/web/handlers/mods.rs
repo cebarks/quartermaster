@@ -739,7 +739,7 @@ pub async fn dep_tree_partial(
     let deps = match (query.mod_id, &query.ver) {
         (Some(mod_id), Some(ver)) => state
             .forge
-            .get_dependencies(&[(mod_id, ver.as_str())])
+            .get_dependencies(&[(&mod_id.to_string(), ver.as_str())])
             .await
             .unwrap_or_default(),
         _ => vec![],
