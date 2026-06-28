@@ -358,6 +358,15 @@ fn extract_mod_7z(
                 ));
             }
 
+            // Reject symlinks — 7z encodes these as Windows reparse points.
+            // Mirrors the is_symlink() check in extract_mod_zip.
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+            if entry.windows_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err(sevenz_rust2::Error::Other(
+                    format!("archive contains symlink entry: {raw_name}").into(),
+                ));
+            }
+
             let relative = if !prefix.is_empty() && raw_name.starts_with(&prefix) {
                 &raw_name[prefix.len()..]
             } else {
@@ -1181,6 +1190,31 @@ mod tests {
         assert!(
             err.contains("anti-item"),
             "error should mention anti-item: {err}"
+        );
+    }
+
+    #[test]
+    fn sevenz_rejects_symlink_entry() {
+        use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = ArchiveWriter::create(tmp.path()).unwrap();
+        let entry = ArchiveEntry {
+            name: "SPT/user/mods/TestMod/evil_link".to_string(),
+            has_windows_attributes: true,
+            windows_attributes: 0x0400, // FILE_ATTRIBUTE_REPARSE_POINT
+            ..Default::default()
+        };
+        writer.push_archive_entry::<&[u8]>(entry, None).unwrap();
+        writer.finish().unwrap();
+
+        let tmp_dir = TempDir::new().unwrap();
+        let result = extract_mod(tmp.path(), tmp_dir.path());
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("symlink"),
+            "error should mention symlink: {err}"
         );
     }
 
