@@ -312,6 +312,22 @@ impl ForgeClient {
         Ok(parsed.data)
     }
 
+    /// Get all known SPT versions with mod counts and release links.
+    #[allow(dead_code)] // plumbing for future UI
+    pub async fn get_spt_versions(&self) -> Result<Vec<SptVersion>> {
+        let url = format!("{}/spt/versions", self.base_url);
+        let req = self.client.get(&url);
+
+        let body = self
+            .send_cached(req)
+            .await
+            .context("get_spt_versions request failed")?;
+
+        let parsed: SptVersionsResponse =
+            serde_json::from_slice(&body).context("get_spt_versions: failed to parse response")?;
+        Ok(parsed.data)
+    }
+
     fn is_forge_url(&self, url: &str) -> bool {
         let origin = |s: &str| {
             let u = reqwest::Url::parse(s).ok()?;
@@ -1227,5 +1243,47 @@ mod tests {
         let versions = client.get_addon_versions(1).await.unwrap();
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].version, "1.2.0");
+    }
+
+    #[tokio::test]
+    async fn get_spt_versions_returns_list() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": [
+                {
+                    "id": 2,
+                    "version": "3.11.3",
+                    "version_major": 3,
+                    "version_minor": 11,
+                    "version_patch": 3,
+                    "version_labels": "",
+                    "mod_count": 371,
+                    "link": "https://github.com/sp-tarkov/build/releases/tag/3.11.3",
+                    "color_class": "green",
+                    "created_at": "2025-04-08T19:29:40.000000Z",
+                    "updated_at": "2025-04-08T19:29:40.000000Z"
+                },
+                {
+                    "id": 3,
+                    "version": "3.11.2",
+                    "mod_count": 371
+                }
+            ]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/spt/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let versions = client.get_spt_versions().await.unwrap();
+
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version, "3.11.3");
+        assert_eq!(versions[0].mod_count, Some(371));
+        assert_eq!(versions[1].version, "3.11.2");
     }
 }

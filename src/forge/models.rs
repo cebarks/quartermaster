@@ -294,6 +294,32 @@ pub struct ForgeAddonVersionsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// SPT version types
+// ---------------------------------------------------------------------------
+
+/// An SPT version from the Forge API.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SptVersion {
+    pub id: i64,
+    pub version: String,
+    pub version_major: Option<i64>,
+    pub version_minor: Option<i64>,
+    pub version_patch: Option<i64>,
+    pub version_labels: Option<String>,
+    pub mod_count: Option<i64>,
+    pub link: Option<String>,
+    pub color_class: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// Response envelope for SPT versions.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SptVersionsResponse {
+    pub data: Vec<SptVersion>,
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -740,5 +766,35 @@ mod tests {
         assert_eq!(v.mod_version_constraint.as_deref(), Some("^2.0.0"));
         assert_eq!(v.content_length, Some(52428800));
         assert_eq!(v.downloads, Some(523));
+    }
+
+    #[test]
+    fn deserialize_spt_version() {
+        let json = r#"{
+            "id": 2,
+            "version": "3.11.3",
+            "version_major": 3,
+            "version_minor": 11,
+            "version_patch": 3,
+            "version_labels": "",
+            "mod_count": 371,
+            "link": "https://github.com/sp-tarkov/build/releases/tag/3.11.3",
+            "color_class": "green",
+            "created_at": "2025-04-08T19:29:40.000000Z",
+            "updated_at": "2025-04-08T19:29:40.000000Z"
+        }"#;
+
+        let v: SptVersion = serde_json::from_str(json).expect("should deserialize SptVersion");
+        assert_eq!(v.id, 2);
+        assert_eq!(v.version, "3.11.3");
+        assert_eq!(v.version_major, Some(3));
+        assert_eq!(v.version_minor, Some(11));
+        assert_eq!(v.version_patch, Some(3));
+        assert_eq!(v.mod_count, Some(371));
+        assert_eq!(
+            v.link.as_deref(),
+            Some("https://github.com/sp-tarkov/build/releases/tag/3.11.3")
+        );
+        assert_eq!(v.color_class.as_deref(), Some("green"));
     }
 }
