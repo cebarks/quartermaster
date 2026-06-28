@@ -158,37 +158,45 @@ pub async fn restart_server(
             .finish());
     }
 
-    // Drain queue if configured
+    // Drain queue if configured. Errors here are non-fatal — the server is
+    // already stopped, so we log the failure and continue to the start phase.
     if state.config().auto_drain_on_lifecycle {
         let db = state.db.clone();
-        let ops = web::block(move || {
+        match web::block(move || {
             let db = db.lock();
             db.list_pending_ops()
         })
         .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-        for op in &ops {
-            let result = match op.action {
-                crate::db::users::QueueAction::Install => {
-                    super::queue::apply_install(op, &state).await
+        {
+            Ok(Ok(ops)) => {
+                for op in &ops {
+                    let result = match op.action {
+                        crate::db::users::QueueAction::Install => {
+                            super::queue::apply_install(op, &state).await
+                        }
+                        crate::db::users::QueueAction::Update => {
+                            super::queue::apply_update(op, &state).await
+                        }
+                        crate::db::users::QueueAction::Remove => {
+                            super::queue::apply_remove(op, &state).await
+                        }
+                    };
+                    if result.is_ok() {
+                        let db = state.db.clone();
+                        let op_id = op.id;
+                        let _ = web::block(move || {
+                            let db = db.lock();
+                            db.delete_pending_op(op_id)
+                        })
+                        .await;
+                    }
                 }
-                crate::db::users::QueueAction::Update => {
-                    super::queue::apply_update(op, &state).await
-                }
-                crate::db::users::QueueAction::Remove => {
-                    super::queue::apply_remove(op, &state).await
-                }
-            };
-            if result.is_ok() {
-                let db = state.db.clone();
-                let op_id = op.id;
-                let _ = web::block(move || {
-                    let db = db.lock();
-                    db.delete_pending_op(op_id)
-                })
-                .await;
+            }
+            Ok(Err(e)) => {
+                tracing::error!(err = %e, "failed to list pending ops during restart queue drain");
+            }
+            Err(e) => {
+                tracing::error!(err = %e, "blocking error during restart queue drain");
             }
         }
     }
