@@ -144,12 +144,6 @@ pub fn configure_app(
                     .route(web::post().to(handlers::auth::login_submit)),
             )
             .service(
-                web::resource("/register")
-                    .wrap(Governor::new(&governor_conf))
-                    .route(web::get().to(handlers::auth::register_page))
-                    .route(web::post().to(handlers::auth::register_submit)),
-            )
-            .service(
                 web::resource("/reset-password")
                     .wrap(Governor::new(&governor_conf))
                     .route(web::get().to(handlers::auth::reset_password_page))
@@ -158,7 +152,8 @@ pub fn configure_app(
             .service(
                 web::resource("/join")
                     .wrap(Governor::new(&governor_conf))
-                    .route(web::get().to(handlers::join::join_page)),
+                    .route(web::get().to(handlers::join::join_page))
+                    .route(web::post().to(handlers::join::join_submit)),
             )
             .service(
                 web::resource("/join/mods.zip")
@@ -179,8 +174,6 @@ pub fn configure_app(
         // Same routes without rate limiting (for tests)
         quma_scope = quma_scope
             .route("/login", web::post().to(handlers::auth::login_submit))
-            .route("/register", web::get().to(handlers::auth::register_page))
-            .route("/register", web::post().to(handlers::auth::register_submit))
             .route(
                 "/reset-password",
                 web::get().to(handlers::auth::reset_password_page),
@@ -190,6 +183,7 @@ pub fn configure_app(
                 web::post().to(handlers::auth::reset_password_submit),
             )
             .route("/join", web::get().to(handlers::join::join_page))
+            .route("/join", web::post().to(handlers::join::join_submit))
             .route("/join/mods.zip", web::get().to(handlers::join::mod_archive))
             .route(
                 "/join/bootstrap.sh",

@@ -52,15 +52,15 @@ async fn join_page_loads_with_valid_code() {
 }
 
 #[actix_web::test]
-async fn join_page_returns_503_without_external_url() {
+async fn join_page_renders_without_external_url() {
     let mut app = TestAppBuilder::new()
         .with_invite("quma-testcode1", None)
         .build()
         .await;
 
     let resp = app.get("/quma/join?code=quma-testcode1").await;
-    // Default config has no external_url, so should 503
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    // The join page is now a registration form and does not require external_url
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[actix_web::test]
