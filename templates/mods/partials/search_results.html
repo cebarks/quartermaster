@@ -17,6 +17,8 @@
     <span class="badge badge-success">Fika ✓</span>
     {% elif m.fika_compatible == "incompatible" %}
     <span class="badge badge-danger">Fika ✗</span>
+    {% elif m.fika_compatible == "unknown" %}
+    <span class="badge badge-muted">Fika ?</span>
     {% endif %}
 </div>
 {% endfor %}
@@ -33,6 +35,7 @@ document.querySelectorAll('.search-card').forEach(function(card) {
         var badge = '';
         if (fika === 'compatible') badge = ' <span class="badge badge-success">Fika ✓</span>';
         else if (fika === 'incompatible') badge = ' <span class="badge badge-danger">Fika ✗</span>';
+        else if (fika === 'unknown') badge = ' <span class="badge badge-muted">Fika ?</span>';
         preview.innerHTML = '<strong>' + name.replace(/</g, '&lt;') + '</strong> (ID: ' + id + ')' + badge;
         document.getElementById('request-create-form').style.display = 'block';
     });
