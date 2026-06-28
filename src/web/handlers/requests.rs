@@ -298,6 +298,8 @@ async fn trigger_install_for_request(
                 )
                 .await?;
 
+                // TODO(debt): this download/extract/insert block duplicates
+                // download_and_install_with_arc — refactor to reuse it.
                 let link = version
                     .link
                     .as_deref()

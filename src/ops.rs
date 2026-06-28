@@ -909,8 +909,6 @@ pub async fn resolve_and_install_deps(
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("no download link for {} v{}", dep.name, dep.version))?;
 
-        let dep_mod = forge.get_mod(dep.mod_id, false).await?;
-
         let db_id = crate::cli::install::download_and_install_with_arc(
             forge,
             db,
@@ -921,7 +919,7 @@ pub async fn resolve_and_install_deps(
                 forge_version_id: dep.version_id,
                 download_url: link,
                 name: &dep.name,
-                slug: dep_mod.slug.as_deref(),
+                slug: dep.slug.as_deref(),
                 version: &dep.version,
             },
         )
@@ -963,8 +961,12 @@ struct PendingDep {
     version_id: i64,
     name: String,
     version: String,
+    slug: Option<String>,
 }
 
+// TODO(debt): no cycle guard — if the Forge API ever returns circular deps, this
+// stack-overflows. Same issue in cli::install::collect_deps_to_install. Add a
+// visited set or depth limit to both.
 fn collect_web_deps(
     nodes: &[crate::forge::models::DependencyNode],
     db: &Arc<parking_lot::Mutex<crate::db::Database>>,
@@ -1006,6 +1008,7 @@ fn collect_web_deps(
             version_id,
             name: node.name.clone(),
             version,
+            slug: node.slug.clone(),
         });
     }
     Ok(())

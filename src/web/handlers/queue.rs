@@ -245,10 +245,17 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("install op missing version_id"))?;
+
+    {
+        let db = state.db.lock();
+        if db.get_mod_by_forge_id(op.forge_mod_id)?.is_some() {
+            return Ok(());
+        }
+    }
+
     let (link, version_str, full_version) =
         resolve_version_link(state, op.forge_mod_id, version_id).await?;
 
-    // Install dependencies first
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
@@ -299,8 +306,19 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("update op missing version_id"))?;
-    let (link, version_str, _version) =
+    let (link, version_str, full_version) =
         resolve_version_link(state, op.forge_mod_id, version_id).await?;
+
+    let dep_db_ids = crate::ops::resolve_and_install_deps(
+        &state.forge,
+        &state.db,
+        &state.spt_dir,
+        &state.config_cloned(),
+        op.forge_mod_id,
+        &full_version,
+    )
+    .await?;
+
     let tmp_dir = download_to_temp(state, &link).await?;
     let archive_path = tmp_dir.path().join("mod.zip");
 
@@ -309,22 +327,26 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let config = state.config_cloned();
     let forge_mod_id = op.forge_mod_id;
 
-    web::block(move || {
+    let mod_db_id = web::block(move || {
         let db = db.lock();
         let installed = db
             .get_mod_by_forge_id(forge_mod_id)?
             .ok_or_else(|| anyhow::anyhow!("mod not found for forge_id {forge_mod_id}"))?;
+        let db_id = installed.id;
         crate::ops::update_mod_from_archive(
             &db,
             &spt_dir,
             &config,
-            installed.id,
+            db_id,
             version_id,
             &version_str,
             &archive_path,
-        )
+        )?;
+        Ok::<_, anyhow::Error>(db_id)
     })
     .await??;
+
+    crate::ops::record_dep_edges(&state.db, mod_db_id, &dep_db_ids);
 
     Ok(())
 }
