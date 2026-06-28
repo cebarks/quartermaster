@@ -115,8 +115,6 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
             .get_mod_by_forge_id(crate::config::FIKA_CLIENT_FORGE_ID)?
             .is_none()
     {
-        // TODO(debt): download_and_install uses println! which bypasses tracing — consider
-        // a quiet/logging mode for non-CLI callers.
         tracing::info!("Fika detected but client mod not installed — auto-installing");
         if let Err(e) = auto_install_bootstrap_mod(
             &forge,

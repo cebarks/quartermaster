@@ -277,6 +277,7 @@ async fn trigger_install_for_request(
         let forge = state.forge.clone();
         let spt_dir = state.spt_dir.clone();
         let db = state.db.clone();
+        let db_edges = db.clone();
         let version = version.clone();
         let mod_name = request.mod_name.clone();
         let mod_slug = request.mod_slug.clone();
@@ -286,6 +287,19 @@ async fn trigger_install_for_request(
 
         tokio::spawn(async move {
             let result = async {
+                // Install dependencies first
+                let dep_db_ids = crate::ops::resolve_and_install_deps(
+                    &forge,
+                    &db,
+                    &spt_dir,
+                    &config,
+                    forge_mod_id,
+                    &version,
+                )
+                .await?;
+
+                // TODO(debt): this download/extract/insert block duplicates
+                // download_and_install_with_arc — refactor to reuse it.
                 let link = version
                     .link
                     .as_deref()
@@ -329,6 +343,9 @@ async fn trigger_install_for_request(
                     Ok::<_, anyhow::Error>(db_id)
                 })
                 .await??;
+
+                // Record dependency edges
+                crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
 
                 let _ = actix_web::web::block(move || {
                     crate::ops::scan_and_record_runtime_files(&db2, db_id, &spt_dir2)

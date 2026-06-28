@@ -220,7 +220,7 @@ async fn resolve_version_link(
     state: &AppState,
     forge_mod_id: i64,
     version_id: i64,
-) -> anyhow::Result<(String, String)> {
+) -> anyhow::Result<(String, String, crate::forge::models::ForgeVersion)> {
     let forge_mod = state.forge.get_mod(forge_mod_id, true).await?;
     let versions = forge_mod.versions.unwrap_or_default();
     let version = versions
@@ -231,7 +231,7 @@ async fn resolve_version_link(
         .link
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
-    Ok((link.to_string(), version.version.clone()))
+    Ok((link.to_string(), version.version.clone(), version.clone()))
 }
 
 async fn download_to_temp(state: &AppState, link: &str) -> anyhow::Result<tempfile::TempDir> {
@@ -245,7 +245,27 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("install op missing version_id"))?;
-    let (link, version_str) = resolve_version_link(state, op.forge_mod_id, version_id).await?;
+
+    {
+        let db = state.db.lock();
+        if db.get_mod_by_forge_id(op.forge_mod_id)?.is_some() {
+            return Ok(());
+        }
+    }
+
+    let (link, version_str, full_version) =
+        resolve_version_link(state, op.forge_mod_id, version_id).await?;
+
+    let dep_db_ids = crate::ops::resolve_and_install_deps(
+        &state.forge,
+        &state.db,
+        &state.spt_dir,
+        &state.config_cloned(),
+        op.forge_mod_id,
+        &full_version,
+    )
+    .await?;
+
     let tmp_dir = download_to_temp(state, &link).await?;
     let archive_path = tmp_dir.path().join("mod.zip");
 
@@ -255,12 +275,12 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let mod_name = op.mod_name.clone();
     let forge_mod_id = op.forge_mod_id;
 
-    web::block(move || {
+    let db_id = web::block(move || {
         let db = db.lock();
-        if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
-            return Ok(());
+        if let Some(existing) = db.get_mod_by_forge_id(forge_mod_id)? {
+            return Ok(Some(existing.id));
         }
-        crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+        let id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
             db: &db,
             spt_dir: &spt_dir,
             config: &config,
@@ -271,9 +291,13 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
             version: &version_str,
             archive_path: &archive_path,
         })?;
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, anyhow::Error>(Some(id))
     })
     .await??;
+
+    if let Some(db_id) = db_id {
+        crate::ops::record_dep_edges(&state.db, db_id, &dep_db_ids);
+    }
 
     Ok(())
 }
@@ -282,7 +306,19 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("update op missing version_id"))?;
-    let (link, version_str) = resolve_version_link(state, op.forge_mod_id, version_id).await?;
+    let (link, version_str, full_version) =
+        resolve_version_link(state, op.forge_mod_id, version_id).await?;
+
+    let dep_db_ids = crate::ops::resolve_and_install_deps(
+        &state.forge,
+        &state.db,
+        &state.spt_dir,
+        &state.config_cloned(),
+        op.forge_mod_id,
+        &full_version,
+    )
+    .await?;
+
     let tmp_dir = download_to_temp(state, &link).await?;
     let archive_path = tmp_dir.path().join("mod.zip");
 
@@ -291,22 +327,26 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let config = state.config_cloned();
     let forge_mod_id = op.forge_mod_id;
 
-    web::block(move || {
+    let mod_db_id = web::block(move || {
         let db = db.lock();
         let installed = db
             .get_mod_by_forge_id(forge_mod_id)?
             .ok_or_else(|| anyhow::anyhow!("mod not found for forge_id {forge_mod_id}"))?;
+        let db_id = installed.id;
         crate::ops::update_mod_from_archive(
             &db,
             &spt_dir,
             &config,
-            installed.id,
+            db_id,
             version_id,
             &version_str,
             &archive_path,
-        )
+        )?;
+        Ok::<_, anyhow::Error>(db_id)
     })
     .await??;
+
+    crate::ops::record_dep_edges(&state.db, mod_db_id, &dep_db_ids);
 
     Ok(())
 }

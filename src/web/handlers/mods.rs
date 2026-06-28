@@ -1080,6 +1080,7 @@ pub async fn install_mod(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let db_edges = db.clone();
     let config = state.config_cloned();
     let version = version.clone();
     let mod_name = mod_info.name.clone();
@@ -1089,6 +1090,14 @@ pub async fn install_mod(
 
     tokio::spawn(async move {
         let result = async {
+            // Install dependencies first
+            let dep_db_ids = crate::ops::resolve_and_install_deps(
+                &forge, &db, &spt_dir, &config, mod_id, &version,
+            )
+            .await?;
+
+            // TODO(debt): this download/extract/insert block duplicates
+            // download_and_install_with_arc — refactor to reuse it.
             let link = version
                 .link
                 .as_deref()
@@ -1112,6 +1121,9 @@ pub async fn install_mod(
             let db2 = db.clone();
             let db3 = db.clone();
             let config2 = config.clone();
+            // TODO(debt): concurrent installs of the same mod can race past the
+            // pre-spawn check — loser hits a UNIQUE constraint on insert_mod,
+            // leaving orphaned dep files. Add constraint-violation handling here.
             let db_id = actix_web::web::block(move || {
                 let db = db.lock();
                 let tx = db.begin_transaction()?;
@@ -1129,6 +1141,9 @@ pub async fn install_mod(
                 Ok::<_, anyhow::Error>(db_id)
             })
             .await??;
+
+            // Record dependency edges
+            crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
 
             // Scan for runtime-generated files and track them separately
             let _ = actix_web::web::block(move || {
@@ -1298,9 +1313,20 @@ pub async fn update_mod(
     let config = state.config_cloned();
     let version = version.clone();
     let update_cache = state.update_cache.clone();
+    let forge_mod_id = installed.forge_mod_id;
 
     tokio::spawn(async move {
         let result = async {
+            let dep_db_ids = crate::ops::resolve_and_install_deps(
+                &forge,
+                &db,
+                &spt_dir,
+                &config,
+                forge_mod_id,
+                &version,
+            )
+            .await?;
+
             let link = version
                 .link
                 .as_deref()
@@ -1329,6 +1355,8 @@ pub async fn update_mod(
                 version.version.clone(),
             )
             .await?;
+
+            crate::ops::record_dep_edges(&db, mod_db_id, &dep_db_ids);
 
             // Regenerate NarcoNet config if enabled
             let db2 = db.clone();

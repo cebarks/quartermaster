@@ -36,6 +36,10 @@ fn detect_format(archive_path: &Path) -> Result<ArchiveFormat> {
     )
 }
 
+fn normalize_archive_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
 /// List all entry names in an archive (ZIP or 7z).
 fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
     match detect_format(archive_path)? {
@@ -44,7 +48,7 @@ fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
                 .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
             let archive = ZipArchive::new(file)
                 .with_context(|| format!("failed to read ZIP: {}", archive_path.display()))?;
-            Ok(archive.file_names().map(String::from).collect())
+            Ok(archive.file_names().map(normalize_archive_path).collect())
         }
         ArchiveFormat::SevenZ => {
             let mut file = fs::File::open(archive_path)
@@ -56,7 +60,7 @@ fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
                 .files
                 .iter()
                 .map(|entry| {
-                    let name = entry.name().to_string();
+                    let name = normalize_archive_path(entry.name());
                     if entry.is_directory() && !name.ends_with('/') {
                         format!("{name}/")
                     } else {
@@ -251,7 +255,7 @@ fn extract_mod_zip(
             .by_index(i)
             .with_context(|| format!("failed to read ZIP entry {i}"))?;
 
-        let raw_name = entry.name().to_string();
+        let raw_name = normalize_archive_path(entry.name());
 
         if entry.is_symlink() {
             anyhow::bail!("archive contains symlink entry: {raw_name}");
@@ -344,7 +348,7 @@ fn extract_mod_7z(
 
     reader
         .for_each_entries(|entry, reader| {
-            let raw_name = entry.name().to_string();
+            let raw_name = normalize_archive_path(entry.name());
 
             // Reject anti-items — deletion markers used in incremental 7z archives
             // that should not be extracted as real files
@@ -1191,5 +1195,82 @@ mod tests {
             err.contains("path traversal"),
             "error should mention path traversal: {err}"
         );
+    }
+
+    #[test]
+    fn extract_zip_normalizes_backslash_paths() {
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zip = ZipWriter::new(buf);
+        let opts = SimpleFileOptions::default();
+        zip.start_file("SPT\\user\\mods\\TestMod\\package.json", opts)
+            .unwrap();
+        zip.write_all(b"{}").unwrap();
+        zip.start_file("BepInEx\\plugins\\TestPlugin\\test.dll", opts)
+            .unwrap();
+        zip.write_all(b"\x00\x01").unwrap();
+        let buf = zip.finish().unwrap();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(buf.get_ref()).unwrap();
+        tmp.flush().unwrap();
+
+        let tmp_dir = TempDir::new().unwrap();
+        let files = extract_mod(tmp.path(), tmp_dir.path()).unwrap();
+
+        assert_eq!(files.len(), 2);
+        for f in &files {
+            assert!(
+                !f.path.contains('\\'),
+                "path should not contain backslashes: {}",
+                f.path
+            );
+        }
+        assert!(tmp_dir
+            .path()
+            .join("SPT/user/mods/TestMod/package.json")
+            .exists());
+        assert!(tmp_dir
+            .path()
+            .join("BepInEx/plugins/TestPlugin/test.dll")
+            .exists());
+    }
+
+    #[test]
+    fn detect_mod_type_with_backslash_paths() {
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zip = ZipWriter::new(buf);
+        let opts = SimpleFileOptions::default();
+        zip.start_file("SPT\\user\\mods\\TestMod\\package.json", opts)
+            .unwrap();
+        zip.write_all(b"{}").unwrap();
+        zip.start_file("BepInEx\\plugins\\TestPlugin.dll", opts)
+            .unwrap();
+        zip.write_all(b"\x00\x01").unwrap();
+        let buf = zip.finish().unwrap();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(buf.get_ref()).unwrap();
+        tmp.flush().unwrap();
+
+        let result = detect_mod_type(tmp.path()).unwrap();
+        assert_eq!(result, ModType::Hybrid);
+    }
+
+    #[test]
+    fn strip_prefix_with_backslash_wrapper() {
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zip = ZipWriter::new(buf);
+        let opts = SimpleFileOptions::default();
+        zip.start_file("SAIN\\SPT\\user\\mods\\SAIN\\package.json", opts)
+            .unwrap();
+        zip.write_all(b"{}").unwrap();
+        zip.start_file("SAIN\\SPT\\user\\mods\\SAIN\\src\\mod.ts", opts)
+            .unwrap();
+        zip.write_all(b"// code").unwrap();
+        let buf = zip.finish().unwrap();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(buf.get_ref()).unwrap();
+        tmp.flush().unwrap();
+
+        let prefix = detect_strip_prefix(tmp.path()).unwrap();
+        assert_eq!(prefix, "SAIN/");
     }
 }

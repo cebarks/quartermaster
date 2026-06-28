@@ -846,6 +846,174 @@ pub fn collect_all_reverse_deps(db: &Database, mod_db_id: i64) -> Result<Vec<Ins
     Ok(result)
 }
 
+/// Resolve and install all dependencies for a mod.
+///
+/// Reuses `download_and_install_with_arc` for each dependency so we get
+/// staging-directory safety and proper DB recording. Returns the DB IDs
+/// of installed dependencies for recording edges.
+pub async fn resolve_and_install_deps(
+    forge: &crate::forge::client::ForgeClient,
+    db: &Arc<parking_lot::Mutex<crate::db::Database>>,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    forge_mod_id: i64,
+    selected_version: &crate::forge::models::ForgeVersion,
+) -> Result<Vec<i64>> {
+    let dep_nodes = forge
+        .get_dependencies(&[(&forge_mod_id.to_string(), &selected_version.version)])
+        .await?;
+
+    let mut to_install = Vec::new();
+    collect_web_deps(&dep_nodes, db, &mut to_install)?;
+
+    if !to_install.is_empty() {
+        tracing::info!(
+            count = to_install.len(),
+            deps = ?to_install.iter().map(|d| &d.name).collect::<Vec<_>>(),
+            "installing dependencies"
+        );
+    }
+
+    let mut installed_db_ids = Vec::new();
+
+    for dep in &to_install {
+        // Race condition guard: another concurrent install may have installed
+        // this dep between collect_web_deps and now
+        {
+            let db_guard = db.lock();
+            if let Some(existing) = db_guard.get_mod_by_forge_id(dep.mod_id)? {
+                tracing::debug!(
+                    dep.mod_id,
+                    name = dep.name,
+                    "dependency already installed (race)"
+                );
+                installed_db_ids.push(existing.id);
+                continue;
+            }
+        }
+
+        let dep_versions = forge.get_versions(dep.mod_id, None).await?;
+        let dep_ver = dep_versions
+            .iter()
+            .find(|v| v.id == dep.version_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "version {} for dependency {} not found on Forge",
+                    dep.version_id,
+                    dep.name
+                )
+            })?;
+
+        let link = dep_ver
+            .link
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("no download link for {} v{}", dep.name, dep.version))?;
+
+        let db_id = crate::cli::install::download_and_install_with_arc(
+            forge,
+            db,
+            spt_dir,
+            config,
+            &crate::cli::install::ModInstallParams {
+                forge_mod_id: dep.mod_id,
+                forge_version_id: dep.version_id,
+                download_url: link,
+                name: &dep.name,
+                slug: dep.slug.as_deref(),
+                version: &dep.version,
+            },
+        )
+        .await?;
+
+        tracing::info!(
+            dep.mod_id,
+            name = dep.name,
+            version = dep.version,
+            "dependency installed"
+        );
+        installed_db_ids.push(db_id);
+    }
+
+    Ok(installed_db_ids)
+}
+
+/// Record dependency edges in the database (parent mod depends on each dep).
+pub fn record_dep_edges(
+    db: &Arc<parking_lot::Mutex<crate::db::Database>>,
+    main_mod_db_id: i64,
+    dep_db_ids: &[i64],
+) {
+    let db = db.lock();
+    for dep_db_id in dep_db_ids {
+        match db.insert_dependency(main_mod_db_id, *dep_db_id, None) {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}
+            Err(e) => {
+                tracing::warn!(main_mod_db_id, dep_db_id, err = %e, "failed to record dependency edge");
+            }
+        }
+    }
+}
+
+struct PendingDep {
+    mod_id: i64,
+    version_id: i64,
+    name: String,
+    version: String,
+    slug: Option<String>,
+}
+
+// TODO(debt): no cycle guard — if the Forge API ever returns circular deps, this
+// stack-overflows. Same issue in cli::install::collect_deps_to_install. Add a
+// visited set or depth limit to both.
+fn collect_web_deps(
+    nodes: &[crate::forge::models::DependencyNode],
+    db: &Arc<parking_lot::Mutex<crate::db::Database>>,
+    out: &mut Vec<PendingDep>,
+) -> Result<()> {
+    for node in nodes {
+        if node.conflict {
+            tracing::warn!(mod_name = node.name, "skipping conflicting dependency");
+            continue;
+        }
+
+        {
+            let db = db.lock();
+            if db.get_mod_by_forge_id(node.id)?.is_some() {
+                continue;
+            }
+        }
+
+        if out.iter().any(|d| d.mod_id == node.id) {
+            continue;
+        }
+
+        // Recurse into children first so transitive deps install before their parents
+        collect_web_deps(&node.dependencies, db, out)?;
+
+        let (version_id, version) = match &node.latest_compatible_version {
+            Some(v) => (v.id, v.version.clone()),
+            None => {
+                tracing::warn!(
+                    dep = node.name,
+                    "dependency has no compatible version, skipping"
+                );
+                continue;
+            }
+        };
+
+        out.push(PendingDep {
+            mod_id: node.id,
+            version_id,
+            name: node.name.clone(),
+            version,
+            slug: node.slug.clone(),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
