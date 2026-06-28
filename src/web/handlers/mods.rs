@@ -1080,6 +1080,7 @@ pub async fn install_mod(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let db_edges = db.clone();
     let config = state.config_cloned();
     let version = version.clone();
     let mod_name = mod_info.name.clone();
@@ -1089,6 +1090,12 @@ pub async fn install_mod(
 
     tokio::spawn(async move {
         let result = async {
+            // Install dependencies first
+            let dep_db_ids = crate::ops::resolve_and_install_deps(
+                &forge, &db, &spt_dir, &config, mod_id, &version,
+            )
+            .await?;
+
             let link = version
                 .link
                 .as_deref()
@@ -1129,6 +1136,9 @@ pub async fn install_mod(
                 Ok::<_, anyhow::Error>(db_id)
             })
             .await??;
+
+            // Record dependency edges
+            crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
 
             // Scan for runtime-generated files and track them separately
             let _ = actix_web::web::block(move || {
