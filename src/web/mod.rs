@@ -71,6 +71,7 @@ async fn serve_asset(path: web::Path<String>) -> HttpResponse {
 /// All state needed to launch the web server, bundled to avoid a 12-parameter function.
 pub struct ServerContext {
     pub config: Config,
+    pub config_handle: Arc<parking_lot::RwLock<Config>>,
     pub config_path: std::path::PathBuf,
     pub db: Arc<Mutex<Database>>,
     pub forge: ForgeClient,
@@ -638,6 +639,7 @@ pub fn configure_app(
 pub async fn start_server(ctx: ServerContext) -> Result<()> {
     let ServerContext {
         config,
+        config_handle,
         config_path,
         db,
         forge,
@@ -697,7 +699,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
-        config: Arc::new(parking_lot::RwLock::new(config.clone())),
+        config: config_handle,
         config_path,
         config_lock: parking_lot::Mutex::new(()),
         spt_dir,
