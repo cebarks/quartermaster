@@ -240,6 +240,78 @@ impl ForgeClient {
         Ok(body.data)
     }
 
+    #[allow(dead_code)] // plumbing for future addon UI
+    pub async fn search_addons(&self, query: &str) -> Result<Vec<ForgeAddon>> {
+        let url = format!("{}/addons", self.base_url);
+        let req = self.client.get(&url).query(&[("query", query)]);
+
+        let body = self
+            .send_cached(req)
+            .await
+            .context("search_addons request failed")?;
+
+        let parsed: ForgeAddonSearchResponse =
+            serde_json::from_slice(&body).context("search_addons: failed to parse response")?;
+        Ok(parsed.data)
+    }
+
+    #[allow(dead_code)] // plumbing for future addon UI
+    pub async fn get_addon(&self, id: i64, include_versions: bool) -> Result<ForgeAddon> {
+        let url = format!("{}/addon/{}", self.base_url, id);
+        let mut req = self.client.get(&url);
+        if include_versions {
+            req = req.query(&[("include", "versions")]);
+        }
+
+        let body = self
+            .send_cached(req)
+            .await
+            .context("get_addon request failed")?;
+
+        let parsed: ForgeAddonResponse =
+            serde_json::from_slice(&body).context("get_addon: failed to parse response")?;
+        Ok(parsed.data)
+    }
+
+    #[allow(dead_code)] // plumbing for future addon UI
+    pub async fn get_addon_versions(&self, addon_id: i64) -> Result<Vec<ForgeAddonVersion>> {
+        let url = format!("{}/addon/{}/versions", self.base_url, addon_id);
+        let req = self.client.get(&url);
+
+        let body = self
+            .send_cached(req)
+            .await
+            .context("get_addon_versions request failed")?;
+
+        let parsed: ForgeAddonVersionsResponse = serde_json::from_slice(&body)
+            .context("get_addon_versions: failed to parse response")?;
+        Ok(parsed.data)
+    }
+
+    #[allow(dead_code)] // plumbing for future addon UI
+    pub async fn get_addon_dependencies(
+        &self,
+        addons: &[(&str, &str)],
+    ) -> Result<Vec<DependencyNode>> {
+        let url = format!("{}/addons/dependencies", self.base_url);
+        let addons_param: String = addons
+            .iter()
+            .map(|(id, ver)| format!("{id}:{ver}"))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let req = self.client.get(&url).query(&[("addons", &addons_param)]);
+
+        let body = self
+            .send_cached(req)
+            .await
+            .context("get_addon_dependencies request failed")?;
+
+        let parsed: DependencyResponse = serde_json::from_slice(&body)
+            .context("get_addon_dependencies: failed to parse response")?;
+        Ok(parsed.data)
+    }
+
     fn is_forge_url(&self, url: &str) -> bool {
         let origin = |s: &str| {
             let u = reqwest::Url::parse(s).ok()?;
@@ -1085,5 +1157,75 @@ mod tests {
             .check_updates(&[(42, "1.0.0".into())], "3.10.0")
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn search_addons_returns_results() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": [
+                {"id": 1, "name": "Music Pack", "slug": "music-pack", "mod_id": 5}
+            ]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/addons"))
+            .and(query_param("query", "music"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let addons = client.search_addons("music").await.unwrap();
+        assert_eq!(addons.len(), 1);
+        assert_eq!(addons[0].name, "Music Pack");
+    }
+
+    #[tokio::test]
+    async fn get_addon_returns_details() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": {"id": 1, "name": "Music Pack", "mod_id": 5}
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/addon/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let addon = client.get_addon(1, false).await.unwrap();
+        assert_eq!(addon.id, 1);
+        assert_eq!(addon.name, "Music Pack");
+    }
+
+    #[tokio::test]
+    async fn get_addon_versions_returns_list() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": [
+                {
+                    "id": 1,
+                    "version": "1.2.0",
+                    "mod_version_constraint": "^2.0.0",
+                    "downloads": 523
+                }
+            ]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/addon/1/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let versions = client.get_addon_versions(1).await.unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, "1.2.0");
     }
 }

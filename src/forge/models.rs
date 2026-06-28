@@ -232,6 +232,68 @@ pub struct UpdatesResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Addon types
+// ---------------------------------------------------------------------------
+
+/// An addon listing from the Forge API.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ForgeAddon {
+    pub id: i64,
+    pub name: String,
+    pub slug: Option<String>,
+    pub teaser: Option<String>,
+    pub description: Option<String>,
+    pub thumbnail: Option<String>,
+    pub downloads: Option<i64>,
+    pub owner: Option<ForgeModOwner>,
+    pub additional_authors: Option<Vec<ForgeModOwner>>,
+    pub source_code_links: Option<Vec<SourceCodeLink>>,
+    pub detail_url: Option<String>,
+    pub contains_ai_content: Option<bool>,
+    pub custom_ai_disclosure: Option<String>,
+    pub contains_ads: Option<bool>,
+    pub mod_id: Option<i64>,
+    pub is_detached: Option<bool>,
+    pub versions: Option<Vec<ForgeAddonVersion>>,
+    pub published_at: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// A specific version of an addon.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ForgeAddonVersion {
+    pub id: i64,
+    pub version: String,
+    pub description: Option<String>,
+    pub link: Option<String>,
+    pub content_length: Option<u64>,
+    pub mod_version_constraint: Option<String>,
+    pub downloads: Option<i64>,
+    pub published_at: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// Response envelope for addon search results.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ForgeAddonSearchResponse {
+    pub data: Vec<ForgeAddon>,
+}
+
+/// Response envelope for a single addon.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ForgeAddonResponse {
+    pub data: ForgeAddon,
+}
+
+/// Response envelope for a list of addon versions.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ForgeAddonVersionsResponse {
+    pub data: Vec<ForgeAddonVersion>,
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -618,5 +680,65 @@ mod tests {
             serde_json::from_str(json).expect("should deserialize with guid");
         assert_eq!(node.id, 42);
         assert_eq!(node.guid.as_deref(), Some("com.example.big-brain"));
+    }
+
+    #[test]
+    fn deserialize_forge_addon() {
+        let json = r#"{
+            "id": 1,
+            "name": "Ultimate Music Pack",
+            "slug": "ultimate-music-pack",
+            "teaser": "A collection of atmospheric music tracks",
+            "description": "This addon adds over 50 new music tracks...",
+            "thumbnail": "",
+            "downloads": 1523,
+            "owner": {
+                "id": 1,
+                "name": "AddonAuthor",
+                "profile_photo_url": "https://example.com/profile.jpg",
+                "cover_photo_url": null
+            },
+            "additional_authors": [],
+            "source_code_links": [],
+            "detail_url": "https://forge.sp-tarkov.com/addon/1/ultimate-music-pack",
+            "contains_ads": false,
+            "contains_ai_content": false,
+            "mod_id": 5,
+            "is_detached": false,
+            "published_at": "2025-01-09T17:48:53.000000Z",
+            "created_at": "2024-12-11T14:48:53.000000Z",
+            "updated_at": "2025-04-10T13:50:00.000000Z"
+        }"#;
+
+        let a: ForgeAddon = serde_json::from_str(json).expect("should deserialize ForgeAddon");
+        assert_eq!(a.id, 1);
+        assert_eq!(a.name, "Ultimate Music Pack");
+        assert_eq!(a.mod_id, Some(5));
+        assert_eq!(a.is_detached, Some(false));
+        assert_eq!(a.downloads, Some(1523));
+    }
+
+    #[test]
+    fn deserialize_forge_addon_version() {
+        let json = r#"{
+            "id": 1,
+            "version": "1.2.0",
+            "description": "Added 10 new tracks",
+            "link": "https://example.com/download/v1.2.0.zip",
+            "content_length": 52428800,
+            "mod_version_constraint": "^2.0.0",
+            "downloads": 523,
+            "published_at": "2025-01-09T17:48:53.000000Z",
+            "created_at": "2024-12-11T14:48:53.000000Z",
+            "updated_at": "2025-04-10T13:50:00.000000Z"
+        }"#;
+
+        let v: ForgeAddonVersion =
+            serde_json::from_str(json).expect("should deserialize ForgeAddonVersion");
+        assert_eq!(v.id, 1);
+        assert_eq!(v.version, "1.2.0");
+        assert_eq!(v.mod_version_constraint.as_deref(), Some("^2.0.0"));
+        assert_eq!(v.content_length, Some(52428800));
+        assert_eq!(v.downloads, Some(523));
     }
 }
