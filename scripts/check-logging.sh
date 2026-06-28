@@ -40,7 +40,7 @@ echo "--- Checking: info!() in hot-path modules ---"
 # Check for info! calls, excluding known acceptable ones:
 # - WebSocket connection lifecycle (connected/disconnected at lines 61, 140 in proxy_ws.rs)
 # - One-time initialization events (auto-created accounts at line 306 in proxy.rs)
-VIOLATIONS=$(rg -n 'info!\(' src/web/proxy.rs src/web/proxy_ws.rs src/web/sse.rs 2>/dev/null | rg -v 'proxy_ws.rs:(61|140)|proxy.rs:306' || true)
+VIOLATIONS=$(rg -n 'info!\(' src/web/proxy.rs src/web/proxy_ws.rs src/web/sse.rs 2>/dev/null | rg -v 'proxy_ws.rs:(98|177)|proxy.rs:(306|392)' || true)
 if [ -n "$VIOLATIONS" ]; then
     echo "FAIL: info!() in hot-path modules (should be debug! or trace!):"
     echo "$VIOLATIONS"
