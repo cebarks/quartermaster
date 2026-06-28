@@ -1,11 +1,20 @@
+use std::io::{Read, Write};
 use std::time::Instant;
 
 use actix_web::web::{self, Data};
 use actix_web::{HttpRequest, HttpResponse};
+use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::web::state::AppState;
+
+enum BackendRewriteTarget {
+    HttpProxy,
+    DirectTcp,
+}
 
 static HOP_BY_HOP_HEADERS: &[&str] = &[
     "connection",
@@ -202,6 +211,22 @@ pub async fn proxy_handler(
                 );
             }
 
+            // SPT 4.x hardcodes backend URLs to 127.0.0.1:6969 regardless of
+            // config. Rewrite HTTP API URLs to external_url (L7 proxy on :443)
+            // and WebSocket/notifier URLs to external_url host on :6969 (direct
+            // TCP passthrough) since SPT's notifier breaks under L7 proxies.
+            let rewrite_target = if !status.is_success() || state.config().external_url.is_none() {
+                None
+            } else if req.path() == "/launcher/server/connect"
+                || req.path() == "/client/game/config"
+            {
+                Some(BackendRewriteTarget::HttpProxy)
+            } else if req.path() == "/client/notifier/channel/create" {
+                Some(BackendRewriteTarget::DirectTcp)
+            } else {
+                None
+            };
+
             let mut builder = HttpResponse::build(
                 actix_web::http::StatusCode::from_u16(status.as_u16())
                     .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY),
@@ -212,16 +237,35 @@ pub async fn proxy_handler(
                 if HOP_BY_HOP_HEADERS.contains(&name_str.as_str()) {
                     continue;
                 }
-                // Convert reqwest header types to actix-web compatible types
                 if let Ok(value_str) = value.to_str() {
                     builder.insert_header((name.as_str(), value_str));
                 }
             }
 
-            let stream = resp.bytes_stream().map(|result| {
-                result.map_err(|e| actix_web::error::PayloadError::Io(std::io::Error::other(e)))
-            });
-            Ok(builder.streaming(stream))
+            if let Some(target) = rewrite_target {
+                let external_url = state.config().external_url.clone().unwrap();
+                let replacement = match target {
+                    BackendRewriteTarget::HttpProxy => extract_host(&external_url),
+                    BackendRewriteTarget::DirectTcp => {
+                        format!("{}:{}", extract_host(&external_url), port)
+                    }
+                };
+                let raw_body = resp.bytes().await.map_err(|e| {
+                    actix_web::error::ErrorBadGateway(format!("failed to read response body: {e}"))
+                })?;
+                match rewrite_backend_url(&raw_body, &replacement) {
+                    Ok(rewritten) => Ok(builder.body(rewritten)),
+                    Err(e) => {
+                        tracing::warn!(err = %e, "failed to rewrite backend URLs, forwarding original");
+                        Ok(builder.body(raw_body))
+                    }
+                }
+            } else {
+                let stream = resp.bytes_stream().map(|result| {
+                    result.map_err(|e| actix_web::error::PayloadError::Io(std::io::Error::other(e)))
+                });
+                Ok(builder.streaming(stream))
+            }
         }
         Err(e) => {
             state
@@ -236,6 +280,46 @@ pub async fn proxy_handler(
             );
             Err(actix_web::error::ErrorBadGateway("SPT server unreachable"))
         }
+    }
+}
+
+/// Extract the hostname (without scheme or port) from a URL like `https://tarkov.grovest.io`.
+fn extract_host(url: &str) -> String {
+    url.trim_end_matches('/')
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url)
+        .split(':')
+        .next()
+        .unwrap_or(url)
+        .to_string()
+}
+
+/// Rewrite hardcoded `127.0.0.1:6969` in SPT response bodies.
+/// `replacement` is the target host or host:port to substitute.
+/// The body may be zlib-compressed (SPT default) or plain JSON.
+fn rewrite_backend_url(body: &[u8], replacement: &str) -> Result<Vec<u8>, String> {
+    let (json_bytes, compressed) = {
+        let mut decoder = ZlibDecoder::new(body);
+        let mut buf = Vec::new();
+        match decoder.read_to_end(&mut buf) {
+            Ok(_) => (buf, true),
+            Err(_) => (body.to_vec(), false),
+        }
+    };
+
+    let json_str = String::from_utf8(json_bytes).map_err(|e| format!("utf8: {e}"))?;
+    let rewritten = json_str.replace("127.0.0.1:6969", replacement);
+    let new_json = rewritten.into_bytes();
+
+    if compressed {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(&new_json)
+            .map_err(|e| format!("zlib compress: {e}"))?;
+        encoder.finish().map_err(|e| format!("zlib finish: {e}"))
+    } else {
+        Ok(new_json)
     }
 }
 
