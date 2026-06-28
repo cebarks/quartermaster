@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
+{% block title %}Setup — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("setup", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Client Setup</h1>
+<p class="text-muted">Set up your SPT client to connect to <strong>{{ server_name }}</strong> (SPT {{ spt_version }}).</p>
+
+{% if let Some(flash) = flash %}
+<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
+{% endif %}
+
+<div class="card" style="margin-bottom: 1.5rem">
+    <h3>Step 1: Install Fika</h3>
+    {% if fika_installed %}
+    <p>Download the Fika Installer and run it from your SPT installation directory.</p>
+    <a href="{{ fika_installer_url }}" class="btn btn-sm" target="_blank" rel="noopener">{% call icons::download() %}{% endcall %} Download Fika Installer</a>
+    {% else %}
+    <p class="text-muted">Fika is not installed on this server. Skip this step.</p>
+    {% endif %}
+</div>
+
+{% if external_url_configured %}
+<div class="card" style="margin-bottom: 1.5rem">
+    <h3>Step 2: Install Server Mods</h3>
+    {% if modsync_installed %}
+    <p>Download the mod archive and extract it into your SPT installation directory. This installs NarcoNet, which will automatically sync remaining client mods from the server.</p>
+    <a href="/quma/setup/mods.zip" class="btn btn-sm">{% call icons::download() %}{% endcall %} Download Mods</a>
+    {% else %}
+    <p class="text-muted">NarcoNet is not installed on this server. Contact the server admin for mod installation instructions.</p>
+    {% endif %}
+</div>
+
+<div class="card" style="margin-bottom: 1.5rem">
+    <h3>Step 3: Configure Server Address</h3>
+    <p>Open the SPT Launcher, go to settings, and set the server address to:</p>
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin: 0.75rem 0">
+        <code id="server-url" style="padding: 0.5rem 0.75rem; background: var(--bg-tertiary); border-radius: 4px; font-size: 1rem; user-select: all">{{ spt_server_url }}</code>
+        <button class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText(document.getElementById('server-url').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy'},1500)})">Copy</button>
+    </div>
+</div>
+
+<div class="card">
+    <h3>One-Click Bootstrap</h3>
+    <p>Or, run a bootstrap script that performs all three steps automatically. Run it from your SPT installation directory.</p>
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
+        <a href="/quma/setup/bootstrap.ps1" class="btn btn-sm">{% call icons::download() %}{% endcall %} PowerShell Script (Windows)</a>
+        <a href="/quma/setup/bootstrap.sh" class="btn btn-sm btn-outline">{% call icons::download() %}{% endcall %} Bash Script (Linux)</a>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-warning">
+    The server administrator has not configured an external URL yet. Steps 2–3 and bootstrap scripts are unavailable until <code>external_url</code> is set in the server config.
+</div>
+{% endif %}
+{% endblock %}

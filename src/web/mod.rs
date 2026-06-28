@@ -170,6 +170,11 @@ pub fn configure_app(
                 web::resource("/join/bootstrap.ps1")
                     .wrap(Governor::new(&governor_conf))
                     .route(web::get().to(handlers::join::bootstrap_powershell)),
+            )
+            .service(
+                web::resource("/setup/mods.zip")
+                    .wrap(Governor::new(&governor_conf))
+                    .route(web::get().to(handlers::setup::setup_mods_zip)),
             );
     } else {
         // Same routes without rate limiting (for tests)
@@ -193,6 +198,10 @@ pub fn configure_app(
             .route(
                 "/join/bootstrap.ps1",
                 web::get().to(handlers::join::bootstrap_powershell),
+            )
+            .route(
+                "/setup/mods.zip",
+                web::get().to(handlers::setup::setup_mods_zip),
             );
     }
 
@@ -448,6 +457,15 @@ pub fn configure_app(
                     .route(web::post().to(handlers::auth::change_password_submit)),
             )
             .route("/", web::get().to(handlers::dashboard::dashboard))
+            .route("/setup", web::get().to(handlers::setup::setup_page))
+            .route(
+                "/setup/bootstrap.sh",
+                web::get().to(handlers::setup::setup_bootstrap_bash),
+            )
+            .route(
+                "/setup/bootstrap.ps1",
+                web::get().to(handlers::setup::setup_bootstrap_powershell),
+            )
             .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
             .route("/logs", web::get().to(handlers::logs::logs_page))
             .route("/metrics", web::get().to(handlers::metrics::metrics_page))

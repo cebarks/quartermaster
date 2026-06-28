@@ -5,6 +5,7 @@
     <a href="/quma/mods"{% if active == "mods" %} class="active"{% endif %}>{% call icons::package() %}{% endcall %} Mods</a>
     <a href="/quma/stats"{% if active == "stats" %} class="active"{% endif %}>{% call icons::crosshair() %}{% endcall %} Stats</a>
     <a href="/quma/profiles/{{ user.username }}"{% if active == "profile" %} class="active"{% endif %}>{% call icons::user() %}{% endcall %} Profile</a>
+    <a href="/quma/setup"{% if active == "setup" %} class="active"{% endif %}>{% call icons::download() %}{% endcall %} Setup</a>
     {% if user.can("server.control") || user.can("server.logs") || user.can("server.metrics") || user.can("users.manage") || user.can("settings.manage") %}
     <div class="nav-dropdown" id="admin-dropdown">
         <button class="nav-dropdown-toggle{% if active == "logs" || active == "metrics" || active == "settings" || active == "admin" || active == "backups" || active == "modsync" || active == "svm" %} active{% endif %}"
