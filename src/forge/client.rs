@@ -87,6 +87,19 @@ impl ForgeClient {
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
                 }
+                Ok(resp) if resp.status().is_server_error() => {
+                    if attempt == MAX_RETRIES {
+                        return resp
+                            .error_for_status()
+                            .context("Forge API returned server error after retries");
+                    }
+                    let status = resp.status();
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        status = status.as_u16(),
+                        "Forge API returned server error, retrying immediately"
+                    );
+                }
                 Ok(resp) => {
                     return resp
                         .error_for_status()
@@ -129,7 +142,11 @@ impl ForgeClient {
         let resp = self.send_with_retry(request).await?;
         let body = resp.bytes().await.context("failed to read response body")?;
         let bytes = body.to_vec();
-        self.cache.insert(cache_key, bytes.clone());
+        // Only cache if the response is valid JSON — avoids poisoning the
+        // cache with garbled 200 responses (CDN errors, partial responses).
+        if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok() {
+            self.cache.insert(cache_key, bytes.clone());
+        }
         Ok(bytes)
     }
 
@@ -770,7 +787,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/mods"))
             .respond_with(ResponseTemplate::new(500))
-            .expect(1)
+            .expect(3) // initial + 2 retries (5xx is now retried)
             .mount(&server)
             .await;
 
@@ -1081,6 +1098,90 @@ mod tests {
             err_msg.contains("rate limit") || err_msg.contains("429"),
             "error should mention rate limiting: {err_msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn retries_on_5xx_server_error() {
+        let server = MockServer::start().await;
+        let body_ok = serde_json::json!({
+            "data": [{"id": 1, "name": "Test Mod"}]
+        });
+
+        // Mount 502 mock FIRST (FIFO — matches first, exhausted after 1 hit)
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(ResponseTemplate::new(502))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Mount success mock SECOND (matches after 502 exhausted)
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body_ok))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let mods = client.search_mods("test").await.unwrap();
+        assert_eq!(mods.len(), 1);
+        assert_eq!(mods[0].name, "Test Mod");
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_max_retries_on_5xx() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(3) // initial + 2 retries
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let result = client.search_mods("test").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn malformed_json_200_not_cached() {
+        let server = MockServer::start().await;
+        let good_body = serde_json::json!({
+            "data": {"id": 42, "name": "Good Mod"}
+        });
+
+        // Mount garbled response FIRST (FIFO — matches first, exhausted after 1 hit)
+        Mock::given(method("GET"))
+            .and(path("/mod/42"))
+            .and(query_param_is_missing("include"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("this is not json"))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Mount good response SECOND (matches after garbled exhausted)
+        Mock::given(method("GET"))
+            .and(path("/mod/42"))
+            .and(query_param_is_missing("include"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&good_body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+
+        // First call gets garbled response — should fail but NOT cache it
+        let result = client.get_mod(42, false).await;
+        assert!(result.is_err());
+
+        // Second call should hit the server again (not cached), get good response
+        let m = client.get_mod(42, false).await.unwrap();
+        assert_eq!(m.id, 42);
+        assert_eq!(m.name, "Good Mod");
     }
 
     #[tokio::test]
