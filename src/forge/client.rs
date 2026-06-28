@@ -7,6 +7,7 @@ use tokio::io::AsyncWriteExt;
 use super::models::*;
 
 const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
+const MAX_RETRIES: u32 = 2;
 
 #[derive(Clone)]
 pub struct ForgeClient {
@@ -48,18 +49,67 @@ impl ForgeClient {
         Ok(Self { client, base_url })
     }
 
+    async fn send_with_retry(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+        let mut last_error = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            let req = request
+                .try_clone()
+                .ok_or_else(|| anyhow::anyhow!("request not cloneable (has streaming body)"))?
+                .send()
+                .await;
+
+            match req {
+                Ok(resp) if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS => {
+                    if attempt == MAX_RETRIES {
+                        anyhow::bail!(
+                            "Forge API rate limit exceeded after {} retries (HTTP 429)",
+                            MAX_RETRIES
+                        );
+                    }
+                    let retry_after = resp
+                        .headers()
+                        .get("Retry-After")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(5);
+                    let wait = retry_after.min(60);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        retry_after = wait,
+                        "Forge API rate limited, retrying"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                }
+                Ok(resp) => {
+                    return resp
+                        .error_for_status()
+                        .context("Forge API returned error status");
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt == MAX_RETRIES {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Err(last_error
+            .map(|e| anyhow::anyhow!(e))
+            .unwrap_or_else(|| anyhow::anyhow!("request failed after retries"))
+            .context("Forge API request failed"))
+    }
+
     /// Search mods by query string.
     pub async fn search_mods(&self, query: &str) -> Result<Vec<ForgeMod>> {
         let url = format!("{}/mods", self.base_url);
+        let req = self.client.get(&url).query(&[("query", query)]);
+
         let resp = self
-            .client
-            .get(&url)
-            .query(&[("query", query)])
-            .send()
+            .send_with_retry(req)
             .await
-            .context("search_mods request failed")?
-            .error_for_status()
-            .context("search_mods returned error status")?;
+            .context("search_mods request failed")?;
 
         let body: ForgeSearchResponse = resp
             .json()
@@ -76,12 +126,10 @@ impl ForgeClient {
             req = req.query(&[("include", "versions")]);
         }
 
-        let resp = req
-            .send()
+        let resp = self
+            .send_with_retry(req)
             .await
-            .context("get_mod request failed")?
-            .error_for_status()
-            .context("get_mod returned error status")?;
+            .context("get_mod request failed")?;
 
         let body: ForgeModResponse = resp
             .json()
@@ -102,12 +150,10 @@ impl ForgeClient {
             req = req.query(&[("filter[spt_version]", v)]);
         }
 
-        let resp = req
-            .send()
+        let resp = self
+            .send_with_retry(req)
             .await
-            .context("get_versions request failed")?
-            .error_for_status()
-            .context("get_versions returned error status")?;
+            .context("get_versions request failed")?;
 
         let body: ForgeVersionsResponse = resp
             .json()
@@ -125,15 +171,12 @@ impl ForgeClient {
             .collect::<Vec<_>>()
             .join(",");
 
+        let req = self.client.get(&url).query(&[("mods", &mods_param)]);
+
         let resp = self
-            .client
-            .get(&url)
-            .query(&[("mods", &mods_param)])
-            .send()
+            .send_with_retry(req)
             .await
-            .context("get_dependencies request failed")?
-            .error_for_status()
-            .context("get_dependencies returned error status")?;
+            .context("get_dependencies request failed")?;
 
         let body: DependencyResponse = resp
             .json()
@@ -156,18 +199,15 @@ impl ForgeClient {
             .collect::<Vec<_>>()
             .join(",");
 
+        let req = self.client.get(&url).query(&[
+            ("mods", &mods_param),
+            ("spt_version", &spt_version.to_string()),
+        ]);
+
         let resp = self
-            .client
-            .get(&url)
-            .query(&[
-                ("mods", &mods_param),
-                ("spt_version", &spt_version.to_string()),
-            ])
-            .send()
+            .send_with_retry(req)
             .await
-            .context("check_updates request failed")?
-            .error_for_status()
-            .context("check_updates returned error status")?;
+            .context("check_updates request failed")?;
 
         let body: UpdatesResponse = resp
             .json()
@@ -813,5 +853,75 @@ mod tests {
 
         let mods = client.search_mods("test").await.unwrap();
         assert!(mods.is_empty());
+    }
+
+    #[tokio::test]
+    async fn retries_on_429_with_retry_after() {
+        let server = MockServer::start().await;
+        let body_429 = serde_json::json!({
+            "success": false,
+            "code": "RATE_LIMITED",
+            "message": "Too many requests."
+        });
+        let body_ok = serde_json::json!({
+            "data": [{"id": 1, "name": "Test Mod"}]
+        });
+
+        // Mount 429 mock FIRST (matches first, exhausted after 1 hit)
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .set_body_json(&body_429)
+                    .insert_header("Retry-After", "0"),
+            )
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Mount success mock SECOND (matches after 429 exhausted)
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body_ok))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let mods = client.search_mods("test").await.unwrap();
+        assert_eq!(mods.len(), 1);
+        assert_eq!(mods[0].name, "Test Mod");
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_max_retries_on_429() {
+        let server = MockServer::start().await;
+        let body_429 = serde_json::json!({
+            "success": false,
+            "code": "RATE_LIMITED",
+            "message": "Too many requests."
+        });
+
+        // Always returns 429
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .set_body_json(&body_429)
+                    .insert_header("Retry-After", "0"),
+            )
+            .expect(3) // initial + 2 retries
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let result = client.search_mods("test").await;
+        assert!(result.is_err());
+        let err_msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            err_msg.contains("rate limit") || err_msg.contains("429"),
+            "error should mention rate limiting: {err_msg}"
+        );
     }
 }
