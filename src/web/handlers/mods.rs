@@ -454,7 +454,7 @@ pub async fn check_updates_partial(
                 result
                     .as_ref()
                     .ok()
-                    .and_then(|versions| versions.last())
+                    .and_then(|versions| versions.iter().max_by_key(|v| v.id))
                     .map(|v| &v.version)
                     .is_some_and(|v| v != &m.version)
             })
@@ -548,7 +548,12 @@ pub async fn update_status_partial(
     for (&idx, result) in needs_check.iter().zip(version_results) {
         let new_ver = result
             .ok()
-            .and_then(|versions| versions.last().map(|v| v.version.clone()))
+            .and_then(|versions| {
+                versions
+                    .iter()
+                    .max_by_key(|v| v.id)
+                    .map(|v| v.version.clone())
+            })
             .filter(|v| v != &installed[idx].version);
         version_map.insert(idx, new_ver);
     }
@@ -916,7 +921,7 @@ pub async fn install_mod(
         }
     };
 
-    let version = match versions.last() {
+    let version = match versions.iter().max_by_key(|v| v.id) {
         Some(v) => v,
         None => {
             set_flash(
@@ -1206,9 +1211,12 @@ pub async fn update_mod(
         .await
         .map_err(WebError::from)?;
 
-    let version = versions.last().ok_or(WebError::BadRequest(
-        "No compatible update found".to_string(),
-    ))?;
+    let version = versions
+        .iter()
+        .max_by_key(|v| v.id)
+        .ok_or(WebError::BadRequest(
+            "No compatible update found".to_string(),
+        ))?;
 
     if version.version == installed.version {
         set_flash(&session, "Already up to date", FlashType::Warning);

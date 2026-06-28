@@ -190,7 +190,10 @@ async fn trigger_install_for_request(
         ));
     }
 
-    let version = versions.last().expect("checked non-empty above");
+    let version = versions
+        .iter()
+        .max_by_key(|v| v.id)
+        .expect("checked non-empty above");
     let mut message = String::new();
 
     {
