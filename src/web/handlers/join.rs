@@ -224,10 +224,7 @@ pub async fn join_submit(
     if username.is_empty() || username.len() > 32 {
         return render_err("Username must be 1-32 characters");
     }
-    if !username
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '_')
-    {
+    if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return render_err("Username can only contain letters, numbers, and underscores");
     }
 
@@ -267,14 +264,11 @@ pub async fn join_submit(
     }
 
     // Create SPT profile via server API
-    let (host, port) =
-        crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(c) => c,
         Err(_) => {
-            return render_err(
-                "Could not connect to the SPT server. Make sure it is running.",
-            );
+            return render_err("Could not connect to the SPT server. Make sure it is running.");
         }
     };
 
@@ -379,10 +373,7 @@ pub async fn join_submit(
 
 /// Scan SPT profiles directory to find a profile by username.
 /// Returns the AID (filename stem) if found.
-fn find_profile_by_username(
-    spt_dir: &std::path::Path,
-    username: &str,
-) -> Option<String> {
+fn find_profile_by_username(spt_dir: &std::path::Path, username: &str) -> Option<String> {
     let profiles_dir = spt_dir.join("SPT/user/profiles");
     let entries = match std::fs::read_dir(&profiles_dir) {
         Ok(e) => e,
@@ -395,9 +386,7 @@ fn find_profile_by_username(
     for entry in entries.flatten() {
         let path = entry.path();
         let profile_id = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(id) if path.extension().and_then(|e| e.to_str()) == Some("json") => {
-                id.to_string()
-            }
+            Some(id) if path.extension().and_then(|e| e.to_str()) == Some("json") => id.to_string(),
             _ => continue,
         };
 
@@ -662,8 +651,7 @@ echo ""
 echo "=== Setup Complete ==="
 echo ""
 echo "Next steps:"
-echo "  1. Launch SPT and connect"
-echo "  2. After connecting, register at: $SERVER_URL/quma/register?code={code}"
+echo "  1. Launch SPT and connect to: $SERVER_URL"
 "#
     )
 }
@@ -721,8 +709,7 @@ try {{
     Write-Host "=== Setup Complete ===" -ForegroundColor Green
     Write-Host ""
     Write-Host "Next steps:"
-    Write-Host "  1. Launch SPT and connect"
-    Write-Host "  2. After connecting, register at: $ServerUrl/quma/register?code={code}"
+    Write-Host "  1. Launch SPT and connect to: $ServerUrl"
 }} finally {{
     if (Test-Path $TmpFile) {{ Remove-Item $TmpFile -Force }}
 }}

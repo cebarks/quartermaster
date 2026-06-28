@@ -7,8 +7,8 @@ use subtle::ConstantTimeEq;
 use actix_web::HttpRequest;
 
 use crate::web::auth::{
-    hash_password, require_auth, set_session_user, verify_password, SessionUser,
-    MIN_PASSWORD_LEN, MAX_PASSWORD_LEN,
+    hash_password, require_auth, set_session_user, verify_password, SessionUser, MAX_PASSWORD_LEN,
+    MIN_PASSWORD_LEN,
 };
 use crate::web::error::WebError;
 use crate::web::nav::NavContext;
