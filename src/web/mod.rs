@@ -390,6 +390,10 @@ pub fn configure_app(
                     web::post().to(handlers::admin::delete_user),
                 )
                 .route(
+                    "/users/{id}/link-profile",
+                    web::post().to(handlers::admin::link_profile),
+                )
+                .route(
                     "/invites/{id}/delete",
                     web::post().to(handlers::admin::delete_invite),
                 )

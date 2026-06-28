@@ -67,6 +67,43 @@
                 {% when ProfileStatus::ParseError %}
                     <span class="text-muted">Profile data unavailable</span>
                 {% endmatch %}
+                {% if u.id != current_user_id %}
+                <details style="margin-top:0.25rem">
+                    <summary class="text-sm text-muted" style="cursor:pointer">Link profile</summary>
+                    <form style="margin-top:0.25rem;display:flex;gap:0.25rem;align-items:center">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <select name="spt_profile_id" style="font-size:0.85rem;padding:0.2rem 0.4rem;width:14rem">
+                            <option value="">— None —</option>
+                            {% if let Some(current_aid) = u.spt_profile_id %}
+                            {% if !current_aid.is_empty() %}
+                            <option value="{{ current_aid }}" selected>Current: {{ current_aid }}</option>
+                            {% endif %}
+                            {% endif %}
+                            {% for p in &available_profiles %}
+                            <option value="{{ p.aid }}">{{ p.username }} ({{ p.aid }})</option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline"
+                                hx-post="/quma/api/admin/users/{{ u.id }}/link-profile"
+                                hx-target="closest tr"
+                                hx-swap="outerHTML"
+                                hx-include="closest form"
+                                hx-disabled-elt="this">
+                            Save
+                        </button>
+                        {% if u.spt_profile_id.is_some() %}
+                        <button type="button" class="btn btn-sm btn-danger"
+                                hx-post="/quma/api/admin/users/{{ u.id }}/link-profile"
+                                hx-target="closest tr"
+                                hx-swap="outerHTML"
+                                hx-vals='{"csrf_token":"{{ csrf_token }}","spt_profile_id":""}'
+                                hx-disabled-elt="this">
+                            Unlink
+                        </button>
+                        {% endif %}
+                    </form>
+                </details>
+                {% endif %}
             </td>
             <td class="text-muted text-sm">{{ u.created_at }}</td>
             <td>
