@@ -21,6 +21,11 @@ check-logging:
 
 lint: fmt clippy check-logging
 
+# Set up git hooks for local CI linting
+install-hooks:
+    git config core.hooksPath .githooks
+    @echo "Git hooks installed from .githooks/"
+
 run *ARGS:
     cargo run -- {{ARGS}}
 
