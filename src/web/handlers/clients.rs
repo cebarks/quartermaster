@@ -401,12 +401,19 @@ pub async fn client_scale(
         }
     };
 
-    let headless_config = state
-        .config()
-        .headless
-        .as_ref()
-        .expect("None case returned above")
-        .clone();
+    let headless_config = match state.config().headless.as_ref() {
+        Some(cfg) => cfg.clone(),
+        None => {
+            set_flash(
+                &session,
+                "Headless config was removed during operation",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/settings?tab=headless"))
+                .finish());
+        }
+    };
     let mut updated_config = headless_config;
     let current = updated_config.client_count();
     if target > current {
