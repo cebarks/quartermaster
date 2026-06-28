@@ -13,6 +13,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+struct ConvergingGuard(Arc<AtomicBool>);
+
+impl Drop for ConvergingGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Label key for marking containers as managed by quartermaster
 const MANAGED_BY_LABEL: &str = "quma.managed-by";
 const MANAGED_BY_VALUE: &str = "quartermaster-clients";
@@ -660,10 +668,7 @@ pub async fn converge(
         bail!("Convergence already in progress");
     }
 
-    // Ensure converging flag is cleared on exit
-    let _guard = scopeguard::guard(converging.clone(), |c| {
-        c.store(false, Ordering::Release);
-    });
+    let _guard = ConvergingGuard(converging.clone());
 
     let ntsync_available = std::path::Path::new("/dev/ntsync").exists();
     if !ntsync_available {

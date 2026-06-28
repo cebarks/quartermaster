@@ -7,7 +7,6 @@ use actix_web::{HttpRequest, HttpResponse};
 use actix_web_lab::sse;
 use askama::Template;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast::error::RecvError;
 
 use crate::db::logs::{LogQuery as DbLogQuery, StoredLogEntry};
 use crate::db::rbac::Permission;
@@ -103,16 +102,17 @@ pub async fn app_logs_stream(
     require_permission(&user, Permission::ServerLogs)?;
     let mut rx = state.log_broadcast.subscribe();
 
-    let stream = async_stream::stream! {
+    let (tx, channel_rx) = tokio::sync::mpsc::channel::<sse::Event>(64);
+
+    tokio::spawn(async move {
+        use tokio::sync::broadcast::error::RecvError;
         loop {
-            // Wait for at least one entry
             let entry = match rx.recv().await {
                 Ok(e) => e,
                 Err(RecvError::Lagged(_)) => continue,
                 Err(RecvError::Closed) => break,
             };
 
-            // Drain up to 49 more that are immediately available
             let mut batch = vec![entry];
             while batch.len() < 50 {
                 match rx.try_recv() {
@@ -123,16 +123,22 @@ pub async fn app_logs_stream(
 
             for entry in batch {
                 if let Ok(json) = serde_json::to_string(&entry) {
-                    yield Ok(sse::Event::Data(sse::Data::new(json)));
+                    if tx
+                        .send(sse::Event::Data(sse::Data::new(json)))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
             }
 
-            // Rate-limit: max ~200 entries/sec to prevent browser flooding
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
-    };
+    });
 
-    Ok(sse::Sse::from_stream(stream).with_keep_alive(Duration::from_secs(15)))
+    let stream = tokio_stream::wrappers::ReceiverStream::new(channel_rx);
+    Ok(sse::Sse::from_infallible_stream(stream).with_keep_alive(Duration::from_secs(15)))
 }
 
 // ---------------------------------------------------------------------------

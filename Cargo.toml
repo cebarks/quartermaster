@@ -16,7 +16,6 @@ path = "src/main.rs"
 # CLI
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
-dirs = "6"
 
 # Serialization & config
 serde = { version = "1", features = ["derive"] }
@@ -87,14 +86,8 @@ rpassword = "7"
 # Non-poisoning Mutex for web DB access
 parking_lot = "0.12"
 
-# JSONC comment stripping (for Fika config)
-json_comments = "0.2.2"
-
 # Regex for targeted text replacement
 regex = "1"
-
-# Scope guard for cleanup on panic/early return
-scopeguard = "1"
 
 # Structured logging
 tracing = "0.1"
@@ -103,9 +96,7 @@ tracing-actix-web = "0.7"
 tracing-appender = "0.2"
 rolling-file = "0.2"
 actix-web-lab = "0.26"
-async-stream = "0.3"
 tokio-stream = "0.1"
-bytestring = "1"
 mini-moka = "0.10.3"
 
 [dev-dependencies]
