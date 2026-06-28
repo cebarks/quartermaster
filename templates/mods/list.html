@@ -26,18 +26,7 @@
 </div>
 
 <div id="mods-tab-content">
-    <div class="flex-between">
-        <h2>Installed Mods</h2>
-        {% if user.can("mods.update") %}
-        <div class="flex gap-1">
-            <form method="post" action="/quma/mods/update-all" style="display:inline"
-                  onsubmit="return confirm('Update all mods?')">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update All</button>
-            </form>
-        </div>
-        {% endif %}
-    </div>
+    <h2>Installed Mods</h2>
 
 <div class="card" style="padding: 0.75rem 1.25rem">
     <div class="flex-between">
@@ -70,6 +59,14 @@
         {% endif %}
     </div>
     {% endif %}
+</div>
+
+<div class="card" id="updates-carousel-inner"
+     hx-get="/quma/api/mods/updates-carousel"
+     hx-trigger="load, sse:modsChanged"
+     hx-swap="innerHTML">
+    <h2 style="margin: 0">Updates</h2>
+    <p class="text-muted loading-pulse" style="margin: 0.5rem 0 0">Checking for updates...</p>
 </div>
 
 {% if !has_any_mods %}

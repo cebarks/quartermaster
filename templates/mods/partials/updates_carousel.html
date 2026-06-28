@@ -1,0 +1,72 @@
+{% import "partials/icons.html" as icons %}
+{% if total > 0 %}
+{% if let Some(e) = &entry %}
+<div class="flex-between" style="margin-bottom: 0.75rem">
+    <h2 style="margin: 0">Updates Available ({{ total }})</h2>
+    {% if user.can("mods.update") %}
+    <form method="post" action="/quma/mods/update-all" style="display:inline"
+          onsubmit="return confirm('Update all {{ total }} mods?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-sm btn-outline">{% call icons::refresh() %}{% endcall %} Update All</button>
+    </form>
+    {% endif %}
+</div>
+<div style="display: flex; flex-direction: column; gap: 0.5rem">
+    <div class="flex-between" style="align-items: flex-start">
+        <div>
+            {% if let Some(slug) = &e.slug %}
+            <a href="https://forge.sp-tarkov.com/mods/{{ slug }}" target="_blank" rel="noopener" style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</a>
+            {% else %}
+            <a href="https://forge.sp-tarkov.com/mods/{{ e.forge_mod_id }}" target="_blank" rel="noopener" style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</a>
+            {% endif %}
+            <div style="margin-top: 0.25rem">
+                <span>{{ e.current_version }}</span>
+                <span style="color: var(--success)"> → {{ e.new_version }}</span>
+            </div>
+        </div>
+        {% if user.can("mods.update") %}
+        <form method="post" action="/quma/mods/{{ e.db_id }}/update" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ e.csrf_token }}">
+            <button type="submit" class="btn btn-sm">{% call icons::refresh() %}{% endcall %} Update</button>
+        </form>
+        {% endif %}
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center">
+        <span class="badge badge-muted">{{ e.update_reason }}</span>
+        {% if let Some(spt_ver) = &e.spt_version %}
+        <span class="badge badge-muted">SPT {{ spt_ver }}</span>
+        {% endif %}
+        {% if let Some(fika) = &e.fika_compat %}
+            {% if fika == "compatible" %}
+            <span class="badge badge-success">Fika ✓</span>
+            {% elif fika == "incompatible" %}
+            <span class="badge badge-danger">Fika ✗</span>
+            {% else %}
+            <span class="badge badge-muted">Fika ?</span>
+            {% endif %}
+        {% endif %}
+        {% if let Some(size) = &e.download_size %}
+        <span class="text-muted text-sm">{{ size|format_size_i64 }}</span>
+        {% endif %}
+    </div>
+</div>
+{% if total > 1 %}
+<div class="flex-between" style="margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px solid var(--border)">
+    <button class="btn btn-sm btn-outline"
+            hx-get="/quma/api/mods/updates-carousel?index={{ prev_index }}"
+            hx-target="#updates-carousel-inner"
+            hx-swap="innerHTML">← Prev</button>
+    <span class="text-muted text-sm">{{ index + 1 }} of {{ total }}</span>
+    <button class="btn btn-sm btn-outline"
+            hx-get="/quma/api/mods/updates-carousel?index={{ next_index }}"
+            hx-target="#updates-carousel-inner"
+            hx-swap="innerHTML">Next →</button>
+</div>
+{% endif %}
+{% endif %}
+{% else %}
+<div class="flex-between">
+    <h2 style="margin: 0">Updates</h2>
+</div>
+<p class="text-muted" style="margin: 0.5rem 0 0">{% call icons::check() %}{% endcall %} All mods are up to date</p>
+{% endif %}
