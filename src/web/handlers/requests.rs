@@ -179,7 +179,7 @@ async fn trigger_install_for_request(
         .get_versions(forge_mod_id, Some(&state.spt_info.spt_version))
         .await
         .map_err(|e| {
-            tracing::warn!(error = %e, "failed to fetch versions for request install");
+            tracing::warn!(err = %e, "failed to fetch versions for request install");
             "Could not fetch versions for install.".to_string()
         })?;
 
@@ -367,7 +367,7 @@ async fn trigger_install_for_request(
                     tasks.complete(task_id, "Mod installed successfully".to_string());
                 }
                 Err(e) => {
-                    tracing::error!(forge_mod_id, error = %e, "install from request failed");
+                    tracing::error!(forge_mod_id, err = %e, "install from request failed");
                     tasks.fail(task_id, format!("Install failed: {e}"));
                 }
             }
