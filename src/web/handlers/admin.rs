@@ -7,7 +7,7 @@ use crate::db::rbac::{
     validate_role_name, DeleteRoleResult, Permission, PermissionInfo, RoleRecord,
     RoleWithPermissions,
 };
-use crate::db::users::{InviteCodeWithUsers, User};
+use crate::db::users::{DeleteInviteResult, DeleteUserResult, InviteCodeWithUsers, User};
 use crate::spt::profiles::{load_all_profile_stats, ProfileStatus, SptProfileStats};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
@@ -83,6 +83,7 @@ struct UserRowTemplate {
 // InviteView -- pre-computed view struct for invites template
 // (Askama can't call free functions, so we pre-compute status)
 pub struct InviteView {
+    pub id: i64,
     pub code: String,
     pub created_by_username: Option<String>,
     pub used_by_username: Option<String>,
@@ -101,6 +102,7 @@ impl InviteView {
             "available"
         };
         InviteView {
+            id: ic.invite.id,
             code: ic.invite.code,
             created_by_username: ic.created_by_username,
             used_by_username: ic.used_by_username,
@@ -462,6 +464,41 @@ pub async fn create_reset_token(
     .await
 }
 
+pub async fn delete_user(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+    form: Form<CsrfOnly>,
+) -> actix_web::Result<Html> {
+    let current_user = require_auth(&req)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let target_id = path.into_inner();
+    if target_id == current_user.user_id {
+        return Err(WebError::BadRequest("Cannot delete yourself".to_string()).into());
+    }
+
+    let db = state.db.clone();
+    let result = web::block(move || {
+        let db = db.lock();
+        db.delete_user(target_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    match result {
+        DeleteUserResult::Deleted => admin_users(state, req, session).await,
+        DeleteUserResult::LastAdmin => {
+            Err(WebError::UnprocessableEntity("Cannot delete the last admin".to_string()).into())
+        }
+        DeleteUserResult::NotFound => Err(WebError::NotFound.into()),
+    }
+}
+
 pub async fn admin_invites(
     state: Data<AppState>,
     req: HttpRequest,
@@ -544,6 +581,38 @@ pub async fn create_invite(
         external_url,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn delete_invite(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+    form: Form<CsrfOnly>,
+) -> actix_web::Result<Html> {
+    require_auth(&req)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let invite_id = path.into_inner();
+    let db = state.db.clone();
+    let result = web::block(move || {
+        let db = db.lock();
+        db.delete_invite(invite_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    match result {
+        DeleteInviteResult::Deleted => admin_invites(state, req, session).await,
+        DeleteInviteResult::AlreadyUsed => Err(WebError::UnprocessableEntity(
+            "Cannot delete a used invite code".to_string(),
+        )
+        .into()),
+        DeleteInviteResult::NotFound => Err(WebError::NotFound.into()),
+    }
 }
 
 // -- Role management handlers --
