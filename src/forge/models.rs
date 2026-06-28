@@ -39,30 +39,86 @@ impl<'de> Deserialize<'de> for FikaCompat {
     }
 }
 
+/// A mod or addon owner/author from the Forge API.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ForgeModOwner {
+    pub id: i64,
+    pub name: String,
+    pub profile_photo_url: Option<String>,
+    pub cover_photo_url: Option<String>,
+}
+
+/// A source code link on a mod or addon.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SourceCodeLink {
+    pub url: String,
+    pub label: Option<String>,
+}
+
+/// A mod category from the Forge API.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ForgeCategory {
+    pub id: i64,
+    pub name: String,
+    pub slug: String,
+    pub color_class: Option<String>,
+}
+
+/// A mod license from the Forge API.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ForgeLicense {
+    pub id: i64,
+    pub name: String,
+    pub short_name: String,
+}
+
 /// A mod listing from the Forge API.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ForgeMod {
     pub id: i64,
+    pub hub_id: Option<serde_json::Value>,
+    pub guid: Option<String>,
     pub name: String,
     pub slug: Option<String>,
+    pub teaser: Option<String>,
     pub description: Option<String>,
-    #[serde(rename = "fika_compatibility")]
+    pub thumbnail: Option<String>,
+    pub downloads: Option<i64>,
+    pub owner: Option<ForgeModOwner>,
+    pub additional_authors: Option<Vec<ForgeModOwner>>,
+    pub source_code_links: Option<Vec<SourceCodeLink>>,
+    pub detail_url: Option<String>,
     pub fika_compatibility: Option<FikaCompat>,
+    pub featured: Option<bool>,
+    pub contains_ai_content: Option<bool>,
+    pub custom_ai_disclosure: Option<String>,
+    pub contains_ads: Option<bool>,
+    pub shows_profile_binding_notice: Option<bool>,
+    pub category: Option<ForgeCategory>,
+    pub license: Option<ForgeLicense>,
     pub versions: Option<Vec<ForgeVersion>>,
+    pub published_at: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 /// A specific version of a mod.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ForgeVersion {
     pub id: i64,
+    pub hub_id: Option<serde_json::Value>,
     pub version: String,
+    pub description: Option<String>,
     #[serde(alias = "spt_version_constraint")]
     pub spt_version: Option<String>,
     pub link: Option<String>,
     pub content_length: Option<u64>,
-    #[serde(rename = "fika_compatibility")]
+    pub downloads: Option<i64>,
     pub fika_compatibility: Option<FikaCompat>,
     pub dependencies: Option<Vec<ForgeDependency>>,
+    pub published_at: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 /// A dependency declared by a mod version.
@@ -104,6 +160,7 @@ pub struct ForgeVersionsResponse {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DependencyNode {
     pub id: i64,
+    pub guid: Option<String>,
     pub name: String,
     pub slug: Option<String>,
     pub latest_compatible_version: Option<ForgeVersion>,
@@ -402,5 +459,164 @@ mod tests {
         assert_eq!(node.dependencies[0].id, 123);
         assert_eq!(node.dependencies[0].name, "ChildMod");
         assert!(node.dependencies[0].dependencies.is_empty());
+    }
+
+    #[test]
+    fn deserialize_forge_mod_all_fields() {
+        let json = r#"{
+            "id": 42,
+            "hub_id": "123",
+            "guid": "com.example.big-brain",
+            "name": "Big Brain",
+            "slug": "big-brain",
+            "teaser": "AI overhaul mod for SPT",
+            "description": "Full description here",
+            "thumbnail": "https://forge.sp-tarkov.com/thumbs/42.jpg",
+            "downloads": 55212644,
+            "owner": {
+                "id": 1,
+                "name": "ModAuthor",
+                "profile_photo_url": "https://example.com/profile.jpg",
+                "cover_photo_url": "https://example.com/cover.jpg"
+            },
+            "additional_authors": [
+                {
+                    "id": 2,
+                    "name": "CoAuthor",
+                    "profile_photo_url": "https://example.com/co.jpg",
+                    "cover_photo_url": null
+                }
+            ],
+            "source_code_links": [
+                {"url": "https://github.com/example/big-brain", "label": "GitHub"}
+            ],
+            "detail_url": "https://forge.sp-tarkov.com/mods/42/big-brain",
+            "fika_compatibility": true,
+            "featured": true,
+            "contains_ai_content": false,
+            "custom_ai_disclosure": null,
+            "contains_ads": false,
+            "shows_profile_binding_notice": false,
+            "published_at": "2025-01-09T17:48:53.000000Z",
+            "created_at": "2024-12-11T14:48:53.000000Z",
+            "updated_at": "2025-04-10T13:50:00.000000Z"
+        }"#;
+
+        let m: ForgeMod = serde_json::from_str(json).expect("should deserialize full ForgeMod");
+        assert_eq!(m.id, 42);
+        assert_eq!(m.guid.as_deref(), Some("com.example.big-brain"));
+        assert_eq!(m.teaser.as_deref(), Some("AI overhaul mod for SPT"));
+        assert_eq!(m.downloads, Some(55212644));
+        assert_eq!(
+            m.detail_url.as_deref(),
+            Some("https://forge.sp-tarkov.com/mods/42/big-brain")
+        );
+        assert_eq!(m.featured, Some(true));
+        assert_eq!(m.contains_ai_content, Some(false));
+        assert_eq!(m.contains_ads, Some(false));
+        assert_eq!(m.fika_compatibility, Some(FikaCompat::Compatible));
+
+        let owner = m.owner.expect("should have owner");
+        assert_eq!(owner.id, 1);
+        assert_eq!(owner.name, "ModAuthor");
+
+        let authors = m
+            .additional_authors
+            .expect("should have additional_authors");
+        assert_eq!(authors.len(), 1);
+        assert_eq!(authors[0].name, "CoAuthor");
+
+        let links = m.source_code_links.expect("should have source_code_links");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "https://github.com/example/big-brain");
+        assert_eq!(links[0].label.as_deref(), Some("GitHub"));
+
+        assert!(m.published_at.is_some());
+        assert!(m.created_at.is_some());
+        assert!(m.updated_at.is_some());
+    }
+
+    #[test]
+    fn deserialize_forge_version_all_fields() {
+        let json = r#"{
+            "id": 200,
+            "hub_id": "456",
+            "version": "3.1.0",
+            "description": "Major update with new features",
+            "spt_version_constraint": "^3.10.0",
+            "link": "https://forge.sp-tarkov.com/files/200",
+            "content_length": 2097152,
+            "downloads": 1523,
+            "fika_compatibility": "compatible",
+            "dependencies": [],
+            "published_at": "2025-01-09T17:48:53.000000Z",
+            "created_at": "2024-12-11T14:48:53.000000Z",
+            "updated_at": "2025-04-10T13:50:00.000000Z"
+        }"#;
+
+        let v: ForgeVersion =
+            serde_json::from_str(json).expect("should deserialize full ForgeVersion");
+        assert_eq!(v.id, 200);
+        assert_eq!(
+            v.description.as_deref(),
+            Some("Major update with new features")
+        );
+        assert_eq!(v.downloads, Some(1523));
+        assert!(v.published_at.is_some());
+        assert!(v.created_at.is_some());
+        assert!(v.updated_at.is_some());
+    }
+
+    #[test]
+    fn deserialize_forge_mod_with_category_and_license() {
+        let json = r#"{
+            "id": 42,
+            "name": "Big Brain",
+            "fika_compatibility": true,
+            "category": {
+                "id": 1,
+                "name": "Gameplay",
+                "slug": "gameplay",
+                "color_class": "blue"
+            },
+            "license": {
+                "id": 1,
+                "name": "MIT License",
+                "short_name": "MIT"
+            }
+        }"#;
+
+        let m: ForgeMod = serde_json::from_str(json).expect("should deserialize with includes");
+        let cat = m.category.expect("should have category");
+        assert_eq!(cat.id, 1);
+        assert_eq!(cat.name, "Gameplay");
+        assert_eq!(cat.slug, "gameplay");
+        assert_eq!(cat.color_class.as_deref(), Some("blue"));
+
+        let lic = m.license.expect("should have license");
+        assert_eq!(lic.id, 1);
+        assert_eq!(lic.name, "MIT License");
+        assert_eq!(lic.short_name, "MIT");
+    }
+
+    #[test]
+    fn deserialize_dependency_node_with_guid() {
+        let json = r#"{
+            "id": 42,
+            "guid": "com.example.big-brain",
+            "name": "Big Brain",
+            "slug": "big-brain",
+            "latest_compatible_version": {
+                "id": 100,
+                "version": "1.2.0"
+            },
+            "dependencies": [],
+            "conflict": false
+        }"#;
+
+        let node: DependencyNode =
+            serde_json::from_str(json).expect("should deserialize with guid");
+        assert_eq!(node.id, 42);
+        assert_eq!(node.guid.as_deref(), Some("com.example.big-brain"));
     }
 }

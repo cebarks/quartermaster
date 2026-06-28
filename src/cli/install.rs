@@ -531,16 +531,23 @@ mod tests {
         use crate::forge::models::ForgeVersion;
         DependencyNode {
             id,
+            guid: None,
             name: name.to_string(),
             slug: None,
             latest_compatible_version: Some(ForgeVersion {
                 id: version_id,
+                hub_id: None,
                 version: ver.to_string(),
+                description: None,
                 spt_version: None,
                 link: None,
                 content_length: None,
+                downloads: None,
                 fika_compatibility: None,
                 dependencies: None,
+                published_at: None,
+                created_at: None,
+                updated_at: None,
             }),
             dependencies: vec![],
             conflict,
