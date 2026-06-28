@@ -33,11 +33,13 @@
         <div class="form-group">
             <label for="tls_cert">TLS Certificate Path</label>
             <input type="text" id="tls_cert" name="tls_cert" value="{% if let Some(p) = &config.tls_cert %}{{ p.display() }}{% endif %}" placeholder="/path/to/cert.pem">
+            <p class="text-muted text-sm">Leave empty to use auto-generated self-signed certificate.</p>
         </div>
 
         <div class="form-group">
             <label for="tls_key">TLS Key Path</label>
             <input type="text" id="tls_key" name="tls_key" value="{% if let Some(p) = &config.tls_key %}{{ p.display() }}{% endif %}" placeholder="/path/to/key.pem">
+            <p class="text-muted text-sm">Leave empty to use auto-generated self-signed key.</p>
         </div>
 
         <div class="form-group">

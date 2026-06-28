@@ -198,10 +198,10 @@ pub async fn save_web_settings(
     let cert = form.tls_cert.trim();
     let key = form.tls_key.trim();
 
-    if tls_on && (cert.is_empty() || key.is_empty()) {
+    if tls_on && (cert.is_empty() != key.is_empty()) {
         set_flash(
             &session,
-            "TLS certificate and key paths are required when TLS is enabled",
+            "TLS certificate and key paths must both be set, or both empty (auto-generated)",
             FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()

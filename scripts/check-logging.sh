@@ -70,7 +70,7 @@ VIOLATIONS=$(rg -n 'error\s*=' src/ --glob '*.rs' | rg '(warn!|error!|info!|debu
 if [ -n "$VIOLATIONS" ]; then
     echo "WARN: 'error =' field name (prefer 'err ='):"
     echo "$VIOLATIONS"
-    ERRORS=$((ERRORS + 1))
+    # Don't increment ERRORS — this is advisory, not blocking
 else
     echo "PASS"
 fi

@@ -190,7 +190,7 @@ impl ForgeClient {
         spt_version: Option<&str>,
     ) -> Result<Vec<ForgeVersion>> {
         let url = format!("{}/mod/{}/versions", self.base_url, mod_id);
-        let mut req = self.client.get(&url);
+        let mut req = self.client.get(&url).query(&[("per_page", "100")]);
         if let Some(v) = spt_version {
             req = req.query(&[("filter[spt_version]", v)]);
         }
@@ -545,6 +545,7 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/mod/42/versions"))
+            .and(query_param("per_page", "100"))
             .and(query_param("filter[spt_version]", "3.10.0"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .expect(1)
@@ -570,6 +571,7 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/mod/42/versions"))
+            .and(query_param("per_page", "100"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .expect(1)
             .mount(&server)

@@ -886,14 +886,22 @@ macro_rules! env_override {
 }
 
 impl Config {
-    /// Load config from a TOML file at `path`.
+    /// Load config from a TOML file at `path`. Returns defaults if the file doesn't exist.
     pub fn load(path: &Path) -> Result<Self> {
         tracing::debug!(path = %path.display(), "loading config file");
-        let contents = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read config file: {}", path.display()))?;
-        let config: Config =
-            toml::from_str(&contents).with_context(|| "failed to parse config TOML")?;
-        Ok(config)
+        match std::fs::read_to_string(path) {
+            Ok(contents) => {
+                let config: Config =
+                    toml::from_str(&contents).with_context(|| "failed to parse config TOML")?;
+                Ok(config)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(path = %path.display(), "config file not found, using defaults");
+                Ok(Config::default())
+            }
+            Err(e) => Err(anyhow::anyhow!(e)
+                .context(format!("failed to read config file: {}", path.display()))),
+        }
     }
 
     /// Save config to a TOML file at `path`, creating parent directories if needed.
@@ -1081,6 +1089,15 @@ web_port = 3000
         // Defaults for unspecified fields
         assert!(config.queue_changes);
         assert_eq!(config.web_bind, "0.0.0.0");
+    }
+
+    #[test]
+    fn load_missing_file_returns_defaults() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("nonexistent.toml");
+
+        let config = Config::load(&config_path).expect("should return defaults for missing file");
+        assert_eq!(config, Config::default());
     }
 
     #[test]
