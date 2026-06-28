@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== pre-push: running clippy ==="
+cargo clippy -- -D warnings
+
+echo "=== pre-push: running tests ==="
+cargo test
+
+echo "=== pre-push: running security audit ==="
+cargo audit

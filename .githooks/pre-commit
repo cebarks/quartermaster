@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== pre-commit: checking formatting ==="
+cargo fmt --check
+
+echo "=== pre-commit: checking logging conventions ==="
+./scripts/check-logging.sh
