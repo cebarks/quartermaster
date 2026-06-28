@@ -327,6 +327,7 @@ pub async fn join_submit(
         .map_err(WebError::from)?;
 
     // Create user + consume invite in a single transaction
+    let username_for_login = username.clone();
     let db = state.db.clone();
     let code_for_invite = code.clone();
     let result = web::block(move || {
@@ -362,16 +363,73 @@ pub async fn join_submit(
 
     match result {
         Ok(()) => {
-            crate::web::flash::set_flash(
-                &session,
-                "Account created — please log in.",
-                crate::web::flash::FlashType::Success,
-            );
-            Ok(referrer_policy(
-                HttpResponse::SeeOther()
-                    .insert_header(("Location", "/quma/login"))
-                    .finish(),
-            ))
+            let db = state.db.clone();
+            let uname = username_for_login;
+            let new_user = web::block(move || {
+                let db = db.lock();
+                db.get_user_by_username(&uname)
+            })
+            .await
+            .map_err(WebError::from)?
+            .map_err(WebError::from)?;
+
+            if let Some(new_user) = new_user {
+                let db = state.db.clone();
+                let role = new_user.role.clone();
+                let (role_display, permissions) = web::block(move || {
+                    let db = db.lock();
+                    let role_display = db
+                        .get_role_by_name(&role)
+                        .ok()
+                        .flatten()
+                        .map(|r| r.display_name)
+                        .unwrap_or_else(|| role.clone());
+                    let permissions = db.get_permissions_for_role(&role).unwrap_or_default();
+                    (role_display, permissions)
+                })
+                .await
+                .map_err(WebError::from)?;
+
+                session.renew();
+                let session_user = crate::web::auth::SessionUser {
+                    user_id: new_user.id,
+                    has_password: new_user.password_hash.is_some(),
+                    username: new_user.username,
+                    role_name: new_user.role,
+                    role_display_name: role_display,
+                    permissions,
+                };
+                if let Err(e) = crate::web::auth::set_session_user(&session, &session_user) {
+                    tracing::warn!(err = %e, "failed to auto-login after registration, falling back to login page");
+                    crate::web::flash::set_flash(
+                        &session,
+                        "Account created — please log in.",
+                        crate::web::flash::FlashType::Success,
+                    );
+                    return Ok(referrer_policy(
+                        HttpResponse::SeeOther()
+                            .insert_header(("Location", "/quma/login"))
+                            .finish(),
+                    ));
+                }
+
+                Ok(referrer_policy(
+                    HttpResponse::SeeOther()
+                        .insert_header(("Location", "/quma/setup"))
+                        .finish(),
+                ))
+            } else {
+                crate::web::flash::set_flash(
+                    &session,
+                    "Account created — please log in.",
+                    crate::web::flash::FlashType::Success,
+                );
+                Ok(referrer_policy(
+                    HttpResponse::SeeOther()
+                        .insert_header(("Location", "/quma/login"))
+                        .finish(),
+                ))
+            }
         }
         Err(msg) => render_err(&msg),
     }
