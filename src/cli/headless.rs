@@ -13,6 +13,24 @@ use crate::spt::server::SptClient;
 
 use super::common::{confirm, CliContext};
 
+struct ClientInfo {
+    index: u32,
+    name: String,
+    container_status: &'static str,
+    profile_id: Option<String>,
+    started_at: Option<String>,
+}
+
+const CONNECT_GRACE_SECS: i64 = 90;
+
+fn is_recently_started(started_at: Option<&str>) -> bool {
+    started_at
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .is_some_and(|t| {
+            chrono::Utc::now().signed_duration_since(t).num_seconds() < CONNECT_GRACE_SECS
+        })
+}
+
 #[derive(Subcommand)]
 pub enum HeadlessAction {
     /// Show headless client status
@@ -92,13 +110,17 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
     let container_mgr = require_container_manager(ctx)?;
 
     // Get live data from containers (including PROFILE_ID for Fika correlation)
-    let mut states: Vec<(u32, String, &str, Option<String>)> = Vec::new();
+    let mut states: Vec<ClientInfo> = Vec::new();
     for index in 1..=headless_config.client_count() {
         let name = client_container_name(index);
 
-        let (container_status, profile_id) = match container_mgr.inspect(&name).await {
+        let info = match container_mgr.inspect(&name).await {
             Ok(info) => {
                 let running = info.state.as_ref().and_then(|s| s.running).unwrap_or(false);
+                let started_at = info
+                    .state
+                    .as_ref()
+                    .and_then(|s| crate::container::filter_started_at(s.started_at.clone()));
                 let status = if running { "running" } else { "stopped" };
                 let pid = if running {
                     info.config.and_then(|c| c.env).and_then(|env| {
@@ -110,12 +132,24 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
                 } else {
                     None
                 };
-                (status, pid)
+                ClientInfo {
+                    index,
+                    name,
+                    container_status: status,
+                    profile_id: pid,
+                    started_at,
+                }
             }
-            Err(_) => ("not found", None),
+            Err(_) => ClientInfo {
+                index,
+                name,
+                container_status: "not found",
+                profile_id: None,
+                started_at: None,
+            },
         };
 
-        states.push((index, name, container_status, profile_id));
+        states.push(info);
     }
 
     // Get Fika API data if server is running
@@ -136,16 +170,22 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
             );
             println!("{}", "-".repeat(60));
 
-            for (index, name, container_status, profile_id) in &states {
+            for ci in &states {
                 let fika_state: String = if let Some(ref map) = headless_map {
-                    match profile_id {
+                    match &ci.profile_id {
                         Some(pid) => match map.get(pid) {
                             Some(info) => match &info.state {
                                 EHeadlessStatus::Ready => "Ready".into(),
                                 EHeadlessStatus::InRaid => "In Raid".into(),
                                 EHeadlessStatus::Unknown(s) => format!("Unknown({s})"),
                             },
-                            None => "no data".into(),
+                            None => {
+                                if is_recently_started(ci.started_at.as_deref()) {
+                                    "connecting...".into()
+                                } else {
+                                    "no data".into()
+                                }
+                            }
                         },
                         None => "awaiting profile".into(),
                     }
@@ -155,7 +195,7 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
 
                 println!(
                     "{:<8} {:<20} {:<15} {:<10}",
-                    index, name, container_status, fika_state
+                    ci.index, ci.name, ci.container_status, fika_state
                 );
             }
         }
@@ -179,10 +219,14 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
 
             println!("  Status: {}", if running { "running" } else { "stopped" });
 
-            if let Some(state) = &inspect.state {
-                if let Some(started_at) = &state.started_at {
-                    println!("  Started: {}", started_at);
-                }
+            let detail_started_at = inspect
+                .state
+                .as_ref()
+                .and_then(|s| s.started_at.clone())
+                .filter(|s| !s.is_empty() && s != "0001-01-01T00:00:00Z");
+
+            if let Some(ref started) = detail_started_at {
+                println!("  Started: {}", started);
             }
             if let Some(restart_count) = &inspect.restart_count {
                 println!("  Restart count: {}", restart_count);
@@ -216,6 +260,8 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
                         println!("  State: {}", state_str);
                         println!("  Players: {}", info.players.join(", "));
                         println!("  Level: {}", info.level);
+                    } else if is_recently_started(detail_started_at.as_deref()) {
+                        println!("\nFika Status: connecting... (client recently started)");
                     } else {
                         println!("\nFika Status: no data for this client");
                     }
@@ -562,4 +608,34 @@ fn require_container_manager(ctx: &CliContext) -> Result<&ContainerManager> {
              systemctl --user enable --now podman.socket"
         )
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recently_started_within_grace_period() {
+        let now = chrono::Utc::now();
+        let ts = now.to_rfc3339();
+        assert!(is_recently_started(Some(&ts)));
+    }
+
+    #[test]
+    fn not_recently_started_after_grace_period() {
+        let old = chrono::Utc::now() - chrono::Duration::seconds(CONNECT_GRACE_SECS + 10);
+        let ts = old.to_rfc3339();
+        assert!(!is_recently_started(Some(&ts)));
+    }
+
+    #[test]
+    fn not_recently_started_when_none() {
+        assert!(!is_recently_started(None));
+    }
+
+    #[test]
+    fn not_recently_started_when_invalid() {
+        assert!(!is_recently_started(Some("not-a-timestamp")));
+    }
 }

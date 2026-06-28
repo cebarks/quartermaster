@@ -723,7 +723,15 @@ pub async fn converge(
         )
         .await?;
     } else if current_count > desired_count {
-        remove_excess_clients(container_mgr, config, spt_dir, current_count, desired_count).await?;
+        remove_excess_clients(
+            container_mgr,
+            config,
+            spt_dir,
+            spt_client,
+            current_count,
+            desired_count,
+        )
+        .await?;
     } else {
         info!("Already at desired count ({desired_count}), checking for overlay updates");
     }
@@ -761,6 +769,51 @@ async fn await_server_ready(spt_client: &SptClient, timeout_secs: u64) -> bool {
             return false;
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
+/// Restart all running managed headless containers so they reconnect to a fresh SPT server.
+///
+/// After the SPT server is restarted (for config changes, scale-up, or scale-down),
+/// existing headless containers retain stale connections and won't appear in the Fika
+/// headless API. Restarting them forces a fresh connection to the new server instance.
+async fn restart_running_clients(container_mgr: &ContainerManager, count: u32) -> Result<()> {
+    let futs: Vec<_> = (1..=count)
+        .map(|i| {
+            let name = client_container_name(i);
+            async move {
+                match container_mgr.is_running(&name).await {
+                    Ok(true) => {
+                        info!("Restarting {name} to reconnect to fresh SPT server");
+                        if let Err(e) = container_mgr.restart(&name).await {
+                            warn!("Failed to restart {name} after server restart: {e}");
+                            return Some(format!("{name}: {e}"));
+                        }
+                    }
+                    Ok(false) => {
+                        debug!("Skipping restart of {name} (not running)");
+                    }
+                    Err(e) => {
+                        warn!("Failed to check status of {name}: {e}");
+                        return Some(format!("{name}: {e}"));
+                    }
+                }
+                None
+            }
+        })
+        .collect();
+
+    let results = futures_util::future::join_all(futs).await;
+    let errors: Vec<_> = results.into_iter().flatten().collect();
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "Failed to restart {} client(s): {}",
+            errors.len(),
+            errors.join("; ")
+        )
     }
 }
 
@@ -808,7 +861,10 @@ async fn ensure_clients(
         );
     }
 
-    // 3. Discover available profiles for assignment
+    // 3. Restart existing containers so they reconnect to the fresh server
+    restart_running_clients(container_mgr, current_count).await?;
+
+    // 4. Discover available profiles for assignment
     // Headless profiles are created by the SPT server when it starts with Fika's
     // headless.amount > 0. If profiles don't exist yet (server hasn't been restarted
     // since headless amount was increased), containers are created without PROFILE_ID
@@ -821,7 +877,7 @@ async fn ensure_clients(
     let profile_assignments =
         select_profiles_for_assignment(container_mgr, spt_dir, &managed, new_count).await;
 
-    // 4. Create containers for new clients
+    // 5. Create containers for new clients
     for (offset, profile_id) in profile_assignments.into_iter().enumerate() {
         let i = current_count + 1 + offset as u32;
         let client_index = (i - 1) as usize;
@@ -849,6 +905,7 @@ async fn remove_excess_clients(
     container_mgr: &ContainerManager,
     config: &Config,
     spt_dir: &Path,
+    spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
 ) -> Result<()> {
@@ -886,6 +943,18 @@ async fn remove_excess_clients(
         .start(container)
         .await
         .context("failed to start SPT server after client deregistration")?;
+
+    // 4. Wait for server readiness before restarting remaining clients
+    info!("Waiting for SPT server to become ready");
+    if !await_server_ready(spt_client, 120).await {
+        warn!(
+            "SPT server did not respond within 120s after restart. \
+             Remaining clients may not reconnect immediately."
+        );
+    }
+
+    // 5. Restart remaining clients so they reconnect to the fresh server
+    restart_running_clients(container_mgr, desired_count).await?;
 
     Ok(())
 }

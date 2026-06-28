@@ -120,7 +120,7 @@ impl CreateContainerOpts {
     }
 }
 
-fn filter_started_at(started_at: Option<String>) -> Option<String> {
+pub fn filter_started_at(started_at: Option<String>) -> Option<String> {
     started_at.filter(|s| !s.is_empty() && s != "0001-01-01T00:00:00Z")
 }
 
