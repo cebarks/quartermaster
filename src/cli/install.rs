@@ -340,18 +340,15 @@ pub async fn download_and_install(
 
     let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
     let archive_path = tmp_dir.path().join("mod.zip");
-    println!("  Downloading {}...", name);
+    tracing::info!(name, "downloading mod");
     forge.download_file(download_url, &archive_path).await?;
 
     let mod_type = detect_mod_type(&archive_path)?;
     if mod_type == ModType::Ambiguous {
-        println!(
-            "  Warning: could not determine mod type for {}. Extracting as-is.",
-            name
-        );
+        tracing::warn!(name, "could not determine mod type, extracting as-is");
     }
 
-    println!("  Extracting...");
+    tracing::info!(name, "extracting mod");
     let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
         db,
         spt_dir,
@@ -365,7 +362,7 @@ pub async fn download_and_install(
     })?;
 
     let file_count = db.get_files_for_mod(db_id)?.len();
-    println!("  Extracted {} files", file_count);
+    tracing::info!(name, file_count, "mod extracted");
 
     Ok(db_id)
 }
@@ -393,18 +390,15 @@ pub async fn download_and_install_with_arc(
 
     let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
     let archive_path = tmp_dir.path().join("mod.zip");
-    println!("  Downloading {}...", name);
+    tracing::info!(name, "downloading mod");
     forge.download_file(download_url, &archive_path).await?;
 
     let mod_type = detect_mod_type(&archive_path)?;
     if mod_type == ModType::Ambiguous {
-        println!(
-            "  Warning: could not determine mod type for {}. Extracting as-is.",
-            name
-        );
+        tracing::warn!(name, "could not determine mod type, extracting as-is");
     }
 
-    println!("  Extracting...");
+    tracing::info!(name, "extracting mod");
     // Lock the mutex only for the synchronous DB operation
     let db_id = {
         let db_guard = db.lock();
@@ -422,7 +416,7 @@ pub async fn download_and_install_with_arc(
     }; // MutexGuard dropped here
 
     let file_count = db.lock().get_files_for_mod(db_id)?.len();
-    println!("  Extracted {} files", file_count);
+    tracing::info!(name, file_count, "mod extracted");
 
     Ok(db_id)
 }
