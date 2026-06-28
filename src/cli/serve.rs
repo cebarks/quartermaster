@@ -134,8 +134,10 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     let modsync_installed = crate::config::is_modsync_installed(&spt_dir);
     let converging = Arc::new(AtomicBool::new(false));
+    let config_arc = Arc::new(parking_lot::RwLock::new(config));
 
     // Initialize client supervisor if Fika is installed and headless clients configured
+    let config = config_arc.read().clone();
     let client_states = if let Some(ref headless_config) = config.headless {
         if fika_installed && headless_config.client_count() > 0 {
             if let Some(ref container_mgr_arc) = container_mgr {
@@ -180,7 +182,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         let supervisor = crate::client::supervisor::ClientSupervisor::new(
                             container_mgr_arc.as_ref().clone(),
                             spt_client,
-                            headless_config.clone(),
+                            Arc::clone(&config_arc),
                             Arc::clone(&converging),
                             cancel_token,
                         );
@@ -213,6 +215,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     let server_future = crate::web::start_server(crate::web::ServerContext {
         config,
+        config_handle: config_arc,
         config_path,
         db: db_arc,
         forge,

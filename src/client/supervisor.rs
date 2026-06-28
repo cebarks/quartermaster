@@ -11,7 +11,7 @@ use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 
 use crate::client::{ClientHealth, ClientState, ContainerStatus};
-use crate::config::{HeadlessConfig, RestartPolicy};
+use crate::config::{Config, HeadlessConfig, RestartPolicy};
 use crate::container::ContainerManager;
 use crate::spt::headless::{EHeadlessStatus, GetHeadlessesResponse};
 use crate::spt::server::SptClient;
@@ -19,7 +19,7 @@ use crate::spt::server::SptClient;
 pub struct ClientSupervisor {
     container_mgr: ContainerManager,
     spt_client: SptClient,
-    headless_config: HeadlessConfig,
+    config: Arc<parking_lot::RwLock<Config>>,
     converging: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     state: Arc<RwLock<Vec<ClientState>>>,
@@ -31,7 +31,7 @@ impl ClientSupervisor {
     pub fn new(
         container_mgr: ContainerManager,
         spt_client: SptClient,
-        headless_config: HeadlessConfig,
+        config: Arc<parking_lot::RwLock<Config>>,
         converging: Arc<AtomicBool>,
         cancel_token: CancellationToken,
     ) -> Self {
@@ -39,7 +39,7 @@ impl ClientSupervisor {
         Self {
             container_mgr,
             spt_client,
-            headless_config,
+            config,
             converging,
             cancel_token,
             state,
@@ -86,7 +86,20 @@ impl ClientSupervisor {
         }
     }
 
+    fn headless_config(&self) -> Option<HeadlessConfig> {
+        self.config.read().headless.clone()
+    }
+
     async fn tick(&self) -> anyhow::Result<()> {
+        let headless_config = match self.headless_config() {
+            Some(hc) if hc.client_count() > 0 => hc,
+            _ => {
+                let mut state_lock = self.state.write().await;
+                state_lock.clear();
+                return Ok(());
+            }
+        };
+
         // Check server liveness first
         let server_up = match self.spt_client.ping().await {
             Ok(ping) => ping.ok,
@@ -111,8 +124,10 @@ impl ClientSupervisor {
 
         // Update each client's state
         let mut states = Vec::new();
-        for i in 1..=self.headless_config.client_count() {
-            let state = self.check_client(i, server_up, headlesses.as_ref()).await?;
+        for i in 1..=headless_config.client_count() {
+            let state = self
+                .check_client(i, server_up, headlesses.as_ref(), &headless_config)
+                .await?;
             states.push(state);
         }
 
@@ -162,9 +177,9 @@ impl ClientSupervisor {
                         Arc::clone(&self.watcher_handles),
                         state.index,
                         state.container_name.clone(),
-                        self.headless_config.restart_policy.clone(),
-                        self.headless_config.max_restart_attempts,
-                        self.headless_config.restart_backoff_cap,
+                        headless_config.restart_policy.clone(),
+                        headless_config.max_restart_attempts,
+                        headless_config.restart_backoff_cap,
                         self.converging.clone(),
                         self.cancel_token.clone(),
                     )
@@ -181,6 +196,7 @@ impl ClientSupervisor {
         index: u32,
         server_up: bool,
         headlesses: Option<&GetHeadlessesResponse>,
+        headless_config: &HeadlessConfig,
     ) -> anyhow::Result<ClientState> {
         let container_name = crate::client::converge::client_container_name(index);
 
@@ -258,7 +274,7 @@ impl ClientSupervisor {
         // check_client only reads the value to detect GivenUp state.
 
         // Check if given up
-        if state.consecutive_failures > self.headless_config.max_restart_attempts {
+        if state.consecutive_failures > headless_config.max_restart_attempts {
             state.health = ClientHealth::GivenUp;
         }
 
