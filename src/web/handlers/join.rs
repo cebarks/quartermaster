@@ -9,12 +9,12 @@ use crate::web::error::WebError;
 use crate::web::invite::validate_invite_code;
 use crate::web::state::AppState;
 
-const DEFAULT_SERVER_NAME: &str = "SPT Server";
+pub(crate) const DEFAULT_SERVER_NAME: &str = "SPT Server";
 
-const FIKA_INSTALLER_URL: &str =
+pub(crate) const FIKA_INSTALLER_URL: &str =
     "https://github.com/project-fika/Fika-Installer/releases/latest/download/Fika-Installer.exe";
 
-const BOOTSTRAP_FORGE_IDS: &[i64] = &[
+pub(crate) const BOOTSTRAP_FORGE_IDS: &[i64] = &[
     NARCONET_FORGE_MOD_ID, // 2441
 ];
 
@@ -520,7 +520,12 @@ pub async fn bootstrap_bash(
     let (_, spt_port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_server_url = build_spt_server_url(&external_url, spt_port);
 
-    let script = generate_bash_script(&server_name, &external_url, &code, &spt_server_url);
+    let archive_url = format!(
+        "{}/quma/join/mods.zip?code={}",
+        external_url.trim_end_matches('/'),
+        code
+    );
+    let script = generate_bash_script(&server_name, &archive_url, &spt_server_url);
 
     Ok(referrer_policy(
         HttpResponse::Ok()
@@ -576,7 +581,12 @@ pub async fn bootstrap_powershell(
     let (_, spt_port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
     let spt_server_url = build_spt_server_url(&external_url, spt_port);
 
-    let script = generate_powershell_script(&server_name, &external_url, &code, &spt_server_url);
+    let archive_url = format!(
+        "{}/quma/join/mods.zip?code={}",
+        external_url.trim_end_matches('/'),
+        code
+    );
+    let script = generate_powershell_script(&server_name, &archive_url, &spt_server_url);
 
     Ok(referrer_policy(
         HttpResponse::Ok()
@@ -589,7 +599,7 @@ pub async fn bootstrap_powershell(
     ))
 }
 
-fn build_spt_server_url(external_url: &str, spt_port: u16) -> String {
+pub(crate) fn build_spt_server_url(external_url: &str, spt_port: u16) -> String {
     let trimmed = external_url.trim_end_matches('/');
     let host = trimmed
         .strip_prefix("https://")
@@ -609,16 +619,14 @@ fn escape_powershell(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-fn generate_bash_script(
+pub(crate) fn generate_bash_script(
     server_name: &str,
-    external_url: &str,
-    code: &str,
+    archive_url: &str,
     spt_server_url: &str,
 ) -> String {
     let server_name = escape_bash(server_name);
-    let external_url = escape_bash(external_url.trim_end_matches('/'));
+    let archive_url = escape_bash(archive_url);
     let spt_server_url = escape_bash(spt_server_url);
-    let code = escape_bash(code);
     let fika_installer_url = FIKA_INSTALLER_URL;
 
     format!(
@@ -627,7 +635,7 @@ set -euo pipefail
 
 SERVER_NAME='{server_name}'
 SPT_SERVER_URL='{spt_server_url}'
-ARCHIVE_URL='{external_url}/quma/join/mods.zip?code={code}'
+ARCHIVE_URL='{archive_url}'
 LAUNCHER_CONFIG='SPT/user/launcher/config.json'
 FIKA_INSTALLER_URL='{fika_installer_url}'
 
@@ -701,16 +709,14 @@ echo "  1. Launch SPT and connect to: $SPT_SERVER_URL"
     )
 }
 
-fn generate_powershell_script(
+pub(crate) fn generate_powershell_script(
     server_name: &str,
-    external_url: &str,
-    code: &str,
+    archive_url: &str,
     spt_server_url: &str,
 ) -> String {
     let server_name = escape_powershell(server_name);
-    let external_url = escape_powershell(external_url.trim_end_matches('/'));
+    let archive_url = escape_powershell(archive_url);
     let spt_server_url = escape_powershell(spt_server_url);
-    let code = escape_powershell(code);
     let fika_installer_url = FIKA_INSTALLER_URL;
 
     format!(
@@ -718,7 +724,7 @@ fn generate_powershell_script(
 
 $ServerName = '{server_name}'
 $SptServerUrl = '{spt_server_url}'
-$ArchiveUrl = '{external_url}/quma/join/mods.zip?code={code}'
+$ArchiveUrl = '{archive_url}'
 $LauncherConfig = 'SPT\user\launcher\config.json'
 $FikaInstallerUrl = '{fika_installer_url}'
 
@@ -783,7 +789,7 @@ try {{
     )
 }
 
-fn build_mod_zip(
+pub(crate) fn build_mod_zip(
     spt_dir: &std::path::Path,
     files: &[crate::db::mods::InstalledFile],
 ) -> anyhow::Result<Vec<u8>> {
@@ -824,8 +830,7 @@ mod tests {
     fn bash_script_escapes_shell_metacharacters() {
         let script = generate_bash_script(
             "My'; rm -rf /; echo 'Server",
-            "https://example.com",
-            "code1",
+            "https://example.com/quma/join/mods.zip?code=code1",
             TEST_SPT_URL,
         );
         assert!(script.contains("My'\\''"));
@@ -841,8 +846,7 @@ mod tests {
     fn bash_script_escapes_single_quotes_in_url() {
         let script = generate_bash_script(
             "Server",
-            "https://example.com'injected",
-            "code1",
+            "https://example.com'injected/quma/join/mods.zip?code=code1",
             TEST_SPT_URL,
         );
         assert!(script.contains("example.com'\\''injected"));
@@ -850,7 +854,11 @@ mod tests {
 
     #[test]
     fn bash_script_uses_fika_installer() {
-        let script = generate_bash_script("Server", "https://example.com", "code1", TEST_SPT_URL);
+        let script = generate_bash_script(
+            "Server",
+            "https://example.com/quma/join/mods.zip?code=code1",
+            TEST_SPT_URL,
+        );
         assert!(script.contains("FIKA_INSTALLER_URL="));
         assert!(script.contains("Fika-Installer.exe"));
         assert!(script.contains("wine Fika-Installer.exe install fika"));
@@ -860,8 +868,7 @@ mod tests {
     fn bash_script_uses_spt_server_url_for_launcher() {
         let script = generate_bash_script(
             "Server",
-            "https://example.com",
-            "code1",
+            "https://example.com/quma/join/mods.zip?code=code1",
             "https://example.com:6969",
         );
         assert!(script.contains("SPT_SERVER_URL='https://example.com:6969'"));
@@ -870,8 +877,11 @@ mod tests {
 
     #[test]
     fn powershell_script_escapes_single_quotes() {
-        let script =
-            generate_powershell_script("My' Server", "https://example.com", "code1", TEST_SPT_URL);
+        let script = generate_powershell_script(
+            "My' Server",
+            "https://example.com/quma/join/mods.zip?code=code1",
+            TEST_SPT_URL,
+        );
         assert!(script.contains("My'' Server"));
     }
 
@@ -879,8 +889,7 @@ mod tests {
     fn powershell_script_escapes_single_quotes_in_url() {
         let script = generate_powershell_script(
             "Server",
-            "https://example.com'injected",
-            "code1",
+            "https://example.com'injected/quma/join/mods.zip?code=code1",
             TEST_SPT_URL,
         );
         assert!(script.contains("example.com''injected"));
@@ -888,8 +897,11 @@ mod tests {
 
     #[test]
     fn powershell_script_uses_fika_installer() {
-        let script =
-            generate_powershell_script("Server", "https://example.com", "code1", TEST_SPT_URL);
+        let script = generate_powershell_script(
+            "Server",
+            "https://example.com/quma/join/mods.zip?code=code1",
+            TEST_SPT_URL,
+        );
         assert!(script.contains("$FikaInstallerUrl ="));
         assert!(script.contains("Fika-Installer.exe"));
         assert!(script.contains("install fika"));
@@ -899,8 +911,7 @@ mod tests {
     fn powershell_script_uses_spt_server_url_for_launcher() {
         let script = generate_powershell_script(
             "Server",
-            "https://example.com",
-            "code1",
+            "https://example.com/quma/join/mods.zip?code=code1",
             "https://example.com:6969",
         );
         assert!(script.contains("$SptServerUrl = 'https://example.com:6969'"));
