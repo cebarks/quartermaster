@@ -999,3 +999,124 @@ fn has_pending_op_check() {
     // Same mod_id, different action → false
     assert!(!db.has_pending_op(42, QueueAction::Update).unwrap());
 }
+
+#[test]
+fn delete_user_removes_user() {
+    use crate::db::users::DeleteUserResult;
+
+    let db = test_db();
+    let _admin = db
+        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .unwrap();
+    let player = db
+        .insert_user("player", Some("p2"), Some("pw"), "player")
+        .unwrap();
+
+    let result = db.delete_user(player).unwrap();
+    assert!(matches!(result, DeleteUserResult::Deleted));
+    assert!(db.get_user_by_id(player).unwrap().is_none());
+    assert_eq!(db.list_users().unwrap().len(), 1);
+}
+
+#[test]
+fn delete_user_not_found() {
+    use crate::db::users::DeleteUserResult;
+
+    let db = test_db();
+    let result = db.delete_user(99999).unwrap();
+    assert!(matches!(result, DeleteUserResult::NotFound));
+}
+
+#[test]
+fn delete_user_last_admin_blocked() {
+    use crate::db::users::DeleteUserResult;
+
+    let db = test_db();
+    let admin = db
+        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .unwrap();
+
+    let result = db.delete_user(admin).unwrap();
+    assert!(matches!(result, DeleteUserResult::LastAdmin));
+    assert!(db.get_user_by_id(admin).unwrap().is_some());
+}
+
+#[test]
+fn delete_user_allowed_with_other_admin() {
+    use crate::db::users::DeleteUserResult;
+
+    let db = test_db();
+    let admin1 = db
+        .insert_user("admin1", Some("p1"), Some("pw"), "admin")
+        .unwrap();
+    db.insert_user("admin2", Some("p2"), Some("pw"), "admin")
+        .unwrap();
+
+    let result = db.delete_user(admin1).unwrap();
+    assert!(matches!(result, DeleteUserResult::Deleted));
+}
+
+#[test]
+fn delete_user_cascades_mod_requests() {
+    use crate::db::users::DeleteUserResult;
+
+    let db = test_db();
+    let admin = db
+        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .unwrap();
+    let player = db
+        .insert_user("player", Some("p2"), Some("pw"), "player")
+        .unwrap();
+
+    db.create_mod_request(player, 100, "Mod", None, None, "unknown", None)
+        .unwrap();
+
+    let result = db.delete_user(player).unwrap();
+    assert!(matches!(result, DeleteUserResult::Deleted));
+
+    let requests = db.list_mod_requests(None, admin).unwrap();
+    assert_eq!(requests.len(), 0);
+}
+
+#[test]
+fn delete_invite_unused() {
+    use crate::db::users::DeleteInviteResult;
+
+    let db = test_db();
+    let admin = db
+        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .unwrap();
+    let invite_id = db.create_invite("CODE-DEL", Some(admin), None).unwrap();
+
+    let result = db.delete_invite(invite_id).unwrap();
+    assert!(matches!(result, DeleteInviteResult::Deleted));
+    assert!(db.get_invite("CODE-DEL").unwrap().is_none());
+}
+
+#[test]
+fn delete_invite_already_used() {
+    use crate::db::users::DeleteInviteResult;
+
+    let db = test_db();
+    let admin = db
+        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .unwrap();
+    let invite_id = db.create_invite("CODE-USED", Some(admin), None).unwrap();
+    let player = db
+        .insert_user("player", Some("p2"), Some("pw"), "player")
+        .unwrap();
+    db.use_invite("CODE-USED", player).unwrap();
+
+    let result = db.delete_invite(invite_id).unwrap();
+    assert!(matches!(result, DeleteInviteResult::AlreadyUsed));
+    assert!(db.get_invite("CODE-USED").unwrap().is_some());
+}
+
+#[test]
+fn delete_invite_not_found() {
+    use crate::db::users::DeleteInviteResult;
+
+    let db = test_db();
+    let result = db.delete_invite(99999).unwrap();
+    assert!(matches!(result, DeleteInviteResult::NotFound));
+}
