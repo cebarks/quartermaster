@@ -105,18 +105,30 @@ pub async fn app_logs_stream(
 
     let stream = async_stream::stream! {
         loop {
-            match rx.recv().await {
-                Ok(entry) => {
-                    if let Ok(json) = serde_json::to_string(&entry) {
-                        yield Ok(sse::Event::Data(sse::Data::new(json)));
-                    }
-                }
-                Err(RecvError::Lagged(n)) => {
-                    let comment: bytestring::ByteString = format!("lagged:{n}").into();
-                    yield Ok(sse::Event::Comment(comment));
-                }
+            // Wait for at least one entry
+            let entry = match rx.recv().await {
+                Ok(e) => e,
+                Err(RecvError::Lagged(_)) => continue,
                 Err(RecvError::Closed) => break,
+            };
+
+            // Drain up to 49 more that are immediately available
+            let mut batch = vec![entry];
+            while batch.len() < 50 {
+                match rx.try_recv() {
+                    Ok(e) => batch.push(e),
+                    Err(_) => break,
+                }
             }
+
+            for entry in batch {
+                if let Ok(json) = serde_json::to_string(&entry) {
+                    yield Ok(sse::Event::Data(sse::Data::new(json)));
+                }
+            }
+
+            // Rate-limit: max ~200 entries/sec to prevent browser flooding
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     };
 
@@ -141,11 +153,19 @@ pub async fn server_logs_json(
         .ok_or(WebError::NotFound)?;
     let tail = query.limit.unwrap_or(100).min(10000);
 
-    let output = tokio::process::Command::new("podman")
-        .args(["logs", "--tail", &tail.to_string(), &container])
-        .output()
-        .await
-        .map_err(|e| WebError::Internal(anyhow::anyhow!("podman logs failed: {e}")))?;
+    let output = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::process::Command::new("podman")
+            .args(["logs", "--tail", &tail.to_string(), &container])
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        WebError::Internal(anyhow::anyhow!(
+            "podman logs timed out (log file may be very large)"
+        ))
+    })?
+    .map_err(|e| WebError::Internal(anyhow::anyhow!("podman logs failed: {e}")))?;
 
     // Merge stdout and stderr lines
     let mut lines: Vec<String> = String::from_utf8_lossy(&output.stdout)

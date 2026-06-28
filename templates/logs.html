@@ -57,6 +57,19 @@
 
 <script>
 (function() {
+    const MAX_LOG_ENTRIES = 2000;
+    let serverLogsLoaded = false;
+
+    function trimOldEntries(container, max) {
+        const entries = container.querySelectorAll('.log-entry');
+        let removed = 0;
+        while (entries.length - removed > max) {
+            entries[removed].remove();
+            removed++;
+        }
+        return removed;
+    }
+
     // Tab switching
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -64,6 +77,10 @@
             document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
             btn.classList.add('active');
             document.getElementById('tab-' + btn.dataset.tab).style.display = '';
+            if (btn.dataset.tab === 'server' && !serverLogsLoaded) {
+                serverLogsLoaded = true;
+                loadServerLogs();
+            }
         });
     });
 
@@ -286,21 +303,39 @@
         }
     }
 
+    let appSSEBuffer = [];
+    let appRAFPending = false;
+
+    function flushAppSSEBuffer() {
+        appRAFPending = false;
+        if (appSSEBuffer.length === 0) return;
+        const entries = appSSEBuffer.splice(0, appSSEBuffer.length);
+        const atBottom = isScrolledToBottom();
+        const frag = document.createDocumentFragment();
+        for (const entry of entries) {
+            frag.appendChild(renderAppEntry(entry));
+        }
+        appContainer.appendChild(frag);
+        trimOldEntries(appContainer, MAX_LOG_ENTRIES);
+        if (atBottom) {
+            appContainer.lastElementChild.scrollIntoView({ block: 'end' });
+        }
+        updateScrollIndicators();
+    }
+
     function connectSSE() {
         if (appEventSource) appEventSource.close();
+        appSSEBuffer.length = 0;
         appEventSource = new EventSource('/quma/api/logs/app/stream');
         appEventSource.onmessage = (event) => {
             if (!liveMode) return;
+            if (appSSEBuffer.length >= 200) return;
             try {
-                const entry = JSON.parse(event.data);
-                const atBottom = isScrolledToBottom();
-                const row = renderAppEntry(entry);
-                appContainer.appendChild(row);
-
-                if (atBottom) {
-                    row.scrollIntoView({ block: 'end', behavior: 'smooth' });
+                appSSEBuffer.push(JSON.parse(event.data));
+                if (!appRAFPending) {
+                    appRAFPending = true;
+                    requestAnimationFrame(flushAppSSEBuffer);
                 }
-                updateScrollIndicators();
             } catch(e) {
                 console.error('SSE parse error:', e);
             }
@@ -336,6 +371,7 @@
 
     appClearBtn.addEventListener('click', () => {
         appContainer.innerHTML = '';
+        appSSEBuffer.length = 0;
         oldestId = null;
         hasMore = false;
         loadOlderBtn.style.display = 'none';
@@ -379,10 +415,10 @@
         });
     });
 
-    // Initialize
-    loadInitialLogs();
+    // Initialize — connect SSE only after initial load finishes
+    // to prevent the SSE firehose from starving the main thread
+    loadInitialLogs().then(() => { if (liveMode) connectSSE(); });
     fetchCounts();
-    connectSSE();
 
     // --- Server Logs (unchanged) ---
     const serverContainer = document.getElementById('server-log-container');
@@ -473,15 +509,35 @@
             });
     }
 
+    let serverSSEBuffer = [];
+    let serverRAFPending = false;
+
+    function flushServerSSEBuffer() {
+        serverRAFPending = false;
+        if (serverSSEBuffer.length === 0) return;
+        const lines = serverSSEBuffer.splice(0, serverSSEBuffer.length);
+        const frag = document.createDocumentFragment();
+        for (const line of lines) {
+            frag.appendChild(renderServerLine(line));
+        }
+        serverContainer.appendChild(frag);
+        trimOldEntries(serverContainer, MAX_LOG_ENTRIES);
+        applyServerFilters();
+        serverContainer.scrollTop = serverContainer.scrollHeight;
+    }
+
     function startServerFollow() {
         if (serverEventSource) return;
         serverFollowing = true;
         serverFollowBtn.classList.add('active');
         serverEventSource = new EventSource('/quma/api/logs/server/stream');
         serverEventSource.onmessage = function(e) {
-            serverContainer.appendChild(renderServerLine(e.data));
-            applyServerFilters();
-            serverContainer.scrollTop = serverContainer.scrollHeight;
+            if (serverSSEBuffer.length >= 200) return;
+            serverSSEBuffer.push(e.data);
+            if (!serverRAFPending) {
+                serverRAFPending = true;
+                requestAnimationFrame(flushServerSSEBuffer);
+            }
         };
         serverEventSource.addEventListener('error', function(e) {
             if (e.data) {
@@ -506,10 +562,19 @@
         else startServerFollow();
     });
     serverRefreshBtn.addEventListener('click', loadServerLogs);
-    serverClearBtn.addEventListener('click', () => { serverContainer.innerHTML = ''; });
+    serverClearBtn.addEventListener('click', () => { serverContainer.innerHTML = ''; serverSSEBuffer.length = 0; });
     serverSearch.addEventListener('input', applyServerFilters);
 
-    loadServerLogs();
+    // Disconnect SSE streams when the tab is hidden to prevent
+    // invisible memory accumulation; reconnect when visible again.
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            stopSSE();
+            if (serverFollowing) stopServerFollow();
+        } else {
+            if (liveMode) connectSSE();
+        }
+    });
 })();
 </script>
 {% endblock %}
