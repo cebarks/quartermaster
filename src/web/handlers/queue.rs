@@ -174,10 +174,10 @@ pub async fn apply_queue(
                     tracing::error!(
                         action = %op.action,
                         mod_name = %op.mod_name,
-                        err = %e,
+                        err = %format!("{e:#}"),
                         "queue apply failed"
                     );
-                    failures.push(format!("{}: {}", op.mod_name, e));
+                    failures.push(format!("{}: {e:#}", op.mod_name));
                 }
             }
         }

@@ -95,8 +95,8 @@ struct ExtractionLimits {
 impl ExtractionLimits {
     const fn production() -> Self {
         Self {
-            max_entry_size: 1 << 30, // 1 GB
-            max_total_size: 4 << 30, // 4 GB
+            max_entry_size: 4 << 30,  // 4 GB
+            max_total_size: 16 << 30, // 16 GB
             max_entry_count: 20_000,
         }
     }

@@ -16,7 +16,7 @@ just check          # cargo check
 just test           # cargo test
 just clippy         # cargo clippy -- -D warnings
 just fmt            # cargo fmt
-just lint           # just fmt + just clippy
+just lint           # just fmt + just clippy + just check-logging
 just run <ARGS>     # cargo run -- <ARGS>
 just serve          # cargo run -- serve (starts web UI on 0.0.0.0:9190)
 just audit          # cargo audit
@@ -25,14 +25,24 @@ just changelog-preview  # preview unreleased changes only
 just release-dry-run    # dist build (dry run)
 ```
 
-**Local dev environment** (fake SPT dir at `.dev/`, no real server needed):
+**Additional recipes:**
 
 ```bash
-just dev-init       # create a stub SPT directory at .dev/
-just dev-serve      # build & run web UI against .dev/
-just dev-cli <ARGS> # run any quma command against .dev/
-just dev-reset-db   # wipe .dev/ database (keeps config & structure)
-just dev-clean      # remove .dev/ entirely
+just build-headless     # build the headless client container image
+just dev-install-tools  # install dev tools (cargo-watch for auto-reload)
+just check-logging      # validate logging conventions via scripts/check-logging.sh
+```
+
+**Local dev environment** (SPT dev environment at `.dev-server/`, bootstrapped via `quma setup`):
+
+```bash
+just dev-init       # bootstrap SPT dev environment at .dev-server/ via quma setup
+just dev-serve      # build & run web UI against .dev-server/
+just dev-cli <ARGS> # run any quma command against .dev-server/
+just dev-watch      # auto-rebuild & restart dev server on file changes (needs cargo-watch)
+just dev-seed       # seed dev database with test data (wipes & repopulates)
+just dev-reset-db   # wipe .dev-server/ database (keeps config & structure)
+just dev-clean      # remove .dev-server/ and container entirely
 ```
 
 Run a single test: `cargo test <test_name>` or `cargo test -p quartermaster <test_name>`
@@ -46,8 +56,8 @@ Single Rust binary — the CLI and actix-web server share the same codebase. The
 ### Core Layers
 
 - **`src/cli/`** — One file per CLI subcommand (clap derive). Each command's `run()` function is the entry point. `common.rs` holds `CliContext` (spt_dir, config, db, forge client) and shared helpers like `resolve_mod()` for resolving user input to Forge mod IDs.
-- **`src/web/`** — actix-web server. `mod.rs` defines all routes and middleware wiring. `state.rs` defines `AppState` (shared via `web::Data`). Handlers live in `web/handlers/` (one file per page group: admin, auth, backup, clients, dashboard, logs, metrics, mods, modsync, profiles, queue, raids, requests, server, settings, svm, tasks). Authentication uses `RequireAuth` middleware with admin checks per-handler via `require_admin()`. Supporting modules: `sse.rs` (SSE broadcast), `flash.rs` (flash messages), `template_filters.rs` (Askama filters), `update_cache.rs` (Forge update cache), `raid_tracker.rs` (per-raid stats via proxy interception), `csrf.rs` (CSRF token protection), `nav.rs` (navigation helpers), `error.rs` (error rendering).
-- **`src/db/`** — SQLite via rusqlite (WAL mode, `busy_timeout=5000`). `schema.rs` runs migrations from `migrations/` directory. `mods.rs` has mod CRUD, `users.rs` has user/invite operations, `raids.rs` has raid and kill CRUD, `requests.rs` has mod request/voting operations, `backups.rs` has backup metadata CRUD, `rbac.rs` has role-based access control queries. Database is wrapped in `Arc<parking_lot::Mutex<Database>>` for web access.
+- **`src/web/`** — actix-web server. `mod.rs` defines all routes and middleware wiring. `state.rs` defines `AppState` (shared via `web::Data`). Handlers live in `web/handlers/` (one file per page group: admin, auth, backup, clients, dashboard, join, logs, metrics, mods, modsync, profiles, queue, raids, requests, server, settings, svm, tasks). Authentication uses `RequireAuth` middleware with admin checks per-handler via `require_admin()`. Supporting modules: `sse.rs` (SSE broadcast), `flash.rs` (flash messages), `template_filters.rs` (Askama filters), `update_cache.rs` (Forge update cache), `raid_tracker.rs` (per-raid stats via proxy interception), `csrf.rs` (CSRF token protection), `nav.rs` (navigation helpers), `error.rs` (error rendering).
+- **`src/db/`** — SQLite via rusqlite (WAL mode, `busy_timeout=5000`). `schema.rs` runs migrations from `migrations/` directory. `mods.rs` has mod CRUD, `users.rs` has user/invite operations, `raids.rs` has raid and kill CRUD, `requests.rs` has mod request/voting operations, `backups.rs` has backup metadata CRUD, `rbac.rs` has role-based access control queries, `logs.rs` has log storage and querying for the SQLite log viewer. Database is wrapped in `Arc<parking_lot::Mutex<Database>>` for web access.
 - **`src/forge/`** — HTTP client for SPT Forge API (`https://forge.sp-tarkov.com/api/v0`). `client.rs` is the reqwest-based client, `models.rs` defines API response types. Key quirk: `fika_compatibility` is a boolean on mod objects but a string enum on version objects.
 - **`src/spt/`** — SPT directory interaction. `detect.rs` auto-detects SPT installs and reads version info from `core.json`. `mods.rs` handles archive extraction (ZIP/7z), file hashing, and mod file management. `profiles.rs` reads SPT player profiles. `server.rs` handles SPT server HTTP communication (HTTPS with self-signed certs, zlib compression disabled via `responsecompressed: 0` header).
 - **`src/ops.rs`** — Core mod operations: `install_mod_from_archive`, `update_mod_from_archive`, `remove_mod_by_id`. These coordinate between db, filesystem, and archive extraction.
@@ -56,7 +66,7 @@ Single Rust binary — the CLI and actix-web server share the same codebase. The
 - **`src/container.rs`** — Podman container management for SPT server lifecycle.
 - **`src/queue.rs`** — Change queue: mod operations are queued when SPT server is running, applied when stopped.
 - **`src/server_detect.rs`** — Server running detection (Podman inspect or HTTP ping fallback).
-- **`src/logging.rs`** — Structured logging with tracing. Supports console, file (with rotation), and web broadcast (SSE to browser). `LogBroadcast` uses a tokio broadcast channel + ring buffer.
+- **`src/logging/`** — Structured logging with tracing. `mod.rs` has `LogBroadcast` (tokio broadcast + ring buffer), tracing subscriber setup, and per-layer target filtering. `compact.rs` is a custom compact console formatter. `writer.rs` is an async SQLite log writer for the log viewer. Supports console, file (with rotation), SQLite persistence, and web broadcast (SSE).
 - **`src/config.rs`** — Config types (serde TOML), env var overrides (`QUMA_*` prefix), and config resolution logic.
 - **`src/modsync.rs`** — NarcoNet integration (formerly Corter-ModSync): regenerates `config.yaml` from installed mod state so clients auto-sync.
 - **`src/tls.rs`** — TLS certificate loading/generation for the HTTPS proxy.
