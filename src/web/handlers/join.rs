@@ -285,39 +285,53 @@ pub async fn join_submit(
     };
 
     // TODO(debt): If this succeeds but the DB transaction below fails, the SPT
-    // profile is orphaned (no Quartermaster account links to it). Harmless but
-    // not recoverable without admin intervention.
-    if let Err(e) = spt_client
+    // profile is orphaned (no Quartermaster account links to it).
+    let profile_aid = match spt_client
         .register_profile(&username, &spt_password, &form.edition)
         .await
     {
-        tracing::warn!(err = %e, username = %username, "SPT profile registration failed");
-        return render_err(
-            "Could not create your SPT profile. Make sure the SPT server is running.",
-        );
-    }
-
-    // Scan profiles directory to find the newly created profile's AID.
-    // Retry a few times — SPT may not have flushed the file to disk yet.
-    let spt_dir = state.spt_dir.clone();
-    let username_for_scan = username.clone();
-    let profile_aid = web::block(move || {
-        for attempt in 0..3 {
-            if let Some(aid) = find_profile_by_username(&spt_dir, &username_for_scan) {
-                return Some(aid);
-            }
-            if attempt < 2 {
-                std::thread::sleep(std::time::Duration::from_millis(200));
+        Ok(aid) => {
+            let trimmed = aid.trim().trim_matches('"').to_string();
+            if trimmed.is_empty() {
+                tracing::warn!(username = %username, "SPT returned empty AID, falling back to scan");
+                None
+            } else {
+                Some(trimmed)
             }
         }
-        tracing::warn!(
-            username = %username_for_scan,
-            "profile not found on disk after SPT registration — user will have no linked profile"
-        );
-        None
-    })
-    .await
-    .map_err(WebError::from)?;
+        Err(e) => {
+            tracing::warn!(err = %e, username = %username, "SPT profile registration failed");
+            return render_err(
+                "Could not create your SPT profile. Make sure the SPT server is running.",
+            );
+        }
+    };
+
+    // Fall back to filesystem scan if API didn't return a usable AID
+    let profile_aid = match profile_aid {
+        Some(aid) => Some(aid),
+        None => {
+            let spt_dir = state.spt_dir.clone();
+            let username_for_scan = username.clone();
+            web::block(move || {
+                for attempt in 0..5 {
+                    if let Some(aid) = find_profile_by_username(&spt_dir, &username_for_scan) {
+                        return Some(aid);
+                    }
+                    if attempt < 4 {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                }
+                tracing::warn!(
+                    username = %username_for_scan,
+                    "profile not found on disk after SPT registration — user will have no linked profile"
+                );
+                None
+            })
+            .await
+            .map_err(WebError::from)?
+        }
+    };
 
     // Hash password
     let password = form.password.clone();

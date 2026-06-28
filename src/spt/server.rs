@@ -114,14 +114,15 @@ impl SptClient {
         username: &str,
         password: &str,
         edition: &str,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let body = serde_json::json!({
             "username": username,
             "password": password,
             "edition": edition,
         });
 
-        self.client
+        let resp = self
+            .client
             .post(format!("{}/launcher/profile/register", self.base_url))
             .header("responsecompressed", "0")
             .json(&body)
@@ -131,7 +132,12 @@ impl SptClient {
             .error_for_status()
             .context("SPT server rejected profile registration")?;
 
-        Ok(())
+        let aid = resp
+            .text()
+            .await
+            .context("failed to read SPT registration response")?;
+
+        Ok(aid)
     }
 
     pub fn base_url(&self) -> &str {
