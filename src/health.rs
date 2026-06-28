@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::Result;
 use serde::Serialize;
 
@@ -84,12 +86,14 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
 
     let installed_mods = ctx.db.list_mods()?;
     let server_mod_ids = ctx.db.mods_with_server_files()?;
+    let spt_names = resolve_spt_names(&ctx.db, &server_mod_ids, &ctx.spt_dir);
     let mods = check_mods_health(
         &installed_mods,
         loaded_mods.as_ref(),
         &ctx.forge,
         &ctx.spt_info.spt_version,
         &server_mod_ids,
+        &spt_names,
     )
     .await;
 
@@ -144,12 +148,53 @@ pub async fn check_server(
     }
 }
 
+/// Read `package.json` from each mod's server directory to get the name SPT
+/// uses internally. Returns a map of mod DB id → package.json `name`.
+///
+/// The SPT server reports loaded mods by their `package.json` `name` field,
+/// which can differ from the Forge display name stored in the DB (e.g. Forge
+/// name "Looting Bots" vs package.json name "LootingBots").
+pub fn resolve_spt_names(
+    db: &crate::db::Database,
+    server_mod_ids: &std::collections::HashSet<i64>,
+    spt_dir: &Path,
+) -> std::collections::HashMap<i64, String> {
+    let mut names = std::collections::HashMap::new();
+    for &mod_id in server_mod_ids {
+        if let Ok(files) = db.get_files_for_mod(mod_id) {
+            for file in &files {
+                if file.file_path.starts_with("SPT/user/mods/") {
+                    let parts: Vec<&str> = file.file_path.splitn(5, '/').collect();
+                    if parts.len() >= 4 {
+                        let pkg_path = spt_dir
+                            .join(parts[0])
+                            .join(parts[1])
+                            .join(parts[2])
+                            .join(parts[3])
+                            .join("package.json");
+                        if let Ok(content) = std::fs::read_to_string(&pkg_path) {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                                if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
+                                    names.insert(mod_id, name.to_string());
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
 pub async fn check_mods_health(
     installed_mods: &[crate::db::mods::InstalledMod],
     loaded_mods: Option<&std::collections::HashMap<String, serde_json::Value>>,
     forge: &crate::forge::client::ForgeClient,
     spt_version: &str,
     server_mod_ids: &std::collections::HashSet<i64>,
+    spt_names: &std::collections::HashMap<i64, String>,
 ) -> ModsHealth {
     let mut updates_available = 0;
     let mut incompatible_mods = Vec::new();
@@ -171,7 +216,8 @@ pub async fn check_mods_health(
 
     let (loaded_count, load_failures, untracked_loaded) = match loaded_mods {
         Some(loaded) => {
-            let (failures, untracked) = check_mod_loads(installed_mods, loaded, server_mod_ids);
+            let (failures, untracked) =
+                check_mod_loads(installed_mods, loaded, server_mod_ids, spt_names);
             (Some(loaded.len()), failures, untracked)
         }
         None => (None, vec![], vec![]),
@@ -242,28 +288,36 @@ pub fn check_integrity_from(
 }
 
 /// Compare installed mods (from DB) against loaded mods (from SPT server).
-/// Uses case-insensitive name matching because the SPT server may report
-/// mod names using the package.json `name` field which can differ in casing
-/// from the Forge display name stored in the DB.
+///
+/// Matches using the `package.json` `name` read from disk (via `spt_names`)
+/// because the SPT server keys `loadedServerMods` by that field, which can
+/// differ significantly from the Forge display name stored in the DB (e.g.
+/// Forge "Looting Bots" vs package.json "LootingBots"). Falls back to the
+/// Forge display name when no `package.json` name is available.
 pub fn check_mod_loads(
     installed_mods: &[crate::db::mods::InstalledMod],
     loaded_mods: &std::collections::HashMap<String, serde_json::Value>,
     server_mod_ids: &std::collections::HashSet<i64>,
+    spt_names: &std::collections::HashMap<i64, String>,
 ) -> (Vec<String>, Vec<String>) {
     let checkable: Vec<&crate::db::mods::InstalledMod> = installed_mods
         .iter()
         .filter(|m| !m.disabled && server_mod_ids.contains(&m.id))
         .collect();
 
-    let installed_lower: std::collections::HashSet<String> =
-        checkable.iter().map(|m| m.name.to_lowercase()).collect();
-
     let loaded_lower: std::collections::HashSet<String> =
         loaded_mods.keys().map(|k| k.to_lowercase()).collect();
 
+    let match_name = |m: &crate::db::mods::InstalledMod| -> String {
+        spt_names.get(&m.id).unwrap_or(&m.name).to_lowercase()
+    };
+
+    let installed_lower: std::collections::HashSet<String> =
+        checkable.iter().map(|m| match_name(m)).collect();
+
     let load_failures: Vec<String> = checkable
         .iter()
-        .filter(|m| !loaded_lower.contains(&m.name.to_lowercase()))
+        .filter(|m| !loaded_lower.contains(&match_name(m)))
         .map(|m| m.name.clone())
         .collect();
 
@@ -378,7 +432,12 @@ mod tests {
         loaded.insert("ModB".to_string(), serde_json::json!({}));
 
         let server_mod_ids: std::collections::HashSet<i64> = [1, 2].into_iter().collect();
-        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
+        let (failures, untracked) = check_mod_loads(
+            &installed,
+            &loaded,
+            &server_mod_ids,
+            &std::collections::HashMap::new(),
+        );
         assert!(failures.is_empty());
         assert!(untracked.is_empty());
     }
@@ -413,7 +472,12 @@ mod tests {
         loaded.insert("WorkingMod".to_string(), serde_json::json!({}));
 
         let server_mod_ids: std::collections::HashSet<i64> = [1, 2].into_iter().collect();
-        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
+        let (failures, untracked) = check_mod_loads(
+            &installed,
+            &loaded,
+            &server_mod_ids,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(failures, vec!["BrokenMod"]);
         assert!(untracked.is_empty());
     }
@@ -436,7 +500,12 @@ mod tests {
         loaded.insert("ManualMod".to_string(), serde_json::json!({}));
 
         let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
-        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
+        let (failures, untracked) = check_mod_loads(
+            &installed,
+            &loaded,
+            &server_mod_ids,
+            &std::collections::HashMap::new(),
+        );
         assert!(failures.is_empty());
         assert_eq!(untracked, vec!["ManualMod"]);
     }
@@ -458,7 +527,12 @@ mod tests {
         loaded.insert("sain".to_string(), serde_json::json!({}));
 
         let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
-        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
+        let (failures, untracked) = check_mod_loads(
+            &installed,
+            &loaded,
+            &server_mod_ids,
+            &std::collections::HashMap::new(),
+        );
         assert!(
             failures.is_empty(),
             "case-insensitive match should not report failure"
@@ -767,7 +841,12 @@ mod tests {
 
         // Both mods have server files — test is specifically about the disabled filter
         let server_mod_ids: std::collections::HashSet<i64> = [1, 2].into_iter().collect();
-        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
+        let (failures, untracked) = check_mod_loads(
+            &installed,
+            &loaded,
+            &server_mod_ids,
+            &std::collections::HashMap::new(),
+        );
         assert!(
             failures.is_empty(),
             "disabled mod should not be reported as load failure, got: {:?}",
@@ -807,12 +886,122 @@ mod tests {
 
         // ClientOnlyMod has no server files — its ID is NOT in the server_mod_ids set
         let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
-        let (failures, untracked) = check_mod_loads(&installed, &loaded, &server_mod_ids);
+        let (failures, untracked) = check_mod_loads(
+            &installed,
+            &loaded,
+            &server_mod_ids,
+            &std::collections::HashMap::new(),
+        );
         assert!(
             failures.is_empty(),
             "client-only mod should not be reported as load failure, got: {:?}",
             failures
         );
         assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn check_mod_loads_uses_spt_name_over_forge_name() {
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "Looting Bots".to_string(),
+            slug: None,
+            version: "1.0.0".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+            disabled: false,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("LootingBots".to_string(), serde_json::json!({}));
+
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+
+        // Without spt_names: Forge name "Looting Bots" != "LootingBots" → false failure
+        let (failures, _) = check_mod_loads(
+            &installed,
+            &loaded,
+            &server_mod_ids,
+            &std::collections::HashMap::new(),
+        );
+        assert_eq!(
+            failures,
+            vec!["Looting Bots"],
+            "without spt_names, Forge name mismatch should report failure"
+        );
+
+        // With spt_names: package.json name "LootingBots" matches → no failure
+        let mut spt_names = std::collections::HashMap::new();
+        spt_names.insert(1_i64, "LootingBots".to_string());
+        let (failures, untracked) =
+            check_mod_loads(&installed, &loaded, &server_mod_ids, &spt_names);
+        assert!(
+            failures.is_empty(),
+            "with spt_names mapping, should match by package.json name, got: {:?}",
+            failures
+        );
+        assert!(
+            untracked.is_empty(),
+            "matched mod should not appear as untracked"
+        );
+    }
+
+    #[test]
+    fn check_mod_loads_spt_name_case_insensitive() {
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "SAIN - Solarint's AI Modifications".to_string(),
+            slug: None,
+            version: "1.0.0".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+            disabled: false,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("SAIN".to_string(), serde_json::json!({}));
+
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+        let mut spt_names = std::collections::HashMap::new();
+        spt_names.insert(1_i64, "sain".to_string());
+        let (failures, untracked) =
+            check_mod_loads(&installed, &loaded, &server_mod_ids, &spt_names);
+        assert!(
+            failures.is_empty(),
+            "spt_name match should be case-insensitive, got: {:?}",
+            failures
+        );
+        assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn resolve_spt_names_reads_package_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let db = crate::db::Database::open_in_memory().unwrap();
+
+        let mod_id = db
+            .insert_mod(100, 200, "Looting Bots", None, "1.0.0")
+            .unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/LootingBots")).unwrap();
+        std::fs::write(
+            spt_dir.join("SPT/user/mods/LootingBots/package.json"),
+            r#"{"name": "LootingBots", "version": "1.0.0"}"#,
+        )
+        .unwrap();
+        db.insert_file(
+            mod_id,
+            "SPT/user/mods/LootingBots/package.json",
+            None,
+            Some(100),
+        )
+        .unwrap();
+
+        let server_mod_ids: std::collections::HashSet<i64> = [mod_id].into_iter().collect();
+        let names = resolve_spt_names(&db, &server_mod_ids, spt_dir);
+
+        assert_eq!(names.get(&mod_id).map(|s| s.as_str()), Some("LootingBots"));
     }
 }

@@ -98,12 +98,14 @@ struct DashboardModsTemplate {
 pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
     require_auth(&req)?;
     let db = state.db.clone();
-    let (installed_mods, pending_count, server_mod_ids) = web::block(move || {
+    let spt_dir = state.spt_dir.clone();
+    let (installed_mods, pending_count, server_mod_ids, spt_names) = web::block(move || {
         let db = db.lock();
         let mods = db.list_mods()?;
         let pending = db.list_pending_ops()?;
         let server_ids = db.mods_with_server_files()?;
-        Ok::<_, anyhow::Error>((mods, pending.len(), server_ids))
+        let names = health::resolve_spt_names(&db, &server_ids, &spt_dir);
+        Ok::<_, anyhow::Error>((mods, pending.len(), server_ids, names))
     })
     .await
     .map_err(WebError::from)?
@@ -122,6 +124,7 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
         &state.forge,
         &state.spt_info.spt_version,
         &server_mod_ids,
+        &spt_names,
     )
     .await;
     let tmpl = DashboardModsTemplate {
