@@ -107,29 +107,6 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     let forge = ForgeClient::new(config.forge_token.clone())?;
 
     let fika_installed = is_fika_installed(&spt_dir);
-
-    // Auto-install Fika client mod if Fika is installed but the client plugin isn't tracked
-    if fika_installed
-        && db_arc
-            .lock()
-            .get_mod_by_forge_id(crate::config::FIKA_CLIENT_FORGE_ID)?
-            .is_none()
-    {
-        tracing::info!("Fika detected but client mod not installed — auto-installing");
-        if let Err(e) = auto_install_bootstrap_mod(
-            &forge,
-            &db_arc,
-            &spt_dir,
-            &config,
-            crate::config::FIKA_CLIENT_FORGE_ID,
-            &spt_info.spt_version,
-        )
-        .await
-        {
-            tracing::warn!(err = %e, "failed to auto-install Fika client — bootstrap zip may be incomplete");
-        }
-    }
-
     let modsync_installed = crate::config::is_modsync_installed(&spt_dir);
     let converging = Arc::new(AtomicBool::new(false));
     let config_arc = Arc::new(parking_lot::RwLock::new(config));
@@ -316,49 +293,4 @@ async fn teardown_containers(
     }
 
     tracing::info!(count = containers.len(), "container teardown complete");
-}
-
-async fn auto_install_bootstrap_mod(
-    forge: &ForgeClient,
-    db: &Arc<Mutex<Database>>,
-    spt_dir: &std::path::Path,
-    config: &Config,
-    forge_mod_id: i64,
-    spt_version: &str,
-) -> Result<()> {
-    let forge_mod = forge.get_mod(forge_mod_id, false).await?;
-    let versions = forge.get_versions(forge_mod_id, Some(spt_version)).await?;
-    let version = versions.into_iter().max_by_key(|v| v.id).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no compatible version of {} for SPT {}",
-            forge_mod.name,
-            spt_version
-        )
-    })?;
-    let download_url = version.link.as_deref().ok_or_else(|| {
-        anyhow::anyhow!(
-            "no download link for {} v{}",
-            forge_mod.name,
-            version.version
-        )
-    })?;
-
-    crate::cli::install::download_and_install_with_arc(
-        forge,
-        db,
-        spt_dir,
-        config,
-        &crate::cli::install::ModInstallParams {
-            forge_mod_id,
-            forge_version_id: version.id,
-            download_url,
-            name: &forge_mod.name,
-            slug: forge_mod.slug.as_deref(),
-            version: &version.version,
-        },
-    )
-    .await?;
-
-    tracing::info!(mod_name = %forge_mod.name, version = %version.version, "auto-installed bootstrap mod");
-    Ok(())
 }
