@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use anyhow::Result;
 use serde::Serialize;
 
@@ -86,7 +84,7 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
 
     let installed_mods = ctx.db.list_mods()?;
     let server_mod_ids = ctx.db.mods_with_server_files()?;
-    let spt_names = resolve_spt_names(&ctx.db, &server_mod_ids, &ctx.spt_dir);
+    let spt_names = resolve_spt_names(&ctx.db, &server_mod_ids);
     let mods = check_mods_health(
         &installed_mods,
         loaded_mods.as_ref(),
@@ -148,16 +146,16 @@ pub async fn check_server(
     }
 }
 
-/// Read `package.json` from each mod's server directory to get the name SPT
-/// uses internally. Returns a map of mod DB id → package.json `name`.
+/// Extract the mod directory name from each mod's server file paths.
+/// Returns a map of mod DB id → directory name under `user/mods/`.
 ///
-/// The SPT server reports loaded mods by their `package.json` `name` field,
-/// which can differ from the Forge display name stored in the DB (e.g. Forge
-/// name "Looting Bots" vs package.json name "LootingBots").
+/// The SPT server keys `loadedServerMods` by the directory name (the folder
+/// name under `user/mods/`), NOT by the `package.json` `name` field. For
+/// example, Fika Server lives in `fika-server/` but its `package.json` has
+/// `"name": "server"`.
 pub fn resolve_spt_names(
     db: &crate::db::Database,
     server_mod_ids: &std::collections::HashSet<i64>,
-    spt_dir: &Path,
 ) -> std::collections::HashMap<i64, String> {
     let mut names = std::collections::HashMap::new();
     for &mod_id in server_mod_ids {
@@ -166,19 +164,7 @@ pub fn resolve_spt_names(
                 if file.file_path.starts_with("SPT/user/mods/") {
                     let parts: Vec<&str> = file.file_path.splitn(5, '/').collect();
                     if parts.len() >= 4 {
-                        let pkg_path = spt_dir
-                            .join(parts[0])
-                            .join(parts[1])
-                            .join(parts[2])
-                            .join(parts[3])
-                            .join("package.json");
-                        if let Ok(content) = std::fs::read_to_string(&pkg_path) {
-                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                                if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
-                                    names.insert(mod_id, name.to_string());
-                                }
-                            }
-                        }
+                        names.insert(mod_id, parts[3].to_string());
                         break;
                     }
                 }
@@ -289,11 +275,11 @@ pub fn check_integrity_from(
 
 /// Compare installed mods (from DB) against loaded mods (from SPT server).
 ///
-/// Matches using the `package.json` `name` read from disk (via `spt_names`)
-/// because the SPT server keys `loadedServerMods` by that field, which can
-/// differ significantly from the Forge display name stored in the DB (e.g.
-/// Forge "Looting Bots" vs package.json "LootingBots"). Falls back to the
-/// Forge display name when no `package.json` name is available.
+/// Matches using the directory name under `user/mods/` (via `spt_names`)
+/// because the SPT server keys `loadedServerMods` by directory name, which
+/// can differ from the Forge display name stored in the DB (e.g. Forge
+/// name "Fika Server" vs directory name "fika-server"). Falls back to the
+/// Forge display name when no directory name is available.
 pub fn check_mod_loads(
     installed_mods: &[crate::db::mods::InstalledMod],
     loaded_mods: &std::collections::HashMap<String, serde_json::Value>,
@@ -931,7 +917,7 @@ mod tests {
             "without spt_names, Forge name mismatch should report failure"
         );
 
-        // With spt_names: package.json name "LootingBots" matches → no failure
+        // With spt_names: directory name "LootingBots" matches → no failure
         let mut spt_names = std::collections::HashMap::new();
         spt_names.insert(1_i64, "LootingBots".to_string());
         let (failures, untracked) =
@@ -977,31 +963,24 @@ mod tests {
     }
 
     #[test]
-    fn resolve_spt_names_reads_package_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path();
+    fn resolve_spt_names_uses_directory_name() {
         let db = crate::db::Database::open_in_memory().unwrap();
 
         let mod_id = db
-            .insert_mod(100, 200, "Looting Bots", None, "1.0.0")
+            .insert_mod(100, 200, "Fika Server", None, "1.0.0")
             .unwrap();
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/LootingBots")).unwrap();
-        std::fs::write(
-            spt_dir.join("SPT/user/mods/LootingBots/package.json"),
-            r#"{"name": "LootingBots", "version": "1.0.0"}"#,
-        )
-        .unwrap();
         db.insert_file(
             mod_id,
-            "SPT/user/mods/LootingBots/package.json",
+            "SPT/user/mods/fika-server/package.json",
             None,
             Some(100),
         )
         .unwrap();
 
         let server_mod_ids: std::collections::HashSet<i64> = [mod_id].into_iter().collect();
-        let names = resolve_spt_names(&db, &server_mod_ids, spt_dir);
+        let names = resolve_spt_names(&db, &server_mod_ids);
 
-        assert_eq!(names.get(&mod_id).map(|s| s.as_str()), Some("LootingBots"));
+        // Should use directory name "fika-server", NOT package.json name "server"
+        assert_eq!(names.get(&mod_id).map(|s| s.as_str()), Some("fika-server"));
     }
 }
