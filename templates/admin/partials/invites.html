@@ -26,6 +26,7 @@
             <th>Expires</th>
             <th>Status</th>
             <th>Used By</th>
+            <th>Actions</th>
         </tr>
     </thead>
     <tbody>
@@ -57,6 +58,21 @@
                 {% endif %}
             </td>
             <td>{% if let Some(u) = iv.used_by_username.as_deref() %}<a href="/quma/profiles/{{ u }}">{{ u }}</a>{% endif %}</td>
+            <td>
+                {% if iv.status != "used" %}
+                <form style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="button" class="btn btn-sm btn-danger"
+                            hx-post="/quma/api/admin/invites/{{ iv.id }}/delete"
+                            hx-target="#admin-content"
+                            hx-swap="innerHTML"
+                            hx-include="closest form"
+                            hx-disabled-elt="this">
+                        Delete
+                    </button>
+                </form>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>
