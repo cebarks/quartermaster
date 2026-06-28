@@ -282,6 +282,9 @@ pub async fn join_submit(
             .collect()
     };
 
+    // TODO(debt): If this succeeds but the DB transaction below fails, the SPT
+    // profile is orphaned (no Quartermaster account links to it). Harmless but
+    // not recoverable without admin intervention.
     if let Err(e) = spt_client
         .register_profile(&username, &spt_password, &form.edition)
         .await
@@ -326,7 +329,7 @@ pub async fn join_submit(
     let code_for_invite = code.clone();
     let result = web::block(move || {
         let db = db.lock();
-        let tx = db.conn().unchecked_transaction()?;
+        let tx = db.begin_transaction()?;
 
         // Double-check username not taken (race condition guard)
         if db.get_user_by_username(&username)?.is_some() {
