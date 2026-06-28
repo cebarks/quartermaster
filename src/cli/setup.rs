@@ -182,44 +182,49 @@ fn prompt_modsync() -> Result<bool> {
         || trimmed.eq_ignore_ascii_case("yes"))
 }
 
-async fn install_narconet_from_forge(
+// TODO(debt): duplicates install_single_mod logic from install.rs — extract a context-free helper
+async fn install_from_forge(
+    forge: &crate::forge::client::ForgeClient,
     spt_dir: &Path,
     db: &Database,
     config: &Config,
-    forge_token: Option<String>,
+    forge_mod_id: i64,
+    label: &str,
 ) -> Result<()> {
-    use crate::config::NARCONET_FORGE_MOD_ID;
-    use crate::forge::client::ForgeClient;
+    if let Some(existing) = db.get_mod_by_forge_id(forge_mod_id)? {
+        println!(
+            "  {} v{} already installed, skipping",
+            existing.name, existing.version
+        );
+        return Ok(());
+    }
 
-    println!("\nInstalling NarcoNet...");
-
-    let forge = ForgeClient::new(forge_token)?;
     let forge_mod = forge
-        .get_mod(NARCONET_FORGE_MOD_ID, true)
+        .get_mod(forge_mod_id, true)
         .await
-        .context("failed to fetch NarcoNet mod info from Forge")?;
+        .with_context(|| format!("failed to fetch {label} mod info from Forge"))?;
 
     let version = forge_mod
         .versions
         .as_ref()
-        .and_then(|v| v.first())
-        .ok_or_else(|| anyhow::anyhow!("no versions found for NarcoNet on Forge"))?;
+        .and_then(|v| v.iter().max_by_key(|v| v.id))
+        .ok_or_else(|| anyhow::anyhow!("no versions found for {label} on Forge"))?;
 
     let download_url = version
         .link
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("NarcoNet version has no download link"))?;
+        .ok_or_else(|| anyhow::anyhow!("{label} version has no download link"))?;
 
     let version_str = &version.version;
-    println!("  NarcoNet v{version_str}");
+    println!("  {} v{}", forge_mod.name, version_str);
 
     super::install::download_and_install(
-        &forge,
+        forge,
         db,
         spt_dir,
         config,
         &super::install::ModInstallParams {
-            forge_mod_id: NARCONET_FORGE_MOD_ID,
+            forge_mod_id,
             forge_version_id: version.id,
             download_url,
             name: &forge_mod.name,
@@ -229,7 +234,63 @@ async fn install_narconet_from_forge(
     )
     .await?;
 
-    println!("NarcoNet v{version_str} installed.");
+    Ok(())
+}
+
+async fn install_infrastructure_from_forge(
+    spt_dir: &Path,
+    db: &Database,
+    config: &Config,
+    forge_token: Option<String>,
+    install_fika: bool,
+    install_modsync: bool,
+) -> Result<()> {
+    use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID, NARCONET_FORGE_MOD_ID};
+    use crate::forge::client::ForgeClient;
+
+    if !install_fika && !install_modsync {
+        return Ok(());
+    }
+
+    let forge = ForgeClient::new(forge_token)?;
+
+    if install_fika {
+        println!("\nInstalling Fika...");
+        install_from_forge(
+            &forge,
+            spt_dir,
+            db,
+            config,
+            FIKA_SERVER_FORGE_ID,
+            "Fika Server",
+        )
+        .await?;
+        install_from_forge(
+            &forge,
+            spt_dir,
+            db,
+            config,
+            FIKA_CLIENT_FORGE_ID,
+            "Fika Client",
+        )
+        .await?;
+        println!("Fika installed.");
+    }
+
+    if install_modsync {
+        println!("\nInstalling NarcoNet...");
+        install_from_forge(
+            &forge,
+            spt_dir,
+            db,
+            config,
+            NARCONET_FORGE_MOD_ID,
+            "NarcoNet",
+        )
+        .await?;
+        println!("NarcoNet installed.");
+    }
+
     Ok(())
 }
 
@@ -271,20 +332,11 @@ fn prompt_forge_token() -> Result<Option<String>> {
     }
 }
 
-fn create_container_opts(
-    data_dir: &Path,
-    install_fika: bool,
-    container_name: &str,
-) -> CreateContainerOpts {
-    let fika_mode = if install_fika { "install" } else { "disabled" };
-
+fn create_container_opts(data_dir: &Path, container_name: &str) -> CreateContainerOpts {
     CreateContainerOpts {
         name: container_name.to_string(),
         image: SPT_SERVER_IMAGE.to_string(),
-        env: vec![
-            ("LISTEN_ALL_NETWORKS".to_string(), "true".to_string()),
-            ("FIKA_MODE".to_string(), fika_mode.to_string()),
-        ],
+        env: vec![("LISTEN_ALL_NETWORKS".to_string(), "true".to_string())],
         volumes: vec![VolumeMount {
             host_path: data_dir.to_path_buf(),
             container_path: "/opt/server".to_string(),
@@ -468,7 +520,7 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     println!("Image pulled.");
 
     // 4. Create container
-    let opts = create_container_opts(&p.data_dir, p.install_fika, &p.container_name);
+    let opts = create_container_opts(&p.data_dir, &p.container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", p.container_name);
 
@@ -491,10 +543,16 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     // 9. Create DB and admin
     let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
 
-    // 10. Install NarcoNet
-    if p.install_modsync {
-        install_narconet_from_forge(&p.data_dir, &db, &config, config.forge_token.clone()).await?;
-    }
+    // 10. Install infrastructure mods from Forge
+    install_infrastructure_from_forge(
+        &p.data_dir,
+        &db,
+        &config,
+        config.forge_token.clone(),
+        p.install_fika,
+        p.install_modsync,
+    )
+    .await?;
 
     // 11. Summary
     print_summary(
@@ -519,7 +577,7 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
 
     // 1. Detect or create container
     let resolved_container =
-        detect_or_create_container(mgr, &p.data_dir, p.install_fika, &p.container_name).await?;
+        detect_or_create_container(mgr, &p.data_dir, &p.container_name).await?;
 
     // 2. Create config
     let forge_token_set = p.forge_token.is_some();
@@ -552,10 +610,16 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
         println!("\nManage them through the web UI or reinstall via Forge.");
     }
 
-    // 5. Install NarcoNet
-    if p.install_modsync {
-        install_narconet_from_forge(&p.data_dir, &db, &config, config.forge_token.clone()).await?;
-    }
+    // 5. Install infrastructure mods from Forge
+    install_infrastructure_from_forge(
+        &p.data_dir,
+        &db,
+        &config,
+        config.forge_token.clone(),
+        p.install_fika,
+        p.install_modsync,
+    )
+    .await?;
 
     // 6. Summary
     print_summary(
@@ -572,7 +636,6 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
 async fn detect_or_create_container(
     mgr: &ContainerManager,
     data_dir: &Path,
-    install_fika: bool,
     container_name: &str,
 ) -> Result<String> {
     let detected = mgr.detect_spt_containers(data_dir).await?;
@@ -606,7 +669,7 @@ async fn detect_or_create_container(
     println!("Pulling {}...", SPT_SERVER_IMAGE);
     mgr.pull_image(SPT_SERVER_IMAGE).await?;
 
-    let opts = create_container_opts(data_dir, install_fika, container_name);
+    let opts = create_container_opts(data_dir, container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", container_name);
 
@@ -678,31 +741,21 @@ mod tests {
     }
 
     #[test]
-    fn create_container_opts_fika_enabled() {
+    fn create_container_opts_no_fika_mode() {
         let dir = PathBuf::from("/data/spt");
-        let opts = create_container_opts(&dir, true, DEFAULT_CONTAINER_NAME);
-        assert!(opts
-            .env
-            .iter()
-            .any(|(k, v)| k == "FIKA_MODE" && v == "install"));
+        let opts = create_container_opts(&dir, DEFAULT_CONTAINER_NAME);
+        assert!(
+            !opts.env.iter().any(|(k, _)| k == "FIKA_MODE"),
+            "FIKA_MODE should not be set — Fika is installed via Forge"
+        );
         assert_eq!(opts.name, "spt-server");
         assert_eq!(opts.volumes[0].container_path, "/opt/server");
     }
 
     #[test]
-    fn create_container_opts_fika_disabled() {
-        let dir = PathBuf::from("/data/spt");
-        let opts = create_container_opts(&dir, false, DEFAULT_CONTAINER_NAME);
-        assert!(opts
-            .env
-            .iter()
-            .any(|(k, v)| k == "FIKA_MODE" && v == "disabled"));
-    }
-
-    #[test]
     fn create_container_opts_dev_name() {
         let dir = PathBuf::from("/data/spt");
-        let opts = create_container_opts(&dir, false, DEV_CONTAINER_NAME);
+        let opts = create_container_opts(&dir, DEV_CONTAINER_NAME);
         assert_eq!(opts.name, "spt-server-dev");
     }
 }

@@ -369,9 +369,9 @@ pub async fn download_and_install(
 
 /// Variant of `download_and_install` that accepts an Arc<Mutex<Database>>.
 ///
-/// This is used by async contexts (like `serve.rs` bootstrap installer) where the
-/// database is wrapped in Arc<Mutex> for shared access. The mutex is only locked
-/// for the synchronous DB operations, not held across the async download.
+/// Used by async contexts (web handlers, ops) where the database is wrapped
+/// in Arc<Mutex> for shared access. The mutex is only locked for the
+/// synchronous DB operations, not held across the async download.
 pub async fn download_and_install_with_arc(
     forge: &ForgeClient,
     db: &std::sync::Arc<parking_lot::Mutex<Database>>,
@@ -399,7 +399,6 @@ pub async fn download_and_install_with_arc(
     }
 
     tracing::info!(name, "extracting mod");
-    // Lock the mutex only for the synchronous DB operation
     let db_id = {
         let db_guard = db.lock();
         crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
@@ -413,7 +412,7 @@ pub async fn download_and_install_with_arc(
             version,
             archive_path: &archive_path,
         })?
-    }; // MutexGuard dropped here
+    };
 
     let file_count = db.lock().get_files_for_mod(db_id)?.len();
     tracing::info!(name, file_count, "mod extracted");
