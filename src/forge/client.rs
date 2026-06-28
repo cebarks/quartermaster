@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use tokio::io::AsyncWriteExt;
 
+use super::cache::ForgeResponseCache;
 use super::models::*;
 
 const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
@@ -13,6 +14,7 @@ const MAX_RETRIES: u32 = 2;
 pub struct ForgeClient {
     client: reqwest::Client,
     base_url: String,
+    cache: ForgeResponseCache,
 }
 
 impl ForgeClient {
@@ -46,7 +48,11 @@ impl ForgeClient {
             .build()
             .context("failed to build HTTP client")?;
 
-        Ok(Self { client, base_url })
+        Ok(Self {
+            client,
+            base_url,
+            cache: ForgeResponseCache::new(256, 300),
+        })
     }
 
     async fn send_with_retry(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
@@ -108,21 +114,38 @@ impl ForgeClient {
             .context("Forge API request failed"))
     }
 
+    async fn send_cached(&self, request: reqwest::RequestBuilder) -> Result<Vec<u8>> {
+        let built = request
+            .try_clone()
+            .ok_or_else(|| anyhow::anyhow!("request not cloneable"))?
+            .build()
+            .context("failed to build request")?;
+        let cache_key = built.url().to_string();
+
+        if let Some(cached) = self.cache.get(&cache_key) {
+            return Ok(cached);
+        }
+
+        let resp = self.send_with_retry(request).await?;
+        let body = resp.bytes().await.context("failed to read response body")?;
+        let bytes = body.to_vec();
+        self.cache.insert(cache_key, bytes.clone());
+        Ok(bytes)
+    }
+
     /// Search mods by query string.
     pub async fn search_mods(&self, query: &str) -> Result<Vec<ForgeMod>> {
         let url = format!("{}/mods", self.base_url);
         let req = self.client.get(&url).query(&[("query", query)]);
 
-        let resp = self
-            .send_with_retry(req)
+        let body = self
+            .send_cached(req)
             .await
             .context("search_mods request failed")?;
 
-        let body: ForgeSearchResponse = resp
-            .json()
-            .await
-            .context("search_mods: failed to parse response")?;
-        Ok(body.data)
+        let parsed: ForgeSearchResponse =
+            serde_json::from_slice(&body).context("search_mods: failed to parse response")?;
+        Ok(parsed.data)
     }
 
     /// Fetch a single mod by ID, optionally including its versions.
@@ -133,16 +156,14 @@ impl ForgeClient {
             req = req.query(&[("include", "versions")]);
         }
 
-        let resp = self
-            .send_with_retry(req)
+        let body = self
+            .send_cached(req)
             .await
             .context("get_mod request failed")?;
 
-        let body: ForgeModResponse = resp
-            .json()
-            .await
-            .context("get_mod: failed to parse response")?;
-        Ok(body.data)
+        let parsed: ForgeModResponse =
+            serde_json::from_slice(&body).context("get_mod: failed to parse response")?;
+        Ok(parsed.data)
     }
 
     /// List versions for a mod, optionally filtered to a specific SPT version.
@@ -157,16 +178,14 @@ impl ForgeClient {
             req = req.query(&[("filter[spt_version]", v)]);
         }
 
-        let resp = self
-            .send_with_retry(req)
+        let body = self
+            .send_cached(req)
             .await
             .context("get_versions request failed")?;
 
-        let body: ForgeVersionsResponse = resp
-            .json()
-            .await
-            .context("get_versions: failed to parse response")?;
-        Ok(body.data)
+        let parsed: ForgeVersionsResponse =
+            serde_json::from_slice(&body).context("get_versions: failed to parse response")?;
+        Ok(parsed.data)
     }
 
     /// Resolve the dependency tree for a set of (mod_id, version_string) pairs.
@@ -180,16 +199,14 @@ impl ForgeClient {
 
         let req = self.client.get(&url).query(&[("mods", &mods_param)]);
 
-        let resp = self
-            .send_with_retry(req)
+        let body = self
+            .send_cached(req)
             .await
             .context("get_dependencies request failed")?;
 
-        let body: DependencyResponse = resp
-            .json()
-            .await
-            .context("get_dependencies: failed to parse response")?;
-        Ok(body.data)
+        let parsed: DependencyResponse =
+            serde_json::from_slice(&body).context("get_dependencies: failed to parse response")?;
+        Ok(parsed.data)
     }
 
     /// Check for available updates for the given mods.
@@ -268,13 +285,19 @@ impl ForgeClient {
         file.flush().await.context("error flushing file")?;
         Ok(())
     }
+
+    /// Invalidate all cached responses.
+    #[allow(dead_code)] // public API for cache management, used by external consumers
+    pub fn invalidate_cache(&self) {
+        self.cache.invalidate_all();
+    }
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{method, path, query_param};
+    use wiremock::matchers::{method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn test_client(server: &MockServer) -> ForgeClient {
@@ -930,5 +953,98 @@ mod tests {
             err_msg.contains("rate limit") || err_msg.contains("429"),
             "error should mention rate limiting: {err_msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn caches_identical_get_requests() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": {"id": 42, "name": "Cached Mod"}
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/mod/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1) // only 1 request should reach the server
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let m1 = client.get_mod(42, false).await.unwrap();
+        let m2 = client.get_mod(42, false).await.unwrap();
+
+        assert_eq!(m1.id, 42);
+        assert_eq!(m2.id, 42);
+    }
+
+    #[tokio::test]
+    async fn cache_distinguishes_different_params() {
+        let server = MockServer::start().await;
+        let body_with_ver = serde_json::json!({
+            "data": {
+                "id": 42,
+                "name": "With Versions",
+                "versions": [{"id": 1, "version": "1.0.0"}]
+            }
+        });
+        let body_no_ver = serde_json::json!({
+            "data": {"id": 42, "name": "No Versions"}
+        });
+
+        // Mount with-versions mock (matches requests with ?include=versions)
+        Mock::given(method("GET"))
+            .and(path("/mod/42"))
+            .and(query_param("include", "versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body_with_ver))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Mount without-versions mock (matches requests WITHOUT include param)
+        Mock::given(method("GET"))
+            .and(path("/mod/42"))
+            .and(query_param_is_missing("include"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body_no_ver))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let m1 = client.get_mod(42, false).await.unwrap();
+        let m2 = client.get_mod(42, true).await.unwrap();
+
+        assert_eq!(m1.name, "No Versions");
+        assert_eq!(m2.name, "With Versions");
+    }
+
+    #[tokio::test]
+    async fn check_updates_not_cached() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "data": {
+                "spt_version": "3.10.0",
+                "updates": [],
+                "blocked_updates": [],
+                "up_to_date": [],
+                "incompatible_with_spt": []
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/mods/updates"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(2) // should hit server twice, not cached
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let _ = client
+            .check_updates(&[(42, "1.0.0".into())], "3.10.0")
+            .await
+            .unwrap();
+        let _ = client
+            .check_updates(&[(42, "1.0.0".into())], "3.10.0")
+            .await
+            .unwrap();
     }
 }
