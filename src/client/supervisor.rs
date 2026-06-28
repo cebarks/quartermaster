@@ -165,6 +165,7 @@ impl ClientSupervisor {
                         self.headless_config.restart_policy.clone(),
                         self.headless_config.max_restart_attempts,
                         self.headless_config.restart_backoff_cap,
+                        self.converging.clone(),
                         self.cancel_token.clone(),
                     )
                     .await;
@@ -274,6 +275,7 @@ impl ClientSupervisor {
         restart_policy: RestartPolicy,
         max_restart_attempts: u32,
         backoff_cap: u64,
+        converging: Arc<AtomicBool>,
         cancel_token: CancellationToken,
     ) {
         // Child token: cancelled when either the supervisor shuts down
@@ -303,6 +305,7 @@ impl ClientSupervisor {
                 restart_policy,
                 max_restart_attempts,
                 backoff_cap,
+                converging,
                 watcher_cancel_clone,
             )
             .await;
@@ -320,6 +323,7 @@ async fn exit_watcher_loop(
     restart_policy: RestartPolicy,
     max_restart_attempts: u32,
     backoff_cap: u64,
+    converging: Arc<AtomicBool>,
     cancel_token: CancellationToken,
 ) {
     let mut retry_delay = Duration::from_secs(1);
@@ -417,6 +421,16 @@ async fn exit_watcher_loop(
                 false
             }
         };
+
+        if converging.load(Ordering::Relaxed) {
+            tracing::debug!(
+                container = %container_name,
+                "Skipping exit-watcher restart (convergence in progress)"
+            );
+            // Don't exit the loop — converge will restart the container,
+            // and we need to keep watching for its next exit.
+            continue;
+        }
 
         if !should_restart {
             tracing::info!(
