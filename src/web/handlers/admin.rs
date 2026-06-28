@@ -8,7 +8,9 @@ use crate::db::rbac::{
     RoleWithPermissions,
 };
 use crate::db::users::{DeleteInviteResult, DeleteUserResult, InviteCodeWithUsers, User};
-use crate::spt::profiles::{load_all_profile_stats, ProfileStatus, SptProfileStats};
+use crate::spt::profiles::{
+    list_profiles, load_all_profile_stats, ProfileStatus, SptProfile, SptProfileStats,
+};
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::nav::NavContext;
@@ -45,6 +47,19 @@ fn build_user_profiles(
         .collect()
 }
 
+fn compute_available_profiles(spt_dir: &std::path::Path, users: &[User]) -> Vec<SptProfile> {
+    let all_profiles = list_profiles(spt_dir).unwrap_or_default();
+    let linked_aids: std::collections::HashSet<String> = users
+        .iter()
+        .filter_map(|u| u.spt_profile_id.clone())
+        .filter(|s| !s.is_empty())
+        .collect();
+    all_profiles
+        .into_iter()
+        .filter(|p| !linked_aids.contains(&p.aid))
+        .collect()
+}
+
 // -- Templates --
 
 #[derive(Template)]
@@ -57,6 +72,7 @@ struct AdminPageTemplate {
     flash: Option<crate::web::flash::FlashMessage>,
     nav: NavContext,
     roles: Vec<RoleRecord>,
+    available_profiles: Vec<SptProfile>,
 }
 
 #[derive(Template)]
@@ -66,6 +82,7 @@ struct UsersPartialTemplate {
     current_user_id: i64,
     csrf_token: String,
     roles: Vec<RoleRecord>,
+    available_profiles: Vec<SptProfile>,
 }
 
 #[derive(Template)]
@@ -78,6 +95,7 @@ struct UserRowTemplate {
     reset_link: Option<String>,
     row_message: Option<String>,
     roles: Vec<RoleRecord>,
+    available_profiles: Vec<SptProfile>,
 }
 
 // InviteView -- pre-computed view struct for invites template
@@ -231,6 +249,7 @@ pub async fn admin_page(
         .map_err(WebError::from)?;
 
     let profiles = build_user_profiles(&all_users, &state.spt_dir, &profile_stats);
+    let available_profiles = compute_available_profiles(&state.spt_dir, &all_users);
     let users: Vec<(User, ProfileStatus)> = all_users.into_iter().zip(profiles).collect();
     let current_user_id = user.user_id;
 
@@ -242,6 +261,7 @@ pub async fn admin_page(
         flash,
         nav: NavContext::from_state(&state),
         roles,
+        available_profiles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -271,6 +291,7 @@ pub async fn admin_users(
         .map_err(WebError::from)?;
 
     let profiles = build_user_profiles(&all_users, &state.spt_dir, &profile_stats);
+    let available_profiles = compute_available_profiles(&state.spt_dir, &all_users);
     let users: Vec<(User, ProfileStatus)> = all_users.into_iter().zip(profiles).collect();
 
     let tmpl = UsersPartialTemplate {
@@ -278,6 +299,7 @@ pub async fn admin_users(
         current_user_id: user.user_id,
         csrf_token,
         roles,
+        available_profiles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -497,6 +519,56 @@ pub async fn delete_user(
         }
         DeleteUserResult::NotFound => Err(WebError::NotFound.into()),
     }
+}
+
+#[derive(serde::Deserialize)]
+pub struct LinkProfileForm {
+    pub csrf_token: String,
+    pub spt_profile_id: Option<String>,
+}
+
+pub async fn link_profile(
+    req: HttpRequest,
+    session: Session,
+    state: Data<AppState>,
+    path: Path<i64>,
+    form: Form<LinkProfileForm>,
+) -> actix_web::Result<Html> {
+    let current_user = require_auth(&req)?;
+    crate::web::auth::require_permission(&current_user, Permission::UsersManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let target_id = path.into_inner();
+
+    let profile_id = form.spt_profile_id.clone().filter(|s| !s.is_empty());
+
+    let db = state.db.clone();
+    let pid = profile_id.clone();
+    web::block(move || {
+        let db = db.lock();
+        db.update_user_spt_profile_id(target_id, pid.as_deref())
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let msg = if profile_id.is_some() {
+        "Profile linked"
+    } else {
+        "Profile unlinked"
+    };
+
+    render_user_row(
+        &state,
+        &session,
+        target_id,
+        current_user.user_id,
+        None,
+        Some(msg.to_string()),
+    )
+    .await
 }
 
 pub async fn admin_invites(
@@ -893,6 +965,16 @@ async fn render_user_row(
         }
     };
 
+    let spt_dir2 = state.spt_dir.clone();
+    let db2 = state.db.clone();
+    let available_profiles = web::block(move || {
+        let db = db2.lock();
+        let users = db.list_users().unwrap_or_default();
+        compute_available_profiles(&spt_dir2, &users)
+    })
+    .await
+    .map_err(WebError::from)?;
+
     let tmpl = UserRowTemplate {
         u: user,
         profile,
@@ -901,6 +983,7 @@ async fn render_user_row(
         reset_link,
         row_message,
         roles,
+        available_profiles,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

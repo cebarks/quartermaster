@@ -253,6 +253,17 @@ impl Database {
         )
     }
 
+    pub fn update_user_spt_profile_id(
+        &self,
+        user_id: i64,
+        spt_profile_id: Option<&str>,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE users SET spt_profile_id = ?1 WHERE id = ?2",
+            params![spt_profile_id, user_id],
+        )
+    }
+
     #[cfg(test)]
     pub fn count_admins(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
