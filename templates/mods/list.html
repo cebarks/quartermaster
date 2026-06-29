@@ -6,10 +6,6 @@
 {% block content %}
 <div hx-get="/quma/api/tasks/status" hx-trigger="load" hx-swap="outerHTML" id="task-status"></div>
 
-{% if let Some(flash) = flash %}
-<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
-{% endif %}
-
 <div class="tab-bar">
     <button class="tab active" id="tab-installed"
             onclick="window.location.href='/quma/mods'; return false;">Installed</button>

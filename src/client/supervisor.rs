@@ -292,7 +292,7 @@ impl ClientSupervisor {
         // check_client only reads the value to detect GivenUp state.
 
         // Check if given up
-        if state.consecutive_failures > headless_config.max_restart_attempts {
+        if state.consecutive_failures >= headless_config.max_restart_attempts {
             state.health = ClientHealth::GivenUp;
         }
 
@@ -444,13 +444,13 @@ async fn exit_watcher_loop(
                     }
                 }
 
-                if s.consecutive_failures > max_restart_attempts {
+                if s.consecutive_failures >= max_restart_attempts {
                     s.health = ClientHealth::GivenUp;
                 }
 
                 restart_policy == RestartPolicy::Auto
                     && s.health != ClientHealth::GivenUp
-                    && s.consecutive_failures <= max_restart_attempts
+                    && s.consecutive_failures < max_restart_attempts
             } else {
                 false
             }

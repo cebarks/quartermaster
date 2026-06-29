@@ -6,10 +6,6 @@
 {% block content %}
 <h1>Dashboard</h1>
 
-{% if let Some(flash) = flash %}
-<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
-{% endif %}
-
 <div class="card" style="padding: 0.75rem 1.25rem">
     <div class="flex-between">
         <span>

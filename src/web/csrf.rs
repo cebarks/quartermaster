@@ -1,5 +1,6 @@
 use actix_session::Session;
 use rand::RngExt;
+use subtle::ConstantTimeEq;
 
 const CSRF_SESSION_KEY: &str = "csrf_token";
 const TOKEN_LEN: usize = 32;
@@ -21,7 +22,7 @@ pub fn get_or_create_token(session: &Session) -> String {
 
 pub fn validate_token(session: &Session, form_token: &str) -> bool {
     match session.get::<String>(CSRF_SESSION_KEY) {
-        Ok(Some(session_token)) => session_token == form_token,
+        Ok(Some(session_token)) => session_token.as_bytes().ct_eq(form_token.as_bytes()).into(),
         _ => false,
     }
 }
