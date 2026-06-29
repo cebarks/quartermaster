@@ -1,8 +1,10 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use actix_web::web::Bytes;
 use actix_web::HttpRequest;
+use flate2::read::ZlibDecoder;
 use serde::{Deserialize, Serialize};
 
 use crate::db::raids::{compress_snapshot, NewRaidKill};
@@ -71,6 +73,16 @@ pub fn extract_session_id(req: &HttpRequest) -> Option<String> {
         }
     }
     None
+}
+
+/// Try zlib decompression, fall back to raw bytes. SPT clients send zlib-compressed request bodies.
+fn decompress_body(body: &[u8]) -> Vec<u8> {
+    let mut decoder = ZlibDecoder::new(body);
+    let mut buf = Vec::new();
+    match decoder.read_to_end(&mut buf) {
+        Ok(_) => buf,
+        Err(_) => body.to_vec(),
+    }
 }
 
 /// Read on-disk profile JSON and extract XP/level/victim count from the appropriate character (PMC or Scav).
@@ -147,7 +159,8 @@ pub fn handle_raid_start(
     events: tokio::sync::broadcast::Sender<ServerEvent>,
     snapshots_enabled: bool,
 ) {
-    let start_req: RaidStartRequest = match serde_json::from_slice(&body) {
+    let decompressed = decompress_body(&body);
+    let start_req: RaidStartRequest = match serde_json::from_slice(&decompressed) {
         Ok(req) => req,
         Err(e) => {
             tracing::warn!(err = %e, profile_id = %spt_profile_id, "failed to parse raid start request");
@@ -246,7 +259,8 @@ pub fn handle_raid_end(
     events: tokio::sync::broadcast::Sender<ServerEvent>,
     snapshots_enabled: bool,
 ) {
-    let end_req: RaidEndRequest = match serde_json::from_slice(&body) {
+    let decompressed = decompress_body(&body);
+    let end_req: RaidEndRequest = match serde_json::from_slice(&decompressed) {
         Ok(req) => req,
         Err(e) => {
             tracing::warn!(err = %e, profile_id = %spt_profile_id, "failed to parse raid end request");
