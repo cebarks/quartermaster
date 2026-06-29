@@ -754,6 +754,11 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                 middleware::TrailingSlash::MergeOnly,
             ))
             .wrap(tracing_actix_web::TracingLogger::default())
+            .wrap(
+                middleware::DefaultHeaders::new()
+                    .add(("X-Content-Type-Options", "nosniff"))
+                    .add(("X-Frame-Options", "DENY")),
+            )
             .configure(|cfg| configure_app(cfg, session_key.clone(), tls_enabled, true))
     });
 
