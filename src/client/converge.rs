@@ -10,7 +10,7 @@ use bollard::models::DeviceMapping;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tracing::{debug, info, warn};
 
 struct ConvergingGuard(Arc<AtomicBool>);
@@ -27,6 +27,14 @@ const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 
 use crate::config::FIKA_CLIENT_FORGE_ID;
 
+/// Regex for editing headless amount in fika.jsonc
+static AMOUNT_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#"("amount"\s*:\s*)\d+"#).expect("valid regex"));
+
+/// Regex for editing UDP port in Fika client config
+static PORT_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex"));
+
 /// Edit the headless amount in fika.jsonc using targeted text replacement to preserve comments.
 ///
 /// This function does NOT parse the full JSON - it uses a regex to find and replace only the
@@ -41,14 +49,11 @@ pub fn edit_headless_amount(path: &Path, amount: u32) -> Result<()> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
 
-    // Pattern: "amount" followed by optional whitespace, colon, optional whitespace, then digits
-    let re = regex::Regex::new(r#"("amount"\s*:\s*)\d+"#).expect("valid regex");
-
-    if !re.is_match(&content) {
+    if !AMOUNT_RE.is_match(&content) {
         bail!("could not find headless.amount in {}", path.display());
     }
 
-    let updated = re.replace(&content, format!("${{1}}{amount}"));
+    let updated = AMOUNT_RE.replace(&content, format!("${{1}}{amount}"));
     std::fs::write(path, updated.as_ref())
         .with_context(|| format!("failed to write {}", path.display()))?;
 
@@ -432,13 +437,14 @@ fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
     let content = std::fs::read_to_string(&cfg_path)
         .with_context(|| format!("failed to read {}", cfg_path.display()))?;
 
-    let re = regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex");
-    if !re.is_match(&content) {
+    if !PORT_RE.is_match(&content) {
         debug!("No Port setting found in {}, skipping", cfg_path.display());
         return Ok(());
     }
 
-    let updated = re.replace(&content, format!("${{1}}{port}")).to_string();
+    let updated = PORT_RE
+        .replace(&content, format!("${{1}}{port}"))
+        .to_string();
     std::fs::write(&cfg_path, &updated)
         .with_context(|| format!("failed to write {}", cfg_path.display()))?;
 
