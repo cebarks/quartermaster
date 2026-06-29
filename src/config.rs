@@ -375,6 +375,37 @@ impl Default for ModSyncConfig {
     }
 }
 
+impl ModSyncConfig {
+    /// Migrate deprecated path formats in `extra_sync_paths` and `exclusions`
+    /// to gameroot-relative format. Returns `true` if any paths were changed.
+    ///
+    /// Deprecated formats:
+    /// - `../BepInEx/plugins` → `BepInEx/plugins` (strip `../` prefix)
+    /// - `user/mods` → `SPT/user/mods` (SPT-relative → gameroot-relative)
+    pub fn migrate_deprecated_paths(&mut self) -> bool {
+        let mut changed = false;
+        for path in &mut self.extra_sync_paths {
+            if let Some(stripped) = path.strip_prefix("../") {
+                *path = stripped.to_string();
+                changed = true;
+            } else if path.starts_with("user/") || *path == "user" {
+                *path = format!("SPT/{path}");
+                changed = true;
+            }
+        }
+        for path in &mut self.exclusions {
+            if let Some(stripped) = path.strip_prefix("../") {
+                *path = stripped.to_string();
+                changed = true;
+            } else if path.starts_with("user/") || *path == "user" {
+                *path = format!("SPT/{path}");
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModSyncOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -923,12 +954,23 @@ macro_rules! env_override {
 
 impl Config {
     /// Load config from a TOML file at `path`. Returns defaults if the file doesn't exist.
+    /// Automatically migrates deprecated modsync path formats and saves back if needed.
     pub fn load(path: &Path) -> Result<Self> {
         tracing::debug!(path = %path.display(), "loading config file");
         match std::fs::read_to_string(path) {
             Ok(contents) => {
-                let config: Config =
+                let mut config: Config =
                     toml::from_str(&contents).with_context(|| "failed to parse config TOML")?;
+                if let Some(ref mut ms) = config.modsync {
+                    if ms.migrate_deprecated_paths() {
+                        tracing::warn!(
+                            "NarcoNet config contained deprecated path formats — \
+                             migrated to gameroot-relative format and saved to {}",
+                            path.display()
+                        );
+                        config.save(path)?;
+                    }
+                }
                 Ok(config)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -1954,6 +1996,116 @@ silent = true
         assert_eq!("stop".parse::<OnExit>().unwrap(), OnExit::Stop);
         assert_eq!("remove".parse::<OnExit>().unwrap(), OnExit::Remove);
         assert!("invalid".parse::<OnExit>().is_err());
+    }
+
+    #[test]
+    fn modsync_migrate_strips_dotdot_prefix() {
+        let mut ms = ModSyncConfig {
+            extra_sync_paths: vec!["../BepInEx/plugins".to_string()],
+            exclusions: vec!["../BepInEx/plugins/spt".to_string()],
+            ..ModSyncConfig::default()
+        };
+        assert!(ms.migrate_deprecated_paths());
+        assert_eq!(ms.extra_sync_paths, vec!["BepInEx/plugins"]);
+        assert_eq!(ms.exclusions, vec!["BepInEx/plugins/spt"]);
+    }
+
+    #[test]
+    fn modsync_migrate_converts_user_to_spt_user() {
+        let mut ms = ModSyncConfig {
+            extra_sync_paths: vec!["user/mods".to_string()],
+            ..ModSyncConfig::default()
+        };
+        assert!(ms.migrate_deprecated_paths());
+        assert_eq!(ms.extra_sync_paths, vec!["SPT/user/mods"]);
+    }
+
+    #[test]
+    fn modsync_migrate_converts_bare_user() {
+        let mut ms = ModSyncConfig {
+            exclusions: vec!["user".to_string()],
+            ..ModSyncConfig::default()
+        };
+        assert!(ms.migrate_deprecated_paths());
+        assert_eq!(ms.exclusions, vec!["SPT/user"]);
+    }
+
+    #[test]
+    fn modsync_migrate_leaves_gameroot_relative_unchanged() {
+        let mut ms = ModSyncConfig {
+            extra_sync_paths: vec!["BepInEx/plugins".to_string()],
+            exclusions: vec!["**/*.nosync".to_string(), "SPT/user/mods".to_string()],
+            ..ModSyncConfig::default()
+        };
+        assert!(!ms.migrate_deprecated_paths());
+        assert_eq!(ms.extra_sync_paths, vec!["BepInEx/plugins"]);
+        assert_eq!(ms.exclusions, vec!["**/*.nosync", "SPT/user/mods"]);
+    }
+
+    #[test]
+    fn modsync_migrate_mixed_paths() {
+        let mut ms = ModSyncConfig {
+            extra_sync_paths: vec![
+                "../BepInEx/config".to_string(),
+                "BepInEx/plugins".to_string(),
+                "user/mods".to_string(),
+            ],
+            ..ModSyncConfig::default()
+        };
+        assert!(ms.migrate_deprecated_paths());
+        assert_eq!(
+            ms.extra_sync_paths,
+            vec!["BepInEx/config", "BepInEx/plugins", "SPT/user/mods"]
+        );
+    }
+
+    #[test]
+    fn config_load_auto_migrates_modsync_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("quartermaster.toml");
+
+        let toml_content = r#"
+[modsync]
+extra_sync_paths = ["../BepInEx/config", "user/mods"]
+exclusions = ["../BepInEx/plugins/spt"]
+"#;
+        std::fs::write(&config_path, toml_content).expect("write");
+
+        let config = Config::load(&config_path).expect("should load and migrate");
+        let ms = config.modsync.unwrap();
+        assert_eq!(ms.extra_sync_paths, vec!["BepInEx/config", "SPT/user/mods"]);
+        assert_eq!(ms.exclusions, vec!["BepInEx/plugins/spt"]);
+
+        // Verify the file was updated on disk
+        let reloaded: Config =
+            toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        let ms2 = reloaded.modsync.unwrap();
+        assert_eq!(
+            ms2.extra_sync_paths,
+            vec!["BepInEx/config", "SPT/user/mods"]
+        );
+        assert_eq!(ms2.exclusions, vec!["BepInEx/plugins/spt"]);
+    }
+
+    #[test]
+    fn config_load_does_not_rewrite_when_no_migration_needed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("quartermaster.toml");
+
+        let toml_content = r#"
+[modsync]
+extra_sync_paths = ["BepInEx/config"]
+"#;
+        std::fs::write(&config_path, toml_content).expect("write");
+        let mtime_before = std::fs::metadata(&config_path).unwrap().modified().unwrap();
+
+        // Small sleep to ensure mtime would differ if file were rewritten
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let _config = Config::load(&config_path).expect("should load");
+        let mtime_after = std::fs::metadata(&config_path).unwrap().modified().unwrap();
+
+        assert_eq!(mtime_before, mtime_after);
     }
 }
 
