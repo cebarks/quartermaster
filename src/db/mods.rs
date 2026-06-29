@@ -307,6 +307,18 @@ impl Database {
         rows.collect()
     }
 
+    pub fn get_all_enabled_mod_files(&self) -> rusqlite::Result<Vec<InstalledFile>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.id, f.mod_id, f.file_path, f.file_hash, f.file_size, f.source
+             FROM installed_files f
+             JOIN installed_mods m ON f.mod_id = m.id
+             WHERE m.disabled = 0
+             ORDER BY f.file_path",
+        )?;
+        let rows = stmt.query_map([], row_to_installed_file)?;
+        rows.collect()
+    }
+
     pub fn delete_files_for_mod(&self, mod_id: i64) -> rusqlite::Result<usize> {
         self.conn.execute(
             "DELETE FROM installed_files WHERE mod_id = ?1",
