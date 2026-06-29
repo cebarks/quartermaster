@@ -589,8 +589,7 @@ pub async fn bootstrap_bash(
         .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
     drop(config);
 
-    let (_, spt_port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
-    let spt_server_url = build_spt_server_url(&external_url, spt_port);
+    let spt_server_url = build_spt_server_url(&external_url);
 
     let archive_url = format!(
         "{}/quma/join/mods.zip?code={}",
@@ -650,8 +649,7 @@ pub async fn bootstrap_powershell(
         .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
     drop(config);
 
-    let (_, spt_port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
-    let spt_server_url = build_spt_server_url(&external_url, spt_port);
+    let spt_server_url = build_spt_server_url(&external_url);
 
     let archive_url = format!(
         "{}/quma/join/mods.zip?code={}",
@@ -671,16 +669,13 @@ pub async fn bootstrap_powershell(
     ))
 }
 
-pub(crate) fn build_spt_server_url(external_url: &str, spt_port: u16) -> String {
+pub(crate) fn build_spt_server_url(external_url: &str) -> String {
     let trimmed = external_url.trim_end_matches('/');
-    let host = trimmed
+    let without_scheme = trimmed
         .strip_prefix("https://")
         .or_else(|| trimmed.strip_prefix("http://"))
-        .unwrap_or(trimmed)
-        .split(':')
-        .next()
-        .unwrap_or("localhost");
-    format!("https://{}:{}", host, spt_port)
+        .unwrap_or(trimmed);
+    format!("https://{}", without_scheme)
 }
 
 fn escape_bash(s: &str) -> String {
@@ -991,22 +986,22 @@ mod tests {
     }
 
     #[test]
-    fn build_spt_server_url_extracts_host() {
+    fn build_spt_server_url_normalizes_external_url() {
         assert_eq!(
-            build_spt_server_url("https://tarkov.example.com", 6969),
-            "https://tarkov.example.com:6969"
+            build_spt_server_url("https://tarkov.example.com"),
+            "https://tarkov.example.com"
         );
         assert_eq!(
-            build_spt_server_url("https://tarkov.example.com/", 6969),
-            "https://tarkov.example.com:6969"
+            build_spt_server_url("https://tarkov.example.com/"),
+            "https://tarkov.example.com"
         );
         assert_eq!(
-            build_spt_server_url("http://tarkov.example.com", 7070),
-            "https://tarkov.example.com:7070"
+            build_spt_server_url("http://tarkov.example.com"),
+            "https://tarkov.example.com"
         );
         assert_eq!(
-            build_spt_server_url("https://tarkov.example.com:443", 6969),
-            "https://tarkov.example.com:6969"
+            build_spt_server_url("https://tarkov.example.com:443"),
+            "https://tarkov.example.com:443"
         );
     }
 }

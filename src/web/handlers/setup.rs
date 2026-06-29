@@ -46,11 +46,9 @@ pub async fn setup_page(
     let external_url = config.external_url.clone();
     drop(config);
 
-    let (_, spt_port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
-
     let external_url_configured = external_url.is_some();
     let spt_server_url = match &external_url {
-        Some(url) => build_spt_server_url(url, spt_port),
+        Some(url) => build_spt_server_url(url),
         None => String::new(),
     };
 
@@ -94,8 +92,7 @@ pub async fn setup_bootstrap_bash(
         .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
     drop(config);
 
-    let (_, spt_port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
-    let spt_server_url = build_spt_server_url(&external_url, spt_port);
+    let spt_server_url = build_spt_server_url(&external_url);
 
     let archive_url = format!("{}/quma/setup/mods.zip", external_url.trim_end_matches('/'));
     let script = generate_bash_script(&server_name, &archive_url, &spt_server_url);
@@ -131,8 +128,7 @@ pub async fn setup_bootstrap_powershell(
         .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
     drop(config);
 
-    let (_, spt_port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
-    let spt_server_url = build_spt_server_url(&external_url, spt_port);
+    let spt_server_url = build_spt_server_url(&external_url);
 
     let archive_url = format!("{}/quma/setup/mods.zip", external_url.trim_end_matches('/'));
     let script = generate_powershell_script(&server_name, &archive_url, &spt_server_url);
