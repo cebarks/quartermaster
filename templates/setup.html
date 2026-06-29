@@ -7,10 +7,6 @@
 <h1>Client Setup</h1>
 <p class="text-muted">Set up your SPT client to connect to <strong>{{ server_name }}</strong> (SPT {{ spt_version }}).</p>
 
-{% if let Some(flash) = flash %}
-<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
-{% endif %}
-
 <div class="card" style="margin-bottom: 1.5rem">
     <h3>Step 1: Install Fika</h3>
     {% if fika_installed %}
