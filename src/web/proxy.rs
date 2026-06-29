@@ -233,16 +233,6 @@ pub async fn proxy_handler(
                     .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY),
             );
 
-            for (name, value) in resp_headers.iter() {
-                let name_str = name.as_str().to_lowercase();
-                if HOP_BY_HOP_HEADERS.contains(&name_str.as_str()) {
-                    continue;
-                }
-                if let Ok(value_str) = value.to_str() {
-                    builder.insert_header((name.as_str(), value_str));
-                }
-            }
-
             let (external_url_for_rewrite, source_port, target_port) = {
                 let cfg = state.config();
                 (
@@ -253,6 +243,24 @@ pub async fn proxy_handler(
                     cfg.proxy_rewrite_target_port.unwrap_or(port),
                 )
             };
+            let will_rewrite = matches!(
+                (&rewrite_target, &external_url_for_rewrite),
+                (Some(_), Some(_))
+            );
+
+            for (name, value) in resp_headers.iter() {
+                let name_str = name.as_str().to_lowercase();
+                if HOP_BY_HOP_HEADERS.contains(&name_str.as_str()) {
+                    continue;
+                }
+                if will_rewrite && name_str == "content-length" {
+                    continue;
+                }
+                if let Ok(value_str) = value.to_str() {
+                    builder.insert_header((name.as_str(), value_str));
+                }
+            }
+
             if let (Some(target), Some(external_url)) = (rewrite_target, external_url_for_rewrite) {
                 let replacement = match target {
                     BackendRewriteTarget::HttpProxy => extract_host(&external_url),
