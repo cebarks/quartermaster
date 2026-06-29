@@ -73,6 +73,14 @@ fn default_proxy_enabled() -> bool {
     true
 }
 
+fn default_proxy_rewrite_source_port() -> u16 {
+    6969
+}
+
+fn default_proxy_rewrite_target_port() -> Option<u16> {
+    None
+}
+
 fn default_proxy_rewrite_http_paths() -> Vec<String> {
     vec![
         "/launcher/server/connect".to_string(),
@@ -789,6 +797,12 @@ pub struct Config {
     #[serde(default = "default_proxy_enabled")]
     pub proxy_enabled: bool,
 
+    #[serde(default = "default_proxy_rewrite_source_port")]
+    pub proxy_rewrite_source_port: u16,
+
+    #[serde(default = "default_proxy_rewrite_target_port")]
+    pub proxy_rewrite_target_port: Option<u16>,
+
     #[serde(default = "default_proxy_rewrite_http_paths")]
     pub proxy_rewrite_http_paths: Vec<String>,
 
@@ -833,6 +847,8 @@ impl Default for Config {
             tls_cert: None,
             tls_key: None,
             proxy_enabled: true,
+            proxy_rewrite_source_port: 6969,
+            proxy_rewrite_target_port: None,
             proxy_rewrite_http_paths: default_proxy_rewrite_http_paths(),
             proxy_rewrite_direct_paths: default_proxy_rewrite_direct_paths(),
             snapshots_enabled: true,
