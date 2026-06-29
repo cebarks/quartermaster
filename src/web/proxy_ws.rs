@@ -40,10 +40,13 @@ pub async fn ws_proxy_handler(
     // We start from tungstenite's IntoClientRequest to get proper WS upgrade headers
     // (Connection, Upgrade, Sec-WebSocket-Key, etc.), then layer on the client headers.
     use tungstenite::client::IntoClientRequest;
-    let mut upstream_request = upstream_url
-        .clone()
-        .into_client_request()
-        .expect("valid upstream WS URI");
+    let mut upstream_request = match upstream_url.clone().into_client_request() {
+        Ok(req) => req,
+        Err(e) => {
+            tracing::warn!(err = %e, url = %upstream_url, "invalid upstream WebSocket URI");
+            return Err(actix_web::error::ErrorBadRequest("Invalid WebSocket URI"));
+        }
+    };
     {
         let ws_header_names: std::collections::HashSet<&str> = [
             "host",
