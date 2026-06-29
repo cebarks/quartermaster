@@ -211,20 +211,21 @@ pub async fn proxy_handler(
                 );
             }
 
-            // SPT 4.x hardcodes backend URLs to 127.0.0.1:6969 regardless of
-            // config. Rewrite HTTP API URLs to external_url (L7 proxy on :443)
-            // and WebSocket/notifier URLs to external_url host on :6969 (direct
-            // TCP passthrough) since SPT's notifier breaks under L7 proxies.
-            let rewrite_target = if !status.is_success() || state.config().external_url.is_none() {
-                None
-            } else if req.path() == "/launcher/server/connect"
-                || req.path() == "/client/game/config"
-            {
-                Some(BackendRewriteTarget::HttpProxy)
-            } else if req.path() == "/client/notifier/channel/create" {
-                Some(BackendRewriteTarget::DirectTcp)
-            } else {
-                None
+            let rewrite_target = {
+                let cfg = state.config();
+                if !status.is_success() || cfg.external_url.is_none() {
+                    None
+                } else if cfg.proxy_rewrite_http_paths.iter().any(|p| p == req.path()) {
+                    Some(BackendRewriteTarget::HttpProxy)
+                } else if cfg
+                    .proxy_rewrite_direct_paths
+                    .iter()
+                    .any(|p| p == req.path())
+                {
+                    Some(BackendRewriteTarget::DirectTcp)
+                } else {
+                    None
+                }
             };
 
             let mut builder = HttpResponse::build(
@@ -232,9 +233,27 @@ pub async fn proxy_handler(
                     .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY),
             );
 
+            let (external_url_for_rewrite, source_port, target_port) = {
+                let cfg = state.config();
+                (
+                    rewrite_target
+                        .as_ref()
+                        .and_then(|_| cfg.external_url.clone()),
+                    cfg.proxy_rewrite_source_port,
+                    cfg.proxy_rewrite_target_port.unwrap_or(port),
+                )
+            };
+            let will_rewrite = matches!(
+                (&rewrite_target, &external_url_for_rewrite),
+                (Some(_), Some(_))
+            );
+
             for (name, value) in resp_headers.iter() {
                 let name_str = name.as_str().to_lowercase();
                 if HOP_BY_HOP_HEADERS.contains(&name_str.as_str()) {
+                    continue;
+                }
+                if will_rewrite && name_str == "content-length" {
                     continue;
                 }
                 if let Ok(value_str) = value.to_str() {
@@ -242,20 +261,17 @@ pub async fn proxy_handler(
                 }
             }
 
-            let external_url_for_rewrite = rewrite_target
-                .as_ref()
-                .and_then(|_| state.config().external_url.clone());
             if let (Some(target), Some(external_url)) = (rewrite_target, external_url_for_rewrite) {
                 let replacement = match target {
                     BackendRewriteTarget::HttpProxy => extract_host(&external_url),
                     BackendRewriteTarget::DirectTcp => {
-                        format!("{}:{}", extract_host(&external_url), port)
+                        format!("{}:{}", extract_host(&external_url), target_port)
                     }
                 };
                 let raw_body = resp.bytes().await.map_err(|e| {
                     actix_web::error::ErrorBadGateway(format!("failed to read response body: {e}"))
                 })?;
-                match rewrite_backend_url(&raw_body, &replacement) {
+                match rewrite_backend_url(&raw_body, &replacement, source_port) {
                     Ok(rewritten) => Ok(builder.body(rewritten)),
                     Err(e) => {
                         tracing::warn!(err = %e, "failed to rewrite backend URLs, forwarding original");
@@ -297,10 +313,11 @@ fn extract_host(url: &str) -> String {
         .to_string()
 }
 
-/// Rewrite hardcoded `127.0.0.1:6969` in SPT response bodies.
-/// `replacement` is the target host or host:port to substitute.
-/// The body may be zlib-compressed (SPT default) or plain JSON.
-fn rewrite_backend_url(body: &[u8], replacement: &str) -> Result<Vec<u8>, String> {
+fn rewrite_backend_url(
+    body: &[u8],
+    replacement: &str,
+    source_port: u16,
+) -> Result<Vec<u8>, String> {
     let (json_bytes, compressed) = {
         let mut decoder = ZlibDecoder::new(body);
         let mut buf = Vec::new();
@@ -311,7 +328,11 @@ fn rewrite_backend_url(body: &[u8], replacement: &str) -> Result<Vec<u8>, String
     };
 
     let json_str = String::from_utf8(json_bytes).map_err(|e| format!("utf8: {e}"))?;
-    let rewritten = json_str.replace("127.0.0.1:6969", replacement);
+    let loopback = format!("127.0.0.1:{source_port}");
+    let wildcard = format!("0.0.0.0:{source_port}");
+    let rewritten = json_str
+        .replace(&loopback, replacement)
+        .replace(&wildcard, replacement);
     let new_json = rewritten.into_bytes();
 
     if compressed {

@@ -7,7 +7,7 @@ use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::handlers::join::{
     build_mod_zip, build_spt_server_url, generate_bash_script, generate_powershell_script,
-    BOOTSTRAP_FORGE_IDS, DEFAULT_SERVER_NAME, FIKA_INSTALLER_URL,
+    DEFAULT_SERVER_NAME, FIKA_INSTALLER_URL,
 };
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
@@ -151,7 +151,7 @@ pub async fn setup_mods_zip(state: web::Data<AppState>) -> actix_web::Result<Htt
     let db = state.db.clone();
     let files = web::block(move || {
         let db = db.lock();
-        db.get_files_for_forge_ids(BOOTSTRAP_FORGE_IDS)
+        db.get_all_enabled_mod_files()
     })
     .await
     .map_err(WebError::from)?
@@ -160,7 +160,7 @@ pub async fn setup_mods_zip(state: web::Data<AppState>) -> actix_web::Result<Htt
     if files.is_empty() {
         return Ok(HttpResponse::ServiceUnavailable()
             .content_type("text/plain")
-            .body("No bootstrap mods (NarcoNet) are installed on this server"));
+            .body("No mods are installed on this server"));
     }
 
     let spt_dir = state.spt_dir.clone();
