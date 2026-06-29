@@ -211,20 +211,21 @@ pub async fn proxy_handler(
                 );
             }
 
-            // SPT 4.x hardcodes backend URLs to 127.0.0.1:6969 regardless of
-            // config. Rewrite HTTP API URLs to external_url (L7 proxy on :443)
-            // and WebSocket/notifier URLs to external_url host on :6969 (direct
-            // TCP passthrough) since SPT's notifier breaks under L7 proxies.
-            let rewrite_target = if !status.is_success() || state.config().external_url.is_none() {
-                None
-            } else if req.path() == "/launcher/server/connect"
-                || req.path() == "/client/game/config"
-            {
-                Some(BackendRewriteTarget::HttpProxy)
-            } else if req.path() == "/client/notifier/channel/create" {
-                Some(BackendRewriteTarget::DirectTcp)
-            } else {
-                None
+            let rewrite_target = {
+                let cfg = state.config();
+                if !status.is_success() || cfg.external_url.is_none() {
+                    None
+                } else if cfg.proxy_rewrite_http_paths.iter().any(|p| p == req.path()) {
+                    Some(BackendRewriteTarget::HttpProxy)
+                } else if cfg
+                    .proxy_rewrite_direct_paths
+                    .iter()
+                    .any(|p| p == req.path())
+                {
+                    Some(BackendRewriteTarget::DirectTcp)
+                } else {
+                    None
+                }
             };
 
             let mut builder = HttpResponse::build(
@@ -311,7 +312,9 @@ fn rewrite_backend_url(body: &[u8], replacement: &str) -> Result<Vec<u8>, String
     };
 
     let json_str = String::from_utf8(json_bytes).map_err(|e| format!("utf8: {e}"))?;
-    let rewritten = json_str.replace("127.0.0.1:6969", replacement);
+    let rewritten = json_str
+        .replace("127.0.0.1:6969", replacement)
+        .replace("0.0.0.0:6969", replacement);
     let new_json = rewritten.into_bytes();
 
     if compressed {

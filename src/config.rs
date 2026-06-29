@@ -73,6 +73,18 @@ fn default_proxy_enabled() -> bool {
     true
 }
 
+fn default_proxy_rewrite_http_paths() -> Vec<String> {
+    vec![
+        "/launcher/server/connect".to_string(),
+        "/client/game/config".to_string(),
+        "/client/game/mode".to_string(),
+    ]
+}
+
+fn default_proxy_rewrite_direct_paths() -> Vec<String> {
+    vec!["/client/notifier/channel/create".to_string()]
+}
+
 fn default_snapshots_enabled() -> bool {
     true
 }
@@ -777,6 +789,12 @@ pub struct Config {
     #[serde(default = "default_proxy_enabled")]
     pub proxy_enabled: bool,
 
+    #[serde(default = "default_proxy_rewrite_http_paths")]
+    pub proxy_rewrite_http_paths: Vec<String>,
+
+    #[serde(default = "default_proxy_rewrite_direct_paths")]
+    pub proxy_rewrite_direct_paths: Vec<String>,
+
     #[serde(default = "default_snapshots_enabled")]
     pub snapshots_enabled: bool,
 
@@ -815,6 +833,8 @@ impl Default for Config {
             tls_cert: None,
             tls_key: None,
             proxy_enabled: true,
+            proxy_rewrite_http_paths: default_proxy_rewrite_http_paths(),
+            proxy_rewrite_direct_paths: default_proxy_rewrite_direct_paths(),
             snapshots_enabled: true,
             leaderboard_min_raids: 5,
             external_url: None,
