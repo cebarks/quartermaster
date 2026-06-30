@@ -38,6 +38,15 @@ fn prepend_parent_if_needed(path: &str) -> String {
     }
 }
 
+/// Strip characters that BepInEx forbids in config section/key names.
+/// NarcoNet uses sync path names as BepInEx config keys, so these chars
+/// cause `ConfigDefinition` to throw on the client.
+fn sanitize_name_for_bepinex(name: &str) -> String {
+    name.chars()
+        .filter(|c| !matches!(c, '=' | '\n' | '\t' | '\\' | '"' | '\'' | '[' | ']'))
+        .collect()
+}
+
 /// Generate ModSync config from DB state + quartermaster config.
 fn generate_config(
     ms_config: &ModSyncConfig,
@@ -45,7 +54,8 @@ fn generate_config(
     for_headless: bool,
 ) -> Result<ModSyncOutputConfig> {
     let mods = db.list_mods()?;
-    let mut sync_paths: Vec<SyncPathEntry> = Vec::new();
+    let mut sync_paths: std::collections::BTreeMap<String, SyncPathEntry> =
+        std::collections::BTreeMap::new();
 
     // Build reverse lookup: mod forge_id → group key
     let group_for_mod: std::collections::HashMap<i64, &str> = ms_config
@@ -120,20 +130,32 @@ fn generate_config(
         }
 
         for dir in deduplicate_to_directories(&client_files) {
-            sync_paths.push(SyncPathEntry {
-                path: prepend_parent_if_needed(&dir),
-                name: m.name.clone(),
-                enabled,
-                enforced,
-                silent,
-                restart_required,
-            });
+            let path = prepend_parent_if_needed(&dir);
+            sync_paths
+                .entry(path.clone())
+                .and_modify(|existing| {
+                    // When multiple mods share a directory, merge flags conservatively:
+                    // enable if any mod enables, enforce if any enforces, etc.
+                    existing.enabled = existing.enabled || enabled;
+                    existing.enforced = existing.enforced || enforced;
+                    existing.silent = existing.silent && silent;
+                    existing.restart_required = existing.restart_required || restart_required;
+                })
+                .or_insert(SyncPathEntry {
+                    path,
+                    name: sanitize_name_for_bepinex(&m.name),
+                    enabled,
+                    enforced,
+                    silent,
+                    restart_required,
+                });
         }
     }
 
     for extra in &ms_config.extra_sync_paths {
-        sync_paths.push(SyncPathEntry {
-            path: prepend_parent_if_needed(extra),
+        let path = prepend_parent_if_needed(extra);
+        sync_paths.entry(path.clone()).or_insert(SyncPathEntry {
+            path,
             name: extra.clone(),
             enabled: true,
             enforced: ms_config.enforced,
@@ -142,7 +164,7 @@ fn generate_config(
         });
     }
 
-    sync_paths.sort_by(|a, b| a.path.cmp(&b.path));
+    let sync_paths: Vec<SyncPathEntry> = sync_paths.into_values().collect();
 
     let exclusions = ms_config
         .exclusions
@@ -296,6 +318,20 @@ mod tests {
         )
         .unwrap();
         mod_id
+    }
+
+    #[test]
+    fn sanitize_name_strips_bepinex_invalid_chars() {
+        assert_eq!(
+            sanitize_name_for_bepinex("[SAIN] Twitch Players"),
+            "SAIN Twitch Players"
+        );
+        assert_eq!(
+            sanitize_name_for_bepinex("Normal Mod Name"),
+            "Normal Mod Name"
+        );
+        assert_eq!(sanitize_name_for_bepinex("Mod=\"test\""), "Modtest");
+        assert_eq!(sanitize_name_for_bepinex("It's a mod"), "Its a mod");
     }
 
     #[test]
@@ -946,5 +982,100 @@ mod tests {
         let output = generate_config(&ms_config, &db, false).unwrap();
         assert_eq!(output.sync_paths.len(), 1);
         assert!(output.sync_paths[0].enabled); // mod not in group, gets global default
+    }
+
+    #[test]
+    fn generate_config_deduplicates_shared_directory() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Two mods installing files to the same BepInEx/plugins/SAIN/ directory
+        let mod1 = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod1,
+            "BepInEx/plugins/SAIN/SAIN.dll",
+            Some("abc123"),
+            Some(1024),
+        )
+        .unwrap();
+
+        let mod2 = db
+            .insert_mod(
+                101,
+                201,
+                "[SAIN] Twitch Players",
+                Some("sain-twitch"),
+                "1.0.0",
+            )
+            .unwrap();
+        db.insert_file(
+            mod2,
+            "BepInEx/plugins/SAIN/TwitchPlayers.dll",
+            Some("def456"),
+            Some(512),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false).unwrap();
+
+        // Should produce ONE entry, not two
+        assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins/SAIN");
+    }
+
+    #[test]
+    fn generate_config_shared_directory_merges_flags() {
+        let db = Database::open_in_memory().unwrap();
+
+        let mod1 = db
+            .insert_mod(100, 200, "ModA", Some("mod-a"), "1.0.0")
+            .unwrap();
+        db.insert_file(mod1, "BepInEx/plugins/Shared/a.dll", Some("aaa"), Some(100))
+            .unwrap();
+
+        let mod2 = db
+            .insert_mod(101, 201, "ModB", Some("mod-b"), "1.0.0")
+            .unwrap();
+        db.insert_file(mod2, "BepInEx/plugins/Shared/b.dll", Some("bbb"), Some(100))
+            .unwrap();
+
+        let mut ms_config = ModSyncConfig {
+            enforced: false,
+            silent: true,
+            restart_required: false,
+            ..ModSyncConfig::default()
+        };
+
+        // ModA: override enforced=true
+        ms_config.overrides.insert(
+            "100".to_string(),
+            ModSyncOverride {
+                enforced: Some(true),
+                silent: None,
+                restart_required: None,
+                enabled: None,
+            },
+        );
+
+        // ModB: override silent=false
+        ms_config.overrides.insert(
+            "101".to_string(),
+            ModSyncOverride {
+                enforced: None,
+                silent: Some(false),
+                restart_required: None,
+                enabled: None,
+            },
+        );
+
+        let output = generate_config(&ms_config, &db, false).unwrap();
+
+        assert_eq!(output.sync_paths.len(), 1);
+        // enforced: true (OR — ModA has it)
+        assert!(output.sync_paths[0].enforced);
+        // silent: false (AND — ModB has it false)
+        assert!(!output.sync_paths[0].silent);
     }
 }
