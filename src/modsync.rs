@@ -38,6 +38,15 @@ fn prepend_parent_if_needed(path: &str) -> String {
     }
 }
 
+/// Strip characters that BepInEx forbids in config section/key names.
+/// NarcoNet uses sync path names as BepInEx config keys, so these chars
+/// cause `ConfigDefinition` to throw on the client.
+fn sanitize_name_for_bepinex(name: &str) -> String {
+    name.chars()
+        .filter(|c| !matches!(c, '=' | '\n' | '\t' | '\\' | '"' | '\'' | '[' | ']'))
+        .collect()
+}
+
 /// Generate ModSync config from DB state + quartermaster config.
 fn generate_config(
     ms_config: &ModSyncConfig,
@@ -134,7 +143,7 @@ fn generate_config(
                 })
                 .or_insert(SyncPathEntry {
                     path,
-                    name: m.name.clone(),
+                    name: sanitize_name_for_bepinex(&m.name),
                     enabled,
                     enforced,
                     silent,
@@ -309,6 +318,20 @@ mod tests {
         )
         .unwrap();
         mod_id
+    }
+
+    #[test]
+    fn sanitize_name_strips_bepinex_invalid_chars() {
+        assert_eq!(
+            sanitize_name_for_bepinex("[SAIN] Twitch Players"),
+            "SAIN Twitch Players"
+        );
+        assert_eq!(
+            sanitize_name_for_bepinex("Normal Mod Name"),
+            "Normal Mod Name"
+        );
+        assert_eq!(sanitize_name_for_bepinex("Mod=\"test\""), "Modtest");
+        assert_eq!(sanitize_name_for_bepinex("It's a mod"), "Its a mod");
     }
 
     #[test]
