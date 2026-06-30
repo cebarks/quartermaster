@@ -198,7 +198,7 @@ pub async fn save_settings(
 
     let _guard = state.config_lock.lock();
     let mut new_config = Config::load(&state.config_path).map_err(WebError::from)?;
-    // Preserve existing overrides
+    // Preserve existing overrides and groups
     let existing_overrides = new_config
         .modsync
         .as_ref()
@@ -209,8 +209,15 @@ pub async fn save_settings(
         .as_ref()
         .map(|ms| ms.groups.clone())
         .unwrap_or_default();
+    // Preserve existing enabled flag (Task 2 will add UI for this)
+    let existing_enabled = new_config
+        .modsync
+        .as_ref()
+        .map(|ms| ms.enabled)
+        .unwrap_or(true);
 
     let ms_config = crate::config::ModSyncConfig {
+        enabled: existing_enabled,
         enforced: form.enforced.is_some(),
         silent: form.silent.is_some(),
         restart_required: form.restart_required.is_some(),

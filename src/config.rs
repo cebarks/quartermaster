@@ -301,6 +301,10 @@ fn default_enforced() -> bool {
     true
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_restart_required() -> bool {
     true
 }
@@ -339,6 +343,9 @@ impl BackupConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModSyncConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
     #[serde(default = "default_enforced")]
     pub enforced: bool,
 
@@ -364,6 +371,7 @@ pub struct ModSyncConfig {
 impl Default for ModSyncConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             enforced: true,
             silent: false,
             restart_required: true,

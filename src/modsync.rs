@@ -230,6 +230,16 @@ pub fn regenerate_if_enabled(spt_dir: &Path, config: &Config, db: &Database) -> 
         None => return Ok(false),
     };
 
+    if !ms_config.enabled {
+        if let Some(config_path) = modsync_config_path(spt_dir) {
+            if config_path.exists() {
+                std::fs::remove_file(&config_path).context("failed to remove NarcoNet config.yaml")?;
+                tracing::info!("NarcoNet management disabled — removed config.yaml");
+            }
+        }
+        return Ok(false);
+    }
+
     let config_path = match modsync_config_path(spt_dir) {
         Some(p) => p,
         None => {
@@ -633,6 +643,46 @@ mod tests {
         let config_path = modsync_config_path(tmp.path()).unwrap();
         assert!(config_path.exists());
         assert!(config_path.to_str().unwrap().ends_with("config.yaml"));
+    }
+
+    #[test]
+    fn regenerate_if_enabled_skips_when_disabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let narconet_dir = tmp.path().join("SPT/user/mods/narconet-server");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        setup_db_with_client_mod(&db);
+
+        let mut config = Config::default();
+        let mut ms = ModSyncConfig::default();
+        ms.enabled = false;
+        config.modsync = Some(ms);
+
+        let result = regenerate_if_enabled(tmp.path(), &config, &db).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn regenerate_if_enabled_deletes_config_when_disabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let narconet_dir = tmp.path().join("SPT/user/mods/narconet-server");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
+
+        let config_path = narconet_dir.join("config.yaml");
+        std::fs::write(&config_path, "old content").unwrap();
+        assert!(config_path.exists());
+
+        let db = Database::open_in_memory().unwrap();
+        let mut config = Config::default();
+        let mut ms = ModSyncConfig::default();
+        ms.enabled = false;
+        config.modsync = Some(ms);
+
+        regenerate_if_enabled(tmp.path(), &config, &db).unwrap();
+        assert!(!config_path.exists());
     }
 
     #[test]
