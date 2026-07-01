@@ -28,7 +28,7 @@
             {% if user.can("settings.manage") %}
             <a href="/quma/admin/backups"{% if active == "backups" %} class="active"{% endif %}>Backups</a>
             {% endif %}
-            {% if nav.modsync_installed && user.can("settings.manage") %}
+            {% if nav.modsync_installed && nav.modsync_enabled && user.can("settings.manage") %}
             <a href="/quma/modsync"{% if active == "modsync" %} class="active"{% endif %}>NarcoNet</a>
             {% endif %}
             {% if nav.svm_installed && user.can("settings.manage") %}
