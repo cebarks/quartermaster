@@ -597,6 +597,26 @@ pub async fn save_groups(
         }
     }
 
+    // Validate shared directories before saving
+    {
+        let db = state.db.clone();
+        let groups_clone = new_groups.clone();
+        let validation_result = web::block(move || {
+            let db = db.lock();
+            validate_shared_directories(&db, &groups_clone)
+        })
+        .await
+        .map_err(WebError::from)?;
+
+        if let Err(msg) = validation_result {
+            set_flash(&session, &msg, FlashType::Error);
+            return Ok(HttpResponse::Ok().json(serde_json::json!({
+                "ok": false,
+                "redirect": "/quma/modsync?tab=groups"
+            })));
+        }
+    }
+
     // Load-then-mutate: only replace the groups field
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
@@ -612,7 +632,21 @@ pub async fn save_groups(
     if let Err(e) = state.update_config_from_disk() {
         tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
+
+    // Clone modsync config for layout enforcement
+    let ms_config_for_layout = config.modsync.clone();
     drop(_guard);
+
+    // Move mod files to match new group layout
+    if let Some(ms_config) = ms_config_for_layout {
+        let db_move = state.db.clone();
+        let spt_dir_move = state.spt_dir.clone();
+        let _ = web::block(move || {
+            let db = db_move.lock();
+            crate::modsync::ensure_all_mod_layouts(&spt_dir_move, &ms_config, &db)
+        })
+        .await;
+    }
 
     // Regenerate NarcoNet config.yaml
     state.regenerate_modsync().await;
@@ -653,6 +687,57 @@ struct ModOverrideRow {
 struct ModsPartialTemplate {
     csrf_token: String,
     mods: Vec<ModOverrideRow>,
+}
+
+/// Check that mods sharing a BepInEx directory are not split across different groups.
+fn validate_shared_directories(
+    db: &crate::db::Database,
+    groups: &BTreeMap<String, ModSyncGroup>,
+) -> Result<(), String> {
+    // Build forge_id → group slug map
+    let mut mod_group: std::collections::HashMap<i64, &str> = std::collections::HashMap::new();
+    for (slug, group) in groups {
+        for &id in &group.members {
+            mod_group.insert(id, slug.as_str());
+        }
+    }
+
+    // Build directory → set of groups map
+    let mods = db.list_mods().map_err(|e| e.to_string())?;
+    let mut dir_groups: std::collections::HashMap<String, std::collections::HashSet<Option<&str>>> =
+        std::collections::HashMap::new();
+
+    for m in &mods {
+        let files = db.get_files_for_mod(m.id).map_err(|e| e.to_string())?;
+        for f in &files {
+            if !f.file_path.starts_with("BepInEx/") {
+                continue;
+            }
+            let parts: Vec<&str> = f.file_path.split('/').collect();
+            if parts.len() >= 3 {
+                // Skip paths already in quma- dirs for the directory key
+                let dir_name = if parts[2].starts_with("quma-") && parts.len() >= 4 {
+                    parts[3]
+                } else {
+                    parts[2]
+                };
+                let dir_key = format!("{}/{}", parts[1], dir_name);
+                let group = mod_group.get(&m.forge_mod_id).copied();
+                dir_groups.entry(dir_key).or_default().insert(group);
+            }
+        }
+    }
+
+    for (dir, groups_in_dir) in &dir_groups {
+        if groups_in_dir.len() > 1 {
+            return Err(format!(
+                "Mods in BepInEx/{dir} are assigned to different groups. \
+                 Mods sharing a directory must be in the same group."
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Build a reverse group membership map: forge_mod_id -> group slug
