@@ -660,33 +660,21 @@ pub async fn save_groups(
 
 // ─── Mods Tab ───────────────────────────────────────────────────────────────
 
-/// Context for a single mod row in the overrides table.
-struct ModOverrideRow {
-    db_id: i64,
-    forge_mod_id: i64,
+/// Context for a single mod row in the read-only summary table.
+struct ModSummaryRow {
     name: String,
     group: Option<String>,
-    override_enabled: String,
-    override_enforced: String,
-    override_silent: String,
-    override_restart_required: String,
     effective_enabled: bool,
     effective_enforced: bool,
     effective_silent: bool,
     effective_restart_required: bool,
-    override_conflict_enabled: bool,
-    override_conflict_enforced: bool,
-    override_conflict_silent: bool,
-    override_conflict_restart_required: bool,
-    headless_warning: bool,
     headless_disabled: bool,
 }
 
 #[derive(Template)]
 #[template(path = "modsync/partials/mods.html")]
 struct ModsPartialTemplate {
-    csrf_token: String,
-    mods: Vec<ModOverrideRow>,
+    mods: Vec<ModSummaryRow>,
 }
 
 /// Check that mods sharing a BepInEx directory are not split across different groups.
@@ -753,147 +741,57 @@ fn build_group_membership_map(
     map
 }
 
-/// Compute effective values from cascade: global → group → per-mod override.
-/// Returns (enabled, enforced, silent, restart_required).
-fn compute_effective_values(
-    global: &crate::config::ModSyncConfig,
-    group: Option<&crate::config::ModSyncGroup>,
-    override_val: Option<&crate::config::ModSyncOverride>,
-) -> (bool, bool, bool, bool) {
-    let enabled = override_val
-        .and_then(|o| o.enabled)
-        .or_else(|| group.and_then(|g| g.enabled))
-        .unwrap_or(true); // Default enabled if not specified anywhere
-
-    let enforced = override_val
-        .and_then(|o| o.enforced)
-        .or_else(|| group.and_then(|g| g.enforced))
-        .unwrap_or(global.enforced);
-
-    let silent = override_val
-        .and_then(|o| o.silent)
-        .or_else(|| group.and_then(|g| g.silent))
-        .unwrap_or(global.silent);
-
-    let restart_required = override_val
-        .and_then(|o| o.restart_required)
-        .or_else(|| group.and_then(|g| g.restart_required))
-        .unwrap_or(global.restart_required);
-
-    (enabled, enforced, silent, restart_required)
-}
-
 /// Shared logic: build the mods tab HTML from config + DB state.
-async fn render_mods_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
+async fn render_mods_tab(state: &AppState, _csrf_token: &str) -> Result<String, WebError> {
     let ms_config = state.config().modsync.clone().unwrap_or_default();
 
-    // Fetch all DB data in a single web::block call: mod list + forge_id → db_id mapping
     let db = state.db.clone();
-    let all_mods_and_ids = web::block(move || {
+    let ms_clone = ms_config.clone();
+    let rows = web::block(move || {
         let db = db.lock();
         let all_mods = mods_with_client_files(&db)?;
-        let mut forge_to_db_id: std::collections::HashMap<i64, i64> =
-            std::collections::HashMap::new();
-        for (forge_id, _, has_client) in &all_mods {
+
+        let group_map = build_group_membership_map(&ms_clone);
+        let mut rows = Vec::new();
+
+        for (forge_id, name, has_client) in &all_mods {
             if !has_client {
                 continue;
             }
-            if let Some(m) = db.get_mod_by_forge_id(*forge_id)? {
-                forge_to_db_id.insert(*forge_id, m.id);
-            }
+
+            let group_slug = group_map.get(forge_id);
+            let group_obj = group_slug.and_then(|slug| ms_clone.groups.get(slug));
+
+            let enabled = group_obj.and_then(|g| g.enabled).unwrap_or(true);
+            let enforced = group_obj
+                .and_then(|g| g.enforced)
+                .unwrap_or(ms_clone.enforced);
+            let silent = group_obj.and_then(|g| g.silent).unwrap_or(ms_clone.silent);
+            let restart_required = group_obj
+                .and_then(|g| g.restart_required)
+                .unwrap_or(ms_clone.restart_required);
+
+            let headless_disabled = group_obj.map(|g| g.exclude_headless).unwrap_or(false);
+
+            rows.push(ModSummaryRow {
+                name: name.clone(),
+                group: group_obj.map(|g| g.display_name.clone()),
+                effective_enabled: enabled,
+                effective_enforced: enforced,
+                effective_silent: silent,
+                effective_restart_required: restart_required,
+                headless_disabled,
+            });
         }
-        Ok::<_, anyhow::Error>((all_mods, forge_to_db_id))
+
+        rows.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok::<_, anyhow::Error>(rows)
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let (all_mods, forge_to_db_id) = all_mods_and_ids;
-    let group_map = build_group_membership_map(&ms_config);
-
-    // Build rows (no DB access needed here — all data pre-fetched)
-    let mut rows = Vec::new();
-    for (forge_id, name, has_client) in &all_mods {
-        if !has_client {
-            continue;
-        }
-
-        let db_id = match forge_to_db_id.get(forge_id) {
-            Some(&id) => id,
-            None => continue,
-        };
-
-        let group_slug = group_map.get(forge_id);
-        let group_obj = group_slug.and_then(|slug| ms_config.groups.get(slug));
-
-        let override_val = ms_config.overrides.get(&forge_id.to_string());
-
-        let (eff_enabled, eff_enforced, eff_silent, eff_restart_required) =
-            compute_effective_values(&ms_config, group_obj, override_val);
-
-        // Determine group-level effective (what would be inherited if no per-mod override)
-        let (group_enabled, group_enforced, group_silent, group_restart_required) =
-            compute_effective_values(&ms_config, group_obj, None);
-
-        // Conflict flags: override disagrees with what the group would give
-        let override_conflict_enabled = override_val
-            .and_then(|o| o.enabled)
-            .map(|v| v != group_enabled)
-            .unwrap_or(false);
-        let override_conflict_enforced = override_val
-            .and_then(|o| o.enforced)
-            .map(|v| v != group_enforced)
-            .unwrap_or(false);
-        let override_conflict_silent = override_val
-            .and_then(|o| o.silent)
-            .map(|v| v != group_silent)
-            .unwrap_or(false);
-        let override_conflict_restart_required = override_val
-            .and_then(|o| o.restart_required)
-            .map(|v| v != group_restart_required)
-            .unwrap_or(false);
-
-        // Headless warning: per-mod override with enabled=Some(true) + group has exclude_headless=true
-        let headless_warning = override_val
-            .and_then(|o| o.enabled)
-            .map(|enabled| enabled && group_obj.map(|g| g.exclude_headless).unwrap_or(false))
-            .unwrap_or(false);
-
-        // Headless disabled: mod is in an exclude_headless group AND no per-mod enabled=Some(true) override
-        let headless_disabled = group_obj.map(|g| g.exclude_headless).unwrap_or(false)
-            && !override_val.and_then(|o| o.enabled).unwrap_or(false);
-
-        rows.push(ModOverrideRow {
-            db_id,
-            forge_mod_id: *forge_id,
-            name: name.clone(),
-            group: group_obj.map(|g| g.display_name.clone()),
-            override_enabled: opt_bool_to_val(override_val.and_then(|o| o.enabled)),
-            override_enforced: opt_bool_to_val(override_val.and_then(|o| o.enforced)),
-            override_silent: opt_bool_to_val(override_val.and_then(|o| o.silent)),
-            override_restart_required: opt_bool_to_val(
-                override_val.and_then(|o| o.restart_required),
-            ),
-            effective_enabled: eff_enabled,
-            effective_enforced: eff_enforced,
-            effective_silent: eff_silent,
-            effective_restart_required: eff_restart_required,
-            override_conflict_enabled,
-            override_conflict_enforced,
-            override_conflict_silent,
-            override_conflict_restart_required,
-            headless_warning,
-            headless_disabled,
-        });
-    }
-
-    // Sort by mod name
-    rows.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let tmpl = ModsPartialTemplate {
-        csrf_token: csrf_token.to_string(),
-        mods: rows,
-    };
+    let tmpl = ModsPartialTemplate { mods: rows };
     tmpl.render().map_err(WebError::from)
 }
 
@@ -940,101 +838,6 @@ async fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
         has_headless_groups,
     };
     tmpl.render().map_err(WebError::from)
-}
-
-pub async fn save_mods(
-    state: Data<AppState>,
-    req: HttpRequest,
-    session: Session,
-    body: Json<serde_json::Value>,
-) -> actix_web::Result<HttpResponse> {
-    let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
-
-    let csrf = body
-        .get("csrf_token")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if !crate::web::csrf::validate_token(&session, csrf) {
-        return Err(WebError::Forbidden.into());
-    }
-
-    let mods_val = body
-        .get("mods")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut new_overrides: BTreeMap<String, crate::config::ModSyncOverride> = BTreeMap::new();
-
-    for mod_val in &mods_val {
-        let forge_mod_id = mod_val
-            .get("forge_mod_id")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        if forge_mod_id == 0 {
-            continue;
-        }
-
-        let enabled = parse_opt_bool(mod_val, "enabled");
-        let enforced = parse_opt_bool(mod_val, "enforced");
-        let silent = parse_opt_bool(mod_val, "silent");
-        let restart_required = parse_opt_bool(mod_val, "restart_required");
-
-        // Only create an override entry if at least one field is non-None
-        if enabled.is_some() || enforced.is_some() || silent.is_some() || restart_required.is_some()
-        {
-            let override_entry = crate::config::ModSyncOverride {
-                enabled,
-                enforced,
-                silent,
-                restart_required,
-            };
-            new_overrides.insert(forge_mod_id.to_string(), override_entry);
-        }
-    }
-
-    // Load-then-merge: overlay form changes onto existing overrides,
-    // preserving entries for mods not in the form (server-only mods, etc.).
-    let _guard = state.config_lock.lock();
-    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
-    let ms = config
-        .modsync
-        .get_or_insert_with(crate::config::ModSyncConfig::default);
-    for (key, val) in new_overrides {
-        if val.enabled.is_none()
-            && val.enforced.is_none()
-            && val.silent.is_none()
-            && val.restart_required.is_none()
-        {
-            ms.overrides.remove(&key); // All None = remove override entirely
-        } else {
-            ms.overrides.insert(key, val);
-        }
-    }
-    config.save(&state.config_path).map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
-    drop(_guard);
-
-    // Regenerate NarcoNet config.yaml
-    if state.is_modsync_installed() {
-        let db = state.db.clone();
-        let spt_dir = state.spt_dir.clone();
-        let saved_config = config.clone();
-        let _ = web::block(move || {
-            let db = db.lock();
-            crate::modsync::regenerate_if_enabled(&spt_dir, &saved_config, &db)
-        })
-        .await;
-    }
-
-    set_flash(&session, "NarcoNet overrides saved", FlashType::Success);
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "ok": true,
-        "redirect": "/quma/modsync?tab=mods"
-    })))
 }
 
 // ─── Preview Tab ────────────────────────────────────────────────────────────
