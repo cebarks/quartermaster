@@ -48,95 +48,96 @@ fn sanitize_name_for_bepinex(name: &str) -> String {
 }
 
 /// Generate ModSync config from DB state + quartermaster config.
+///
+/// Emits group-based syncPaths rather than per-mod ones. Only `BepInEx/plugins/`
+/// files are synced — patchers and other BepInEx subdirectories are excluded.
+/// Disabled mods are also excluded.
 fn generate_config(
     ms_config: &ModSyncConfig,
     db: &Database,
     for_headless: bool,
 ) -> Result<ModSyncOutputConfig> {
     let mods = db.list_mods()?;
-    let mut sync_paths: std::collections::BTreeMap<String, SyncPathEntry> =
-        std::collections::BTreeMap::new();
 
-    // Build reverse lookup: mod forge_id → group key
+    // Build reverse lookup: forge_mod_id → group key
     let group_for_mod: std::collections::HashMap<i64, &str> = ms_config
         .groups
         .iter()
         .flat_map(|(key, group)| group.members.iter().map(move |&id| (id, key.as_str())))
         .collect();
 
+    // Track which groups have plugin files and whether any ungrouped mods have plugins
+    let mut has_ungrouped_plugins = false;
+    let mut groups_with_plugins: std::collections::BTreeSet<&str> =
+        std::collections::BTreeSet::new();
+
     for m in &mods {
-        if m.forge_mod_id == NARCONET_FORGE_MOD_ID {
+        if m.forge_mod_id == NARCONET_FORGE_MOD_ID || m.disabled {
             continue;
         }
 
         let files = db.get_files_for_mod(m.id)?;
-        let client_files: Vec<&str> = files
+        let has_plugin_files = files
             .iter()
-            .filter(|f| f.file_path.starts_with("BepInEx/"))
-            .map(|f| f.file_path.as_str())
-            .collect();
+            .any(|f| f.file_path.starts_with("BepInEx/plugins/"));
 
-        if client_files.is_empty() {
+        if !has_plugin_files {
             continue;
         }
 
-        let group = group_for_mod
-            .get(&m.forge_mod_id)
-            .and_then(|key| ms_config.groups.get(*key));
-
-        // Step 1: start with global defaults
-        let mut enabled = true;
-        let mut enforced = ms_config.enforced;
-        let mut silent = ms_config.silent;
-        let mut restart_required = ms_config.restart_required;
-
-        // Step 2+3: apply group settings over global
-        if let Some(g) = group {
-            if let Some(v) = g.enabled {
-                enabled = v;
-            }
-            if let Some(v) = g.enforced {
-                enforced = v;
-            }
-            if let Some(v) = g.silent {
-                silent = v;
-            }
-            if let Some(v) = g.restart_required {
-                restart_required = v;
-            }
-
-            // Step 4: headless exclusion
-            if for_headless && g.exclude_headless {
-                enabled = false;
-            }
-        }
-
-        for dir in deduplicate_to_directories(&client_files) {
-            let path = prepend_parent_if_needed(&dir);
-            sync_paths
-                .entry(path.clone())
-                .and_modify(|existing| {
-                    // When multiple mods share a directory, merge flags conservatively:
-                    // enable if any mod enables, enforce if any enforces, etc.
-                    existing.enabled = existing.enabled || enabled;
-                    existing.enforced = existing.enforced || enforced;
-                    existing.silent = existing.silent && silent;
-                    existing.restart_required = existing.restart_required || restart_required;
-                })
-                .or_insert(SyncPathEntry {
-                    path,
-                    name: sanitize_name_for_bepinex(&m.name),
-                    enabled,
-                    enforced,
-                    silent,
-                    restart_required,
-                });
+        if let Some(&group_slug) = group_for_mod.get(&m.forge_mod_id) {
+            groups_with_plugins.insert(group_slug);
+        } else {
+            has_ungrouped_plugins = true;
         }
     }
 
+    let mut sync_paths: Vec<SyncPathEntry> = Vec::new();
+    let has_groups = !groups_with_plugins.is_empty();
+
+    // Emit parent plugins syncPath if there are ungrouped mods OR if groups
+    // need a parent path for NarcoNet's specificity/exclusion system
+    if has_ungrouped_plugins || has_groups {
+        sync_paths.push(SyncPathEntry {
+            path: "../BepInEx/plugins".to_string(),
+            name: "BepInEx/plugins".to_string(),
+            enabled: true,
+            enforced: ms_config.enforced,
+            silent: ms_config.silent,
+            restart_required: ms_config.restart_required,
+        });
+    }
+
+    // Emit one syncPath per group
+    for group_slug in &groups_with_plugins {
+        let group = match ms_config.groups.get(*group_slug) {
+            Some(g) => g,
+            None => continue,
+        };
+
+        let mut enabled = group.enabled.unwrap_or(true);
+        let enforced = group.enforced.unwrap_or(ms_config.enforced);
+        let silent = group.silent.unwrap_or(ms_config.silent);
+        let restart_required = group.restart_required.unwrap_or(ms_config.restart_required);
+
+        if for_headless && group.exclude_headless {
+            enabled = false;
+        }
+
+        sync_paths.push(SyncPathEntry {
+            path: format!("../BepInEx/plugins/quma-{group_slug}"),
+            name: sanitize_name_for_bepinex(&group.display_name),
+            enabled,
+            enforced,
+            silent,
+            restart_required,
+        });
+    }
+
+    // Extra sync paths
     for extra in &ms_config.extra_sync_paths {
         let path = prepend_parent_if_needed(extra);
-        sync_paths.entry(path.clone()).or_insert(SyncPathEntry {
+        sync_paths.push(SyncPathEntry {
             path,
             name: extra.clone(),
             enabled: true,
@@ -146,46 +147,23 @@ fn generate_config(
         });
     }
 
-    let sync_paths: Vec<SyncPathEntry> = sync_paths.into_values().collect();
+    // Sort for deterministic output
+    sync_paths.sort_by(|a, b| a.path.cmp(&b.path));
 
-    let exclusions = ms_config
+    // Build exclusions
+    let mut exclusions: Vec<String> = ms_config
         .exclusions
         .iter()
         .map(|e| prepend_parent_if_needed(e))
         .collect();
+    if has_groups {
+        exclusions.push("quma-*".to_string());
+    }
 
     Ok(ModSyncOutputConfig {
         sync_paths,
         exclusions,
     })
-}
-
-/// Given a list of file paths under BepInEx/, deduplicate to the minimal
-/// set of directories. If multiple files share a common parent like
-/// `BepInEx/plugins/SAIN/`, use the directory. If a file is alone at a
-/// level (e.g., `BepInEx/patchers/Mod.dll`), use the file path directly.
-fn deduplicate_to_directories(paths: &[&str]) -> Vec<String> {
-    use std::collections::BTreeSet;
-    let mut dirs: BTreeSet<String> = BTreeSet::new();
-
-    for path in paths {
-        let parts: Vec<&str> = path.split('/').collect();
-        // BepInEx/<category>/<mod_name_or_file>/...
-        // If 3+ parts and the 3rd part has no extension, treat first 3 as directory
-        // If 3 parts and the last has an extension, it's a standalone file
-        if parts.len() >= 3 {
-            let third = parts[2];
-            if parts.len() == 3 && third.contains('.') {
-                // Standalone file like BepInEx/patchers/Mod.dll
-                dirs.insert(path.to_string());
-            } else {
-                // Directory like BepInEx/plugins/SAIN
-                dirs.insert(format!("{}/{}/{}", parts[0], parts[1], third));
-            }
-        }
-    }
-
-    dirs.into_iter().collect()
 }
 
 /// Write a ModSyncOutputConfig to config.yaml atomically.
@@ -346,12 +324,13 @@ mod tests {
         let output = generate_config(&ms_config, &db, false).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins/SAIN");
-        assert_eq!(output.sync_paths[0].name, "SAIN");
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
         assert!(output.sync_paths[0].enforced);
         assert!(!output.sync_paths[0].silent);
         assert!(output.sync_paths[0].restart_required);
         assert!(output.sync_paths[0].enabled);
+        assert!(output.exclusions.is_empty()); // no groups = no quma-* exclusion
     }
 
     #[test]
@@ -374,8 +353,8 @@ mod tests {
         let output = generate_config(&ms_config, &db, false).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins/HybridMod");
-        assert_eq!(output.sync_paths[0].name, "HybridMod");
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
     }
 
     #[test]
@@ -399,10 +378,17 @@ mod tests {
 
         let output = generate_config(&ms_config, &db, false).unwrap();
 
-        assert_eq!(output.sync_paths.len(), 1);
-        assert!(!output.sync_paths[0].enforced);
-        assert!(output.sync_paths[0].silent);
-        assert!(output.sync_paths[0].restart_required);
+        // Parent + group syncpath
+        assert_eq!(output.sync_paths.len(), 2);
+        let group_path = output
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-"))
+            .unwrap();
+        assert!(!group_path.enforced); // group override
+        assert!(group_path.silent); // group override
+        assert!(group_path.restart_required); // inherited global default
+        assert!(output.exclusions.contains(&"quma-*".to_string()));
     }
 
     #[test]
@@ -426,8 +412,14 @@ mod tests {
 
         let output = generate_config(&ms_config, &db, false).unwrap();
 
-        assert_eq!(output.sync_paths.len(), 1);
-        assert!(!output.sync_paths[0].enabled);
+        // Parent + group syncpath
+        assert_eq!(output.sync_paths.len(), 2);
+        let group_path = output
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-"))
+            .unwrap();
+        assert!(!group_path.enabled);
     }
 
     #[test]
@@ -478,9 +470,10 @@ mod tests {
         let ms_config = ModSyncConfig::default();
         let output = generate_config(&ms_config, &db, false).unwrap();
 
-        assert_eq!(output.sync_paths.len(), 2);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins/Alpha");
-        assert_eq!(output.sync_paths[1].path, "../BepInEx/plugins/Zebra");
+        // Both ungrouped → single category-level syncPath
+        assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
     }
 
     #[test]
@@ -496,6 +489,8 @@ mod tests {
         };
         let output = generate_config(&ms_config, &db, false).unwrap();
 
+        // Ungrouped mod → parent syncpath gets global defaults
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
         assert!(!output.sync_paths[0].enforced);
         assert!(output.sync_paths[0].silent);
         assert!(!output.sync_paths[0].restart_required);
@@ -518,11 +513,8 @@ mod tests {
         let ms_config = ModSyncConfig::default();
         let output = generate_config(&ms_config, &db, false).unwrap();
 
-        assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(
-            output.sync_paths[0].path,
-            "../BepInEx/patchers/PatcherMod.dll"
-        );
+        // Patchers are not synced — only plugins
+        assert!(output.sync_paths.is_empty());
     }
 
     #[test]
@@ -552,9 +544,10 @@ mod tests {
         let ms_config = ModSyncConfig::default();
         let output = generate_config(&ms_config, &db, false).unwrap();
 
-        // Only SAIN should appear, not NarcoNet
+        // Only SAIN should appear (ungrouped), not NarcoNet
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].name, "SAIN");
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
     }
 
     #[test]
@@ -702,8 +695,8 @@ mod tests {
         assert!(result);
 
         let content = std::fs::read_to_string(modsync_config_path(spt_dir).unwrap()).unwrap();
-        assert!(content.contains("TestClientMod"));
-        assert!(content.contains("../BepInEx/plugins/TestClientMod"));
+        assert!(content.contains("../BepInEx/plugins"));
+        assert!(content.contains("BepInEx/plugins"));
 
         // Update — add a second file
         db.insert_file(
@@ -725,7 +718,8 @@ mod tests {
         assert!(result);
 
         let content = std::fs::read_to_string(modsync_config_path(spt_dir).unwrap()).unwrap();
-        assert!(!content.contains("TestClientMod"));
+        // No mods → no syncPaths (only the empty array marker)
+        assert!(!content.contains("../BepInEx/plugins"));
     }
 
     #[test]
@@ -778,7 +772,7 @@ mod tests {
             .map(|p| p["path"].as_str().unwrap().to_string())
             .collect();
 
-        assert!(paths.contains(&"../BepInEx/plugins/ClientMod".to_string()));
+        assert!(paths.contains(&"../BepInEx/plugins".to_string()));
         assert!(paths.contains(&"../BepInEx/config".to_string()));
         assert!(!paths.iter().any(|p| p.contains("ServerOnly")));
 
@@ -811,8 +805,15 @@ mod tests {
         );
 
         let output = generate_config(&ms_config, &db, false).unwrap();
-        assert_eq!(output.sync_paths.len(), 1);
-        assert!(!output.sync_paths[0].enabled);
+        // Parent + group syncpath
+        assert_eq!(output.sync_paths.len(), 2);
+        let group_path = output
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-"))
+            .unwrap();
+        assert!(!group_path.enabled);
+        assert!(output.exclusions.contains(&"quma-*".to_string()));
     }
 
     #[test]
@@ -840,10 +841,17 @@ mod tests {
         );
 
         let output = generate_config(&ms_config, &db, false).unwrap();
-        assert!(!output.sync_paths[0].enforced); // group override
-        assert!(!output.sync_paths[0].silent); // inherited global
-        assert!(output.sync_paths[0].restart_required); // inherited global
-        assert!(output.sync_paths[0].enabled); // default true
+        // Parent + group syncpath
+        assert_eq!(output.sync_paths.len(), 2);
+        let group_path = output
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-"))
+            .unwrap();
+        assert!(!group_path.enforced); // group override
+        assert!(!group_path.silent); // inherited global
+        assert!(group_path.restart_required); // inherited global
+        assert!(group_path.enabled); // default true
     }
 
     #[test]
@@ -865,13 +873,23 @@ mod tests {
             },
         );
 
-        // Player config: mod is enabled
+        // Player config: group syncpath is enabled
         let player = generate_config(&ms_config, &db, false).unwrap();
-        assert!(player.sync_paths[0].enabled);
+        let player_group = player
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-"))
+            .unwrap();
+        assert!(player_group.enabled);
 
-        // Headless config: mod is disabled
+        // Headless config: group syncpath is disabled
         let headless = generate_config(&ms_config, &db, true).unwrap();
-        assert!(!headless.sync_paths[0].enabled);
+        let headless_group = headless
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-"))
+            .unwrap();
+        assert!(!headless_group.enabled);
     }
 
     #[test]
@@ -894,7 +912,12 @@ mod tests {
         );
 
         let player = generate_config(&ms_config, &db, false).unwrap();
-        assert!(player.sync_paths[0].enabled); // exclude_headless ignored for players
+        let group_path = player
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-"))
+            .unwrap();
+        assert!(group_path.enabled); // exclude_headless ignored for players
     }
 
     #[test]
@@ -955,12 +978,16 @@ mod tests {
         );
 
         let output = generate_config(&ms_config, &db, false).unwrap();
+        // SAIN is ungrouped, empty group has no plugin-bearing members
+        // → only the parent syncpath, no group syncpaths
         assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
         assert!(output.sync_paths[0].enabled); // mod not in group, gets global default
+        assert!(output.exclusions.is_empty()); // no groups with plugins → no quma-* exclusion
     }
 
     #[test]
-    fn generate_config_deduplicates_shared_directory() {
+    fn generate_config_multiple_ungrouped_mods_single_syncpath() {
         let db = Database::open_in_memory().unwrap();
 
         // Two mods installing files to the same BepInEx/plugins/SAIN/ directory
@@ -995,13 +1022,14 @@ mod tests {
         let ms_config = ModSyncConfig::default();
         let output = generate_config(&ms_config, &db, false).unwrap();
 
-        // Should produce ONE entry, not two
+        // Both ungrouped → single category-level syncPath
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins/SAIN");
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
     }
 
     #[test]
-    fn generate_config_shared_directory_merges_flags() {
+    fn generate_config_multiple_groups_get_independent_settings() {
         let db = Database::open_in_memory().unwrap();
 
         let mod1 = db
@@ -1053,9 +1081,26 @@ mod tests {
 
         let output = generate_config(&ms_config, &db, false).unwrap();
 
-        assert_eq!(output.sync_paths.len(), 1);
-        assert!(output.sync_paths[0].enforced);
-        assert!(!output.sync_paths[0].silent);
+        // Parent + 2 group syncpaths
+        assert_eq!(output.sync_paths.len(), 3);
+
+        let grp_a = output
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-grp-a"))
+            .unwrap();
+        assert!(grp_a.enforced); // group override
+        assert!(grp_a.silent); // inherited global (true)
+
+        let grp_b = output
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-grp-b"))
+            .unwrap();
+        assert!(!grp_b.enforced); // inherited global (false)
+        assert!(!grp_b.silent); // group override
+
+        assert!(output.exclusions.contains(&"quma-*".to_string()));
     }
 
     #[test]
@@ -1089,5 +1134,138 @@ mod tests {
         let result = regenerate_if_enabled(spt_dir, &config, &db).unwrap();
         assert!(result);
         assert!(config_path.exists());
+    }
+
+    #[test]
+    fn generate_config_ungrouped_emits_category_syncpath() {
+        let db = Database::open_in_memory().unwrap();
+        setup_db_with_client_mod(&db); // SAIN in BepInEx/plugins/
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false).unwrap();
+
+        assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
+        assert!(output.sync_paths[0].enforced);
+        assert!(output.exclusions.is_empty()); // no groups = no quma-* exclusion
+    }
+
+    #[test]
+    fn generate_config_grouped_mod_emits_group_syncpath() {
+        let db = Database::open_in_memory().unwrap();
+        setup_db_with_client_mod(&db); // forge_mod_id=100
+
+        let mut ms_config = ModSyncConfig::default();
+        ms_config.groups.insert(
+            "optional".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Optional".to_string(),
+                members: vec![100],
+                enabled: Some(false),
+                enforced: Some(false),
+                silent: None,
+                restart_required: None,
+                exclude_headless: false,
+            },
+        );
+
+        let output = generate_config(&ms_config, &db, false).unwrap();
+
+        // Should have group syncpath only (no ungrouped mods)
+        let group_path = output
+            .sync_paths
+            .iter()
+            .find(|p| p.path.contains("quma-"))
+            .unwrap();
+        assert_eq!(group_path.path, "../BepInEx/plugins/quma-optional");
+        assert_eq!(group_path.name, "Optional");
+        assert!(!group_path.enabled);
+        assert!(!group_path.enforced);
+
+        // quma-* exclusion present
+        assert!(output.exclusions.iter().any(|e| e == "quma-*"));
+    }
+
+    #[test]
+    fn generate_config_mixed_grouped_and_ungrouped() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Ungrouped mod
+        let mod1 = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod1,
+            "BepInEx/plugins/SAIN/SAIN.dll",
+            Some("abc"),
+            Some(1024),
+        )
+        .unwrap();
+
+        // Grouped mod
+        let mod2 = db
+            .insert_mod(200, 300, "Donuts", Some("donuts"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod2,
+            "BepInEx/plugins/Donuts/Donuts.dll",
+            Some("def"),
+            Some(512),
+        )
+        .unwrap();
+
+        let mut ms_config = ModSyncConfig::default();
+        ms_config.groups.insert(
+            "optional".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Optional".to_string(),
+                members: vec![200],
+                enabled: Some(false),
+                enforced: None,
+                silent: None,
+                restart_required: None,
+                exclude_headless: false,
+            },
+        );
+
+        let output = generate_config(&ms_config, &db, false).unwrap();
+
+        let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
+        assert!(paths.contains(&"../BepInEx/plugins")); // default for SAIN
+        assert!(paths.contains(&"../BepInEx/plugins/quma-optional")); // group for Donuts
+        assert!(output.exclusions.contains(&"quma-*".to_string()));
+    }
+
+    #[test]
+    fn generate_config_no_client_mods_no_syncpaths() {
+        let db = Database::open_in_memory().unwrap();
+        setup_db_with_server_mod(&db);
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false).unwrap();
+
+        assert!(output.sync_paths.is_empty());
+    }
+
+    #[test]
+    fn generate_config_patcher_only_mod_excluded() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/PatcherMod/patch.dll",
+            Some("ppp"),
+            Some(512),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false).unwrap();
+
+        // Patchers are not synced — only plugins
+        assert!(output.sync_paths.is_empty());
     }
 }
