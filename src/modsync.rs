@@ -182,6 +182,223 @@ fn write_config(config_path: &Path, output: &ModSyncOutputConfig) -> Result<()> 
     Ok(())
 }
 
+/// The `quma-` prefix used for group directories on disk.
+#[allow(dead_code)] // Used by later tasks that wire this into CLI/web handlers
+const GROUP_DIR_PREFIX: &str = "quma-";
+
+/// Ensure a mod's BepInEx files are in the correct directory based on group
+/// membership. Moves files and updates DB paths if needed. Returns true if
+/// any files were moved.
+#[allow(dead_code)] // Wired in by later tasks
+pub fn ensure_mod_layout(
+    spt_dir: &Path,
+    ms_config: &ModSyncConfig,
+    db: &Database,
+    mod_db_id: i64,
+) -> Result<bool> {
+    let mod_info = db
+        .get_mod(mod_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("mod not found: {mod_db_id}"))?;
+
+    if mod_info.disabled {
+        return Ok(false);
+    }
+
+    // Find which group this mod belongs to (if any)
+    let group_slug: Option<&str> = ms_config
+        .groups
+        .iter()
+        .find(|(_, g)| g.members.contains(&mod_info.forge_mod_id))
+        .map(|(slug, _)| slug.as_str());
+
+    let files = db.get_files_for_mod(mod_db_id)?;
+
+    // Only process BepInEx/plugins/ files (patchers and others are not synced)
+    let plugin_files: Vec<&str> = files
+        .iter()
+        .filter(|f| f.file_path.starts_with("BepInEx/plugins/"))
+        .map(|f| f.file_path.as_str())
+        .collect();
+
+    if plugin_files.is_empty() {
+        return Ok(false);
+    }
+
+    // Find the current mod directory from a sample file
+    let sample = plugin_files[0];
+    let parts: Vec<&str> = sample.split('/').collect();
+
+    let (current_prefix, mod_dir_name) =
+        if parts.len() >= 4 && parts[2].starts_with(GROUP_DIR_PREFIX) {
+            // Currently in a group dir: BepInEx/plugins/quma-<group>/<mod>/...
+            let prefix = format!("BepInEx/plugins/{}/{}", parts[2], parts[3]);
+            (prefix, parts[3].to_string())
+        } else if parts.len() >= 3 {
+            // Standard location: BepInEx/plugins/<mod>/...
+            let prefix = format!("BepInEx/plugins/{}", parts[2]);
+            (prefix, parts[2].to_string())
+        } else {
+            return Ok(false);
+        };
+
+    let expected_prefix = if let Some(slug) = group_slug {
+        format!("BepInEx/plugins/quma-{slug}/{mod_dir_name}")
+    } else {
+        format!("BepInEx/plugins/{mod_dir_name}")
+    };
+
+    if current_prefix == expected_prefix {
+        return Ok(false);
+    }
+
+    // Safety: check if other mods share this directory. If so, only move
+    // if ALL mods sharing the directory belong to the same target group.
+    // Otherwise skip to avoid corrupting other mods' DB records.
+    let src = spt_dir.join(&current_prefix);
+    if src.is_dir() {
+        let all_mods = db.list_mods()?;
+        for other in &all_mods {
+            if other.id == mod_db_id {
+                continue;
+            }
+            let other_files = db.get_files_for_mod(other.id)?;
+            let shares_dir = other_files
+                .iter()
+                .any(|f| f.file_path.starts_with(&format!("{current_prefix}/")));
+            if shares_dir {
+                // Another mod shares this directory — find its expected group
+                let other_group = ms_config
+                    .groups
+                    .iter()
+                    .find(|(_, g)| g.members.contains(&other.forge_mod_id))
+                    .map(|(slug, _)| slug.as_str());
+                if other_group != group_slug {
+                    tracing::warn!(
+                        mod_name = %mod_info.name,
+                        other_mod = %other.name,
+                        dir = %current_prefix,
+                        "skipping layout move — mods share directory but are in different groups"
+                    );
+                    return Ok(false);
+                }
+            }
+        }
+    }
+
+    let dst = spt_dir.join(&expected_prefix);
+
+    if src.is_symlink() {
+        tracing::warn!(path = %src.display(), "skipping symlink during layout move");
+        return Ok(false);
+    }
+
+    if !src.exists() {
+        tracing::warn!(
+            path = %src.display(),
+            "source directory missing during layout move"
+        );
+        return Ok(false);
+    }
+
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if let Err(_rename_err) = std::fs::rename(&src, &dst) {
+        // Cross-device fallback: copy + delete
+        copy_dir_recursive(&src, &dst)?;
+        std::fs::remove_dir_all(&src)?;
+    }
+
+    // Update DB paths for this mod
+    db.reprefix_mod_files(mod_db_id, &current_prefix, &expected_prefix)?;
+
+    // Also update DB paths for any other mods sharing this directory
+    // (they were validated above to be in the same group)
+    let all_mods = db.list_mods()?;
+    for other in &all_mods {
+        if other.id == mod_db_id {
+            continue;
+        }
+        let other_files = db.get_files_for_mod(other.id)?;
+        if other_files
+            .iter()
+            .any(|f| f.file_path.starts_with(&format!("{current_prefix}/")))
+        {
+            db.reprefix_mod_files(other.id, &current_prefix, &expected_prefix)?;
+        }
+    }
+
+    // Clean up empty parent directory (e.g., empty quma-<group>/ after moving out)
+    if let Some(parent) = src.parent() {
+        if parent.is_dir() && is_dir_empty(parent) {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+
+    tracing::debug!(
+        mod_name = %mod_info.name,
+        from = %current_prefix,
+        to = %expected_prefix,
+        "moved mod files for group layout"
+    );
+
+    Ok(true)
+}
+
+/// Ensure all mods with client files are in the correct layout.
+/// Returns the number of mods that were moved.
+#[allow(dead_code)] // Wired in by later tasks
+pub fn ensure_all_mod_layouts(
+    spt_dir: &Path,
+    ms_config: &ModSyncConfig,
+    db: &Database,
+) -> Result<usize> {
+    let mods = db.list_mods()?;
+    let mut moved_count = 0;
+    for m in &mods {
+        match ensure_mod_layout(spt_dir, ms_config, db, m.id) {
+            Ok(true) => moved_count += 1,
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(
+                    mod_name = %m.name,
+                    err = %e,
+                    "failed to ensure mod layout"
+                );
+            }
+        }
+    }
+    if moved_count > 0 {
+        tracing::info!(
+            moved_count,
+            "reconciled mod file layouts for NarcoNet groups"
+        );
+    }
+    Ok(moved_count)
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn is_dir_empty(path: &Path) -> bool {
+    path.read_dir()
+        .map(|mut d| d.next().is_none())
+        .unwrap_or(false)
+}
+
 /// Regenerate config.yaml if NarcoNet is installed and [modsync] config is present.
 /// Returns true if the config was written, false if skipped.
 pub fn regenerate_if_enabled(spt_dir: &Path, config: &Config, db: &Database) -> Result<bool> {
@@ -1267,5 +1484,157 @@ mod tests {
 
         // Patchers are not synced — only plugins
         assert!(output.sync_paths.is_empty());
+    }
+
+    #[test]
+    fn ensure_mod_layout_moves_to_group_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let db = Database::open_in_memory().unwrap();
+
+        // Create mod files on disk
+        let mod_dir = spt_dir.join("BepInEx/plugins/SAIN");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        std::fs::write(mod_dir.join("SAIN.dll"), b"test").unwrap();
+
+        // Register in DB
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/SAIN/SAIN.dll",
+            Some("abc"),
+            Some(4),
+        )
+        .unwrap();
+
+        let mut ms_config = ModSyncConfig::default();
+        ms_config.groups.insert(
+            "optional".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Optional".to_string(),
+                members: vec![100],
+                enabled: None,
+                enforced: None,
+                silent: None,
+                restart_required: None,
+                exclude_headless: false,
+            },
+        );
+
+        let moved = ensure_mod_layout(spt_dir, &ms_config, &db, mod_id).unwrap();
+        assert!(moved);
+
+        // Files should be at new location
+        assert!(spt_dir
+            .join("BepInEx/plugins/quma-optional/SAIN/SAIN.dll")
+            .exists());
+        assert!(!spt_dir.join("BepInEx/plugins/SAIN/SAIN.dll").exists());
+
+        // DB should be updated
+        let files = db.get_files_for_mod(mod_id).unwrap();
+        assert_eq!(
+            files[0].file_path,
+            "BepInEx/plugins/quma-optional/SAIN/SAIN.dll"
+        );
+    }
+
+    #[test]
+    fn ensure_mod_layout_moves_back_from_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let db = Database::open_in_memory().unwrap();
+
+        // Files already in group dir
+        let mod_dir = spt_dir.join("BepInEx/plugins/quma-optional/SAIN");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        std::fs::write(mod_dir.join("SAIN.dll"), b"test").unwrap();
+
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/quma-optional/SAIN/SAIN.dll",
+            Some("abc"),
+            Some(4),
+        )
+        .unwrap();
+
+        // No groups — mod is ungrouped now
+        let ms_config = ModSyncConfig::default();
+
+        let moved = ensure_mod_layout(spt_dir, &ms_config, &db, mod_id).unwrap();
+        assert!(moved);
+
+        assert!(spt_dir.join("BepInEx/plugins/SAIN/SAIN.dll").exists());
+        assert!(!spt_dir.join("BepInEx/plugins/quma-optional").exists()); // cleaned up
+
+        let files = db.get_files_for_mod(mod_id).unwrap();
+        assert_eq!(files[0].file_path, "BepInEx/plugins/SAIN/SAIN.dll");
+    }
+
+    #[test]
+    fn ensure_mod_layout_noop_when_already_correct() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let db = Database::open_in_memory().unwrap();
+
+        let mod_dir = spt_dir.join("BepInEx/plugins/SAIN");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        std::fs::write(mod_dir.join("SAIN.dll"), b"test").unwrap();
+
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/SAIN/SAIN.dll",
+            Some("abc"),
+            Some(4),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default(); // no groups
+
+        let moved = ensure_mod_layout(spt_dir, &ms_config, &db, mod_id).unwrap();
+        assert!(!moved);
+    }
+
+    #[test]
+    fn ensure_mod_layout_skips_disabled_mod() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let db = Database::open_in_memory().unwrap();
+
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/SAIN.disabled/SAIN.dll",
+            Some("abc"),
+            Some(4),
+        )
+        .unwrap();
+        db.set_mod_disabled(mod_id, true).unwrap();
+
+        let mut ms_config = ModSyncConfig::default();
+        ms_config.groups.insert(
+            "optional".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Optional".to_string(),
+                members: vec![100],
+                enabled: None,
+                enforced: None,
+                silent: None,
+                restart_required: None,
+                exclude_headless: false,
+            },
+        );
+
+        let moved = ensure_mod_layout(spt_dir, &ms_config, &db, mod_id).unwrap();
+        assert!(!moved); // disabled mods are skipped
     }
 }
