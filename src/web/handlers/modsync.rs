@@ -238,16 +238,7 @@ pub async fn save_settings(
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
-    if state.is_modsync_installed() {
-        let db = state.db.clone();
-        let spt_dir = state.spt_dir.clone();
-        let config = new_config.clone();
-        let _ = web::block(move || {
-            let db = db.lock();
-            crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
-        })
-        .await;
-    }
+    state.regenerate_modsync().await;
 
     set_flash(&session, "NarcoNet settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
@@ -624,16 +615,7 @@ pub async fn save_groups(
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
-    if state.is_modsync_installed() {
-        let db = state.db.clone();
-        let spt_dir = state.spt_dir.clone();
-        let saved_config = config.clone();
-        let _ = web::block(move || {
-            let db = db.lock();
-            crate::modsync::regenerate_if_enabled(&spt_dir, &saved_config, &db)
-        })
-        .await;
-    }
+    state.regenerate_modsync().await;
 
     set_flash(&session, "NarcoNet groups saved", FlashType::Success);
     Ok(HttpResponse::Ok().json(serde_json::json!({

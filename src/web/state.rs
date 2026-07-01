@@ -86,4 +86,21 @@ impl AppState {
         self.svm_installed
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    pub async fn regenerate_modsync(&self) {
+        if !self.is_modsync_installed() {
+            return;
+        }
+        let db = self.db.clone();
+        let spt_dir = self.spt_dir.clone();
+        let config = self.config_cloned();
+        let result = actix_web::web::block(move || {
+            let db = db.lock();
+            crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
+        })
+        .await;
+        if let Err(e) = result {
+            tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
+        }
+    }
 }
