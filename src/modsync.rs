@@ -189,7 +189,6 @@ const GROUP_DIR_PREFIX: &str = "quma-";
 /// Ensure a mod's BepInEx files are in the correct directory based on group
 /// membership. Moves files and updates DB paths if needed. Returns true if
 /// any files were moved.
-#[allow(dead_code)] // Wired in by later tasks
 pub fn ensure_mod_layout(
     spt_dir: &Path,
     ms_config: &ModSyncConfig,
@@ -348,7 +347,6 @@ pub fn ensure_mod_layout(
 
 /// Ensure all mods with client files are in the correct layout.
 /// Returns the number of mods that were moved.
-#[allow(dead_code)] // Wired in by later tasks
 pub fn ensure_all_mod_layouts(
     spt_dir: &Path,
     ms_config: &ModSyncConfig,

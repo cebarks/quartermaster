@@ -701,6 +701,13 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
             tracing::warn!(err = %e, "failed to regenerate NarcoNet config on startup");
         }
+        if let Some(ref ms_config) = config.modsync {
+            if let Err(e) =
+                crate::modsync::ensure_all_mod_layouts(&spt_dir, ms_config, &db_arc.lock())
+            {
+                tracing::warn!(err = %e, "failed to reconcile mod layouts on startup");
+            }
+        }
     }
 
     let svm =

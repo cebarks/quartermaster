@@ -370,6 +370,12 @@ pub fn restore_mod_backup(
         tracing::warn!(err = %e, "failed to regenerate NarcoNet config after restore");
     }
 
+    if let Some(ref ms_config) = config.modsync {
+        if let Err(e) = crate::modsync::ensure_mod_layout(spt_dir, ms_config, db, mod_db_id) {
+            tracing::warn!(err = %e, "failed to ensure mod layout after restore");
+        }
+    }
+
     Ok(())
 }
 
@@ -488,6 +494,12 @@ pub fn restore_full_backup(
 
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
         tracing::warn!(err = %e, "failed to regenerate NarcoNet config after full restore");
+    }
+
+    if let Some(ref ms_config) = config.modsync {
+        if let Err(e) = crate::modsync::ensure_all_mod_layouts(spt_dir, ms_config, db) {
+            tracing::warn!(err = %e, "failed to ensure mod layouts after full restore");
+        }
     }
 
     Ok(())
