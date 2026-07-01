@@ -66,8 +66,7 @@ pub async fn modsync_page(
     let ms_config = state.config().modsync.clone();
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed
-        && ms_config.as_ref().is_some_and(|ms| ms.enabled);
+    let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
 
     // Determine active tab (validate and constrain based on state)
     let mut active_tab = query.tab.as_str();
