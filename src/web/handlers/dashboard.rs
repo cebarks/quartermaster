@@ -39,7 +39,7 @@ pub async fn dashboard(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && state.config().modsync.is_some();
+    let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
     let tmpl = DashboardTemplate {
         user,
         spt_version: state.spt_info.spt_version.clone(),

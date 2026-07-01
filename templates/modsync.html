@@ -13,8 +13,7 @@
 
 {% if !modsync_managed %}
 <div class="card" style="border-left: 3px solid var(--warning)">
-    <p><strong>NarcoNet is installed but not managed by Quartermaster.</strong> Save settings below to enable automatic config generation.</p>
-    <p class="text-muted text-sm mt-1">Note: enabling management will overwrite the existing <code>config.yaml</code>. The default <code>enforced = true</code> is stricter than NarcoNet's default — all synced mods will require clients to match the server exactly.</p>
+    <p><strong>NarcoNet management is not active.</strong> Enable it below to have Quartermaster auto-generate <code>config.yaml</code> from installed mods.</p>
 </div>
 {% endif %}
 

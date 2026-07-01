@@ -44,6 +44,7 @@ struct ModSyncTemplate {
 #[template(path = "modsync/partials/settings.html")]
 struct SettingsPartialTemplate {
     csrf_token: String,
+    enabled: bool,
     enforced: bool,
     silent: bool,
     restart_required: bool,
@@ -65,7 +66,7 @@ pub async fn modsync_page(
     let ms_config = state.config().modsync.clone();
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && ms_config.is_some();
+    let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
 
     // Determine active tab (validate and constrain based on state)
     let mut active_tab = query.tab.as_str();
@@ -81,9 +82,10 @@ pub async fn modsync_page(
     // Render the appropriate tab partial
     let tab_content = match active_tab {
         "settings" => {
-            let (enforced, silent, restart_required, extra_sync_paths, exclusions) =
+            let (enabled, enforced, silent, restart_required, extra_sync_paths, exclusions) =
                 if let Some(ref ms) = ms_config {
                     (
+                        ms.enabled,
                         ms.enforced,
                         ms.silent,
                         ms.restart_required,
@@ -91,10 +93,11 @@ pub async fn modsync_page(
                         ms.exclusions.join("\n"),
                     )
                 } else {
-                    (true, false, true, String::new(), String::new())
+                    (true, true, false, true, String::new(), String::new())
                 };
             let partial = SettingsPartialTemplate {
                 csrf_token: csrf_token.clone(),
+                enabled,
                 enforced,
                 silent,
                 restart_required,
@@ -134,9 +137,10 @@ pub async fn settings_partial(
 
     let ms_config = state.config().modsync.clone();
 
-    let (enforced, silent, restart_required, extra_sync_paths, exclusions) =
+    let (enabled, enforced, silent, restart_required, extra_sync_paths, exclusions) =
         if let Some(ref ms) = ms_config {
             (
+                ms.enabled,
                 ms.enforced,
                 ms.silent,
                 ms.restart_required,
@@ -144,11 +148,12 @@ pub async fn settings_partial(
                 ms.exclusions.join("\n"),
             )
         } else {
-            (true, false, true, String::new(), String::new())
+            (true, true, false, true, String::new(), String::new())
         };
 
     let tmpl = SettingsPartialTemplate {
         csrf_token,
+        enabled,
         enforced,
         silent,
         restart_required,
@@ -163,6 +168,7 @@ pub async fn settings_partial(
 #[derive(serde::Deserialize)]
 pub struct ModSyncSettingsForm {
     csrf_token: String,
+    enabled: Option<String>,
     enforced: Option<String>,
     silent: Option<String>,
     restart_required: Option<String>,
@@ -198,7 +204,7 @@ pub async fn save_settings(
 
     let _guard = state.config_lock.lock();
     let mut new_config = Config::load(&state.config_path).map_err(WebError::from)?;
-    // Preserve existing overrides
+    // Preserve existing overrides and groups
     let existing_overrides = new_config
         .modsync
         .as_ref()
@@ -211,6 +217,7 @@ pub async fn save_settings(
         .unwrap_or_default();
 
     let ms_config = crate::config::ModSyncConfig {
+        enabled: form.enabled.is_some(),
         enforced: form.enforced.is_some(),
         silent: form.silent.is_some(),
         restart_required: form.restart_required.is_some(),

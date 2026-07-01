@@ -369,7 +369,7 @@ pub async fn mod_detail(
         .and_then(|ms| ms.overrides.get(&forge_id_str).cloned());
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && state.config().modsync.is_some();
+    let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
     let tmpl = ModDetailTemplate {
         user,
         mod_info,

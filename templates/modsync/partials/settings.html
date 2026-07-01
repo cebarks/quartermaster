@@ -1,6 +1,12 @@
 <form method="post" action="/quma/modsync/settings">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
+    <div class="card" style="border-left: 3px solid var(--primary)">
+        <div class="form-group" style="margin-bottom: 0">
+            <label><input type="checkbox" name="enabled" {% if enabled %}checked{% endif %}> <strong>Enable NarcoNet management</strong> — Quartermaster will auto-generate <code>config.yaml</code> from installed mods</label>
+        </div>
+    </div>
+
     <div class="card">
         <h2>Global Defaults</h2>
         <p class="text-muted text-sm mb-1">Applied to all synced mods unless overridden per-mod or per-group.</p>
