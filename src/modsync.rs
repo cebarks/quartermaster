@@ -80,8 +80,6 @@ fn generate_config(
             continue;
         }
 
-        let forge_id_str = m.forge_mod_id.to_string();
-        let overrides = ms_config.overrides.get(&forge_id_str);
         let group = group_for_mod
             .get(&m.forge_mod_id)
             .and_then(|key| ms_config.groups.get(*key));
@@ -110,22 +108,6 @@ fn generate_config(
             // Step 4: headless exclusion
             if for_headless && g.exclude_headless {
                 enabled = false;
-            }
-        }
-
-        // Step 5: per-mod overrides win
-        if let Some(o) = overrides {
-            if let Some(v) = o.enabled {
-                enabled = v;
-            }
-            if let Some(v) = o.enforced {
-                enforced = v;
-            }
-            if let Some(v) = o.silent {
-                silent = v;
-            }
-            if let Some(v) = o.restart_required {
-                restart_required = v;
             }
         }
 
@@ -272,7 +254,7 @@ pub fn preview_config(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::config::{ModSyncConfig, ModSyncOverride, NARCONET_FORGE_MOD_ID};
+    use crate::config::{ModSyncConfig, NARCONET_FORGE_MOD_ID};
     use crate::db::Database;
 
     fn setup_db_with_client_mod(db: &Database) -> i64 {
@@ -397,18 +379,21 @@ mod tests {
     }
 
     #[test]
-    fn generate_config_per_mod_override_applied() {
+    fn generate_config_group_override_applied() {
         let db = Database::open_in_memory().unwrap();
         setup_db_with_client_mod(&db);
 
         let mut ms_config = ModSyncConfig::default();
-        ms_config.overrides.insert(
-            "100".to_string(),
-            ModSyncOverride {
+        ms_config.groups.insert(
+            "custom".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Custom".to_string(),
+                members: vec![100],
+                enabled: None,
                 enforced: Some(false),
                 silent: Some(true),
                 restart_required: None,
-                enabled: None,
+                exclude_headless: false,
             },
         );
 
@@ -421,18 +406,21 @@ mod tests {
     }
 
     #[test]
-    fn generate_config_disabled_mod_override() {
+    fn generate_config_group_disabled_mod() {
         let db = Database::open_in_memory().unwrap();
         setup_db_with_client_mod(&db);
 
         let mut ms_config = ModSyncConfig::default();
-        ms_config.overrides.insert(
-            "100".to_string(),
-            ModSyncOverride {
+        ms_config.groups.insert(
+            "disabled".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Disabled".to_string(),
+                members: vec![100],
                 enabled: Some(false),
                 enforced: None,
                 silent: None,
                 restart_required: None,
+                exclude_headless: false,
             },
         );
 
@@ -859,38 +847,6 @@ mod tests {
     }
 
     #[test]
-    fn generate_config_per_mod_override_wins_over_group() {
-        let db = Database::open_in_memory().unwrap();
-        setup_db_with_client_mod(&db);
-
-        let mut ms_config = ModSyncConfig::default();
-        ms_config.groups.insert(
-            "grp".to_string(),
-            crate::config::ModSyncGroup {
-                display_name: "Grp".to_string(),
-                members: vec![100],
-                enabled: None,
-                enforced: Some(true),
-                silent: None,
-                restart_required: None,
-                exclude_headless: false,
-            },
-        );
-        ms_config.overrides.insert(
-            "100".to_string(),
-            ModSyncOverride {
-                enforced: Some(false), // override group
-                silent: None,
-                restart_required: None,
-                enabled: None,
-            },
-        );
-
-        let output = generate_config(&ms_config, &db, false).unwrap();
-        assert!(!output.sync_paths[0].enforced); // per-mod wins
-    }
-
-    #[test]
     fn generate_config_headless_excludes_group_members() {
         let db = Database::open_in_memory().unwrap();
         setup_db_with_client_mod(&db);
@@ -916,38 +872,6 @@ mod tests {
         // Headless config: mod is disabled
         let headless = generate_config(&ms_config, &db, true).unwrap();
         assert!(!headless.sync_paths[0].enabled);
-    }
-
-    #[test]
-    fn generate_config_per_mod_enabled_overrides_headless_exclude() {
-        let db = Database::open_in_memory().unwrap();
-        setup_db_with_client_mod(&db);
-
-        let mut ms_config = ModSyncConfig::default();
-        ms_config.groups.insert(
-            "no-hl".to_string(),
-            crate::config::ModSyncGroup {
-                display_name: "No Headless".to_string(),
-                members: vec![100],
-                enabled: None,
-                enforced: None,
-                silent: None,
-                restart_required: None,
-                exclude_headless: true,
-            },
-        );
-        ms_config.overrides.insert(
-            "100".to_string(),
-            ModSyncOverride {
-                enabled: Some(true), // explicitly enabled
-                enforced: None,
-                silent: None,
-                restart_required: None,
-            },
-        );
-
-        let headless = generate_config(&ms_config, &db, true).unwrap();
-        assert!(headless.sync_paths[0].enabled); // per-mod wins
     }
 
     #[test]
@@ -1099,34 +1023,38 @@ mod tests {
             ..ModSyncConfig::default()
         };
 
-        // ModA: override enforced=true
-        ms_config.overrides.insert(
-            "100".to_string(),
-            ModSyncOverride {
+        // ModA in a group with enforced=true
+        ms_config.groups.insert(
+            "grp-a".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Group A".to_string(),
+                members: vec![100],
+                enabled: None,
                 enforced: Some(true),
                 silent: None,
                 restart_required: None,
-                enabled: None,
+                exclude_headless: false,
             },
         );
 
-        // ModB: override silent=false
-        ms_config.overrides.insert(
-            "101".to_string(),
-            ModSyncOverride {
+        // ModB in a group with silent=false
+        ms_config.groups.insert(
+            "grp-b".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Group B".to_string(),
+                members: vec![101],
+                enabled: None,
                 enforced: None,
                 silent: Some(false),
                 restart_required: None,
-                enabled: None,
+                exclude_headless: false,
             },
         );
 
         let output = generate_config(&ms_config, &db, false).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
-        // enforced: true (OR — ModA has it)
         assert!(output.sync_paths[0].enforced);
-        // silent: false (AND — ModB has it false)
         assert!(!output.sync_paths[0].silent);
     }
 
