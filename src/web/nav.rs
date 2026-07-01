@@ -12,11 +12,7 @@ pub struct NavContext {
 impl NavContext {
     /// Build a `NavContext` from the current `AppState`.
     pub fn from_state(state: &AppState) -> Self {
-        let modsync_enabled = state
-            .config()
-            .modsync
-            .as_ref()
-            .is_some_and(|ms| ms.enabled);
+        let modsync_enabled = state.config().modsync.as_ref().is_some_and(|ms| ms.enabled);
         Self {
             fika_installed: state.fika_installed,
             modsync_installed: state.is_modsync_installed(),
