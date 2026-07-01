@@ -382,20 +382,19 @@ impl Database {
     /// Batch-update file paths for a mod, replacing `old_prefix` with `new_prefix`.
     /// Only updates paths that start with `old_prefix/`. Returns the number of rows changed.
     /// Uses a `/` boundary to prevent `SAIN` from matching `SAIN-Preset`.
-    #[allow(dead_code)] // Used in later tasks
     pub fn reprefix_mod_files(
         &self,
         mod_id: i64,
         old_prefix: &str,
         new_prefix: &str,
     ) -> rusqlite::Result<usize> {
-        let pattern = format!("{old_prefix}/%");
         let old_prefix_len = old_prefix.len() as i64;
+        let prefix_with_slash = format!("{old_prefix}/");
         self.conn.execute(
             "UPDATE installed_files
              SET file_path = ?1 || substr(file_path, ?2 + 1)
-             WHERE mod_id = ?3 AND file_path LIKE ?4",
-            params![new_prefix, old_prefix_len, mod_id, pattern],
+             WHERE mod_id = ?3 AND substr(file_path, 1, ?2 + 1) = ?4",
+            params![new_prefix, old_prefix_len, mod_id, prefix_with_slash],
         )
     }
 

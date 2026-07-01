@@ -183,7 +183,6 @@ fn write_config(config_path: &Path, output: &ModSyncOutputConfig) -> Result<()> 
 }
 
 /// The `quma-` prefix used for group directories on disk.
-#[allow(dead_code)] // Used by later tasks that wire this into CLI/web handlers
 const GROUP_DIR_PREFIX: &str = "quma-";
 
 /// Ensure a mod's BepInEx files are in the correct directory based on group
