@@ -233,7 +233,8 @@ pub fn regenerate_if_enabled(spt_dir: &Path, config: &Config, db: &Database) -> 
     if !ms_config.enabled {
         if let Some(config_path) = modsync_config_path(spt_dir) {
             if config_path.exists() {
-                std::fs::remove_file(&config_path).context("failed to remove NarcoNet config.yaml")?;
+                std::fs::remove_file(&config_path)
+                    .context("failed to remove NarcoNet config.yaml")?;
                 tracing::info!("NarcoNet management disabled — removed config.yaml");
             }
         }
@@ -1127,5 +1128,38 @@ mod tests {
         assert!(output.sync_paths[0].enforced);
         // silent: false (AND — ModB has it false)
         assert!(!output.sync_paths[0].silent);
+    }
+
+    #[test]
+    fn full_lifecycle_enable_disable_reenable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let narconet_dir = spt_dir.join("SPT/user/mods/narconet-server");
+        std::fs::create_dir_all(&narconet_dir).unwrap();
+        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        setup_db_with_client_mod(&db);
+
+        let mut config = Config::default();
+        config.modsync = Some(ModSyncConfig::default());
+
+        // Enable: config.yaml is created
+        let result = regenerate_if_enabled(spt_dir, &config, &db).unwrap();
+        assert!(result);
+        let config_path = modsync_config_path(spt_dir).unwrap();
+        assert!(config_path.exists());
+
+        // Disable: config.yaml is removed
+        config.modsync.as_mut().unwrap().enabled = false;
+        let result = regenerate_if_enabled(spt_dir, &config, &db).unwrap();
+        assert!(!result);
+        assert!(!config_path.exists());
+
+        // Re-enable: config.yaml is recreated
+        config.modsync.as_mut().unwrap().enabled = true;
+        let result = regenerate_if_enabled(spt_dir, &config, &db).unwrap();
+        assert!(result);
+        assert!(config_path.exists());
     }
 }
