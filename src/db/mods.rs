@@ -379,6 +379,26 @@ impl Database {
         )
     }
 
+    /// Batch-update file paths for a mod, replacing `old_prefix` with `new_prefix`.
+    /// Only updates paths that start with `old_prefix/`. Returns the number of rows changed.
+    /// Uses a `/` boundary to prevent `SAIN` from matching `SAIN-Preset`.
+    #[allow(dead_code)] // Used in later tasks
+    pub fn reprefix_mod_files(
+        &self,
+        mod_id: i64,
+        old_prefix: &str,
+        new_prefix: &str,
+    ) -> rusqlite::Result<usize> {
+        let pattern = format!("{old_prefix}/%");
+        let old_prefix_len = old_prefix.len() as i64;
+        self.conn.execute(
+            "UPDATE installed_files
+             SET file_path = ?1 || substr(file_path, ?2 + 1)
+             WHERE mod_id = ?3 AND file_path LIKE ?4",
+            params![new_prefix, old_prefix_len, mod_id, pattern],
+        )
+    }
+
     // ── Dependency CRUD ───────────────────────────────────────────────
 
     pub fn insert_dependency(
@@ -674,5 +694,57 @@ mod tests {
         let results = db.list_mods_filtered(&filter).unwrap();
         assert_eq!(results[0].0.name, "alpha");
         assert_eq!(results[1].0.name, "Beta");
+    }
+
+    #[test]
+    fn reprefix_mod_files_updates_matching_paths() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        db.insert_file(mod_id, "BepInEx/plugins/TestMod/test.dll", None, Some(100))
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/TestMod/config.json",
+            None,
+            Some(50),
+        )
+        .unwrap();
+        db.insert_file(mod_id, "SPT/user/mods/TestMod/package.json", None, Some(30))
+            .unwrap();
+
+        let updated = db
+            .reprefix_mod_files(
+                mod_id,
+                "BepInEx/plugins/TestMod",
+                "BepInEx/plugins/quma-optional/TestMod",
+            )
+            .unwrap();
+
+        assert_eq!(updated, 2);
+        let files = db.get_files_for_mod(mod_id).unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.file_path.as_str()).collect();
+        assert!(paths.contains(&"BepInEx/plugins/quma-optional/TestMod/test.dll"));
+        assert!(paths.contains(&"BepInEx/plugins/quma-optional/TestMod/config.json"));
+        assert!(paths.contains(&"SPT/user/mods/TestMod/package.json"));
+    }
+
+    #[test]
+    fn reprefix_mod_files_noop_when_no_match() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        db.insert_file(mod_id, "SPT/user/mods/TestMod/package.json", None, Some(30))
+            .unwrap();
+
+        let updated = db
+            .reprefix_mod_files(
+                mod_id,
+                "BepInEx/plugins/TestMod",
+                "BepInEx/plugins/quma-optional/TestMod",
+            )
+            .unwrap();
+
+        assert_eq!(updated, 0);
+        let files = db.get_files_for_mod(mod_id).unwrap();
+        assert_eq!(files[0].file_path, "SPT/user/mods/TestMod/package.json");
     }
 }
