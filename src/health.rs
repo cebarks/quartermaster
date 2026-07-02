@@ -273,13 +273,44 @@ pub fn check_integrity_from(
     })
 }
 
+/// Strip non-alphanumeric characters and lowercase for fuzzy name comparison.
+///
+/// SPT keys `loadedServerMods` by the mod's self-reported internal name
+/// (from DLL metadata), which differs from both the directory name and the
+/// Forge display name. Normalizing lets us match via substring containment
+/// (e.g. directory `acidphantasm-bosseshavegpcoins` contains normalized
+/// loaded name `bosseshavegpcoins`).
+fn normalize_mod_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Check if two mod names match after normalization, using either exact
+/// equality or substring containment (in either direction).
+fn names_match(a: &str, b: &str) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    a == b || a.contains(b) || b.contains(a)
+}
+
 /// Compare installed mods (from DB) against loaded mods (from SPT server).
 ///
-/// Matches using the directory name under `user/mods/` (via `spt_names`)
-/// because the SPT server keys `loadedServerMods` by directory name, which
-/// can differ from the Forge display name stored in the DB (e.g. Forge
-/// name "Fika Server" vs directory name "fika-server"). Falls back to the
-/// Forge display name when no directory name is available.
+/// SPT keys `loadedServerMods` by the mod's self-reported internal name
+/// (from DLL metadata attributes like `[SptMod("name")]`), which can be
+/// completely different from both the directory name under `user/mods/`
+/// and the Forge display name. For example:
+///   - directory `acidphantasm-bosseshavegpcoins` → loaded as `Bosses Have GP Coins`
+///   - directory `fika-server` → loaded as `server`
+///   - directory `Solarint-SAIN-ServerMod` → loaded as `SAIN`
+///
+/// We match using normalized substring containment: strip non-alphanumeric
+/// chars and lowercase, then check if either name contains the other. This
+/// works because directory names typically embed the mod name (with author
+/// prefixes/suffixes). Both the directory name and Forge display name are
+/// tried for maximum coverage.
 pub fn check_mod_loads(
     installed_mods: &[crate::db::mods::InstalledMod],
     loaded_mods: &std::collections::HashMap<String, serde_json::Value>,
@@ -291,26 +322,40 @@ pub fn check_mod_loads(
         .filter(|m| !m.disabled && server_mod_ids.contains(&m.id))
         .collect();
 
-    let loaded_lower: std::collections::HashSet<String> =
-        loaded_mods.keys().map(|k| k.to_lowercase()).collect();
-
-    let match_name = |m: &crate::db::mods::InstalledMod| -> String {
-        spt_names.get(&m.id).unwrap_or(&m.name).to_lowercase()
-    };
-
-    let installed_lower: std::collections::HashSet<String> =
-        checkable.iter().map(|m| match_name(m)).collect();
-
-    let load_failures: Vec<String> = checkable
-        .iter()
-        .filter(|m| !loaded_lower.contains(&match_name(m)))
-        .map(|m| m.name.clone())
+    let loaded_normalized: Vec<(&String, String)> = loaded_mods
+        .keys()
+        .map(|k| (k, normalize_mod_name(k)))
         .collect();
 
-    let untracked_loaded: Vec<String> = loaded_mods
-        .keys()
-        .filter(|name| !installed_lower.contains(&name.to_lowercase()))
-        .cloned()
+    let installed_names: Vec<(&crate::db::mods::InstalledMod, Vec<String>)> = checkable
+        .iter()
+        .map(|m| {
+            let mut candidates = vec![normalize_mod_name(&m.name)];
+            if let Some(dir_name) = spt_names.get(&m.id) {
+                candidates.push(normalize_mod_name(dir_name));
+            }
+            (*m, candidates)
+        })
+        .collect();
+
+    let load_failures: Vec<String> = installed_names
+        .iter()
+        .filter(|(_, candidates)| {
+            !loaded_normalized
+                .iter()
+                .any(|(_, ln)| candidates.iter().any(|c| names_match(c, ln)))
+        })
+        .map(|(m, _)| m.name.clone())
+        .collect();
+
+    let untracked_loaded: Vec<String> = loaded_normalized
+        .iter()
+        .filter(|(_, ln)| {
+            !installed_names
+                .iter()
+                .any(|(_, candidates)| candidates.iter().any(|c| names_match(c, ln)))
+        })
+        .map(|(name, _)| (*name).clone())
         .collect();
 
     (load_failures, untracked_loaded)
@@ -887,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn check_mod_loads_uses_spt_name_over_forge_name() {
+    fn check_mod_loads_normalized_forge_name_match() {
         let installed = vec![InstalledMod {
             id: 1,
             forge_mod_id: 100,
@@ -904,44 +949,93 @@ mod tests {
 
         let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
 
-        // Without spt_names: Forge name "Looting Bots" != "LootingBots" → false failure
-        let (failures, _) = check_mod_loads(
+        // Normalized matching: "Looting Bots" → "lootingbots" matches "LootingBots" → "lootingbots"
+        let (failures, untracked) = check_mod_loads(
             &installed,
             &loaded,
             &server_mod_ids,
             &std::collections::HashMap::new(),
         );
-        assert_eq!(
-            failures,
-            vec!["Looting Bots"],
-            "without spt_names, Forge name mismatch should report failure"
+        assert!(
+            failures.is_empty(),
+            "normalized Forge name should match loaded name, got: {:?}",
+            failures
         );
+        assert!(untracked.is_empty());
+    }
 
-        // With spt_names: directory name "LootingBots" matches → no failure
+    #[test]
+    fn check_mod_loads_author_prefixed_directory() {
+        // Real-world: directory "acidphantasm-bosseshavegpcoins" loads as "Bosses Have GP Coins"
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "Bosses Have Gp Coins".to_string(),
+            slug: None,
+            version: "1.0.0".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+            disabled: false,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("Bosses Have GP Coins".to_string(), serde_json::json!({}));
+
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
         let mut spt_names = std::collections::HashMap::new();
-        spt_names.insert(1_i64, "LootingBots".to_string());
+        spt_names.insert(1_i64, "acidphantasm-bosseshavegpcoins".to_string());
+
         let (failures, untracked) =
             check_mod_loads(&installed, &loaded, &server_mod_ids, &spt_names);
         assert!(
             failures.is_empty(),
-            "with spt_names mapping, should match by package.json name, got: {:?}",
+            "author-prefixed directory should match via containment, got: {:?}",
             failures
         );
-        assert!(
-            untracked.is_empty(),
-            "matched mod should not appear as untracked"
-        );
+        assert!(untracked.is_empty());
     }
 
     #[test]
-    fn check_mod_loads_spt_name_case_insensitive() {
+    fn check_mod_loads_fika_server_matches() {
+        // Real-world: directory "fika-server" loads as "server"
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "Project Fika - Server".to_string(),
+            slug: None,
+            version: "2.3.2".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+            disabled: false,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("server".to_string(), serde_json::json!({}));
+
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+        let mut spt_names = std::collections::HashMap::new();
+        spt_names.insert(1_i64, "fika-server".to_string());
+
+        let (failures, untracked) =
+            check_mod_loads(&installed, &loaded, &server_mod_ids, &spt_names);
+        assert!(
+            failures.is_empty(),
+            "fika-server directory should match 'server' via containment, got: {:?}",
+            failures
+        );
+        assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn check_mod_loads_sain_matches_via_containment() {
+        // Real-world: directory "Solarint-SAIN-ServerMod" loads as "SAIN"
         let installed = vec![InstalledMod {
             id: 1,
             forge_mod_id: 100,
             forge_version_id: 200,
             name: "SAIN - Solarint's AI Modifications".to_string(),
             slug: None,
-            version: "1.0.0".to_string(),
+            version: "4.4.3".to_string(),
             installed_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: None,
             disabled: false,
@@ -951,15 +1045,152 @@ mod tests {
 
         let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
         let mut spt_names = std::collections::HashMap::new();
-        spt_names.insert(1_i64, "sain".to_string());
+        spt_names.insert(1_i64, "Solarint-SAIN-ServerMod".to_string());
+
         let (failures, untracked) =
             check_mod_loads(&installed, &loaded, &server_mod_ids, &spt_names);
         assert!(
             failures.is_empty(),
-            "spt_name match should be case-insensitive, got: {:?}",
+            "SAIN should match via containment in directory name, got: {:?}",
             failures
         );
         assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn check_mod_loads_dotted_directory_name() {
+        // Real-world: directory "Tyfon.UIFixes.Server" loads as "UI Fixes"
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "UI Fixes".to_string(),
+            slug: None,
+            version: "5.3.9".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+            disabled: false,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("UI Fixes".to_string(), serde_json::json!({}));
+
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+        let mut spt_names = std::collections::HashMap::new();
+        spt_names.insert(1_i64, "Tyfon.UIFixes.Server".to_string());
+
+        let (failures, untracked) =
+            check_mod_loads(&installed, &loaded, &server_mod_ids, &spt_names);
+        assert!(
+            failures.is_empty(),
+            "dotted directory name should match via containment, got: {:?}",
+            failures
+        );
+        assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn check_mod_loads_reverse_package_directory() {
+        // Real-world: directory "com.swiftxp.spt.showmethemoney" loads as "Show Me The Money"
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "Show Me The Money (Item Pricing)".to_string(),
+            slug: None,
+            version: "2.7.0".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+            disabled: false,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("Show Me The Money".to_string(), serde_json::json!({}));
+
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+        let mut spt_names = std::collections::HashMap::new();
+        spt_names.insert(1_i64, "com.swiftxp.spt.showmethemoney".to_string());
+
+        let (failures, untracked) =
+            check_mod_loads(&installed, &loaded, &server_mod_ids, &spt_names);
+        assert!(
+            failures.is_empty(),
+            "reverse-domain directory should match via containment, got: {:?}",
+            failures
+        );
+        assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn check_mod_loads_genuine_failure_still_detected() {
+        // A mod that is truly not loaded should still be reported
+        let installed = vec![InstalledMod {
+            id: 1,
+            forge_mod_id: 100,
+            forge_version_id: 200,
+            name: "Completely Unique Mod Name".to_string(),
+            slug: None,
+            version: "1.0.0".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+            disabled: false,
+        }];
+        let mut loaded = std::collections::HashMap::new();
+        loaded.insert("Totally Different Thing".to_string(), serde_json::json!({}));
+
+        let server_mod_ids: std::collections::HashSet<i64> = [1].into_iter().collect();
+        let mut spt_names = std::collections::HashMap::new();
+        spt_names.insert(1_i64, "UniqueModDir".to_string());
+
+        let (failures, untracked) =
+            check_mod_loads(&installed, &loaded, &server_mod_ids, &spt_names);
+        assert_eq!(
+            failures,
+            vec!["Completely Unique Mod Name"],
+            "genuinely unloaded mod should be reported as failure"
+        );
+        assert_eq!(
+            untracked,
+            vec!["Totally Different Thing"],
+            "genuinely untracked mod should be reported"
+        );
+    }
+
+    #[test]
+    fn normalize_mod_name_strips_nonalpha() {
+        assert_eq!(
+            normalize_mod_name("Bosses Have GP Coins"),
+            "bosseshavegpcoins"
+        );
+        assert_eq!(
+            normalize_mod_name("acidphantasm-bosseshavegpcoins"),
+            "acidphantasmbosseshavegpcoins"
+        );
+        assert_eq!(
+            normalize_mod_name("SAIN - Solarint's AI"),
+            "sainsolarintsai"
+        );
+        assert_eq!(
+            normalize_mod_name("[SVM] Server Value Modifier"),
+            "svmservervaluemodifier"
+        );
+        assert_eq!(normalize_mod_name("com.tyfon.uifixes"), "comtyfonuifixes");
+    }
+
+    #[test]
+    fn names_match_containment() {
+        // Exact match
+        assert!(names_match("lootingbots", "lootingbots"));
+        // Containment: a contains b
+        assert!(names_match(
+            "acidphantasmbosseshavegpcoins",
+            "bosseshavegpcoins"
+        ));
+        // Containment: b contains a
+        assert!(names_match("sain", "solarintsainservermod"));
+        // No match
+        assert!(!names_match("uniquemod", "totallydifferent"));
+        // Empty strings
+        assert!(!names_match("", "something"));
+        assert!(!names_match("something", ""));
     }
 
     #[test]
