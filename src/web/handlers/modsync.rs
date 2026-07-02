@@ -698,7 +698,7 @@ fn validate_shared_directories(
     for m in &mods {
         let files = db.get_files_for_mod(m.id).map_err(|e| e.to_string())?;
         for f in &files {
-            if !f.file_path.starts_with("BepInEx/") {
+            if !f.file_path.starts_with("BepInEx/plugins/") {
                 continue;
             }
             let parts: Vec<&str> = f.file_path.split('/').collect();

@@ -218,6 +218,12 @@ pub fn ensure_mod_layout(
         .map(|f| f.file_path.as_str())
         .collect();
 
+    // Skip flat files (e.g., BepInEx/plugins/SomeFile.dll) — they're synced via parent path
+    let plugin_files: Vec<&str> = plugin_files
+        .into_iter()
+        .filter(|p| p.split('/').count() >= 4)
+        .collect();
+
     if plugin_files.is_empty() {
         return Ok(false);
     }

@@ -83,15 +83,15 @@
     <table>
         <tr>
             <th style="width:140px">Enforced</th>
-            <td>{% match sync_enforced %}{% when Some with (v) %}{{ v }} (override){% when None %}default{% endmatch %}</td>
+            <td>{% match sync_enforced %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>
         </tr>
         <tr>
             <th>Silent</th>
-            <td>{% match sync_silent %}{% when Some with (v) %}{{ v }} (override){% when None %}default{% endmatch %}</td>
+            <td>{% match sync_silent %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>
         </tr>
         <tr>
             <th>Restart Required</th>
-            <td>{% match sync_restart_required %}{% when Some with (v) %}{{ v }} (override){% when None %}default{% endmatch %}</td>
+            <td>{% match sync_restart_required %}{% when Some with (v) %}{{ v }}{% when None %}default{% endmatch %}</td>
         </tr>
         <tr>
             <th>Enabled</th>

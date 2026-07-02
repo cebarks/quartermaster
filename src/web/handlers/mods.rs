@@ -361,12 +361,6 @@ pub async fn mod_detail(
     let has_client_files = archive_files
         .iter()
         .any(|f| f.file_path.starts_with("BepInEx/"));
-    let forge_id_str = mod_info.forge_mod_id.to_string();
-    let overrides = state
-        .config()
-        .modsync
-        .as_ref()
-        .and_then(|ms| ms.overrides.get(&forge_id_str).cloned());
 
     let nav = NavContext::from_state(&state);
     let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
@@ -380,10 +374,10 @@ pub async fn mod_detail(
         csrf_token,
         nav,
         has_client_files,
-        sync_enforced: overrides.as_ref().and_then(|o| o.enforced),
-        sync_silent: overrides.as_ref().and_then(|o| o.silent),
-        sync_restart_required: overrides.as_ref().and_then(|o| o.restart_required),
-        sync_enabled: overrides.as_ref().and_then(|o| o.enabled),
+        sync_enforced: None,
+        sync_silent: None,
+        sync_restart_required: None,
+        sync_enabled: None,
         modsync_managed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
