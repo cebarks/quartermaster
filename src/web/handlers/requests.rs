@@ -317,10 +317,7 @@ async fn trigger_install_for_request(
                 let version_id = version.id;
                 let version_str = version.version.clone();
                 let spt_dir2 = spt_dir.clone();
-                let spt_dir3 = spt_dir.clone();
                 let db2 = db.clone();
-                let db3 = db.clone();
-                let config2 = config.clone();
                 let db_id = actix_web::web::block(move || {
                     let db = db.lock();
                     let tx = db.begin_transaction()?;
@@ -352,11 +349,7 @@ async fn trigger_install_for_request(
                 })
                 .await;
 
-                let _ = actix_web::web::block(move || {
-                    let db = db3.lock();
-                    crate::modsync::regenerate_if_enabled(&spt_dir3, &config2, &db)
-                })
-                .await;
+                state_clone.regenerate_modsync().await;
 
                 Ok::<_, anyhow::Error>(())
             }

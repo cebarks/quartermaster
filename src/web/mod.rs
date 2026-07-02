@@ -485,10 +485,6 @@ pub fn configure_app(
                 "/modsync/groups",
                 web::post().to(handlers::modsync::save_groups),
             )
-            .route(
-                "/modsync/mods",
-                web::post().to(handlers::modsync::save_mods),
-            )
             .route("/svm", web::get().to(handlers::svm::manager_page))
             .route("/svm/view", web::get().to(handlers::svm::player_view))
             .route("/svm/edit", web::get().to(handlers::svm::editor_page))
@@ -700,6 +696,13 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     if modsync_installed && config.modsync.is_some() {
         if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
             tracing::warn!(err = %e, "failed to regenerate NarcoNet config on startup");
+        }
+        if let Some(ref ms_config) = config.modsync {
+            if let Err(e) =
+                crate::modsync::ensure_all_mod_layouts(&spt_dir, ms_config, &db_arc.lock())
+            {
+                tracing::warn!(err = %e, "failed to reconcile mod layouts on startup");
+            }
         }
     }
 

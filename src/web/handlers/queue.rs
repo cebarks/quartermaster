@@ -183,16 +183,7 @@ pub async fn apply_queue(
         }
 
         // Regenerate NarcoNet config after all operations
-        {
-            let db = state_clone.db.clone();
-            let spt_dir = state_clone.spt_dir.clone();
-            let config = state_clone.config_cloned();
-            let _ = web::block(move || {
-                let db = db.lock();
-                crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
-            })
-            .await;
-        }
+        state_clone.regenerate_modsync().await;
 
         if failures.is_empty() {
             tasks.complete(

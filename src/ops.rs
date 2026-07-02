@@ -74,6 +74,11 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     if let Err(e) = crate::modsync::regenerate_if_enabled(req.spt_dir, req.config, req.db) {
         tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
+    if let Some(ref ms_config) = req.config.modsync {
+        if let Err(e) = crate::modsync::ensure_mod_layout(req.spt_dir, ms_config, req.db, db_id) {
+            tracing::warn!(err = %e, "failed to ensure mod layout after install");
+        }
+    }
     Ok(db_id)
 }
 
@@ -134,6 +139,11 @@ pub fn update_mod_from_archive(
     tx.commit()?;
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
         tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
+    }
+    if let Some(ref ms_config) = config.modsync {
+        if let Err(e) = crate::modsync::ensure_mod_layout(spt_dir, ms_config, db, mod_db_id) {
+            tracing::warn!(err = %e, "failed to ensure mod layout after update");
+        }
     }
     Ok(())
 }
@@ -421,9 +431,28 @@ pub fn remove_mod_by_id(
     tracing::info!(mod_db_id, "removing mod");
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_remove")?;
     let files = db.get_files_for_mod(mod_db_id)?;
-    let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
-    tracing::debug!(file_count = paths.len(), "deleting mod files");
-    crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
+    let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
+    tracing::debug!(file_count = file_paths.len(), "deleting mod files");
+    crate::spt::mods::delete_mod_files(spt_dir, &file_paths)?;
+
+    // Clean up empty quma-* group directories after mod removal
+    for path in &file_paths {
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() >= 4
+            && parts[0] == "BepInEx"
+            && parts[1] == "plugins"
+            && parts[2].starts_with("quma-")
+        {
+            let group_dir = spt_dir.join(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
+            if group_dir.is_dir() {
+                if let Ok(mut entries) = std::fs::read_dir(&group_dir) {
+                    if entries.next().is_none() {
+                        let _ = std::fs::remove_dir(&group_dir);
+                    }
+                }
+            }
+        }
+    }
 
     // Look up forge_mod_id before deletion for group cleanup
     let forge_mod_id = db.get_mod(mod_db_id)?.map(|m| m.forge_mod_id);
@@ -819,6 +848,12 @@ pub fn enable_mod(
     }
 
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod enabled");
+
+    if let Some(ref ms_config) = config.modsync {
+        if let Err(e) = crate::modsync::ensure_mod_layout(spt_dir, ms_config, db, mod_db_id) {
+            tracing::warn!(err = %e, "failed to ensure mod layout after enable");
+        }
+    }
     Ok(())
 }
 

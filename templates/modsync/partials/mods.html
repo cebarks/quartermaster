@@ -1,172 +1,44 @@
-<div id="mods-form">
-    <input type="hidden" id="mods-csrf" value="{{ csrf_token }}">
-
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">
-        <h2 style="margin: 0">Per-Mod Overrides</h2>
-        <button type="button" id="save-overrides-btn" class="btn btn-sm btn-primary">Save Overrides</button>
-    </div>
-
-    <p class="text-muted text-sm" style="margin-bottom: 1rem">
-        Override settings for individual mods. Empty cells inherit from group or global settings.
-    </p>
-
-    {% if mods.is_empty() %}
-    <div class="text-muted text-sm" style="padding: 1rem; text-align: center; border: 1px dashed var(--border); border-radius: 4px">
-        No mods with client files installed.
-    </div>
-    {% else %}
-    <div style="overflow-x: auto">
-        <table class="table" style="width: 100%; border-collapse: collapse">
-            <thead>
-                <tr>
-                    <th style="text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border)">Mod</th>
-                    <th style="text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border)">Group</th>
-                    <th style="text-align: center; padding: 0.5rem; border-bottom: 1px solid var(--border)">Enabled</th>
-                    <th style="text-align: center; padding: 0.5rem; border-bottom: 1px solid var(--border)">Enforced</th>
-                    <th style="text-align: center; padding: 0.5rem; border-bottom: 1px solid var(--border)">Silent</th>
-                    <th style="text-align: center; padding: 0.5rem; border-bottom: 1px solid var(--border)">Restart Req.</th>
-                    <th style="text-align: center; padding: 0.5rem; border-bottom: 1px solid var(--border)">Effective</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for m in mods %}
-                <tr data-forge-id="{{ m.forge_mod_id }}">
-                    <td style="padding: 0.5rem; border-bottom: 1px solid var(--border)">
-                        <a href="/quma/mods/{{ m.db_id }}">{{ m.name }}</a>
-                    </td>
-                    <td style="padding: 0.5rem; border-bottom: 1px solid var(--border)">
-                        {% if let Some(group) = m.group %}
-                        <a href="/quma/modsync?tab=groups" class="badge badge-primary" style="text-decoration: none">{{ group }}</a>
-                        {% else %}
-                        <span class="text-muted" style="font-size: 0.9rem">—</span>
-                        {% endif %}
-                    </td>
-                    <td style="padding: 0.35rem; border-bottom: 1px solid var(--border); text-align: center">
-                        <select data-field="enabled" style="width: 100%; padding: 0.25rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-size: 0.85rem{% if m.override_conflict_enabled %};border-color:var(--warning){% endif %}">
-                            <option value=""{% if m.override_enabled == "" %} selected{% endif %}>default</option>
-                            <option value="true"{% if m.override_enabled == "true" %} selected{% endif %}>yes</option>
-                            <option value="false"{% if m.override_enabled == "false" %} selected{% endif %}>no</option>
-                        </select>
-                    </td>
-                    <td style="padding: 0.35rem; border-bottom: 1px solid var(--border); text-align: center">
-                        <select data-field="enforced" style="width: 100%; padding: 0.25rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-size: 0.85rem{% if m.override_conflict_enforced %};border-color:var(--warning){% endif %}">
-                            <option value=""{% if m.override_enforced == "" %} selected{% endif %}>default</option>
-                            <option value="true"{% if m.override_enforced == "true" %} selected{% endif %}>yes</option>
-                            <option value="false"{% if m.override_enforced == "false" %} selected{% endif %}>no</option>
-                        </select>
-                    </td>
-                    <td style="padding: 0.35rem; border-bottom: 1px solid var(--border); text-align: center">
-                        <select data-field="silent" style="width: 100%; padding: 0.25rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-size: 0.85rem{% if m.override_conflict_silent %};border-color:var(--warning){% endif %}">
-                            <option value=""{% if m.override_silent == "" %} selected{% endif %}>default</option>
-                            <option value="true"{% if m.override_silent == "true" %} selected{% endif %}>yes</option>
-                            <option value="false"{% if m.override_silent == "false" %} selected{% endif %}>no</option>
-                        </select>
-                    </td>
-                    <td style="padding: 0.35rem; border-bottom: 1px solid var(--border); text-align: center">
-                        <select data-field="restart_required" style="width: 100%; padding: 0.25rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-size: 0.85rem{% if m.override_conflict_restart_required %};border-color:var(--warning){% endif %}">
-                            <option value=""{% if m.override_restart_required == "" %} selected{% endif %}>default</option>
-                            <option value="true"{% if m.override_restart_required == "true" %} selected{% endif %}>yes</option>
-                            <option value="false"{% if m.override_restart_required == "false" %} selected{% endif %}>no</option>
-                        </select>
-                    </td>
-                    <td style="padding: 0.5rem; border-bottom: 1px solid var(--border); text-align: center; font-size: 0.8rem">
-                        <div style="display: flex; gap: 0.4rem; justify-content: center; flex-wrap: wrap">
-                            {% if m.effective_enabled %}
-                            <span class="badge badge-success" style="padding: 0.15rem 0.35rem" title="Enabled">ON</span>
-                            {% else %}
-                            <span class="badge" style="background: #666; padding: 0.15rem 0.35rem" title="Disabled">OFF</span>
-                            {% endif %}
-                            {% if m.effective_enforced %}
-                            <span class="badge" style="background: #e67e22; padding: 0.15rem 0.35rem; color: white" title="Enforced">E</span>
-                            {% endif %}
-                            {% if m.effective_silent %}
-                            <span class="badge" style="background: #9b59b6; padding: 0.15rem 0.35rem; color: white" title="Silent">S</span>
-                            {% endif %}
-                            {% if m.effective_restart_required %}
-                            <span class="badge" style="background: #3498db; padding: 0.15rem 0.35rem; color: white" title="Restart Required">R</span>
-                            {% endif %}
-                            {% if m.headless_disabled %}
-                            <span class="badge badge-warning" title="Disabled for headless clients" style="font-size:0.7rem">H:OFF</span>
-                            {% endif %}
-                            {% if m.headless_warning %}
-                            <span style="color: var(--warning); font-size: 1rem" title="Per-mod override will cause this mod to sync to headless clients despite group exclusion">⚠</span>
-                            {% endif %}
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
+<div class="card">
+  <div class="card-header">
+    <h3>Per-Mod Effective Settings</h3>
+    <p class="text-muted">These values are computed from global defaults and group membership. To change a mod's settings, assign it to a group on the Groups tab.</p>
+  </div>
+  <div class="table-responsive">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Mod</th>
+          <th>Group</th>
+          <th>Enabled</th>
+          <th>Enforced</th>
+          <th>Silent</th>
+          <th>Restart</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in mods %}
+        <tr>
+          <td>{{ m.name }}</td>
+          <td>
+            {% if let Some(group) = m.group %}
+              <span class="badge">{{ group }}</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+            {% if m.headless_disabled %}
+              <span class="badge badge-warning" title="Disabled for headless clients">HL</span>
+            {% endif %}
+          </td>
+          <td>{% if m.effective_enabled %}Yes{% else %}No{% endif %}</td>
+          <td>{% if m.effective_enforced %}Yes{% else %}No{% endif %}</td>
+          <td>{% if m.effective_silent %}Yes{% else %}No{% endif %}</td>
+          <td>{% if m.effective_restart_required %}Yes{% else %}No{% endif %}</td>
+        </tr>
+        {% endfor %}
+        {% if mods.is_empty() %}
+        <tr><td colspan="6" class="text-muted text-center">No client mods installed</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
 </div>
-
-<script>
-(function() {
-    var form = document.getElementById('mods-form');
-    if (!form) return;
-
-    // Serialize table data to JSON
-    function serializeMods() {
-        var rows = form.querySelectorAll('tbody tr[data-forge-id]');
-        var mods = [];
-        rows.forEach(function(row) {
-            var forgeId = row.getAttribute('data-forge-id');
-            var mod = {
-                forge_mod_id: parseInt(forgeId, 10),
-                enabled: row.querySelector('[data-field="enabled"]').value,
-                enforced: row.querySelector('[data-field="enforced"]').value,
-                silent: row.querySelector('[data-field="silent"]').value,
-                restart_required: row.querySelector('[data-field="restart_required"]').value
-            };
-            mods.push(mod);
-        });
-        return mods;
-    }
-
-    // Save button
-    var saveBtn = document.getElementById('save-overrides-btn');
-    if (saveBtn) {
-        saveBtn.addEventListener('click', function() {
-            var mods = serializeMods();
-            var csrf = document.getElementById('mods-csrf').value;
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Saving...';
-
-            fetch('/quma/modsync/mods', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ csrf_token: csrf, mods: mods })
-            })
-            .then(function(resp) { return resp.json(); })
-            .then(function(data) {
-                if (data.ok && data.redirect) {
-                    window.location.href = data.redirect;
-                } else {
-                    saveBtn.disabled = false;
-                    saveBtn.textContent = 'Save Overrides';
-                    alert(data.error || 'Save failed');
-                }
-            })
-            .catch(function(err) {
-                saveBtn.disabled = false;
-                saveBtn.textContent = 'Save Overrides';
-                alert('Network error: ' + err.message);
-            });
-        });
-    }
-
-    // ── Dirty-state guard on tab switch ──────────────────────────
-    var initialSnapshot = JSON.stringify(serializeMods());
-
-    document.querySelector('.tabs').addEventListener('htmx:beforeRequest', function(evt) {
-        if (!evt.target.closest('.tabs')) return;
-        var currentSnapshot = JSON.stringify(serializeMods());
-        if (currentSnapshot !== initialSnapshot) {
-            if (!confirm('You have unsaved changes that will be lost. Continue?')) {
-                evt.preventDefault();
-            }
-        }
-    });
-})();
-</script>

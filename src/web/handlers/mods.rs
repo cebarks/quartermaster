@@ -361,12 +361,6 @@ pub async fn mod_detail(
     let has_client_files = archive_files
         .iter()
         .any(|f| f.file_path.starts_with("BepInEx/"));
-    let forge_id_str = mod_info.forge_mod_id.to_string();
-    let overrides = state
-        .config()
-        .modsync
-        .as_ref()
-        .and_then(|ms| ms.overrides.get(&forge_id_str).cloned());
 
     let nav = NavContext::from_state(&state);
     let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
@@ -380,10 +374,10 @@ pub async fn mod_detail(
         csrf_token,
         nav,
         has_client_files,
-        sync_enforced: overrides.as_ref().and_then(|o| o.enforced),
-        sync_silent: overrides.as_ref().and_then(|o| o.silent),
-        sync_restart_required: overrides.as_ref().and_then(|o| o.restart_required),
-        sync_enabled: overrides.as_ref().and_then(|o| o.enabled),
+        sync_enforced: None,
+        sync_silent: None,
+        sync_restart_required: None,
+        sync_enabled: None,
         modsync_managed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
@@ -1117,10 +1111,7 @@ pub async fn install_mod(
             let version_id = version.id;
             let version_str = version.version.clone();
             let spt_dir2 = spt_dir.clone();
-            let spt_dir3 = spt_dir.clone();
             let db2 = db.clone();
-            let db3 = db.clone();
-            let config2 = config.clone();
             // TODO(debt): concurrent installs of the same mod can race past the
             // pre-spawn check — loser hits a UNIQUE constraint on insert_mod,
             // leaving orphaned dep files. Add constraint-violation handling here.
@@ -1152,11 +1143,7 @@ pub async fn install_mod(
             .await;
 
             // Regenerate NarcoNet config if enabled
-            let _ = actix_web::web::block(move || {
-                let db = db3.lock();
-                crate::modsync::regenerate_if_enabled(&spt_dir3, &config2, &db)
-            })
-            .await;
+            state_clone.regenerate_modsync().await;
 
             Ok::<_, anyhow::Error>(())
         }
@@ -1314,6 +1301,7 @@ pub async fn update_mod(
     let version = version.clone();
     let update_cache = state.update_cache.clone();
     let forge_mod_id = installed.forge_mod_id;
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -1359,14 +1347,7 @@ pub async fn update_mod(
             crate::ops::record_dep_edges(&db, mod_db_id, &dep_db_ids);
 
             // Regenerate NarcoNet config if enabled
-            let db2 = db.clone();
-            let spt_dir2 = spt_dir.clone();
-            let config2 = config.clone();
-            let _ = actix_web::web::block(move || {
-                let db = db2.lock();
-                crate::modsync::regenerate_if_enabled(&spt_dir2, &config2, &db)
-            })
-            .await;
+            state_clone.regenerate_modsync().await;
 
             Ok::<_, anyhow::Error>(())
         }
@@ -1712,14 +1693,7 @@ pub async fn update_all_mods(
         }
 
         // Regenerate NarcoNet config after all updates
-        let spt_dir2 = spt_dir.clone();
-        let db2 = db.clone();
-        let config2 = config.clone();
-        let _ = actix_web::web::block(move || {
-            let db = db2.lock();
-            crate::modsync::regenerate_if_enabled(&spt_dir2, &config2, &db)
-        })
-        .await;
+        state_clone.regenerate_modsync().await;
 
         update_cache.invalidate();
         // Re-check NarcoNet detection (updating mods might affect NarcoNet state)

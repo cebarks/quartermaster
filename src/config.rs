@@ -361,7 +361,7 @@ pub struct ModSyncConfig {
     #[serde(default)]
     pub exclusions: Vec<String>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub overrides: BTreeMap<String, ModSyncOverride>,
 
     #[serde(default)]
@@ -411,6 +411,95 @@ impl ModSyncConfig {
             }
         }
         changed
+    }
+
+    /// Migrate per-mod overrides into groups. Each override becomes a
+    /// single-member group. If the mod already belongs to a group, the
+    /// override is merged (single-member) or the mod is split out
+    /// (multi-member). Returns `true` if any migration occurred.
+    pub fn migrate_overrides_to_groups(&mut self) -> bool {
+        if self.overrides.is_empty() {
+            return false;
+        }
+
+        // Build reverse lookup: forge_mod_id → group slug
+        let mod_to_group: std::collections::HashMap<i64, String> = self
+            .groups
+            .iter()
+            .flat_map(|(slug, g)| g.members.iter().map(move |&id| (id, slug.clone())))
+            .collect();
+
+        let overrides = std::mem::take(&mut self.overrides);
+        for (forge_id_str, ovr) in overrides {
+            let forge_id: i64 = match forge_id_str.parse() {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            if let Some(group_slug) = mod_to_group.get(&forge_id) {
+                let group = match self.groups.get_mut(group_slug) {
+                    Some(g) => g,
+                    None => continue,
+                };
+
+                if group.members.len() == 1 {
+                    // Single-member group: merge override values directly
+                    if ovr.enabled.is_some() {
+                        group.enabled = ovr.enabled;
+                    }
+                    if ovr.enforced.is_some() {
+                        group.enforced = ovr.enforced;
+                    }
+                    if ovr.silent.is_some() {
+                        group.silent = ovr.silent;
+                    }
+                    if ovr.restart_required.is_some() {
+                        group.restart_required = ovr.restart_required;
+                    }
+                } else {
+                    // Multi-member group: split this mod out into its own group
+                    group.members.retain(|&id| id != forge_id);
+                    let mut new_group = ModSyncGroup {
+                        display_name: format!("Mod #{forge_id}"),
+                        members: vec![forge_id],
+                        enabled: group.enabled,
+                        enforced: group.enforced,
+                        silent: group.silent,
+                        restart_required: group.restart_required,
+                        exclude_headless: group.exclude_headless,
+                    };
+                    // Apply override on top
+                    if ovr.enabled.is_some() {
+                        new_group.enabled = ovr.enabled;
+                    }
+                    if ovr.enforced.is_some() {
+                        new_group.enforced = ovr.enforced;
+                    }
+                    if ovr.silent.is_some() {
+                        new_group.silent = ovr.silent;
+                    }
+                    if ovr.restart_required.is_some() {
+                        new_group.restart_required = ovr.restart_required;
+                    }
+                    self.groups
+                        .insert(format!("override-{forge_id}"), new_group);
+                }
+            } else {
+                // Mod not in any group: create a new single-member group
+                let group = ModSyncGroup {
+                    display_name: format!("Mod #{forge_id}"),
+                    members: vec![forge_id],
+                    enabled: ovr.enabled,
+                    enforced: ovr.enforced,
+                    silent: ovr.silent,
+                    restart_required: ovr.restart_required,
+                    exclude_headless: false,
+                };
+                self.groups.insert(format!("override-{forge_id}"), group);
+            }
+        }
+
+        true
     }
 }
 
@@ -969,6 +1058,7 @@ impl Config {
             Ok(contents) => {
                 let mut config: Config =
                     toml::from_str(&contents).with_context(|| "failed to parse config TOML")?;
+                let mut save_needed = false;
                 if let Some(ref mut ms) = config.modsync {
                     if ms.migrate_deprecated_paths() {
                         tracing::warn!(
@@ -976,8 +1066,19 @@ impl Config {
                              migrated to gameroot-relative format and saved to {}",
                             path.display()
                         );
-                        config.save(path)?;
+                        save_needed = true;
                     }
+                    if ms.migrate_overrides_to_groups() {
+                        tracing::warn!(
+                            "migrated per-mod NarcoNet overrides to groups — \
+                             overrides are deprecated, saved to {}",
+                            path.display()
+                        );
+                        save_needed = true;
+                    }
+                }
+                if save_needed {
+                    config.save(path)?;
                 }
                 Ok(config)
             }
@@ -2176,5 +2277,107 @@ format = "text"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.logging.console.format, ConsoleFormat::Full);
+    }
+
+    #[test]
+    fn migrate_overrides_no_overrides_returns_false() {
+        let mut ms = ModSyncConfig::default();
+        assert!(!ms.migrate_overrides_to_groups());
+    }
+
+    #[test]
+    fn migrate_overrides_standalone_override_creates_group() {
+        let mut ms = ModSyncConfig::default();
+        ms.overrides.insert(
+            "100".to_string(),
+            ModSyncOverride {
+                enforced: Some(false),
+                silent: Some(true),
+                restart_required: None,
+                enabled: None,
+            },
+        );
+
+        assert!(ms.migrate_overrides_to_groups());
+        assert!(ms.overrides.is_empty());
+        assert_eq!(ms.groups.len(), 1);
+
+        let group = &ms.groups["override-100"];
+        assert_eq!(group.display_name, "Mod #100");
+        assert_eq!(group.members, vec![100]);
+        assert_eq!(group.enforced, Some(false));
+        assert_eq!(group.silent, Some(true));
+        assert_eq!(group.restart_required, None);
+        assert_eq!(group.enabled, None);
+    }
+
+    #[test]
+    fn migrate_overrides_single_member_group_merges() {
+        let mut ms = ModSyncConfig::default();
+        ms.groups.insert(
+            "grp".to_string(),
+            ModSyncGroup {
+                display_name: "Group".to_string(),
+                members: vec![100],
+                enabled: None,
+                enforced: Some(true),
+                silent: None,
+                restart_required: None,
+                exclude_headless: false,
+            },
+        );
+        ms.overrides.insert(
+            "100".to_string(),
+            ModSyncOverride {
+                enforced: Some(false),
+                silent: None,
+                restart_required: None,
+                enabled: None,
+            },
+        );
+
+        assert!(ms.migrate_overrides_to_groups());
+        assert!(ms.overrides.is_empty());
+        assert_eq!(ms.groups.len(), 1);
+        assert_eq!(ms.groups["grp"].enforced, Some(false));
+    }
+
+    #[test]
+    fn migrate_overrides_multi_member_group_splits() {
+        let mut ms = ModSyncConfig::default();
+        ms.groups.insert(
+            "grp".to_string(),
+            ModSyncGroup {
+                display_name: "Group".to_string(),
+                members: vec![100, 200],
+                enabled: None,
+                enforced: Some(true),
+                silent: None,
+                restart_required: None,
+                exclude_headless: false,
+            },
+        );
+        ms.overrides.insert(
+            "100".to_string(),
+            ModSyncOverride {
+                enforced: Some(false),
+                silent: None,
+                restart_required: None,
+                enabled: None,
+            },
+        );
+
+        assert!(ms.migrate_overrides_to_groups());
+        assert!(ms.overrides.is_empty());
+        assert_eq!(ms.groups.len(), 2);
+
+        // Original group keeps member 200 only
+        assert_eq!(ms.groups["grp"].members, vec![200]);
+        assert_eq!(ms.groups["grp"].enforced, Some(true));
+
+        // New group has member 100 with merged flags
+        let new_grp = &ms.groups["override-100"];
+        assert_eq!(new_grp.members, vec![100]);
+        assert_eq!(new_grp.enforced, Some(false)); // override wins
     }
 }
