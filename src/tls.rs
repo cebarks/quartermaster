@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
@@ -17,11 +18,15 @@ pub fn load_or_generate_tls_config(
             let cert_path = spt_dir.join("quma-cert.pem");
             let key_path = spt_dir.join("quma-key.pem");
             if cert_path.exists() && key_path.exists() {
-                tracing::info!("loading existing self-signed TLS certificate");
+                tracing::info!(
+                    "loading existing self-signed TLS certificate; \
+                     if clients fail to connect via IP, delete {} and {} to regenerate with current network interfaces",
+                    cert_path.display(),
+                    key_path.display()
+                );
                 load_pem_files(&cert_path, &key_path)?
             } else {
-                tracing::info!("generating self-signed TLS certificate");
-                generate_self_signed(&cert_path, &key_path)?
+                generate_self_signed(&cert_path, &key_path, &config.web_bind)?
             }
         }
     };
@@ -56,13 +61,60 @@ fn load_pem_files(
     Ok((certs, key))
 }
 
+fn collect_san_names(web_bind: &str) -> Vec<String> {
+    let mut sans = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ];
+
+    let bind_is_wildcard = web_bind == "0.0.0.0" || web_bind == "::";
+
+    if bind_is_wildcard {
+        match local_ip_address::list_afinet_netifas() {
+            Ok(ifaces) => {
+                for (_, ip) in &ifaces {
+                    if ip.is_loopback() {
+                        continue;
+                    }
+                    let s = ip.to_string();
+                    if !sans.contains(&s) {
+                        sans.push(s);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "failed to enumerate network interfaces; cert will only cover localhost"
+                );
+            }
+        }
+    } else if let Ok(ip) = web_bind.parse::<IpAddr>() {
+        let s = ip.to_string();
+        if !sans.contains(&s) {
+            sans.push(s);
+        }
+    } else {
+        // web_bind is a hostname
+        if !sans.contains(&web_bind.to_string()) {
+            sans.push(web_bind.to_string());
+        }
+    }
+
+    sans
+}
+
 fn generate_self_signed(
     cert_path: &Path,
     key_path: &Path,
+    web_bind: &str,
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    let sans = collect_san_names(web_bind);
+    tracing::info!(?sans, "generating self-signed TLS certificate");
+
     let key_pair = rcgen::KeyPair::generate().context("failed to generate key pair")?;
-    let params = rcgen::CertificateParams::new(vec!["localhost".to_string()])
-        .context("failed to create cert params")?;
+    let params = rcgen::CertificateParams::new(sans).context("failed to create cert params")?;
     let cert = params
         .self_signed(&key_pair)
         .context("failed to generate self-signed certificate")?;
@@ -154,5 +206,43 @@ mod tests {
         // tls_key is None
         let result = load_or_generate_tls_config(&config, tmp.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn collect_san_names_always_includes_localhost() {
+        let sans = collect_san_names("10.0.0.5");
+        assert!(sans.contains(&"localhost".to_string()));
+        assert!(sans.contains(&"127.0.0.1".to_string()));
+        assert!(sans.contains(&"::1".to_string()));
+    }
+
+    #[test]
+    fn collect_san_names_includes_specific_bind_ip() {
+        let sans = collect_san_names("192.168.1.100");
+        assert!(sans.contains(&"192.168.1.100".to_string()));
+    }
+
+    #[test]
+    fn collect_san_names_includes_hostname_bind() {
+        let sans = collect_san_names("myhost.local");
+        assert!(sans.contains(&"myhost.local".to_string()));
+        assert!(sans.contains(&"localhost".to_string()));
+    }
+
+    #[test]
+    fn collect_san_names_wildcard_includes_interfaces() {
+        let sans = collect_san_names("0.0.0.0");
+        assert!(sans.contains(&"localhost".to_string()));
+        assert!(sans.contains(&"127.0.0.1".to_string()));
+        assert!(sans.contains(&"::1".to_string()));
+        // 3 loopback entries + at least one non-loopback IP on most systems
+        assert!(sans.len() >= 3);
+    }
+
+    #[test]
+    fn collect_san_names_no_duplicates() {
+        let sans = collect_san_names("127.0.0.1");
+        let count = sans.iter().filter(|s| *s == "127.0.0.1").count();
+        assert_eq!(count, 1);
     }
 }
