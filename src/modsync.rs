@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::config::{find_narconet_dir, Config, ModSyncConfig, NARCONET_FORGE_MOD_ID};
+use crate::config::{find_narconet_dir, Config, ModSyncConfig};
 use crate::db::Database;
 
 /// A single syncPath entry in NarcoNet's config.yaml.
@@ -72,7 +72,7 @@ fn generate_config(
         std::collections::BTreeSet::new();
 
     for m in &mods {
-        if m.forge_mod_id == NARCONET_FORGE_MOD_ID || m.disabled {
+        if m.disabled {
             continue;
         }
 
@@ -770,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_config_narconet_self_excluded() {
+    fn generate_config_narconet_included() {
         let db = Database::open_in_memory().unwrap();
         // NarcoNet's own mod with Forge ID 2441
         let mod_id = db
@@ -790,16 +790,44 @@ mod tests {
         )
         .unwrap();
 
-        // A normal client mod should still appear
+        // A normal client mod should also appear
         setup_db_with_client_mod(&db);
 
         let ms_config = ModSyncConfig::default();
         let output = generate_config(&ms_config, &db, false).unwrap();
 
-        // Only SAIN should appear (ungrouped), not NarcoNet
+        // Both NarcoNet and SAIN contribute to the ungrouped plugins path
         assert_eq!(output.sync_paths.len(), 1);
         assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
         assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
+    }
+
+    #[test]
+    fn generate_config_narconet_only_mod() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(
+                NARCONET_FORGE_MOD_ID,
+                999,
+                "NarcoNet",
+                Some("narconet"),
+                "1.0.16",
+            )
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/MadManBeavis-NarcoNet/NarcoNet.dll",
+            Some("aaa111"),
+            Some(4096),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false).unwrap();
+
+        // NarcoNet alone should produce a sync path
+        assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
     }
 
     #[test]

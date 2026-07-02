@@ -5,7 +5,7 @@ use actix_web::web::{self, Data, Form, Json, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
-use crate::config::{validate_group_slug, Config, ModSyncGroup, NARCONET_FORGE_MOD_ID};
+use crate::config::{validate_group_slug, Config, ModSyncGroup};
 use crate::db::rbac::Permission;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
@@ -317,9 +317,6 @@ fn mods_with_client_files(
     let mods = db.list_mods()?;
     let mut result = Vec::new();
     for m in &mods {
-        if m.forge_mod_id == NARCONET_FORGE_MOD_ID {
-            continue;
-        }
         let files = db.get_files_for_mod(m.id)?;
         let has_client = files.iter().any(|f| f.file_path.starts_with("BepInEx/"));
         result.push((m.forge_mod_id, m.name.clone(), has_client));
