@@ -633,22 +633,9 @@ pub async fn save_groups(
         tracing::warn!(err = %e, "failed to refresh in-memory config after save");
     }
 
-    // Clone modsync config for layout enforcement
-    let ms_config_for_layout = config.modsync.clone();
     drop(_guard);
 
-    // Move mod files to match new group layout
-    if let Some(ms_config) = ms_config_for_layout {
-        let db_move = state.db.clone();
-        let spt_dir_move = state.spt_dir.clone();
-        let _ = web::block(move || {
-            let db = db_move.lock();
-            crate::modsync::ensure_all_mod_layouts(&spt_dir_move, &ms_config, &db)
-        })
-        .await;
-    }
-
-    // Regenerate NarcoNet config.yaml
+    // regenerate_modsync handles both layout enforcement and config.yaml generation
     state.regenerate_modsync().await;
 
     set_flash(&session, "NarcoNet groups saved", FlashType::Success);

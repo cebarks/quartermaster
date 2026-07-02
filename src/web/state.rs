@@ -94,7 +94,7 @@ impl AppState {
         let db = self.db.clone();
         let spt_dir = self.spt_dir.clone();
         let config = self.config_cloned();
-        let _ = actix_web::web::block(move || {
+        let result = actix_web::web::block(move || {
             let db = db.lock();
             if let Some(ref ms) = config.modsync {
                 crate::modsync::ensure_all_mod_layouts(&spt_dir, ms, &db)
@@ -103,6 +103,18 @@ impl AppState {
             }
         })
         .await;
+        match result {
+            Ok(Ok(count)) if count > 0 => {
+                tracing::info!(count, "reconciled mod file layouts for NarcoNet groups");
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(err = %e, "failed to ensure mod file layouts");
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, "mod layout task failed");
+            }
+            _ => {}
+        }
     }
 
     pub async fn regenerate_modsync(&self) {
