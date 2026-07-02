@@ -614,6 +614,9 @@ pub async fn save_groups(
         }
     }
 
+    // "default" is reserved — strip it even if validation was somehow bypassed
+    new_groups.remove("default");
+
     // Load-then-mutate: only replace the groups field
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
@@ -801,12 +804,13 @@ async fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
     let has_headless_groups = ms_config.groups.values().any(|g| g.exclude_headless);
     let ms_config_clone = ms_config.clone();
     let db = state.db.clone();
+    let spt_dir = state.spt_dir.clone();
 
     let (player, headless) = web::block(move || {
         let db = db.lock();
-        let player = crate::modsync::preview_config(&ms_config_clone, &db, false)?;
+        let player = crate::modsync::preview_config(&ms_config_clone, &db, false, Some(&spt_dir))?;
         let headless = if has_headless_groups {
-            crate::modsync::preview_config(&ms_config_clone, &db, true)?
+            crate::modsync::preview_config(&ms_config_clone, &db, true, Some(&spt_dir))?
         } else {
             String::new()
         };
@@ -847,12 +851,13 @@ pub async fn preview_partial(
     let has_headless_groups = ms_config.groups.values().any(|g| g.exclude_headless);
     let ms_config_clone = ms_config.clone();
     let db = state.db.clone();
+    let spt_dir = state.spt_dir.clone();
 
     let (player_yaml, headless_yaml) = web::block(move || {
         let db = db.lock();
-        let player = crate::modsync::preview_config(&ms_config_clone, &db, false)?;
+        let player = crate::modsync::preview_config(&ms_config_clone, &db, false, Some(&spt_dir))?;
         let headless = if has_headless_groups {
-            crate::modsync::preview_config(&ms_config_clone, &db, true)?
+            crate::modsync::preview_config(&ms_config_clone, &db, true, Some(&spt_dir))?
         } else {
             String::new()
         };

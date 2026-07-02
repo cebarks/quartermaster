@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -49,13 +50,15 @@ fn sanitize_name_for_bepinex(name: &str) -> String {
 
 /// Generate ModSync config from DB state + quartermaster config.
 ///
-/// Emits group-based syncPaths rather than per-mod ones. Only `BepInEx/plugins/`
-/// files are synced — patchers and other BepInEx subdirectories are excluded.
-/// Disabled mods are also excluded.
+/// Emits group-based syncPaths for `BepInEx/plugins/` files. For non-plugin
+/// BepInEx files (patchers, configs, etc.), emits directory-level sync paths
+/// when QM tracks every file in that directory, otherwise individual file paths.
+/// Disabled mods are excluded.
 fn generate_config(
     ms_config: &ModSyncConfig,
     db: &Database,
     for_headless: bool,
+    spt_dir: Option<&Path>,
 ) -> Result<ModSyncOutputConfig> {
     let mods = db.list_mods()?;
 
@@ -66,10 +69,11 @@ fn generate_config(
         .flat_map(|(key, group)| group.members.iter().map(move |&id| (id, key.as_str())))
         .collect();
 
-    // Track which groups have plugin files and whether any ungrouped mods have plugins
+    // Single pass: track plugin groups and collect non-plugin BepInEx files
     let mut has_ungrouped_plugins = false;
     let mut groups_with_plugins: std::collections::BTreeSet<&str> =
         std::collections::BTreeSet::new();
+    let mut non_plugin_files: BTreeSet<String> = BTreeSet::new();
 
     for m in &mods {
         if m.disabled {
@@ -77,22 +81,27 @@ fn generate_config(
         }
 
         let files = db.get_files_for_mod(m.id)?;
+
         let has_plugin_files = files
             .iter()
             .any(|f| f.file_path.starts_with("BepInEx/plugins/"));
 
-        if !has_plugin_files {
-            continue;
+        if has_plugin_files {
+            if let Some(&group_slug) = group_for_mod.get(&m.forge_mod_id) {
+                if group_slug == CATCH_ALL_GROUP_SLUG {
+                    has_ungrouped_plugins = true;
+                } else {
+                    groups_with_plugins.insert(group_slug);
+                }
+            } else {
+                has_ungrouped_plugins = true;
+            }
         }
 
-        if let Some(&group_slug) = group_for_mod.get(&m.forge_mod_id) {
-            if group_slug == CATCH_ALL_GROUP_SLUG {
-                has_ungrouped_plugins = true;
-            } else {
-                groups_with_plugins.insert(group_slug);
+        for f in &files {
+            if f.file_path.starts_with("BepInEx/") && !f.file_path.starts_with("BepInEx/plugins/") {
+                non_plugin_files.insert(f.file_path.clone());
             }
-        } else {
-            has_ungrouped_plugins = true;
         }
     }
 
@@ -101,33 +110,15 @@ fn generate_config(
 
     // Emit parent plugins syncPath if there are ungrouped mods OR if groups
     // need a parent path for NarcoNet's specificity/exclusion system.
-    // If a catch-all "default" group exists, use its flags instead of globals.
+    // Always uses global settings — the "default" group is virtual/automatic.
     if has_ungrouped_plugins || has_groups {
-        let catch_all = ms_config.groups.get(CATCH_ALL_GROUP_SLUG);
-        let mut enabled = catch_all.and_then(|g| g.enabled).unwrap_or(true);
-        let enforced = catch_all
-            .and_then(|g| g.enforced)
-            .unwrap_or(ms_config.enforced);
-        let silent = catch_all.and_then(|g| g.silent).unwrap_or(ms_config.silent);
-        let restart_required = catch_all
-            .and_then(|g| g.restart_required)
-            .unwrap_or(ms_config.restart_required);
-
-        if for_headless && catch_all.is_some_and(|g| g.exclude_headless) {
-            enabled = false;
-        }
-
-        let name = catch_all
-            .map(|g| sanitize_name_for_bepinex(&g.display_name))
-            .unwrap_or_else(|| "BepInEx/plugins".to_string());
-
         sync_paths.push(SyncPathEntry {
             path: "../BepInEx/plugins".to_string(),
-            name,
-            enabled,
-            enforced,
-            silent,
-            restart_required,
+            name: "BepInEx/plugins".to_string(),
+            enabled: true,
+            enforced: ms_config.enforced,
+            silent: ms_config.silent,
+            restart_required: ms_config.restart_required,
         });
     }
 
@@ -155,6 +146,65 @@ fn generate_config(
             silent,
             restart_required,
         });
+    }
+
+    // Non-plugin BepInEx files (patchers, configs, etc.)
+    let extra_set: BTreeSet<&str> = ms_config
+        .extra_sync_paths
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+
+    if !non_plugin_files.is_empty() {
+        // Group files by their top-level BepInEx subdirectory (e.g. "BepInEx/patchers")
+        let mut by_subdir: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+        for file_path in &non_plugin_files {
+            let subdir = file_path
+                .splitn(3, '/')
+                .take(2)
+                .collect::<Vec<_>>()
+                .join("/");
+            by_subdir
+                .entry(subdir)
+                .or_default()
+                .push(file_path.as_str());
+        }
+
+        for (subdir, tracked_files) in &by_subdir {
+            if extra_set.contains(subdir.as_str()) {
+                continue;
+            }
+
+            // Check if QM owns every file in this directory on disk
+            let use_directory = spt_dir
+                .map(|dir| all_files_tracked(dir, subdir, &non_plugin_files))
+                .unwrap_or(false);
+
+            if use_directory {
+                sync_paths.push(SyncPathEntry {
+                    path: prepend_parent_if_needed(subdir),
+                    name: subdir.clone(),
+                    enabled: true,
+                    enforced: ms_config.enforced,
+                    silent: ms_config.silent,
+                    restart_required: ms_config.restart_required,
+                });
+            } else {
+                for &file_path in tracked_files {
+                    if extra_set.contains(file_path) {
+                        continue;
+                    }
+                    sync_paths.push(SyncPathEntry {
+                        path: prepend_parent_if_needed(file_path),
+                        name: file_path.to_string(),
+                        enabled: true,
+                        enforced: ms_config.enforced,
+                        silent: ms_config.silent,
+                        restart_required: ms_config.restart_required,
+                    });
+                }
+            }
+        }
     }
 
     // Extra sync paths
@@ -243,7 +293,7 @@ pub fn ensure_mod_layout(
 
     let files = db.get_files_for_mod(mod_db_id)?;
 
-    // Only process BepInEx/plugins/ files (patchers and others are not synced)
+    // Only move BepInEx/plugins/ files for group layout (non-plugin files are synced directly)
     let plugin_files: Vec<&str> = files
         .iter()
         .filter(|f| f.file_path.starts_with("BepInEx/plugins/"))
@@ -428,6 +478,41 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Check if every file on disk under `spt_dir/subdir` is in `tracked_files`.
+fn all_files_tracked(spt_dir: &Path, subdir: &str, tracked_files: &BTreeSet<String>) -> bool {
+    let dir = spt_dir.join(subdir);
+    if !dir.is_dir() {
+        return false;
+    }
+    collect_files_recursive(&dir).into_iter().all(|disk_path| {
+        disk_path
+            .strip_prefix(spt_dir)
+            .ok()
+            .and_then(|rel| rel.to_str())
+            .is_some_and(|rel| tracked_files.contains(rel))
+    })
+}
+
+fn collect_files_recursive(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return files,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_symlink() {
+            continue;
+        }
+        if path.is_dir() {
+            files.extend(collect_files_recursive(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
+}
+
 fn is_dir_empty(path: &Path) -> bool {
     path.read_dir()
         .map(|mut d| d.next().is_none())
@@ -461,7 +546,7 @@ pub fn regenerate_if_enabled(spt_dir: &Path, config: &Config, db: &Database) -> 
         }
     };
 
-    let output = generate_config(ms_config, db, false)?;
+    let output = generate_config(ms_config, db, false, Some(spt_dir))?;
     write_config(&config_path, &output)?;
 
     Ok(true)
@@ -472,8 +557,9 @@ pub fn preview_config(
     ms_config: &ModSyncConfig,
     db: &Database,
     for_headless: bool,
+    spt_dir: Option<&Path>,
 ) -> Result<String> {
-    let output = generate_config(ms_config, db, for_headless)?;
+    let output = generate_config(ms_config, db, for_headless, spt_dir)?;
     let yaml = serde_saphyr::to_string(&output).context("failed to serialize preview config")?;
     Ok(format!(
         "# Generated by quartermaster — manual edits will be overwritten\n{yaml}"
@@ -573,7 +659,7 @@ mod tests {
         setup_db_with_client_mod(&db);
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
         assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
@@ -591,7 +677,7 @@ mod tests {
         setup_db_with_server_mod(&db);
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert!(output.sync_paths.is_empty());
     }
@@ -602,7 +688,7 @@ mod tests {
         setup_db_with_hybrid_mod(&db);
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
         assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
@@ -628,7 +714,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Parent + group syncpath
         assert_eq!(output.sync_paths.len(), 2);
@@ -662,7 +748,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Parent + group syncpath
         assert_eq!(output.sync_paths.len(), 2);
@@ -681,7 +767,7 @@ mod tests {
         let mut ms_config = ModSyncConfig::default();
         ms_config.extra_sync_paths = vec!["BepInEx/config".to_string()];
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
         assert_eq!(output.sync_paths[0].path, "../BepInEx/config");
@@ -696,7 +782,7 @@ mod tests {
         let mut ms_config = ModSyncConfig::default();
         ms_config.exclusions = vec!["**/*.nosync".to_string(), "BepInEx/plugins/spt".to_string()];
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(
             output.exclusions,
@@ -720,7 +806,7 @@ mod tests {
             .unwrap();
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Both ungrouped → single category-level syncPath
         assert_eq!(output.sync_paths.len(), 1);
@@ -739,7 +825,7 @@ mod tests {
             restart_required: false,
             ..ModSyncConfig::default()
         };
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Ungrouped mod → parent syncpath gets global defaults
         assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
@@ -763,10 +849,14 @@ mod tests {
         .unwrap();
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
-        // Patchers are not synced — only plugins
-        assert!(output.sync_paths.is_empty());
+        // Patcher files synced as individual files (no spt_dir → can't check ownership)
+        assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(
+            output.sync_paths[0].path,
+            "../BepInEx/patchers/PatcherMod.dll"
+        );
     }
 
     #[test]
@@ -794,7 +884,7 @@ mod tests {
         setup_db_with_client_mod(&db);
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Both NarcoNet and SAIN contribute to the ungrouped plugins path
         assert_eq!(output.sync_paths.len(), 1);
@@ -823,7 +913,7 @@ mod tests {
         .unwrap();
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // NarcoNet alone should produce a sync path
         assert_eq!(output.sync_paths.len(), 1);
@@ -1084,7 +1174,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
         // Parent + group syncpath
         assert_eq!(output.sync_paths.len(), 2);
         let group_path = output
@@ -1120,7 +1210,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
         // Parent + group syncpath
         assert_eq!(output.sync_paths.len(), 2);
         let group_path = output
@@ -1154,7 +1244,7 @@ mod tests {
         );
 
         // Player config: group syncpath is enabled
-        let player = generate_config(&ms_config, &db, false).unwrap();
+        let player = generate_config(&ms_config, &db, false, None).unwrap();
         let player_group = player
             .sync_paths
             .iter()
@@ -1163,7 +1253,7 @@ mod tests {
         assert!(player_group.enabled);
 
         // Headless config: group syncpath is disabled
-        let headless = generate_config(&ms_config, &db, true).unwrap();
+        let headless = generate_config(&ms_config, &db, true, None).unwrap();
         let headless_group = headless
             .sync_paths
             .iter()
@@ -1191,7 +1281,7 @@ mod tests {
             },
         );
 
-        let player = generate_config(&ms_config, &db, false).unwrap();
+        let player = generate_config(&ms_config, &db, false, None).unwrap();
         let group_path = player
             .sync_paths
             .iter()
@@ -1218,7 +1308,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
         assert!(output.sync_paths.is_empty());
     }
 
@@ -1229,8 +1319,8 @@ mod tests {
         let mut ms_config = ModSyncConfig::default();
         ms_config.extra_sync_paths = vec!["BepInEx/config".to_string()];
 
-        let player = generate_config(&ms_config, &db, false).unwrap();
-        let headless = generate_config(&ms_config, &db, true).unwrap();
+        let player = generate_config(&ms_config, &db, false, None).unwrap();
+        let headless = generate_config(&ms_config, &db, true, None).unwrap();
 
         assert_eq!(player.sync_paths.len(), 1);
         assert!(player.sync_paths[0].enabled);
@@ -1257,7 +1347,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
         // SAIN is ungrouped, empty group has no plugin-bearing members
         // → only the parent syncpath, no group syncpaths
         assert_eq!(output.sync_paths.len(), 1);
@@ -1300,7 +1390,7 @@ mod tests {
         .unwrap();
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Both ungrouped → single category-level syncPath
         assert_eq!(output.sync_paths.len(), 1);
@@ -1359,7 +1449,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Parent + 2 group syncpaths
         assert_eq!(output.sync_paths.len(), 3);
@@ -1422,7 +1512,7 @@ mod tests {
         setup_db_with_client_mod(&db); // SAIN in BepInEx/plugins/
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
         assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
@@ -1450,7 +1540,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Should have group syncpath only (no ungrouped mods)
         let group_path = output
@@ -1509,7 +1599,7 @@ mod tests {
             },
         );
 
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
         assert!(paths.contains(&"../BepInEx/plugins")); // default for SAIN
@@ -1523,13 +1613,13 @@ mod tests {
         setup_db_with_server_mod(&db);
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert!(output.sync_paths.is_empty());
     }
 
     #[test]
-    fn generate_config_patcher_only_mod_excluded() {
+    fn generate_config_patcher_only_mod_synced_as_files() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
             .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
@@ -1543,10 +1633,14 @@ mod tests {
         .unwrap();
 
         let ms_config = ModSyncConfig::default();
-        let output = generate_config(&ms_config, &db, false).unwrap();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
 
-        // Patchers are not synced — only plugins
-        assert!(output.sync_paths.is_empty());
+        // Without spt_dir, patcher files are synced individually
+        assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(
+            output.sync_paths[0].path,
+            "../BepInEx/patchers/PatcherMod/patch.dll"
+        );
     }
 
     #[test]
@@ -1699,5 +1793,236 @@ mod tests {
 
         let moved = ensure_mod_layout(spt_dir, &ms_config, &db, mod_id).unwrap();
         assert!(!moved); // disabled mods are skipped
+    }
+
+    // ─── Non-plugin BepInEx file sync tests ────────────────────────────────
+
+    #[test]
+    fn generate_config_patcher_files_synced_individually_without_spt_dir() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/PatcherMod/patch.dll",
+            Some("ppp"),
+            Some(512),
+        )
+        .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/PatcherMod/helper.dll",
+            Some("hhh"),
+            Some(256),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
+
+        assert_eq!(output.sync_paths.len(), 2);
+        let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
+        assert!(paths.contains(&"../BepInEx/patchers/PatcherMod/helper.dll"));
+        assert!(paths.contains(&"../BepInEx/patchers/PatcherMod/patch.dll"));
+    }
+
+    #[test]
+    fn generate_config_patcher_dir_synced_when_all_files_tracked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+
+        // Create patcher files on disk — all tracked by QM
+        let patchers_dir = spt_dir.join("BepInEx/patchers");
+        std::fs::create_dir_all(&patchers_dir).unwrap();
+        std::fs::write(patchers_dir.join("PatcherMod.dll"), b"data").unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/PatcherMod.dll",
+            Some("ppp"),
+            Some(4),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, Some(spt_dir)).unwrap();
+
+        // All files in patchers/ are tracked → directory-level sync
+        assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(output.sync_paths[0].path, "../BepInEx/patchers");
+        assert_eq!(output.sync_paths[0].name, "BepInEx/patchers");
+    }
+
+    #[test]
+    fn generate_config_patcher_dir_falls_back_to_files_when_untracked_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+
+        // Create patcher files on disk — one tracked, one not
+        let patchers_dir = spt_dir.join("BepInEx/patchers");
+        std::fs::create_dir_all(&patchers_dir).unwrap();
+        std::fs::write(patchers_dir.join("PatcherMod.dll"), b"data").unwrap();
+        std::fs::write(patchers_dir.join("OtherPatcher.dll"), b"other").unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/PatcherMod.dll",
+            Some("ppp"),
+            Some(4),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, Some(spt_dir)).unwrap();
+
+        // Untracked file on disk → individual file sync
+        assert_eq!(output.sync_paths.len(), 1);
+        assert_eq!(
+            output.sync_paths[0].path,
+            "../BepInEx/patchers/PatcherMod.dll"
+        );
+    }
+
+    #[test]
+    fn generate_config_mixed_plugins_and_patchers() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "FullMod", Some("full-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/FullMod/FullMod.dll",
+            Some("aaa"),
+            Some(1024),
+        )
+        .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/FullMod/patcher.dll",
+            Some("bbb"),
+            Some(512),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
+
+        let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
+        assert!(paths.contains(&"../BepInEx/plugins"));
+        assert!(paths.contains(&"../BepInEx/patchers/FullMod/patcher.dll"));
+        assert_eq!(output.sync_paths.len(), 2);
+    }
+
+    #[test]
+    fn generate_config_non_plugin_skips_extra_sync_paths() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "ConfigMod", Some("config-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/config/ConfigMod.cfg",
+            Some("ccc"),
+            Some(128),
+        )
+        .unwrap();
+
+        let mut ms_config = ModSyncConfig::default();
+        ms_config.extra_sync_paths = vec!["BepInEx/config".to_string()];
+
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
+
+        // BepInEx/config is already in extra_sync_paths → no duplicate
+        let config_paths: Vec<&str> = output
+            .sync_paths
+            .iter()
+            .filter(|p| p.path.contains("config"))
+            .map(|p| p.path.as_str())
+            .collect();
+        assert_eq!(config_paths.len(), 1);
+        assert_eq!(config_paths[0], "../BepInEx/config");
+    }
+
+    #[test]
+    fn generate_config_non_plugin_uses_global_defaults() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/PatcherMod.dll",
+            Some("ppp"),
+            Some(512),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig {
+            enforced: false,
+            silent: true,
+            restart_required: false,
+            ..ModSyncConfig::default()
+        };
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
+
+        assert_eq!(output.sync_paths.len(), 1);
+        assert!(!output.sync_paths[0].enforced);
+        assert!(output.sync_paths[0].silent);
+        assert!(!output.sync_paths[0].restart_required);
+    }
+
+    #[test]
+    fn generate_config_disabled_mod_non_plugin_files_excluded() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/PatcherMod.dll",
+            Some("ppp"),
+            Some(512),
+        )
+        .unwrap();
+        db.set_mod_disabled(mod_id, true).unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
+
+        assert!(output.sync_paths.is_empty());
+    }
+
+    #[test]
+    fn generate_config_multiple_non_plugin_subdirs() {
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(500, 600, "BigMod", Some("big-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/patchers/BigMod.dll",
+            Some("aaa"),
+            Some(512),
+        )
+        .unwrap();
+        db.insert_file(mod_id, "BepInEx/config/BigMod.cfg", Some("bbb"), Some(128))
+            .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
+
+        let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
+        assert!(paths.contains(&"../BepInEx/config/BigMod.cfg"));
+        assert!(paths.contains(&"../BepInEx/patchers/BigMod.dll"));
+        assert_eq!(output.sync_paths.len(), 2);
     }
 }
