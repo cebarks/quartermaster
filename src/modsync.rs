@@ -86,7 +86,11 @@ fn generate_config(
         }
 
         if let Some(&group_slug) = group_for_mod.get(&m.forge_mod_id) {
-            groups_with_plugins.insert(group_slug);
+            if group_slug == CATCH_ALL_GROUP_SLUG {
+                has_ungrouped_plugins = true;
+            } else {
+                groups_with_plugins.insert(group_slug);
+            }
         } else {
             has_ungrouped_plugins = true;
         }
@@ -96,15 +100,34 @@ fn generate_config(
     let has_groups = !groups_with_plugins.is_empty();
 
     // Emit parent plugins syncPath if there are ungrouped mods OR if groups
-    // need a parent path for NarcoNet's specificity/exclusion system
+    // need a parent path for NarcoNet's specificity/exclusion system.
+    // If a catch-all "default" group exists, use its flags instead of globals.
     if has_ungrouped_plugins || has_groups {
+        let catch_all = ms_config.groups.get(CATCH_ALL_GROUP_SLUG);
+        let mut enabled = catch_all.and_then(|g| g.enabled).unwrap_or(true);
+        let enforced = catch_all
+            .and_then(|g| g.enforced)
+            .unwrap_or(ms_config.enforced);
+        let silent = catch_all.and_then(|g| g.silent).unwrap_or(ms_config.silent);
+        let restart_required = catch_all
+            .and_then(|g| g.restart_required)
+            .unwrap_or(ms_config.restart_required);
+
+        if for_headless && catch_all.is_some_and(|g| g.exclude_headless) {
+            enabled = false;
+        }
+
+        let name = catch_all
+            .map(|g| sanitize_name_for_bepinex(&g.display_name))
+            .unwrap_or_else(|| "BepInEx/plugins".to_string());
+
         sync_paths.push(SyncPathEntry {
             path: "../BepInEx/plugins".to_string(),
-            name: "BepInEx/plugins".to_string(),
-            enabled: true,
-            enforced: ms_config.enforced,
-            silent: ms_config.silent,
-            restart_required: ms_config.restart_required,
+            name,
+            enabled,
+            enforced,
+            silent,
+            restart_required,
         });
     }
 
@@ -185,6 +208,11 @@ fn write_config(config_path: &Path, output: &ModSyncOutputConfig) -> Result<()> 
 /// The `quma-` prefix used for group directories on disk.
 const GROUP_DIR_PREFIX: &str = "quma-";
 
+/// A group with this slug is the catch-all: it auto-includes all mods not in
+/// another group. Its mods stay in the standard `BepInEx/plugins/` location
+/// (no `quma-default/` move), and its flags apply to the parent syncPath.
+const CATCH_ALL_GROUP_SLUG: &str = "default";
+
 /// Ensure a mod's BepInEx files are in the correct directory based on group
 /// membership. Moves files and updates DB paths if needed. Returns true if
 /// any files were moved.
@@ -202,11 +230,15 @@ pub fn ensure_mod_layout(
         return Ok(false);
     }
 
-    // Find which group this mod belongs to (if any)
+    // Find which group this mod belongs to (if any).
+    // The catch-all "default" group is treated as ungrouped — its mods stay
+    // in the standard BepInEx/plugins/ location.
     let group_slug: Option<&str> = ms_config
         .groups
         .iter()
-        .find(|(_, g)| g.members.contains(&mod_info.forge_mod_id))
+        .find(|(slug, g)| {
+            slug.as_str() != CATCH_ALL_GROUP_SLUG && g.members.contains(&mod_info.forge_mod_id)
+        })
         .map(|(slug, _)| slug.as_str());
 
     let files = db.get_files_for_mod(mod_db_id)?;
