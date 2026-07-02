@@ -37,7 +37,48 @@ fn detect_format(archive_path: &Path) -> Result<ArchiveFormat> {
 }
 
 fn normalize_archive_path(path: &str) -> String {
-    path.replace('\\', "/")
+    let slash_fixed = path.replace('\\', "/");
+    normalize_known_prefixes(&slash_fixed)
+}
+
+/// Rewrite known directory prefixes to their canonical casing.
+///
+/// Mod archives from Windows authors sometimes use inconsistent casing
+/// (e.g. `bepinex/Plugins/`, `BEPINEX/PLUGINS/`). On Linux this creates
+/// wrong directories, so we normalize to the canonical SPT layout.
+fn normalize_known_prefixes(path: &str) -> String {
+    const CANONICAL_PREFIXES: &[(&[&str], &str)] = &[
+        (&["BepInEx", "plugins"], "BepInEx/plugins/"),
+        (&["SPT", "user", "mods"], "SPT/user/mods/"),
+    ];
+
+    let parts: Vec<&str> = path.splitn(2, '/').collect();
+    if parts.len() < 2 {
+        return path.to_string();
+    }
+
+    for &(segments, canonical) in CANONICAL_PREFIXES {
+        if let Some(remainder) = match_prefix_case_insensitive(path, segments) {
+            return format!("{canonical}{remainder}");
+        }
+    }
+
+    path.to_string()
+}
+
+/// Check if `path` starts with the given segments (case-insensitive).
+/// Returns the remainder after the matched prefix, or `None`.
+fn match_prefix_case_insensitive<'a>(path: &'a str, segments: &[&str]) -> Option<&'a str> {
+    let mut remaining = path;
+    for &segment in segments {
+        let slash_pos = remaining.find('/')?;
+        let component = &remaining[..slash_pos];
+        if !component.eq_ignore_ascii_case(segment) {
+            return None;
+        }
+        remaining = &remaining[slash_pos + 1..];
+    }
+    Some(remaining)
 }
 
 /// List all entry names in an archive (ZIP or 7z).
@@ -1306,5 +1347,92 @@ mod tests {
 
         let prefix = detect_strip_prefix(tmp.path()).unwrap();
         assert_eq!(prefix, "SAIN/");
+    }
+
+    #[test]
+    fn normalize_bepinex_case_variations() {
+        assert_eq!(
+            normalize_archive_path("bepinex/plugins/Foo.dll"),
+            "BepInEx/plugins/Foo.dll"
+        );
+        assert_eq!(
+            normalize_archive_path("BEPINEX/PLUGINS/Foo.dll"),
+            "BepInEx/plugins/Foo.dll"
+        );
+        assert_eq!(
+            normalize_archive_path("BepInEx/Plugins/Mod/file.dll"),
+            "BepInEx/plugins/Mod/file.dll"
+        );
+        // Already canonical — unchanged
+        assert_eq!(
+            normalize_archive_path("BepInEx/plugins/Mod/file.dll"),
+            "BepInEx/plugins/Mod/file.dll"
+        );
+    }
+
+    #[test]
+    fn normalize_spt_case_variations() {
+        assert_eq!(
+            normalize_archive_path("spt/User/Mods/TestMod/package.json"),
+            "SPT/user/mods/TestMod/package.json"
+        );
+        assert_eq!(
+            normalize_archive_path("SPT/USER/MODS/TestMod/package.json"),
+            "SPT/user/mods/TestMod/package.json"
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_non_prefix_paths() {
+        assert_eq!(
+            normalize_archive_path("SomeOther/path/file.txt"),
+            "SomeOther/path/file.txt"
+        );
+        assert_eq!(normalize_archive_path("readme.txt"), "readme.txt");
+    }
+
+    #[test]
+    fn normalize_handles_backslash_and_case() {
+        assert_eq!(
+            normalize_archive_path("bepinex\\Plugins\\Mod\\file.dll"),
+            "BepInEx/plugins/Mod/file.dll"
+        );
+    }
+
+    #[test]
+    fn detect_client_mod_wrong_case() {
+        let zip = create_test_zip(&[
+            ("bepinex/Plugins/TestPlugin.dll", b"\x00\x01"),
+            ("bepinex/Plugins/TestPlugin/config.json", b"{}"),
+        ]);
+        let result = detect_mod_type(zip.path()).unwrap();
+        assert_eq!(result, ModType::Client);
+    }
+
+    #[test]
+    fn extract_client_mod_wrong_case() {
+        let zip = create_test_zip(&[("bepinex/Plugins/TestPlugin/TestPlugin.dll", b"\x00\x01")]);
+        let tmp_dir = TempDir::new().unwrap();
+        let files = extract_mod(zip.path(), tmp_dir.path()).unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].path, "BepInEx/plugins/TestPlugin/TestPlugin.dll",
+            "path should be normalized to canonical casing"
+        );
+        assert!(
+            tmp_dir
+                .path()
+                .join("BepInEx/plugins/TestPlugin/TestPlugin.dll")
+                .exists(),
+            "file should exist at canonical path"
+        );
+    }
+
+    #[test]
+    fn strip_prefix_with_wrong_case_bepinex() {
+        let zip = create_test_zip(&[("bepinex/plugins/TestPlugin.dll", b"\x00\x01")]);
+        let prefix = detect_strip_prefix(zip.path()).unwrap();
+        assert_eq!(prefix, "", "BepInEx/ (any case) should not be stripped");
     }
 }
