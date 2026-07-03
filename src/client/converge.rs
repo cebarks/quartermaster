@@ -1256,6 +1256,8 @@ async fn create_client_container(
         healthcheck: None,
         devices,
         security_opt,
+        cpuset_cpus: None,
+        cpuset_mems: None,
     };
 
     let container_id = container_mgr.create_container(opts).await?;

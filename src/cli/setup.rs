@@ -363,6 +363,8 @@ fn create_container_opts(data_dir: &Path, container_name: &str) -> CreateContain
         }),
         devices: vec![],
         security_opt: vec![],
+        cpuset_cpus: None,
+        cpuset_mems: None,
     }
 }
 
