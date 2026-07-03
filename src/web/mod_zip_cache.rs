@@ -245,4 +245,57 @@ mod tests {
         assert!(path.is_some());
         assert!(path.unwrap().exists());
     }
+
+    #[test]
+    fn rebuild_replaces_cache_with_updated_content() {
+        let spt_dir = tempfile::tempdir().unwrap();
+        make_test_file(spt_dir.path(), "user/mods/a/package.json", b"{\"a\":true}");
+
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(1, 1, "mod-a", Some("mod-a"), "1.0.0")
+            .unwrap();
+        db.insert_file(1, "user/mods/a/package.json", Some("h1"), Some(10))
+            .unwrap();
+
+        let db_arc = Arc::new(Mutex::new(db));
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc.clone());
+        cache.rebuild_sync();
+
+        let path = cache.get().unwrap();
+        let size_before = std::fs::metadata(&path).unwrap().len();
+
+        // Add a second mod file
+        make_test_file(spt_dir.path(), "user/mods/b/package.json", b"{\"b\":true}");
+        {
+            let db = db_arc.lock();
+            db.insert_mod(2, 2, "mod-b", Some("mod-b"), "1.0.0")
+                .unwrap();
+            db.insert_file(2, "user/mods/b/package.json", Some("h2"), Some(10))
+                .unwrap();
+        }
+
+        // Rebuild and verify the zip grew
+        cache.rebuild_sync();
+        let size_after = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            size_after > size_before,
+            "zip should be larger after adding a mod"
+        );
+    }
+
+    #[test]
+    fn empty_mods_removes_cache_file() {
+        let spt_dir = tempfile::tempdir().unwrap();
+        let db = Database::open_in_memory().unwrap();
+        let db_arc = Arc::new(Mutex::new(db));
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc);
+
+        // Create a dummy cache file
+        std::fs::write(&cache.inner.cache_path, b"dummy").unwrap();
+        assert!(cache.get().is_some());
+
+        // Rebuild with empty DB should remove it
+        cache.rebuild_sync();
+        assert!(cache.get().is_none());
+    }
 }
