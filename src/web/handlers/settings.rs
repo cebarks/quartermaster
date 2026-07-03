@@ -466,6 +466,7 @@ pub async fn save_headless_settings(
         image: form.image.trim().to_string(),
         isolated_paths: isolated,
         clients: Vec::new(), // clients managed via create/delete, not settings
+        ..HeadlessConfig::default()  // New fields use defaults until form is updated
     };
 
     let _guard = state.config_lock.lock();
