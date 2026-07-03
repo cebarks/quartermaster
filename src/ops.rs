@@ -35,6 +35,42 @@ fn record_extracted_addon_files(
     Ok(())
 }
 
+/// Move extracted files from a staging directory to the live SPT directory.
+///
+/// For each file, attempts `rename` first (fast, same-filesystem move), falling
+/// back to `copy` if the staging dir is on a different mount.
+fn move_staged_files(staging_dir: &Path, spt_dir: &Path, files: &[ExtractedFile]) -> Result<()> {
+    for file in files {
+        let src = staging_dir.join(&file.path);
+        let dst = spt_dir.join(&file.path);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
+    }
+    Ok(())
+}
+
+/// Compute which files from `old_paths` are not present in `new_files`, delete
+/// them from `spt_dir`, and log the count.
+fn remove_stale_files(
+    spt_dir: &Path,
+    old_paths: Vec<String>,
+    new_files: &[ExtractedFile],
+) -> Result<()> {
+    let new_paths: std::collections::HashSet<&str> =
+        new_files.iter().map(|f| f.path.as_str()).collect();
+    let stale_paths: Vec<String> = old_paths
+        .into_iter()
+        .filter(|p| !new_paths.contains(p.as_str()))
+        .collect();
+    if !stale_paths.is_empty() {
+        tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
+        crate::spt::mods::delete_mod_files(spt_dir, &stale_paths)?;
+    }
+    Ok(())
+}
+
 /// Parameters for installing a mod from a downloaded archive.
 pub struct InstallRequest<'a> {
     pub db: &'a Database,
@@ -89,14 +125,7 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     tx.commit()?;
 
     // DB committed — now move files from staging to the live directory.
-    for file in &extracted {
-        let src = staging_dir.path().join(&file.path);
-        let dst = req.spt_dir.join(&file.path);
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-    }
+    move_staged_files(staging_dir.path(), req.spt_dir, &extracted)?;
 
     tracing::debug!(
         db_id,
@@ -143,14 +172,7 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
     tx.commit()?;
 
     // DB committed — now move files from staging to the live directory.
-    for file in &extracted {
-        let src = staging_dir.path().join(&file.path);
-        let dst = req.spt_dir.join(&file.path);
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-    }
+    move_staged_files(staging_dir.path(), req.spt_dir, &extracted)?;
 
     tracing::debug!(
         db_id,
@@ -192,26 +214,8 @@ pub fn update_mod_from_archive(
     // Copy new files first (overwriting any shared with old version), so that
     // if copying fails mid-way the old files that weren't overwritten remain
     // intact. This is strictly safer than delete-all-then-copy-all.
-    for file in &extracted {
-        let src = staging_dir.path().join(&file.path);
-        let dst = spt_dir.join(&file.path);
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-    }
-
-    // Delete old files that are NOT in the new file set (stale files only).
-    let new_paths: std::collections::HashSet<&str> =
-        extracted.iter().map(|f| f.path.as_str()).collect();
-    let stale_paths: Vec<String> = old_paths
-        .into_iter()
-        .filter(|p| !new_paths.contains(p.as_str()))
-        .collect();
-    if !stale_paths.is_empty() {
-        tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
-        crate::spt::mods::delete_mod_files(spt_dir, &stale_paths)?;
-    }
+    move_staged_files(staging_dir.path(), spt_dir, &extracted)?;
+    remove_stale_files(spt_dir, old_paths, &extracted)?;
 
     let tx = db.begin_transaction()?;
     db.delete_files_for_mod(mod_db_id)?;
@@ -272,26 +276,8 @@ pub fn update_addon_from_archive(
     // Copy new files first (overwriting any shared with old version), so that
     // if copying fails mid-way the old files that weren't overwritten remain
     // intact. This is strictly safer than delete-all-then-copy-all.
-    for file in &extracted {
-        let src = staging_dir.path().join(&file.path);
-        let dst = spt_dir.join(&file.path);
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-    }
-
-    // Delete old files that are NOT in the new file set (stale files only).
-    let new_paths: std::collections::HashSet<&str> =
-        extracted.iter().map(|f| f.path.as_str()).collect();
-    let stale_paths: Vec<String> = old_paths
-        .into_iter()
-        .filter(|p| !new_paths.contains(p.as_str()))
-        .collect();
-    if !stale_paths.is_empty() {
-        tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
-        crate::spt::mods::delete_mod_files(spt_dir, &stale_paths)?;
-    }
+    move_staged_files(staging_dir.path(), spt_dir, &extracted)?;
+    remove_stale_files(spt_dir, old_paths, &extracted)?;
 
     let tx = db.begin_transaction()?;
     db.delete_files_for_addon(addon_db_id)?;
@@ -372,26 +358,8 @@ pub async fn apply_mod_update(
     // fails partway, old files that weren't overwritten remain intact.
     let spt_dir_fs = spt_dir.clone();
     let extracted = actix_web::web::block(move || {
-        for file in &extracted {
-            let src = staging_path.join(&file.path);
-            let dst = spt_dir_fs.join(&file.path);
-            if let Some(parent) = dst.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-        }
-
-        let new_paths: std::collections::HashSet<&str> =
-            extracted.iter().map(|f| f.path.as_str()).collect();
-        let stale_paths: Vec<String> = old_paths
-            .into_iter()
-            .filter(|p| !new_paths.contains(p.as_str()))
-            .collect();
-        if !stale_paths.is_empty() {
-            tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
-            crate::spt::mods::delete_mod_files(&spt_dir_fs, &stale_paths)?;
-        }
-
+        move_staged_files(&staging_path, &spt_dir_fs, &extracted)?;
+        remove_stale_files(&spt_dir_fs, old_paths, &extracted)?;
         Ok::<_, anyhow::Error>(extracted)
     })
     .await??;
@@ -503,26 +471,8 @@ pub async fn apply_addon_update(
     // fails partway, old files that weren't overwritten remain intact.
     let spt_dir_fs = spt_dir.clone();
     let extracted = actix_web::web::block(move || {
-        for file in &extracted {
-            let src = staging_path.join(&file.path);
-            let dst = spt_dir_fs.join(&file.path);
-            if let Some(parent) = dst.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
-        }
-
-        let new_paths: std::collections::HashSet<&str> =
-            extracted.iter().map(|f| f.path.as_str()).collect();
-        let stale_paths: Vec<String> = old_paths
-            .into_iter()
-            .filter(|p| !new_paths.contains(p.as_str()))
-            .collect();
-        if !stale_paths.is_empty() {
-            tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
-            crate::spt::mods::delete_mod_files(&spt_dir_fs, &stale_paths)?;
-        }
-
+        move_staged_files(&staging_path, &spt_dir_fs, &extracted)?;
+        remove_stale_files(&spt_dir_fs, old_paths, &extracted)?;
         Ok::<_, anyhow::Error>(extracted)
     })
     .await??;
@@ -599,6 +549,90 @@ pub fn recover_pending_updates(db: &Database, spt_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Count how many files from `new_files` exist on disk under `spt_dir` with
+/// correct SHA256 hashes. Used by recovery to determine update completion state.
+fn count_verified_files(spt_dir: &Path, new_files: &[ExtractedFile]) -> usize {
+    let mut verified = 0usize;
+    for file in new_files {
+        let path = spt_dir.join(&file.path);
+        if path.exists() {
+            match crate::spt::mods::compute_file_hash(&path) {
+                Ok(hash) => {
+                    if hash == file.hash {
+                        verified += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %file.path,
+                        error = %e,
+                        "recovery: file exists but could not be read"
+                    );
+                }
+            }
+        }
+    }
+    verified
+}
+
+/// Remove partially-copied new files that don't overlap with old files.
+/// Used during recovery rollback of interrupted updates.
+fn cleanup_partial_copy(spt_dir: &Path, new_files: &[ExtractedFile], old_paths: &[String]) {
+    let old_set: std::collections::HashSet<&str> = old_paths.iter().map(|p| p.as_str()).collect();
+    for file in new_files {
+        if !old_set.contains(file.path.as_str()) {
+            let path = spt_dir.join(&file.path);
+            if path.exists() {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    tracing::warn!(
+                        path = %file.path,
+                        error = %e,
+                        "failed to clean up partially-copied file during recovery"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Result of assessing disk state during recovery of an interrupted update.
+enum RecoveryOutcome {
+    /// All new files present with correct hashes -- complete the DB update forward.
+    AllNewPresent,
+    /// Some (but not all) new files present -- partial copy needs rollback.
+    PartialCopy { present: usize, total: usize },
+    /// No new files, old files still present -- swap never happened.
+    OldFilesIntact,
+    /// Neither old nor new files found -- ambiguous state.
+    Ambiguous,
+}
+
+/// Assess what state disk is in for a pending update recovery.
+fn assess_recovery_state(
+    spt_dir: &Path,
+    new_files: &[ExtractedFile],
+    old_paths: &[String],
+) -> RecoveryOutcome {
+    let new_files_ok = count_verified_files(spt_dir, new_files);
+    let old_files_exist = old_paths
+        .iter()
+        .filter(|p| spt_dir.join(p).exists())
+        .count();
+
+    if new_files_ok == new_files.len() {
+        RecoveryOutcome::AllNewPresent
+    } else if new_files_ok > 0 && new_files_ok < new_files.len() {
+        RecoveryOutcome::PartialCopy {
+            present: new_files_ok,
+            total: new_files.len(),
+        }
+    } else if old_files_exist > 0 {
+        RecoveryOutcome::OldFilesIntact
+    } else {
+        RecoveryOutcome::Ambiguous
+    }
+}
+
 fn recover_single_update(
     db: &Database,
     spt_dir: &Path,
@@ -610,8 +644,7 @@ fn recover_single_update(
     }
 
     // Check if the mod row still exists
-    let mod_exists = db.get_mod(record.mod_db_id)?.is_some();
-    if !mod_exists {
+    if db.get_mod(record.mod_db_id)?.is_none() {
         tracing::warn!(
             pending_id = record.id,
             mod_db_id = record.mod_db_id,
@@ -621,103 +654,55 @@ fn recover_single_update(
         return Ok(());
     }
 
-    // Parse the JSON file lists
     let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
         .context("failed to parse new_file_paths JSON from pending_updates")?;
     let old_paths: Vec<String> = serde_json::from_str(&record.old_file_paths)
         .context("failed to parse old_file_paths JSON from pending_updates")?;
 
-    // Check how many new files exist on disk with correct hashes
-    let mut new_files_ok = 0usize;
-    for file in &new_files {
-        let path = spt_dir.join(&file.path);
-        if path.exists() {
-            match std::fs::read(&path) {
-                Ok(content) => {
-                    let hash = crate::spt::mods::compute_hash_public(&content);
-                    if hash == file.hash {
-                        new_files_ok += 1;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        path = %file.path,
-                        error = %e,
-                        "recovery: file exists but could not be read"
-                    );
-                }
-            }
+    match assess_recovery_state(spt_dir, &new_files, &old_paths) {
+        RecoveryOutcome::AllNewPresent => {
+            let tx = db.begin_transaction()?;
+            db.delete_files_for_mod(record.mod_db_id)?;
+            record_extracted_files(db, record.mod_db_id, &new_files)?;
+            db.update_mod(record.mod_db_id, record.version_id, &record.version_str)?;
+            db.delete_pending_update(record.id)?;
+            tx.commit()?;
+            tracing::info!(
+                mod_db_id = record.mod_db_id,
+                pending_id = record.id,
+                version = %record.version_str,
+                "recovered interrupted update: completed DB update"
+            );
         }
-    }
-
-    // Check how many old files still exist on disk
-    let old_files_exist = old_paths
-        .iter()
-        .filter(|p| spt_dir.join(p).exists())
-        .count();
-
-    let all_new_present = new_files_ok == new_files.len();
-
-    if all_new_present {
-        // All new files present with correct hashes — complete the DB update
-        let tx = db.begin_transaction()?;
-        db.delete_files_for_mod(record.mod_db_id)?;
-        record_extracted_files(db, record.mod_db_id, &new_files)?;
-        db.update_mod(record.mod_db_id, record.version_id, &record.version_str)?;
-        db.delete_pending_update(record.id)?;
-        tx.commit()?;
-        tracing::info!(
-            mod_db_id = record.mod_db_id,
-            pending_id = record.id,
-            version = %record.version_str,
-            "recovered interrupted update: completed DB update"
-        );
-    } else if new_files_ok > 0 && new_files_ok < new_files.len() {
-        // Partial copy — some new files exist but not all. Clean up the
-        // partially-copied new files (only those that don't overlap with old
-        // paths) and clear the marker.
-        let old_set: std::collections::HashSet<&str> =
-            old_paths.iter().map(|p| p.as_str()).collect();
-        for file in &new_files {
-            if !old_set.contains(file.path.as_str()) {
-                let path = spt_dir.join(&file.path);
-                if path.exists() {
-                    if let Err(e) = std::fs::remove_file(&path) {
-                        tracing::warn!(
-                            path = %file.path,
-                            error = %e,
-                            "failed to clean up partially-copied file during recovery"
-                        );
-                    }
-                }
-            }
+        RecoveryOutcome::PartialCopy { present, total } => {
+            cleanup_partial_copy(spt_dir, &new_files, &old_paths);
+            db.delete_pending_update(record.id)?;
+            tracing::warn!(
+                mod_db_id = record.mod_db_id,
+                pending_id = record.id,
+                new_present = present,
+                new_total = total,
+                "recovered interrupted update: rolled back partial copy. \
+                 Restore from backup if mod files are inconsistent."
+            );
         }
-        db.delete_pending_update(record.id)?;
-        tracing::warn!(
-            mod_db_id = record.mod_db_id,
-            pending_id = record.id,
-            new_present = new_files_ok,
-            new_total = new_files.len(),
-            "recovered interrupted update: rolled back partial copy. \
-             Restore from backup if mod files are inconsistent."
-        );
-    } else if old_files_exist > 0 {
-        // No new files on disk, old files still present — swap never happened
-        db.delete_pending_update(record.id)?;
-        tracing::info!(
-            mod_db_id = record.mod_db_id,
-            pending_id = record.id,
-            "recovered interrupted update: filesystem unchanged, cleared stale marker"
-        );
-    } else {
-        // Neither old nor new files — ambiguous state
-        db.delete_pending_update(record.id)?;
-        tracing::warn!(
-            mod_db_id = record.mod_db_id,
-            pending_id = record.id,
-            "recovered interrupted update: ambiguous state (no old or new files found). \
-             Restore from backup if needed."
-        );
+        RecoveryOutcome::OldFilesIntact => {
+            db.delete_pending_update(record.id)?;
+            tracing::info!(
+                mod_db_id = record.mod_db_id,
+                pending_id = record.id,
+                "recovered interrupted update: filesystem unchanged, cleared stale marker"
+            );
+        }
+        RecoveryOutcome::Ambiguous => {
+            db.delete_pending_update(record.id)?;
+            tracing::warn!(
+                mod_db_id = record.mod_db_id,
+                pending_id = record.id,
+                "recovered interrupted update: ambiguous state (no old or new files found). \
+                 Restore from backup if needed."
+            );
+        }
     }
 
     Ok(())
@@ -728,9 +713,7 @@ fn recover_single_addon_update(
     spt_dir: &Path,
     record: &crate::db::mods::PendingUpdate,
 ) -> Result<()> {
-    // Check if the addon row still exists
-    let addon_exists = db.get_addon(record.mod_db_id)?.is_some();
-    if !addon_exists {
+    if db.get_addon(record.mod_db_id)?.is_none() {
         tracing::warn!(
             pending_id = record.id,
             addon_db_id = record.mod_db_id,
@@ -740,109 +723,61 @@ fn recover_single_addon_update(
         return Ok(());
     }
 
-    // Parse the JSON file lists
     let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
         .context("failed to parse new_file_paths JSON from pending_updates")?;
     let old_paths: Vec<String> = serde_json::from_str(&record.old_file_paths)
         .context("failed to parse old_file_paths JSON from pending_updates")?;
 
-    // Check how many new files exist on disk with correct hashes
-    let mut new_files_ok = 0usize;
-    for file in &new_files {
-        let path = spt_dir.join(&file.path);
-        if path.exists() {
-            match std::fs::read(&path) {
-                Ok(content) => {
-                    let hash = crate::spt::mods::compute_hash_public(&content);
-                    if hash == file.hash {
-                        new_files_ok += 1;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        path = %file.path,
-                        error = %e,
-                        "recovery: file exists but could not be read"
-                    );
-                }
-            }
+    match assess_recovery_state(spt_dir, &new_files, &old_paths) {
+        RecoveryOutcome::AllNewPresent => {
+            let tx = db.begin_transaction()?;
+            db.delete_files_for_addon(record.mod_db_id)?;
+            record_extracted_addon_files(db, record.mod_db_id, &new_files)?;
+            // For addons, we don't have mod_version_constraint in the pending record, so pass None
+            db.update_addon(
+                record.mod_db_id,
+                record.version_id,
+                &record.version_str,
+                None,
+            )?;
+            db.delete_pending_update(record.id)?;
+            tx.commit()?;
+            tracing::info!(
+                addon_db_id = record.mod_db_id,
+                pending_id = record.id,
+                version = %record.version_str,
+                "recovered interrupted addon update: completed DB update"
+            );
         }
-    }
-
-    // Check how many old files still exist on disk
-    let old_files_exist = old_paths
-        .iter()
-        .filter(|p| spt_dir.join(p).exists())
-        .count();
-
-    let all_new_present = new_files_ok == new_files.len();
-
-    if all_new_present {
-        // All new files present with correct hashes — complete the DB update
-        let tx = db.begin_transaction()?;
-        db.delete_files_for_addon(record.mod_db_id)?;
-        record_extracted_addon_files(db, record.mod_db_id, &new_files)?;
-        // For addons, we don't have mod_version_constraint in the pending record, so pass None
-        db.update_addon(
-            record.mod_db_id,
-            record.version_id,
-            &record.version_str,
-            None,
-        )?;
-        db.delete_pending_update(record.id)?;
-        tx.commit()?;
-        tracing::info!(
-            addon_db_id = record.mod_db_id,
-            pending_id = record.id,
-            version = %record.version_str,
-            "recovered interrupted addon update: completed DB update"
-        );
-    } else if new_files_ok > 0 && new_files_ok < new_files.len() {
-        // Partial copy — some new files exist but not all. Clean up the
-        // partially-copied new files (only those that don't overlap with old
-        // paths) and clear the marker.
-        let old_set: std::collections::HashSet<&str> =
-            old_paths.iter().map(|p| p.as_str()).collect();
-        for file in &new_files {
-            if !old_set.contains(file.path.as_str()) {
-                let path = spt_dir.join(&file.path);
-                if path.exists() {
-                    if let Err(e) = std::fs::remove_file(&path) {
-                        tracing::warn!(
-                            path = %file.path,
-                            error = %e,
-                            "failed to clean up partially-copied file during recovery"
-                        );
-                    }
-                }
-            }
+        RecoveryOutcome::PartialCopy { present, total } => {
+            cleanup_partial_copy(spt_dir, &new_files, &old_paths);
+            db.delete_pending_update(record.id)?;
+            tracing::warn!(
+                addon_db_id = record.mod_db_id,
+                pending_id = record.id,
+                new_present = present,
+                new_total = total,
+                "recovered interrupted addon update: rolled back partial copy. \
+                 Restore from backup if addon files are inconsistent."
+            );
         }
-        db.delete_pending_update(record.id)?;
-        tracing::warn!(
-            addon_db_id = record.mod_db_id,
-            pending_id = record.id,
-            new_present = new_files_ok,
-            new_total = new_files.len(),
-            "recovered interrupted addon update: rolled back partial copy. \
-             Restore from backup if addon files are inconsistent."
-        );
-    } else if old_files_exist > 0 {
-        // No new files on disk, old files still present — swap never happened
-        db.delete_pending_update(record.id)?;
-        tracing::info!(
-            addon_db_id = record.mod_db_id,
-            pending_id = record.id,
-            "recovered interrupted addon update: filesystem unchanged, cleared stale marker"
-        );
-    } else {
-        // Neither old nor new files — ambiguous state
-        db.delete_pending_update(record.id)?;
-        tracing::warn!(
-            addon_db_id = record.mod_db_id,
-            pending_id = record.id,
-            "recovered interrupted addon update: ambiguous state (no old or new files found). \
-             Restore from backup if needed."
-        );
+        RecoveryOutcome::OldFilesIntact => {
+            db.delete_pending_update(record.id)?;
+            tracing::info!(
+                addon_db_id = record.mod_db_id,
+                pending_id = record.id,
+                "recovered interrupted addon update: filesystem unchanged, cleared stale marker"
+            );
+        }
+        RecoveryOutcome::Ambiguous => {
+            db.delete_pending_update(record.id)?;
+            tracing::warn!(
+                addon_db_id = record.mod_db_id,
+                pending_id = record.id,
+                "recovered interrupted addon update: ambiguous state (no old or new files found). \
+                 Restore from backup if needed."
+            );
+        }
     }
 
     Ok(())
@@ -1167,6 +1102,52 @@ fn rename_batch(renames: &[(PathBuf, PathBuf)]) -> Result<Vec<(PathBuf, PathBuf)
     Ok(completed)
 }
 
+/// Build a list of filesystem renames to disable: append `.disabled` to each
+/// top-level directory and loose file.
+fn build_disable_renames(
+    spt_dir: &Path,
+    top_dirs: &[String],
+    loose: &[&str],
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut renames = Vec::new();
+    for dir in top_dirs {
+        let src = spt_dir.join(dir);
+        let dst = spt_dir.join(format!("{dir}.disabled"));
+        renames.push((src, dst));
+    }
+    for loose_path in loose {
+        let src = spt_dir.join(loose_path);
+        let dst = spt_dir.join(format!("{loose_path}.disabled"));
+        renames.push((src, dst));
+    }
+    renames
+}
+
+/// Build a list of filesystem renames to enable: strip `.disabled` suffix from
+/// each top-level directory and loose file that has it.
+fn build_enable_renames(
+    spt_dir: &Path,
+    top_dirs: &[String],
+    loose: &[&str],
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut renames = Vec::new();
+    for dir in top_dirs {
+        if let Some(restored) = dir.strip_suffix(".disabled") {
+            let src = spt_dir.join(dir);
+            let dst = spt_dir.join(restored);
+            renames.push((src, dst));
+        }
+    }
+    for loose_path in loose {
+        if let Some(restored) = loose_path.strip_suffix(".disabled") {
+            let src = spt_dir.join(loose_path);
+            let dst = spt_dir.join(restored);
+            renames.push((src, dst));
+        }
+    }
+    renames
+}
+
 /// Disable a mod by renaming its top-level directories and loose files with
 /// a `.disabled` suffix, updating file paths in the database, and marking
 /// the mod as disabled.
@@ -1213,19 +1194,7 @@ pub fn disable_mod(
 
     db.set_mod_disabled(mod_db_id, true)?;
 
-    // Build rename list and perform filesystem renames
-    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for dir in &top_dirs {
-        let src = spt_dir.join(dir);
-        let dst = spt_dir.join(format!("{dir}.disabled"));
-        renames.push((src, dst));
-    }
-    for loose_path in &loose {
-        let src = spt_dir.join(loose_path);
-        let dst = spt_dir.join(format!("{loose_path}.disabled"));
-        renames.push((src, dst));
-    }
-
+    let renames = build_disable_renames(spt_dir, &top_dirs, &loose);
     let completed = rename_batch(&renames)?;
 
     // Commit transaction -- undo renames if commit fails
@@ -1294,29 +1263,7 @@ pub fn enable_mod(
 
     db.set_mod_disabled(mod_db_id, false)?;
 
-    // Build rename list and perform filesystem renames (strip .disabled suffix)
-    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for dir in &top_dirs {
-        if dir.ends_with(".disabled") {
-            let restored = dir
-                .strip_suffix(".disabled")
-                .expect("checked by ends_with above");
-            let src = spt_dir.join(dir);
-            let dst = spt_dir.join(restored);
-            renames.push((src, dst));
-        }
-    }
-    for loose_path in &loose {
-        if loose_path.ends_with(".disabled") {
-            let restored = loose_path
-                .strip_suffix(".disabled")
-                .expect("checked by ends_with above");
-            let src = spt_dir.join(loose_path);
-            let dst = spt_dir.join(restored);
-            renames.push((src, dst));
-        }
-    }
-
+    let renames = build_enable_renames(spt_dir, &top_dirs, &loose);
     let completed = rename_batch(&renames)?;
 
     // Commit transaction -- undo renames if commit fails
@@ -1390,19 +1337,7 @@ pub fn disable_addon(
 
     db.set_addon_disabled(addon_db_id, true)?;
 
-    // Build rename list and perform filesystem renames
-    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for dir in &top_dirs {
-        let src = spt_dir.join(dir);
-        let dst = spt_dir.join(format!("{}.disabled", dir));
-        renames.push((src, dst));
-    }
-    for loose_path in &loose {
-        let src = spt_dir.join(loose_path);
-        let dst = spt_dir.join(format!("{}.disabled", loose_path));
-        renames.push((src, dst));
-    }
-
+    let renames = build_disable_renames(spt_dir, &top_dirs, &loose);
     let completed = rename_batch(&renames)?;
 
     // Commit transaction -- undo renames if commit fails
@@ -1477,29 +1412,7 @@ pub fn enable_addon(
 
     db.set_addon_disabled(addon_db_id, false)?;
 
-    // Build rename list and perform filesystem renames (strip .disabled suffix)
-    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for dir in &top_dirs {
-        if dir.ends_with(".disabled") {
-            let restored = dir
-                .strip_suffix(".disabled")
-                .expect("checked by ends_with above");
-            let src = spt_dir.join(dir);
-            let dst = spt_dir.join(restored);
-            renames.push((src, dst));
-        }
-    }
-    for loose_path in &loose {
-        if loose_path.ends_with(".disabled") {
-            let restored = loose_path
-                .strip_suffix(".disabled")
-                .expect("checked by ends_with above");
-            let src = spt_dir.join(loose_path);
-            let dst = spt_dir.join(restored);
-            renames.push((src, dst));
-        }
-    }
-
+    let renames = build_enable_renames(spt_dir, &top_dirs, &loose);
     let completed = rename_batch(&renames)?;
 
     // Commit transaction -- undo renames if commit fails
@@ -1710,25 +1623,8 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::db::Database;
-    use std::io::Write;
+    use crate::spt::mods::tests::create_test_zip;
     use tempfile::TempDir;
-    use zip::write::SimpleFileOptions;
-    use zip::ZipWriter;
-
-    fn create_test_zip(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
-        let buf = std::io::Cursor::new(Vec::new());
-        let mut zip = ZipWriter::new(buf);
-        let opts = SimpleFileOptions::default();
-        for (name, content) in entries {
-            zip.start_file(*name, opts).unwrap();
-            zip.write_all(content).unwrap();
-        }
-        let buf = zip.finish().unwrap();
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        tmp.write_all(buf.get_ref()).unwrap();
-        tmp.flush().unwrap();
-        tmp
-    }
 
     fn setup_spt_dir() -> TempDir {
         let tmp = TempDir::new().unwrap();
