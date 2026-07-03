@@ -8,8 +8,7 @@ use serde_json::Value;
 
 pub use config::SvmConfig;
 
-#[allow(dead_code)]
-const SVM_FORGE_ID: i64 = 236;
+pub const SVM_FORGE_ID: i64 = 236;
 const LOADER_FILE: &str = "Loader/loader.json";
 const PRESETS_DIR: &str = "Presets";
 

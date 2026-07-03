@@ -363,7 +363,7 @@ async fn trigger_install_for_request(
                         crate::config::is_modsync_installed(&spt_dir),
                         std::sync::atomic::Ordering::Relaxed,
                     );
-                    if forge_mod_id == 236 {
+                    if forge_mod_id == crate::svm::SVM_FORGE_ID {
                         state_clone
                             .svm_installed
                             .store(true, std::sync::atomic::Ordering::Relaxed);

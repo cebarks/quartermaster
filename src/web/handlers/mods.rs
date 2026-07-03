@@ -1173,7 +1173,7 @@ pub async fn install_mod(
                     crate::config::is_modsync_installed(&spt_dir),
                     std::sync::atomic::Ordering::Relaxed,
                 );
-                if mod_id == 236 {
+                if mod_id == crate::svm::SVM_FORGE_ID {
                     state_clone
                         .svm_installed
                         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1478,7 +1478,7 @@ pub async fn remove_mod(
         crate::config::is_modsync_installed(&state.spt_dir),
         std::sync::atomic::Ordering::Relaxed,
     );
-    if installed.forge_mod_id == 236 {
+    if installed.forge_mod_id == crate::svm::SVM_FORGE_ID {
         state
             .svm_installed
             .store(false, std::sync::atomic::Ordering::Relaxed);

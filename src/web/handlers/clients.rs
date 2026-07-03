@@ -354,12 +354,7 @@ pub async fn client_scale(
                 .read()
                 .await
                 .iter()
-                .filter(|c| {
-                    matches!(
-                        c.fika_status,
-                        Some(EHeadlessStatus::InRaid | EHeadlessStatus::Ready)
-                    )
-                })
+                .filter(|c| matches!(c.fika_status, Some(EHeadlessStatus::InRaid)))
                 .filter(|c| c.index >= target)
                 .map(|c| c.index)
                 .collect(),

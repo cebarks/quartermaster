@@ -8,7 +8,7 @@ use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
 use bollard::models::DeviceMapping;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use tracing::{debug, info, warn};
@@ -468,7 +468,7 @@ pub fn setup_client_overlay(
     isolated_paths: &[String],
     base_udp_port: u16,
 ) -> Result<()> {
-    let overlay_dir = install_dir.join(".quma/clients").join(index.to_string());
+    let overlay_dir = client_overlay_dir(install_dir, index);
 
     let wine_prefix_dir = overlay_dir.join("wine-prefix");
     if !wine_prefix_dir.exists() {
@@ -670,6 +670,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 /// Generate the container name for a client at the given index.
 pub fn client_container_name(index: u32) -> String {
     format!("fika-headless-{index}")
+}
+
+/// Return the overlay directory for a client at the given index.
+pub fn client_overlay_dir(install_dir: &Path, index: u32) -> PathBuf {
+    install_dir.join(".quma/clients").join(index.to_string())
 }
 
 /// Calculate the UDP port for a client at the given index.
@@ -1068,10 +1073,7 @@ async fn create_client_container(
     ntsync_available: bool,
 ) -> Result<()> {
     let name = client_container_name(index);
-    let overlay_dir = headless_config
-        .install_dir
-        .join(".quma/clients")
-        .join(index.to_string());
+    let overlay_dir = client_overlay_dir(&headless_config.install_dir, index);
 
     // Set up overlay directory first
     setup_client_overlay(
