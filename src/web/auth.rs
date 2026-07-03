@@ -17,6 +17,24 @@ use crate::web::error::WebError;
 pub(crate) const MIN_PASSWORD_LEN: usize = 8;
 pub(crate) const MAX_PASSWORD_LEN: usize = 128;
 
+/// Validate password meets complexity requirements.
+/// Returns Ok(()) if valid, Err with a user-facing message if not.
+pub fn validate_password_complexity(password: &str) -> Result<(), &'static str> {
+    if password.len() < MIN_PASSWORD_LEN || password.len() > MAX_PASSWORD_LEN {
+        return Err("Password must be 8-128 characters");
+    }
+    if !password.chars().any(|c| c.is_ascii_alphabetic()) {
+        return Err("Password must contain at least one letter");
+    }
+    if !password
+        .chars()
+        .any(|c| c.is_ascii_digit() || (!c.is_ascii_alphabetic() && !c.is_ascii_whitespace()))
+    {
+        return Err("Password must contain at least one number or special character");
+    }
+    Ok(())
+}
+
 pub fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
@@ -288,5 +306,22 @@ mod tests {
         assert!(!user.can("users.manage"));
         // Unknown permission string returns false (and would log a warning)
         assert!(!user.can("nonexistent.perm"));
+    }
+
+    #[test]
+    fn password_complexity_validation() {
+        // Too short
+        assert!(validate_password_complexity("Ab1").is_err());
+        // No letter
+        assert!(validate_password_complexity("12345678").is_err());
+        // No digit or special char
+        assert!(validate_password_complexity("abcdefgh").is_err());
+        // Valid: letters + digit
+        assert!(validate_password_complexity("abcdef1g").is_ok());
+        // Valid: letters + special
+        assert!(validate_password_complexity("abcdef!g").is_ok());
+        // Too long
+        let long = "a".repeat(129) + "1";
+        assert!(validate_password_complexity(&long).is_err());
     }
 }

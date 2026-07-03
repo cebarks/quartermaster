@@ -7,8 +7,8 @@ use subtle::ConstantTimeEq;
 use actix_web::HttpRequest;
 
 use crate::web::auth::{
-    hash_password, require_auth, set_session_user, verify_password, SessionUser, MAX_PASSWORD_LEN,
-    MIN_PASSWORD_LEN,
+    hash_password, require_auth, set_session_user, validate_password_complexity, verify_password,
+    SessionUser,
 };
 use crate::web::error::WebError;
 use crate::web::nav::NavContext;
@@ -315,11 +315,8 @@ pub async fn reset_password_submit(
             .body(tmpl.render().map_err(WebError::from)?))
     };
 
-    if form.password.len() < MIN_PASSWORD_LEN {
-        return render_error("Password must be 8-128 characters", form.token);
-    }
-    if form.password.len() > MAX_PASSWORD_LEN {
-        return render_error("Password must be 8-128 characters", form.token);
+    if let Err(msg) = validate_password_complexity(&form.password) {
+        return render_error(msg, form.token);
     }
     if form.password != form.password_confirm {
         return render_error("Passwords do not match", form.token);
@@ -498,8 +495,8 @@ pub async fn change_password_submit(
     };
 
     // Validate new password before expensive verify/hash operations
-    if form.password.len() < MIN_PASSWORD_LEN || form.password.len() > MAX_PASSWORD_LEN {
-        return render_error("New password must be 8-128 characters.");
+    if let Err(msg) = validate_password_complexity(&form.password) {
+        return render_error(msg);
     }
     if form.password != form.password_confirm {
         return render_error("New passwords do not match.");

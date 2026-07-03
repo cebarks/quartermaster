@@ -4,7 +4,7 @@ use actix_web::{web, HttpResponse};
 use askama::Template;
 
 use crate::config::NARCONET_FORGE_MOD_ID;
-use crate::web::auth::{hash_password, MAX_PASSWORD_LEN, MIN_PASSWORD_LEN};
+use crate::web::auth::{hash_password, validate_password_complexity};
 use crate::web::error::WebError;
 use crate::web::invite::validate_invite_code;
 use crate::web::state::AppState;
@@ -231,15 +231,8 @@ pub async fn join_submit(
     }
 
     // Validate password
-    if form.password.len() < MIN_PASSWORD_LEN {
-        return render_err(&format!(
-            "Password must be at least {MIN_PASSWORD_LEN} characters"
-        ));
-    }
-    if form.password.len() > MAX_PASSWORD_LEN {
-        return render_err(&format!(
-            "Password must be at most {MAX_PASSWORD_LEN} characters"
-        ));
+    if let Err(msg) = validate_password_complexity(&form.password) {
+        return render_err(msg);
     }
     if form.password != form.password_confirm {
         return render_err("Passwords do not match");

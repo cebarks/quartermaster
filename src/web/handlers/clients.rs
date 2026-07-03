@@ -51,6 +51,7 @@ pub async fn client_detail(
     path: Path<u32>,
 ) -> actix_web::Result<web::Html> {
     let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
