@@ -258,7 +258,7 @@ impl ForgeClient {
         Ok(body.data)
     }
 
-    #[allow(dead_code)] // plumbing for future addon UI
+    #[allow(dead_code)] // used in Task 5
     pub async fn search_addons(&self, query: &str) -> Result<Vec<ForgeAddon>> {
         let url = format!("{}/addons", self.base_url);
         let req = self.client.get(&url).query(&[("query", query)]);
@@ -273,7 +273,7 @@ impl ForgeClient {
         Ok(parsed.data)
     }
 
-    #[allow(dead_code)] // plumbing for future addon UI
+    #[allow(dead_code)] // used in Task 5
     pub async fn get_addon(&self, id: i64, include_versions: bool) -> Result<ForgeAddon> {
         let url = format!("{}/addon/{}", self.base_url, id);
         let mut req = self.client.get(&url);
@@ -291,7 +291,7 @@ impl ForgeClient {
         Ok(parsed.data)
     }
 
-    #[allow(dead_code)] // plumbing for future addon UI
+    #[allow(dead_code)] // used in Task 5
     pub async fn get_addon_versions(&self, addon_id: i64) -> Result<Vec<ForgeAddonVersion>> {
         let url = format!("{}/addon/{}/versions", self.base_url, addon_id);
         let req = self.client.get(&url);
@@ -306,7 +306,7 @@ impl ForgeClient {
         Ok(parsed.data)
     }
 
-    #[allow(dead_code)] // plumbing for future addon UI
+    #[allow(dead_code)] // used in Task 4
     pub async fn get_addon_dependencies(
         &self,
         addons: &[(&str, &str)],

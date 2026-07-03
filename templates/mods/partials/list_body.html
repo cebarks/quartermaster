@@ -42,7 +42,12 @@
 <tbody>
 {% for m in &mods %}
 <tr>
-    <td><a href="/quma/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a></td>
+    <td>
+        <a href="/quma/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a>
+        {% if m.addon_count > 0 %}
+        <span class="badge badge-info" style="margin-left: 0.5rem;" title="{{ m.addon_count }} addon{% if m.addon_count != 1 %}s{% endif %}">{{ m.addon_count }}</span>
+        {% endif %}
+    </td>
     <td><span id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</span></td>
     <td class="text-muted">{{ m.file_count }}</td>
     <td class="text-muted">{{ m.total_size|format_size_i64 }}</td>

@@ -238,6 +238,7 @@ pub struct UpdatesResponse {
 
 /// An addon listing from the Forge API.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // used in Task 4
 pub struct ForgeAddon {
     pub id: i64,
     pub name: String,
@@ -263,6 +264,7 @@ pub struct ForgeAddon {
 
 /// A specific version of an addon.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[allow(dead_code)] // used in Task 4
 pub struct ForgeAddonVersion {
     pub id: i64,
     pub version: String,
@@ -278,18 +280,21 @@ pub struct ForgeAddonVersion {
 
 /// Response envelope for addon search results.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // used in Task 5
 pub struct ForgeAddonSearchResponse {
     pub data: Vec<ForgeAddon>,
 }
 
 /// Response envelope for a single addon.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // used in Task 5
 pub struct ForgeAddonResponse {
     pub data: ForgeAddon,
 }
 
 /// Response envelope for a list of addon versions.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // used in Task 5
 pub struct ForgeAddonVersionsResponse {
     pub data: Vec<ForgeAddonVersion>,
 }

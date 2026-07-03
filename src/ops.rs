@@ -19,6 +19,22 @@ fn record_extracted_files(db: &Database, mod_db_id: i64, files: &[ExtractedFile]
     Ok(())
 }
 
+fn record_extracted_addon_files(
+    db: &Database,
+    addon_db_id: i64,
+    files: &[ExtractedFile],
+) -> Result<()> {
+    for file in files {
+        db.insert_addon_file(
+            addon_db_id,
+            &file.path,
+            Some(&file.hash),
+            Some(file.size as i64),
+        )?;
+    }
+    Ok(())
+}
+
 /// Parameters for installing a mod from a downloaded archive.
 pub struct InstallRequest<'a> {
     pub db: &'a Database,
@@ -29,6 +45,22 @@ pub struct InstallRequest<'a> {
     pub name: &'a str,
     pub slug: Option<&'a str>,
     pub version: &'a str,
+    pub archive_path: &'a Path,
+}
+
+/// Parameters for installing an addon from a downloaded archive.
+#[allow(dead_code)] // Used in Task 5
+pub struct InstallAddonRequest<'a> {
+    pub db: &'a Database,
+    pub spt_dir: &'a Path,
+    pub config: &'a crate::config::Config,
+    pub forge_addon_id: i64,
+    pub parent_mod_id: i64,
+    pub version_id: i64,
+    pub name: &'a str,
+    pub slug: Option<&'a str>,
+    pub version: &'a str,
+    pub mod_version_constraint: Option<&'a str>,
     pub archive_path: &'a Path,
 }
 
@@ -78,6 +110,55 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         if let Err(e) = crate::modsync::ensure_mod_layout(req.spt_dir, ms_config, req.db, db_id) {
             tracing::warn!(err = %e, "failed to ensure mod layout after install");
         }
+    }
+    Ok(db_id)
+}
+
+#[allow(dead_code)] // Used in Task 5
+pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> {
+    tracing::info!(
+        addon_name = req.name,
+        addon_id = req.forge_addon_id,
+        parent_mod_id = req.parent_mod_id,
+        version = req.version,
+        "installing addon from archive"
+    );
+
+    // Extract to a staging directory so files are not left on disk if the DB
+    // transaction fails (mirrors mod install pattern).
+    let staging_dir = tempfile::tempdir()?;
+    let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
+
+    let tx = req.db.begin_transaction()?;
+    let db_id = req.db.insert_addon(
+        req.forge_addon_id,
+        req.parent_mod_id,
+        req.version_id,
+        req.name,
+        req.slug,
+        req.version,
+        req.mod_version_constraint,
+    )?;
+    record_extracted_addon_files(req.db, db_id, &extracted)?;
+    tx.commit()?;
+
+    // DB committed — now move files from staging to the live directory.
+    for file in &extracted {
+        let src = staging_dir.path().join(&file.path);
+        let dst = req.spt_dir.join(&file.path);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
+    }
+
+    tracing::debug!(
+        db_id,
+        file_count = extracted.len(),
+        "addon installed, files recorded"
+    );
+    if let Err(e) = crate::modsync::regenerate_if_enabled(req.spt_dir, req.config, req.db) {
+        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
     Ok(db_id)
 }
@@ -144,6 +225,81 @@ pub fn update_mod_from_archive(
         if let Err(e) = crate::modsync::ensure_mod_layout(spt_dir, ms_config, db, mod_db_id) {
             tracing::warn!(err = %e, "failed to ensure mod layout after update");
         }
+    }
+    Ok(())
+}
+
+#[allow(dead_code)] // Used in Task 5
+#[allow(clippy::too_many_arguments)]
+pub fn update_addon_from_archive(
+    db: &Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    addon_db_id: i64,
+    version_id: i64,
+    version_str: &str,
+    mod_version_constraint: Option<&str>,
+    archive_path: &Path,
+) -> Result<()> {
+    tracing::info!(
+        addon_db_id,
+        version = version_str,
+        "updating addon from archive"
+    );
+    let staging_dir = tempfile::tempdir()?;
+    let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
+
+    let old_files = db.get_files_for_addon(addon_db_id)?;
+    let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
+    tracing::debug!(
+        old_file_count = old_paths.len(),
+        new_file_count = extracted.len(),
+        "replacing addon files"
+    );
+
+    // Get addon to back up parent mod
+    let addon = db
+        .get_addon(addon_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("addon not found"))?;
+    crate::backup::auto_backup_mod(
+        db,
+        spt_dir,
+        config,
+        addon.parent_mod_id,
+        "auto_update_addon",
+    )?;
+
+    // Copy new files first (overwriting any shared with old version), so that
+    // if copying fails mid-way the old files that weren't overwritten remain
+    // intact. This is strictly safer than delete-all-then-copy-all.
+    for file in &extracted {
+        let src = staging_dir.path().join(&file.path);
+        let dst = spt_dir.join(&file.path);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
+    }
+
+    // Delete old files that are NOT in the new file set (stale files only).
+    let new_paths: std::collections::HashSet<&str> =
+        extracted.iter().map(|f| f.path.as_str()).collect();
+    let stale_paths: Vec<String> = old_paths
+        .into_iter()
+        .filter(|p| !new_paths.contains(p.as_str()))
+        .collect();
+    if !stale_paths.is_empty() {
+        tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
+        crate::spt::mods::delete_mod_files(spt_dir, &stale_paths)?;
+    }
+
+    let tx = db.begin_transaction()?;
+    db.delete_files_for_addon(addon_db_id)?;
+    record_extracted_addon_files(db, addon_db_id, &extracted)?;
+    db.update_addon(addon_db_id, version_id, version_str, mod_version_constraint)?;
+    tx.commit()?;
+    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
+        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
     Ok(())
 }
@@ -269,6 +425,146 @@ pub async fn apply_mod_update(
     result
 }
 
+/// Apply an addon update using brief DB locks suitable for the web context.
+///
+/// This is the async counterpart of [`update_addon_from_archive`]: it performs the
+/// same 3-step update (read old paths, filesystem swap, DB write) but splits
+/// each step into a separate [`actix_web::web::block`] call so the DB mutex is
+/// never held across slow filesystem I/O.
+///
+/// A `pending_updates` marker row is written to the database *before* any
+/// destructive filesystem work begins. If the process crashes between the
+/// filesystem swap and the final DB commit, [`recover_pending_updates`] will
+/// detect and resolve the inconsistency on the next startup.
+///
+/// `extracted` must be the files already extracted to `staging_path`.
+#[allow(dead_code)] // Used in Task 7
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_addon_update(
+    db: Arc<parking_lot::Mutex<Database>>,
+    spt_dir: PathBuf,
+    config: crate::config::Config,
+    staging_path: PathBuf,
+    extracted: Vec<ExtractedFile>,
+    addon_db_id: i64,
+    version_id: i64,
+    version_str: String,
+    mod_version_constraint: Option<String>,
+    forge_addon_id: i64,
+) -> Result<()> {
+    // Serialize file metadata for the pending_updates marker
+    let new_files_json =
+        serde_json::to_string(&extracted).context("failed to serialize new file paths")?;
+
+    // Step 1: Read old file paths, auto-backup, and write pending marker (brief DB lock)
+    let db_step1 = db.clone();
+    let spt_dir_backup = spt_dir.clone();
+    let config_backup = config;
+    let version_str_step1 = version_str.clone();
+    let new_files_json_step1 = new_files_json;
+    let (old_paths, pending_id, _parent_mod_id) = actix_web::web::block(move || {
+        let db = db_step1.lock();
+        let addon = db
+            .get_addon(addon_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("addon not found"))?;
+        crate::backup::auto_backup_mod(
+            &db,
+            &spt_dir_backup,
+            &config_backup,
+            addon.parent_mod_id,
+            "auto_update_addon",
+        )?;
+        let files = db.get_files_for_addon(addon_db_id)?;
+        let old_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
+        let old_files_json =
+            serde_json::to_string(&old_paths).context("failed to serialize old file paths")?;
+
+        // Write the pending marker before any destructive filesystem work
+        let pending_id = db.insert_pending_addon_update(
+            addon_db_id,
+            version_id,
+            &version_str_step1,
+            &new_files_json_step1,
+            &old_files_json,
+            forge_addon_id,
+        )?;
+        tracing::debug!(
+            addon_db_id,
+            pending_id,
+            "pending addon update marker written"
+        );
+
+        Ok::<_, anyhow::Error>((old_paths, pending_id, addon.parent_mod_id))
+    })
+    .await??;
+
+    // Step 2: Filesystem swap (no DB lock held)
+    // Copy new files first, then delete stale-only old files. If copying
+    // fails partway, old files that weren't overwritten remain intact.
+    let spt_dir_fs = spt_dir.clone();
+    let extracted = actix_web::web::block(move || {
+        for file in &extracted {
+            let src = staging_path.join(&file.path);
+            let dst = spt_dir_fs.join(&file.path);
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
+        }
+
+        let new_paths: std::collections::HashSet<&str> =
+            extracted.iter().map(|f| f.path.as_str()).collect();
+        let stale_paths: Vec<String> = old_paths
+            .into_iter()
+            .filter(|p| !new_paths.contains(p.as_str()))
+            .collect();
+        if !stale_paths.is_empty() {
+            tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
+            crate::spt::mods::delete_mod_files(&spt_dir_fs, &stale_paths)?;
+        }
+
+        Ok::<_, anyhow::Error>(extracted)
+    })
+    .await??;
+
+    // Step 3: DB writes atomically + clear pending marker (brief DB lock)
+    let db_step3 = db;
+    let result = actix_web::web::block(move || {
+        let db = db_step3.lock();
+        let tx = db.begin_transaction()?;
+        db.delete_files_for_addon(addon_db_id)?;
+        record_extracted_addon_files(&db, addon_db_id, &extracted)?;
+        db.update_addon(
+            addon_db_id,
+            version_id,
+            &version_str,
+            mod_version_constraint.as_deref(),
+        )?;
+        db.delete_pending_update(pending_id)?;
+        tx.commit()?;
+        tracing::debug!(
+            addon_db_id,
+            pending_id,
+            "pending addon update marker cleared"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?;
+
+    if let Err(ref e) = result {
+        tracing::error!(
+            addon_db_id,
+            pending_id,
+            error = %e,
+            "INCONSISTENT_STATE: filesystem updated but DB write failed for addon update. \
+             A pending_updates record (id={}) exists — recovery will run on next startup.",
+            pending_id
+        );
+    }
+
+    result
+}
+
 /// Recover from interrupted async mod updates on startup.
 ///
 /// Scans the `pending_updates` table for markers left behind by [`apply_mod_update`]
@@ -308,6 +604,11 @@ fn recover_single_update(
     spt_dir: &Path,
     record: &crate::db::mods::PendingUpdate,
 ) -> Result<()> {
+    // Route to addon or mod recovery based on item_type
+    if record.item_type == "addon" {
+        return recover_single_addon_update(db, spt_dir, record);
+    }
+
     // Check if the mod row still exists
     let mod_exists = db.get_mod(record.mod_db_id)?.is_some();
     if !mod_exists {
@@ -422,6 +723,131 @@ fn recover_single_update(
     Ok(())
 }
 
+fn recover_single_addon_update(
+    db: &Database,
+    spt_dir: &Path,
+    record: &crate::db::mods::PendingUpdate,
+) -> Result<()> {
+    // Check if the addon row still exists
+    let addon_exists = db.get_addon(record.mod_db_id)?.is_some();
+    if !addon_exists {
+        tracing::warn!(
+            pending_id = record.id,
+            addon_db_id = record.mod_db_id,
+            "cleared orphaned pending addon update marker (addon row was deleted)"
+        );
+        db.delete_pending_update(record.id)?;
+        return Ok(());
+    }
+
+    // Parse the JSON file lists
+    let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
+        .context("failed to parse new_file_paths JSON from pending_updates")?;
+    let old_paths: Vec<String> = serde_json::from_str(&record.old_file_paths)
+        .context("failed to parse old_file_paths JSON from pending_updates")?;
+
+    // Check how many new files exist on disk with correct hashes
+    let mut new_files_ok = 0usize;
+    for file in &new_files {
+        let path = spt_dir.join(&file.path);
+        if path.exists() {
+            match std::fs::read(&path) {
+                Ok(content) => {
+                    let hash = crate::spt::mods::compute_hash_public(&content);
+                    if hash == file.hash {
+                        new_files_ok += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %file.path,
+                        error = %e,
+                        "recovery: file exists but could not be read"
+                    );
+                }
+            }
+        }
+    }
+
+    // Check how many old files still exist on disk
+    let old_files_exist = old_paths
+        .iter()
+        .filter(|p| spt_dir.join(p).exists())
+        .count();
+
+    let all_new_present = new_files_ok == new_files.len();
+
+    if all_new_present {
+        // All new files present with correct hashes — complete the DB update
+        let tx = db.begin_transaction()?;
+        db.delete_files_for_addon(record.mod_db_id)?;
+        record_extracted_addon_files(db, record.mod_db_id, &new_files)?;
+        // For addons, we don't have mod_version_constraint in the pending record, so pass None
+        db.update_addon(
+            record.mod_db_id,
+            record.version_id,
+            &record.version_str,
+            None,
+        )?;
+        db.delete_pending_update(record.id)?;
+        tx.commit()?;
+        tracing::info!(
+            addon_db_id = record.mod_db_id,
+            pending_id = record.id,
+            version = %record.version_str,
+            "recovered interrupted addon update: completed DB update"
+        );
+    } else if new_files_ok > 0 && new_files_ok < new_files.len() {
+        // Partial copy — some new files exist but not all. Clean up the
+        // partially-copied new files (only those that don't overlap with old
+        // paths) and clear the marker.
+        let old_set: std::collections::HashSet<&str> =
+            old_paths.iter().map(|p| p.as_str()).collect();
+        for file in &new_files {
+            if !old_set.contains(file.path.as_str()) {
+                let path = spt_dir.join(&file.path);
+                if path.exists() {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        tracing::warn!(
+                            path = %file.path,
+                            error = %e,
+                            "failed to clean up partially-copied file during recovery"
+                        );
+                    }
+                }
+            }
+        }
+        db.delete_pending_update(record.id)?;
+        tracing::warn!(
+            addon_db_id = record.mod_db_id,
+            pending_id = record.id,
+            new_present = new_files_ok,
+            new_total = new_files.len(),
+            "recovered interrupted addon update: rolled back partial copy. \
+             Restore from backup if addon files are inconsistent."
+        );
+    } else if old_files_exist > 0 {
+        // No new files on disk, old files still present — swap never happened
+        db.delete_pending_update(record.id)?;
+        tracing::info!(
+            addon_db_id = record.mod_db_id,
+            pending_id = record.id,
+            "recovered interrupted addon update: filesystem unchanged, cleared stale marker"
+        );
+    } else {
+        // Neither old nor new files — ambiguous state
+        db.delete_pending_update(record.id)?;
+        tracing::warn!(
+            addon_db_id = record.mod_db_id,
+            pending_id = record.id,
+            "recovered interrupted addon update: ambiguous state (no old or new files found). \
+             Restore from backup if needed."
+        );
+    }
+
+    Ok(())
+}
+
 pub fn remove_mod_by_id(
     db: &Database,
     spt_dir: &Path,
@@ -429,6 +855,14 @@ pub fn remove_mod_by_id(
     mod_db_id: i64,
 ) -> Result<()> {
     tracing::info!(mod_db_id, "removing mod");
+
+    // Remove child addons first, suppressing per-addon modsync regen
+    let child_addons = db.list_addons_for_mod(mod_db_id)?;
+    for addon in &child_addons {
+        tracing::info!(addon_name = %addon.name, "removing child addon before parent mod removal");
+        remove_addon_by_id(db, spt_dir, config, addon.id, true /* skip_modsync */)?;
+    }
+
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_remove")?;
     let files = db.get_files_for_mod(mod_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
@@ -486,6 +920,50 @@ pub fn remove_mod_by_id(
 
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
         tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
+    }
+    Ok(())
+}
+
+/// Remove an addon by its database ID.
+///
+/// This function backs up the addon files, deletes them from disk, and removes
+/// the database record. When `skip_modsync` is true, the modsync regeneration
+/// is suppressed — used during parent mod cascade removal to avoid redundant
+/// regenerations.
+pub fn remove_addon_by_id(
+    db: &Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    addon_db_id: i64,
+    skip_modsync: bool,
+) -> Result<()> {
+    let addon = db
+        .get_addon(addon_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("addon not found"))?;
+    tracing::info!(addon_db_id, addon_name = %addon.name, "removing addon");
+
+    // Back up addon files (via parent mod backup for simplicity)
+    crate::backup::auto_backup_mod(
+        db,
+        spt_dir,
+        config,
+        addon.parent_mod_id,
+        "auto_remove_addon",
+    )?;
+
+    let files = db.get_files_for_addon(addon_db_id)?;
+    let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
+    tracing::debug!(file_count = file_paths.len(), "deleting addon files");
+    crate::spt::mods::delete_mod_files(spt_dir, &file_paths)?;
+
+    let tx = db.begin_transaction()?;
+    db.delete_addon(addon_db_id)?; // CASCADE deletes file records
+    tx.commit()?;
+
+    if !skip_modsync {
+        if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
+            tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
+        }
     }
     Ok(())
 }
@@ -854,6 +1332,183 @@ pub fn enable_mod(
             tracing::warn!(err = %e, "failed to ensure mod layout after enable");
         }
     }
+    Ok(())
+}
+
+/// Disable an addon by renaming its top-level directories and loose files with
+/// a `.disabled` suffix, updating file paths in the database, and marking
+/// the addon as disabled.
+#[allow(dead_code)] // Used in Task 5 and Task 7
+pub fn disable_addon(
+    db: &Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    addon_db_id: i64,
+) -> Result<()> {
+    let addon_info = db
+        .get_addon(addon_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("addon not found"))?;
+    if addon_info.disabled {
+        anyhow::bail!("addon is already disabled");
+    }
+
+    let files = db.get_files_for_addon(addon_db_id)?;
+    let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
+    let top_dirs = find_top_level_mod_dirs(&file_paths);
+    let loose = find_loose_files(&file_paths, &top_dirs);
+
+    tracing::info!(addon_db_id, addon_name = %addon_info.name, "disabling addon");
+
+    crate::backup::auto_backup_mod(
+        db,
+        spt_dir,
+        config,
+        addon_info.parent_mod_id,
+        "auto_disable_addon",
+    )?;
+
+    // Begin transaction: update DB first, then filesystem
+    let tx = db.begin_transaction()?;
+
+    // Update file paths in the database
+    for dir in &top_dirs {
+        let old_prefix = dir;
+        let new_prefix = format!("{}.disabled", dir);
+        db.reprefix_addon_files(addon_db_id, old_prefix, &new_prefix)?;
+    }
+    for loose_path in &loose {
+        // For loose files, we need to manually update each file path
+        let file_id = files
+            .iter()
+            .find(|f| f.file_path == *loose_path)
+            .map(|f| f.id);
+        if let Some(fid) = file_id {
+            let new_path = format!("{}.disabled", loose_path);
+            db.rename_file_path(fid, &new_path)?;
+        }
+    }
+
+    db.set_addon_disabled(addon_db_id, true)?;
+
+    // Build rename list and perform filesystem renames
+    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for dir in &top_dirs {
+        let src = spt_dir.join(dir);
+        let dst = spt_dir.join(format!("{}.disabled", dir));
+        renames.push((src, dst));
+    }
+    for loose_path in &loose {
+        let src = spt_dir.join(loose_path);
+        let dst = spt_dir.join(format!("{}.disabled", loose_path));
+        renames.push((src, dst));
+    }
+
+    let completed = rename_batch(&renames)?;
+
+    // Commit transaction -- undo renames if commit fails
+    if let Err(e) = tx.commit() {
+        undo_renames(&completed);
+        return Err(e.into());
+    }
+
+    tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon disabled");
+    Ok(())
+}
+
+/// Enable a previously disabled addon by removing the `.disabled` suffix from
+/// its directories and files, updating file paths in the database, and
+/// clearing the disabled flag.
+#[allow(dead_code)] // Used in Task 5 and Task 7
+pub fn enable_addon(
+    db: &Database,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    addon_db_id: i64,
+) -> Result<()> {
+    let addon_info = db
+        .get_addon(addon_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("addon not found"))?;
+    if !addon_info.disabled {
+        anyhow::bail!("addon is not disabled");
+    }
+
+    let files = db.get_files_for_addon(addon_db_id)?;
+    let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
+    let top_dirs = find_top_level_mod_dirs(&file_paths);
+    let loose = find_loose_files(&file_paths, &top_dirs);
+
+    tracing::info!(addon_db_id, addon_name = %addon_info.name, "enabling addon");
+
+    crate::backup::auto_backup_mod(
+        db,
+        spt_dir,
+        config,
+        addon_info.parent_mod_id,
+        "auto_enable_addon",
+    )?;
+
+    // Begin transaction: update DB first, then filesystem
+    let tx = db.begin_transaction()?;
+
+    // Update file paths in the database (strip .disabled from paths)
+    for dir in &top_dirs {
+        if dir.ends_with(".disabled") {
+            let old_prefix = dir;
+            let new_prefix = dir
+                .strip_suffix(".disabled")
+                .expect("checked by ends_with above");
+            db.reprefix_addon_files(addon_db_id, old_prefix, new_prefix)?;
+        }
+    }
+    for loose_path in &loose {
+        if loose_path.ends_with(".disabled") {
+            let file_id = files
+                .iter()
+                .find(|f| f.file_path == *loose_path)
+                .map(|f| f.id);
+            if let Some(fid) = file_id {
+                let new_path = loose_path
+                    .strip_suffix(".disabled")
+                    .expect("checked by ends_with above");
+                db.rename_file_path(fid, new_path)?;
+            }
+        }
+    }
+
+    db.set_addon_disabled(addon_db_id, false)?;
+
+    // Build rename list and perform filesystem renames (strip .disabled suffix)
+    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for dir in &top_dirs {
+        if dir.ends_with(".disabled") {
+            let restored = dir
+                .strip_suffix(".disabled")
+                .expect("checked by ends_with above");
+            let src = spt_dir.join(dir);
+            let dst = spt_dir.join(restored);
+            renames.push((src, dst));
+        }
+    }
+    for loose_path in &loose {
+        if loose_path.ends_with(".disabled") {
+            let restored = loose_path
+                .strip_suffix(".disabled")
+                .expect("checked by ends_with above");
+            let src = spt_dir.join(loose_path);
+            let dst = spt_dir.join(restored);
+            renames.push((src, dst));
+        }
+    }
+
+    let completed = rename_batch(&renames)?;
+
+    // Commit transaction -- undo renames if commit fails
+    if let Err(e) = tx.commit() {
+        undo_renames(&completed);
+        return Err(e.into());
+    }
+
+    tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon enabled");
     Ok(())
 }
 

@@ -4,7 +4,16 @@ use crate::db::mods::InstalledMod;
 
 use super::common::{confirm, resolve_installed_mod, CliContext};
 
-pub async fn run(mod_ref: Option<&str>, force: bool, ctx: &CliContext) -> Result<()> {
+pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliContext) -> Result<()> {
+    // If --addon flag is set, use addon update flow
+    if addon {
+        let addon_ref = mod_ref.ok_or_else(|| {
+            anyhow::anyhow!(
+                "addon reference required for --addon flag (e.g., `quma update --addon <name>`)"
+            )
+        })?;
+        return run_addon_update(addon_ref, force, ctx).await;
+    }
     // Spec: `quma update` drains pending operations before checking for updates
     let pending = ctx.db.list_pending_ops()?;
     if !pending.is_empty() {
@@ -185,7 +194,128 @@ pub async fn apply_update_by_version(
 
     let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
     println!("    Updated {} files for {}", file_count, installed.name);
+
+    // Re-fetch the mod to get the updated version for compatibility check
+    let updated_mod = ctx
+        .db
+        .get_mod(installed.id)?
+        .expect("mod must exist after update");
+
+    // Check for incompatible addons after parent mod update
+    check_addon_compatibility_after_update(ctx, &updated_mod).await?;
+
     Ok(true)
+}
+
+async fn check_addon_compatibility_after_update(
+    ctx: &CliContext,
+    parent_mod: &InstalledMod,
+) -> Result<()> {
+    let child_addons = ctx.db.list_addons_for_mod(parent_mod.id)?;
+    if child_addons.is_empty() {
+        return Ok(());
+    }
+
+    for addon in &child_addons {
+        if let Some(constraint) = &addon.mod_version_constraint {
+            if !super::common::version_satisfies_constraint(&parent_mod.version, constraint) {
+                tracing::warn!(
+                    "Addon {} (constraint '{}') does not match parent mod version '{}'",
+                    addon.name,
+                    constraint,
+                    parent_mod.version
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_addon_update(addon_ref: &str, force: bool, ctx: &CliContext) -> Result<()> {
+    use super::common::resolve_installed_addon;
+
+    let installed = resolve_installed_addon(addon_ref, ctx)?;
+    println!("Checking for updates to {}...", installed.name);
+
+    let versions = ctx
+        .forge
+        .get_addon_versions(installed.forge_addon_id)
+        .await?;
+
+    if versions.is_empty() {
+        println!("No versions available for {}", installed.name);
+        return Ok(());
+    }
+
+    // Find the latest version
+    let latest = versions
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no versions available"))?;
+
+    // Check if update is available
+    if latest.id == installed.forge_version_id {
+        println!(
+            "{} is already up to date (v{})",
+            installed.name, installed.version
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Update available: {} → {}",
+        installed.version, latest.version
+    );
+
+    if !confirm("Proceed with update?")? {
+        println!("Update cancelled.");
+        return Ok(());
+    }
+
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
+        .await?
+    {
+        ctx.db.insert_pending_addon_op(
+            crate::db::users::QueueAction::Update,
+            installed.forge_addon_id,
+            Some(latest.id),
+            &installed.name,
+            None,
+            None,
+        )?;
+        println!(
+            "Server is running — operation queued. It will be applied on next server restart."
+        );
+        return Ok(());
+    }
+
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
+
+    // Download and update
+    let download_url = latest
+        .link
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("no download URL for addon version"))?;
+
+    println!("Downloading {} v{}...", installed.name, latest.version);
+    let tmp_dir = tempfile::tempdir()?;
+    let archive_path = tmp_dir.path().join("addon.zip");
+    ctx.forge.download_file(download_url, &archive_path).await?;
+
+    crate::ops::update_addon_from_archive(
+        &ctx.db,
+        &ctx.spt_dir,
+        &ctx.config,
+        installed.id,
+        latest.id,
+        &latest.version,
+        latest.mod_version_constraint.as_deref(),
+        &archive_path,
+    )?;
+
+    println!("\n{} updated to v{}", installed.name, latest.version);
+    Ok(())
 }
 
 async fn apply_single_update(

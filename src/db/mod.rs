@@ -1,3 +1,4 @@
+pub mod addons;
 pub mod backups;
 pub mod logs;
 pub mod mods;

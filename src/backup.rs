@@ -15,11 +15,26 @@ struct ManifestMod {
     file_paths: Vec<String>,
 }
 
+/// Manifest entry for a single addon in a full backup.
+#[derive(Debug, Serialize, Deserialize)]
+struct ManifestAddon {
+    forge_addon_id: i64,
+    parent_forge_mod_id: i64,
+    forge_version_id: i64,
+    name: String,
+    slug: Option<String>,
+    version: String,
+    mod_version_constraint: Option<String>,
+    file_paths: Vec<String>,
+}
+
 /// Manifest written into every full backup, recording which mods and files
 /// existed at backup time so we can reconstruct the DB state on restore.
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupManifest {
     mods: Vec<ManifestMod>,
+    #[serde(default)]
+    addons: Vec<ManifestAddon>,
 }
 
 /// Generate a backup ID from the current UTC timestamp.
@@ -79,6 +94,15 @@ pub fn backup_mod(
         .ok_or_else(|| anyhow::anyhow!("mod {mod_db_id} not found"))?;
 
     let files = db.get_files_for_mod(mod_db_id)?;
+
+    // Also get addon files for this mod
+    let addons = db.list_addons_for_mod(mod_db_id)?;
+    let mut addon_files_all = Vec::new();
+    for addon in &addons {
+        let addon_files = db.get_files_for_addon(addon.id)?;
+        addon_files_all.extend(addon_files);
+    }
+
     let backup_dir = resolve_backup_dir(spt_dir, config)?;
     let mod_backup_dir = backup_dir
         .join("mods")
@@ -105,6 +129,22 @@ pub fn backup_mod(
         }
     }
 
+    // Also copy addon files
+    for file in &addon_files_all {
+        let src = spt_dir.join(&file.file_path);
+        let dst = dest.join(&file.file_path);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if src.exists() {
+            std::fs::copy(&src, &dst)
+                .with_context(|| format!("failed to copy {} to backup", src.display()))?;
+            total_size += file.file_size.unwrap_or(0);
+        } else {
+            tracing::warn!(path = %file.file_path, "backup: addon file missing, skipping");
+        }
+    }
+
     let backup_path = format!(
         "{}/mods/{}/{}",
         config.backup.backup_dir, mod_info.forge_mod_id, bid
@@ -127,7 +167,7 @@ pub fn backup_mod(
     tracing::info!(
         mod_db_id,
         backup_id = %bid,
-        file_count = files.len(),
+        file_count = files.len() + addon_files_all.len(),
         total_size,
         "mod backed up"
     );
@@ -137,12 +177,13 @@ pub fn backup_mod(
     Ok(backup_db_id)
 }
 
-/// Back up all installed mods, player profiles, and the Quartermaster config file.
+/// Back up all installed mods, addons, player profiles, and the Quartermaster config file.
 ///
 /// Creates a single "full" backup containing:
 /// 1. All files for every installed mod (under `mods/`)
-/// 2. All `.json` profile files from `user/profiles/` (under `profiles/`)
-/// 3. The `quartermaster.toml` config file
+/// 2. All files for every installed addon (under `mods/`)
+/// 3. All `.json` profile files from `user/profiles/` (under `profiles/`)
+/// 4. The `quartermaster.toml` config file
 ///
 /// Returns the database ID of the new backup record.
 pub fn backup_full(
@@ -159,6 +200,7 @@ pub fn backup_full(
 
     let mut total_size: i64 = 0;
     let mut manifest_mods: Vec<ManifestMod> = Vec::new();
+    let mut manifest_addons: Vec<ManifestAddon> = Vec::new();
 
     // 1. Copy all mod files and build manifest
     let mods = db.list_mods()?;
@@ -187,16 +229,51 @@ pub fn backup_full(
         });
     }
 
-    // Write manifest so restore can reconstruct DB state for removed mods
+    // 2. Copy all addon files and build manifest
+    let all_addons = db.list_addons()?;
+    for addon in &all_addons {
+        // Look up the parent mod to get its forge_mod_id
+        let parent_mod = db
+            .get_mod(addon.parent_mod_id)?
+            .ok_or_else(|| anyhow::anyhow!("addon parent mod {} not found", addon.parent_mod_id))?;
+
+        let addon_files = db.get_files_for_addon(addon.id)?;
+        let mut file_paths: Vec<String> = Vec::new();
+        for file in &addon_files {
+            let src = spt_dir.join(&file.file_path);
+            let dst = dest.join("mods").join(&file.file_path);
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if src.exists() {
+                std::fs::copy(&src, &dst)?;
+                total_size += file.file_size.unwrap_or(0);
+                file_paths.push(file.file_path.clone());
+            }
+        }
+        manifest_addons.push(ManifestAddon {
+            forge_addon_id: addon.forge_addon_id,
+            parent_forge_mod_id: parent_mod.forge_mod_id,
+            forge_version_id: addon.forge_version_id,
+            name: addon.name.clone(),
+            slug: addon.slug.clone(),
+            version: addon.version.clone(),
+            mod_version_constraint: addon.mod_version_constraint.clone(),
+            file_paths,
+        });
+    }
+
+    // Write manifest so restore can reconstruct DB state for removed mods/addons
     let manifest = BackupManifest {
         mods: manifest_mods,
+        addons: manifest_addons,
     };
     let manifest_json =
         serde_json::to_string_pretty(&manifest).context("failed to serialize backup manifest")?;
     std::fs::write(dest.join("manifest.json"), manifest_json)
         .context("failed to write backup manifest")?;
 
-    // 2. Copy profiles
+    // 3. Copy profiles
     let profiles_src = spt_dir.join("user/profiles");
     if profiles_src.is_dir() {
         let profiles_dst = dest.join("profiles");
@@ -214,7 +291,7 @@ pub fn backup_full(
         }
     }
 
-    // 3. Copy config
+    // 4. Copy config
     let config_src = spt_dir.join("quartermaster.toml");
     if config_src.exists() {
         std::fs::copy(&config_src, dest.join("quartermaster.toml"))?;
@@ -421,7 +498,7 @@ pub fn restore_full_backup(
             db.delete_mod(m.id)?;
         }
 
-        // Read manifest to know which mods existed at backup time
+        // Read manifest to know which mods and addons existed at backup time
         let manifest_path = backup_dir.join("manifest.json");
         let manifest: BackupManifest = if manifest_path.exists() {
             let data = std::fs::read_to_string(&manifest_path)
@@ -433,7 +510,10 @@ pub fn restore_full_backup(
             // a hard failure on old backups.
             tracing::warn!("full backup has no manifest.json — file-to-mod mapping will be lost");
             copy_backup_subtree(&mods_dir, spt_dir)?;
-            BackupManifest { mods: vec![] }
+            BackupManifest {
+                mods: vec![],
+                addons: vec![],
+            }
         };
 
         // For each mod in the manifest: re-insert the mod row, copy files,
@@ -463,6 +543,59 @@ pub fn restore_full_backup(
                 let hash = crate::spt::mods::compute_hash_public(&content);
                 let size = content.len() as i64;
                 db.insert_file(mod_db_id, rel_path, Some(&hash), Some(size))?;
+            }
+        }
+
+        // Build a map from forge_mod_id to mod_db_id for addon restoration
+        let mut mod_id_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        for mm in &manifest.mods {
+            if let Ok(Some(m)) = db.get_mod_by_forge_id(mm.forge_mod_id) {
+                mod_id_map.insert(mm.forge_mod_id, m.id);
+            }
+        }
+
+        // For each addon in the manifest: re-insert the addon row, copy files,
+        // and record file metadata.
+        for ma in &manifest.addons {
+            // Look up the parent mod's current DB id using the forge_mod_id
+            let parent_mod_db_id = match mod_id_map.get(&ma.parent_forge_mod_id) {
+                Some(&id) => id,
+                None => {
+                    tracing::warn!(
+                        addon_name = %ma.name,
+                        parent_forge_mod_id = ma.parent_forge_mod_id,
+                        "parent mod not found for addon, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let addon_db_id = db.insert_addon(
+                ma.forge_addon_id,
+                parent_mod_db_id,
+                ma.forge_version_id,
+                &ma.name,
+                ma.slug.as_deref(),
+                &ma.version,
+                ma.mod_version_constraint.as_deref(),
+            )?;
+
+            for rel_path in &ma.file_paths {
+                let src = mods_dir.join(rel_path);
+                if !src.exists() {
+                    tracing::warn!(path = %rel_path, "addon manifest file missing from backup, skipping");
+                    continue;
+                }
+                let dst = spt_dir.join(rel_path);
+                if let Some(parent) = dst.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&src, &dst)?;
+
+                let content = std::fs::read(&dst)?;
+                let hash = crate::spt::mods::compute_hash_public(&content);
+                let size = content.len() as i64;
+                db.insert_addon_file(addon_db_id, rel_path, Some(&hash), Some(size))?;
             }
         }
     }

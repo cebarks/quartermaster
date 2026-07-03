@@ -84,6 +84,9 @@ pub enum Command {
         /// Bypass queue and apply immediately
         #[arg(long)]
         force: bool,
+        /// Operate on a Forge addon instead of a mod
+        #[arg(long)]
+        addon: bool,
     },
 
     /// Update installed mods
@@ -93,6 +96,9 @@ pub enum Command {
         /// Bypass queue and apply immediately
         #[arg(long)]
         force: bool,
+        /// Operate on a Forge addon instead of a mod
+        #[arg(long)]
+        addon: bool,
     },
 
     /// Remove an installed mod
@@ -105,6 +111,9 @@ pub enum Command {
         /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
+        /// Operate on a Forge addon instead of a mod
+        #[arg(long)]
+        addon: bool,
     },
 
     /// List installed mods

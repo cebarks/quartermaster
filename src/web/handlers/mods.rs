@@ -3,11 +3,13 @@ use actix_web::web::{self, Data, Form, Html, Path, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
+use crate::db::addons::InstalledAddon;
 use crate::db::mods::{
     InstalledFile, InstalledMod, ModDependency, ModListFilter, ModSortColumn, ModStatusFilter,
     SortDirection,
 };
 use crate::db::rbac::Permission;
+use crate::db::users::QueueAction;
 use crate::forge::models::{DependencyNode, FikaCompat};
 use crate::health::{self, IntegrityHealth};
 use crate::web::auth::{require_auth, require_permission, SessionUser};
@@ -90,6 +92,7 @@ struct ModListEntry {
     mod_info: InstalledMod,
     file_count: usize,
     total_size: i64,
+    addon_count: usize,
 }
 
 struct DepEntry {
@@ -126,6 +129,7 @@ struct ModDetailTemplate {
     archive_files: Vec<InstalledFile>,
     runtime_files: Vec<InstalledFile>,
     dependencies: Vec<DepEntry>,
+    addons: Vec<InstalledAddon>,
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
@@ -270,11 +274,12 @@ pub async fn list_mods(
     let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
 
-    let (all_unfiltered, filtered_entries) = web::block(move || {
+    let (all_unfiltered, filtered_entries, addon_counts) = web::block(move || {
         let db = db.lock();
         let all = db.list_mods_with_file_counts()?;
         let filtered = db.list_mods_filtered(&filter)?;
-        Ok::<_, anyhow::Error>((all, filtered))
+        let addon_counts = db.count_addons_by_mod()?;
+        Ok::<_, anyhow::Error>((all, filtered, addon_counts))
     })
     .await
     .map_err(WebError::from)?
@@ -282,10 +287,14 @@ pub async fn list_mods(
 
     let all_entries: Vec<ModListEntry> = all_unfiltered
         .into_iter()
-        .map(|(mod_info, file_count, total_size)| ModListEntry {
-            mod_info,
-            file_count,
-            total_size,
+        .map(|(mod_info, file_count, total_size)| {
+            let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
+            ModListEntry {
+                mod_info,
+                file_count,
+                total_size,
+                addon_count,
+            }
         })
         .collect();
 
@@ -297,10 +306,14 @@ pub async fn list_mods(
 
     let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
-        .map(|(mod_info, file_count, total_size)| ModListEntry {
-            mod_info,
-            file_count,
-            total_size,
+        .map(|(mod_info, file_count, total_size)| {
+            let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
+            ModListEntry {
+                mod_info,
+                file_count,
+                total_size,
+                addon_count,
+            }
         })
         .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
         .collect();
@@ -338,7 +351,7 @@ pub async fn mod_detail(
     let mod_id = path.into_inner();
     let db = state.db.clone();
 
-    let (mod_info, archive_files, runtime_files, dependencies) = web::block(move || {
+    let (mod_info, archive_files, runtime_files, dependencies, addons) = web::block(move || {
         let db = db.lock();
         let mod_info = db
             .get_mod(mod_id)?
@@ -352,7 +365,8 @@ pub async fn mod_detail(
             let dep_mod = db.get_mod(dep.depends_on_mod_id)?;
             dep_entries.push(DepEntry { dep, dep_mod });
         }
-        Ok::<_, anyhow::Error>((mod_info, archive_files, runtime_files, dep_entries))
+        let addons = db.list_addons_for_mod(mod_id)?;
+        Ok::<_, anyhow::Error>((mod_info, archive_files, runtime_files, dep_entries, addons))
     })
     .await
     .map_err(WebError::from)?
@@ -370,6 +384,7 @@ pub async fn mod_detail(
         archive_files,
         runtime_files,
         dependencies,
+        addons,
         flash,
         csrf_token,
         nav,
@@ -1732,10 +1747,11 @@ pub async fn list_body_partial(
     let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
 
-    let filtered_entries = web::block(move || {
+    let (filtered_entries, addon_counts) = web::block(move || {
         let db = db.lock();
         let filtered = db.list_mods_filtered(&filter)?;
-        Ok::<_, anyhow::Error>(filtered)
+        let addon_counts = db.count_addons_by_mod()?;
+        Ok::<_, anyhow::Error>((filtered, addon_counts))
     })
     .await
     .map_err(WebError::from)?
@@ -1743,10 +1759,14 @@ pub async fn list_body_partial(
 
     let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
-        .map(|(mod_info, file_count, total_size)| ModListEntry {
-            mod_info,
-            file_count,
-            total_size,
+        .map(|(mod_info, file_count, total_size)| {
+            let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
+            ModListEntry {
+                mod_info,
+                file_count,
+                total_size,
+                addon_count,
+            }
         })
         .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
         .collect();
@@ -1833,4 +1853,737 @@ pub async fn file_tracking_page(
         report,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+// ── Addon Handlers ────────────────────────────────────────────────────
+
+#[derive(Template)]
+#[template(path = "mods/partials/addon_list.html")]
+struct AddonListTemplate {
+    addons: Vec<InstalledAddon>,
+    csrf_token: String,
+    can_disable: bool,
+    can_remove: bool,
+}
+
+pub async fn list_addons_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let mod_db_id = path.into_inner();
+    let db = state.db.clone();
+
+    let addons = web::block(move || {
+        let db = db.lock();
+        db.list_addons_for_mod(mod_db_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let can_disable = user.can("mods.disable");
+    let can_remove = user.can("mods.remove");
+
+    let tmpl = AddonListTemplate {
+        addons,
+        csrf_token,
+        can_disable,
+        can_remove,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+#[derive(serde::Deserialize)]
+pub struct AddonSearchQuery {
+    pub q: Option<String>,
+    pub parent: i64,
+}
+
+#[derive(Template)]
+#[template(path = "mods/partials/addon_search_results.html")]
+struct AddonSearchResultsTemplate {
+    results: Vec<AddonSearchResult>,
+    parent_mod_db_id: i64,
+    csrf_token: String,
+    error: Option<String>,
+}
+
+pub struct AddonSearchResult {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    #[allow(dead_code)]
+    pub mod_id: i64,
+}
+
+pub async fn search_addons(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    query: Query<AddonSearchQuery>,
+) -> actix_web::Result<Html> {
+    let _user = require_auth(&req)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let parent_mod_db_id = query.parent;
+
+    let search_query = query.q.as_deref().unwrap_or("").trim();
+    if search_query.is_empty() {
+        let tmpl = AddonSearchResultsTemplate {
+            results: vec![],
+            parent_mod_db_id,
+            csrf_token,
+            error: None,
+        };
+        return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+    }
+
+    // Get the parent mod to find its forge_mod_id
+    let db = state.db.clone();
+    let parent_mod = web::block(move || {
+        let db = db.lock();
+        db.get_mod(parent_mod_db_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let parent_forge_mod_id = match parent_mod {
+        Some(m) => m.forge_mod_id,
+        None => {
+            let tmpl = AddonSearchResultsTemplate {
+                results: vec![],
+                parent_mod_db_id,
+                csrf_token,
+                error: Some("Parent mod not found".to_string()),
+            };
+            return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+        }
+    };
+
+    let results = match state.forge.search_addons(search_query).await {
+        Ok(forge_results) => forge_results
+            .into_iter()
+            .filter(|a| a.mod_id == Some(parent_forge_mod_id))
+            .map(|a| AddonSearchResult {
+                id: a.id,
+                name: a.name,
+                description: a.description,
+                mod_id: a.mod_id.unwrap_or(0),
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!(err = %e, "failed to search addons");
+            let tmpl = AddonSearchResultsTemplate {
+                results: vec![],
+                parent_mod_db_id,
+                csrf_token,
+                error: Some("Search failed. Please try again.".to_string()),
+            };
+            return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
+        }
+    };
+
+    let tmpl = AddonSearchResultsTemplate {
+        results,
+        parent_mod_db_id,
+        csrf_token,
+        error: None,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+#[derive(serde::Deserialize)]
+pub struct InstallAddonForm {
+    addon_id: i64,
+    csrf_token: String,
+}
+
+pub async fn install_addon(
+    form: Form<InstallAddonForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let parent_mod_db_id = path.into_inner();
+    let addon_forge_id = form.addon_id;
+
+    // Get parent mod
+    let db = state.db.clone();
+    let parent_mod = web::block(move || {
+        let db = db.lock();
+        db.get_mod(parent_mod_db_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let _parent_mod = match parent_mod {
+        Some(m) => m,
+        None => {
+            set_flash(&session, "Parent mod not found", FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
+
+    // Check if already installed
+    {
+        let db = state.db.clone();
+        let already_installed = web::block(move || {
+            let db = db.lock();
+            db.get_addon_by_forge_id(addon_forge_id)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if already_installed.is_some() {
+            set_flash(
+                &session,
+                "This addon is already installed",
+                FlashType::Warning,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", parent_mod_db_id)))
+                .finish());
+        }
+    }
+
+    // Fetch addon info from Forge
+    let addon_info = match state.forge.get_addon(addon_forge_id, false).await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(addon_id = addon_forge_id, err = %e, "failed to fetch addon info");
+            set_flash(
+                &session,
+                "Could not fetch addon info from Forge. Please try again.",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", parent_mod_db_id)))
+                .finish());
+        }
+    };
+
+    // Fetch versions
+    let versions = match state.forge.get_addon_versions(addon_forge_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(addon_id = addon_forge_id, err = %e, "failed to fetch addon versions");
+            set_flash(
+                &session,
+                "Could not fetch addon versions. Please try again.",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", parent_mod_db_id)))
+                .finish());
+        }
+    };
+
+    let version = match versions.iter().max_by_key(|v| v.id) {
+        Some(v) => v,
+        None => {
+            set_flash(
+                &session,
+                "No versions available for this addon",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", parent_mod_db_id)))
+                .finish());
+        }
+    };
+
+    // Check if the operation should be queued
+    let config = state.config_cloned();
+    let should_queue = crate::queue::should_queue(
+        &config,
+        false,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
+
+    if should_queue {
+        let db = state.db.clone();
+        let addon_name = addon_info.name.clone();
+        let version_id = version.id;
+        let already_queued = web::block(move || {
+            let db = db.lock();
+            if db.has_pending_addon_op(addon_forge_id, QueueAction::Install)? {
+                return Ok::<bool, rusqlite::Error>(true);
+            }
+            db.insert_pending_addon_op(
+                QueueAction::Install,
+                addon_forge_id,
+                Some(version_id),
+                &addon_name,
+                None,
+                Some(&user.username),
+            )?;
+            Ok(false)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if already_queued {
+            set_flash(
+                &session,
+                "This addon is already queued for install",
+                FlashType::Warning,
+            );
+        } else {
+            set_flash(&session, "Addon queued for install", FlashType::Success);
+        }
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", format!("/quma/mods/{}#queue", parent_mod_db_id)))
+            .finish());
+    }
+
+    // Install immediately
+    let task_id =
+        match state
+            .tasks
+            .start_if_not_running("Installing addon", &addon_info.name, addon_forge_id)
+        {
+            Some(id) => id,
+            None => {
+                set_flash(
+                    &session,
+                    "This addon is already being installed",
+                    FlashType::Warning,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", format!("/quma/mods/{}", parent_mod_db_id)))
+                    .finish());
+            }
+        };
+
+    let tasks = state.tasks.clone();
+    let forge = state.forge.clone();
+    let spt_dir = state.spt_dir.clone();
+    let db = state.db.clone();
+    let config = state.config_cloned();
+    let version = version.clone();
+    let addon_name = addon_info.name.clone();
+    let addon_slug = addon_info.slug.clone();
+
+    tokio::spawn(async move {
+        let result = async {
+            let link = version
+                .link
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+            let tmp_dir = tempfile::tempdir()?;
+            let archive_path = tmp_dir.path().join("addon.zip");
+            forge.download_file(link, &archive_path).await?;
+
+            let db_ref = &db.lock();
+            let req = crate::ops::InstallAddonRequest {
+                db: db_ref,
+                spt_dir: &spt_dir,
+                config: &config,
+                forge_addon_id: addon_forge_id,
+                parent_mod_id: parent_mod_db_id,
+                version_id: version.id,
+                name: &addon_name,
+                slug: addon_slug.as_deref(),
+                version: &version.version,
+                mod_version_constraint: version.mod_version_constraint.as_deref(),
+                archive_path: &archive_path,
+            };
+
+            crate::ops::install_addon_from_archive(&req)?;
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(_) => {
+                tasks.complete(task_id, "Addon installed successfully".to_string());
+            }
+            Err(e) => {
+                tracing::error!(task_id, err = %e, "addon install failed");
+                tasks.fail(task_id, format!("Install failed: {e}"));
+            }
+        }
+    });
+
+    set_flash(&session, "Addon installation started", FlashType::Success);
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/mods/{}", parent_mod_db_id)))
+        .finish())
+}
+
+#[derive(serde::Deserialize)]
+pub struct AddonActionForm {
+    csrf_token: String,
+}
+
+pub async fn update_addon(
+    form: Form<AddonActionForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsUpdate)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let addon_db_id = path.into_inner();
+
+    // Get addon info
+    let db = state.db.clone();
+    let addon = web::block(move || {
+        let db = db.lock();
+        db.get_addon(addon_db_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let addon = match addon {
+        Some(a) => a,
+        None => {
+            set_flash(&session, "Addon not found", FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
+
+    // Fetch latest version
+    let versions = match state.forge.get_addon_versions(addon.forge_addon_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(forge_id = addon.forge_addon_id, err = %e, "failed to fetch addon versions");
+            set_flash(
+                &session,
+                "Could not fetch addon versions. Please try again.",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", addon.parent_mod_id)))
+                .finish());
+        }
+    };
+
+    let latest_version = match versions.iter().max_by_key(|v| v.id) {
+        Some(v) => v,
+        None => {
+            set_flash(
+                &session,
+                "No versions available for this addon",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", addon.parent_mod_id)))
+                .finish());
+        }
+    };
+
+    if latest_version.version == addon.version {
+        set_flash(&session, "Addon is already up to date", FlashType::Info);
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", format!("/quma/mods/{}", addon.parent_mod_id)))
+            .finish());
+    }
+
+    // Check if the operation should be queued
+    let config = state.config_cloned();
+    let should_queue = crate::queue::should_queue(
+        &config,
+        false,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
+
+    if should_queue {
+        let db = state.db.clone();
+        let addon_name = addon.name.clone();
+        let version_id = latest_version.id;
+        let forge_addon_id = addon.forge_addon_id;
+        let already_queued = web::block(move || {
+            let db = db.lock();
+            if db.has_pending_addon_op(forge_addon_id, QueueAction::Update)? {
+                return Ok::<bool, rusqlite::Error>(true);
+            }
+            db.insert_pending_addon_op(
+                QueueAction::Update,
+                forge_addon_id,
+                Some(version_id),
+                &addon_name,
+                None,
+                Some(&user.username),
+            )?;
+            Ok(false)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if already_queued {
+            set_flash(
+                &session,
+                "This addon is already queued for update",
+                FlashType::Warning,
+            );
+        } else {
+            set_flash(&session, "Addon queued for update", FlashType::Success);
+        }
+        return Ok(HttpResponse::SeeOther()
+            .insert_header((
+                "Location",
+                format!("/quma/mods/{}#queue", addon.parent_mod_id),
+            ))
+            .finish());
+    }
+
+    // Update immediately
+    let task_id =
+        match state
+            .tasks
+            .start_if_not_running("Updating addon", &addon.name, addon.forge_addon_id)
+        {
+            Some(id) => id,
+            None => {
+                set_flash(
+                    &session,
+                    "This addon is already being updated",
+                    FlashType::Warning,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", format!("/quma/mods/{}", addon.parent_mod_id)))
+                    .finish());
+            }
+        };
+
+    let tasks = state.tasks.clone();
+    let forge = state.forge.clone();
+    let spt_dir = state.spt_dir.clone();
+    let db = state.db.clone();
+    let config = state.config_cloned();
+    let version = latest_version.clone();
+    let addon_name = addon.name.clone();
+    let parent_mod_id = addon.parent_mod_id;
+
+    tokio::spawn(async move {
+        let result = async {
+            let link = version
+                .link
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+            let tmp_dir = tempfile::tempdir()?;
+            let archive_path = tmp_dir.path().join("addon.zip");
+            forge.download_file(link, &archive_path).await?;
+
+            // Extract to staging outside the DB lock
+            let staging_dir = tempfile::tempdir()?;
+            let staging_path = staging_dir.path().to_path_buf();
+            let archive = archive_path.clone();
+            let staging_path_clone = staging_path.clone();
+            let extracted = actix_web::web::block(move || {
+                crate::spt::mods::extract_mod(&archive, &staging_path_clone)
+            })
+            .await??;
+
+            crate::ops::apply_addon_update(
+                db,
+                spt_dir,
+                config,
+                staging_path,
+                extracted,
+                addon_db_id,
+                version.id,
+                version.version.clone(),
+                version.mod_version_constraint.clone(),
+                addon.forge_addon_id,
+            )
+            .await?;
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(_) => {
+                tasks.complete(task_id, "Addon updated successfully".to_string());
+            }
+            Err(e) => {
+                tracing::error!(task_id, addon = %addon_name, parent_mod_id, err = %e, "addon update failed");
+                tasks.fail(task_id, format!("Update failed: {e}"));
+            }
+        }
+    });
+
+    set_flash(&session, "Addon update started", FlashType::Success);
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/mods/{}", addon.parent_mod_id)))
+        .finish())
+}
+
+pub async fn remove_addon(
+    form: Form<AddonActionForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsRemove)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let addon_db_id = path.into_inner();
+
+    // Get addon info
+    let db = state.db.clone();
+    let db2 = state.db.clone();
+    let addon = web::block(move || {
+        let db = db.lock();
+        db.get_addon(addon_db_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let addon = match addon {
+        Some(a) => a,
+        None => {
+            set_flash(&session, "Addon not found", FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
+
+    let parent_mod_id = addon.parent_mod_id;
+    let spt_dir = state.spt_dir.clone();
+    let config = state.config_cloned();
+
+    let result = web::block(move || {
+        let db = db2.lock();
+        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon_db_id, false)
+    })
+    .await
+    .map_err(WebError::from)?;
+
+    match result {
+        Ok(_) => {
+            set_flash(&session, "Addon removed successfully", FlashType::Success);
+        }
+        Err(e) => {
+            tracing::error!(addon_db_id, err = %e, "addon removal failed");
+            set_flash(
+                &session,
+                &format!("Failed to remove addon: {e}"),
+                FlashType::Error,
+            );
+        }
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/mods/{}", parent_mod_id)))
+        .finish())
+}
+
+pub async fn toggle_addon_disable(
+    form: Form<AddonActionForm>,
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsDisable)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let addon_db_id = path.into_inner();
+
+    // Get addon info
+    let db = state.db.clone();
+    let addon = web::block(move || {
+        let db = db.lock();
+        db.get_addon(addon_db_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let addon = match addon {
+        Some(a) => a,
+        None => {
+            set_flash(&session, "Addon not found", FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
+
+    let parent_mod_id = addon.parent_mod_id;
+    let is_disabled = addon.disabled;
+    let spt_dir = state.spt_dir.clone();
+    let config = state.config_cloned();
+    let db2 = state.db.clone();
+
+    let result = if is_disabled {
+        web::block(move || {
+            let db = db2.lock();
+            crate::ops::enable_addon(&db, &spt_dir, &config, addon_db_id)
+        })
+        .await
+        .map_err(WebError::from)?
+    } else {
+        web::block(move || {
+            let db = db2.lock();
+            crate::ops::disable_addon(&db, &spt_dir, &config, addon_db_id)
+        })
+        .await
+        .map_err(WebError::from)?
+    };
+
+    match result {
+        Ok(_) => {
+            let msg = if is_disabled {
+                "Addon enabled successfully"
+            } else {
+                "Addon disabled successfully"
+            };
+            set_flash(&session, msg, FlashType::Success);
+        }
+        Err(e) => {
+            tracing::error!(addon_db_id, err = %e, "addon toggle failed");
+            set_flash(
+                &session,
+                &format!("Failed to toggle addon: {e}"),
+                FlashType::Error,
+            );
+        }
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/mods/{}", parent_mod_id)))
+        .finish())
 }

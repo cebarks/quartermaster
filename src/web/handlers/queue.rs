@@ -233,26 +233,33 @@ async fn download_to_temp(state: &AppState, link: &str) -> anyhow::Result<tempfi
 }
 
 pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    if op.item_type == "addon" {
+        return apply_addon_install(op, state).await;
+    }
+
+    let forge_mod_id = op
+        .forge_mod_id
+        .expect("mod operation must have forge_mod_id");
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("install op missing version_id"))?;
 
     {
         let db = state.db.lock();
-        if db.get_mod_by_forge_id(op.forge_mod_id)?.is_some() {
+        if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
             return Ok(());
         }
     }
 
     let (link, version_str, full_version) =
-        resolve_version_link(state, op.forge_mod_id, version_id).await?;
+        resolve_version_link(state, forge_mod_id, version_id).await?;
 
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
         &state.spt_dir,
         &state.config_cloned(),
-        op.forge_mod_id,
+        forge_mod_id,
         &full_version,
     )
     .await?;
@@ -264,7 +271,6 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let spt_dir = state.spt_dir.clone();
     let config = state.config_cloned();
     let mod_name = op.mod_name.clone();
-    let forge_mod_id = op.forge_mod_id;
 
     let db_id = web::block(move || {
         let db = db.lock();
@@ -294,18 +300,25 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
 }
 
 pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    if op.item_type == "addon" {
+        return apply_addon_update(op, state).await;
+    }
+
+    let forge_mod_id = op
+        .forge_mod_id
+        .expect("mod operation must have forge_mod_id");
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("update op missing version_id"))?;
     let (link, version_str, full_version) =
-        resolve_version_link(state, op.forge_mod_id, version_id).await?;
+        resolve_version_link(state, forge_mod_id, version_id).await?;
 
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
         &state.spt_dir,
         &state.config_cloned(),
-        op.forge_mod_id,
+        forge_mod_id,
         &full_version,
     )
     .await?;
@@ -316,7 +329,6 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
     let config = state.config_cloned();
-    let forge_mod_id = op.forge_mod_id;
 
     let mod_db_id = web::block(move || {
         let db = db.lock();
@@ -343,10 +355,16 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
 }
 
 pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    if op.item_type == "addon" {
+        return apply_addon_remove(op, state).await;
+    }
+
+    let forge_mod_id = op
+        .forge_mod_id
+        .expect("mod operation must have forge_mod_id");
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
     let config = state.config_cloned();
-    let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
         let db = db.lock();
@@ -361,6 +379,175 @@ pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> any
         }
 
         crate::ops::remove_mod_by_id(&db, &spt_dir, &config, installed.id)
+    })
+    .await??;
+
+    Ok(())
+}
+
+// ── Addon Queue Operations ───────────────────────────────────────────
+
+async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    let forge_addon_id = op
+        .forge_addon_id
+        .ok_or_else(|| anyhow::anyhow!("addon operation missing forge_addon_id"))?;
+    let version_id = op
+        .forge_version_id
+        .ok_or_else(|| anyhow::anyhow!("addon install op missing version_id"))?;
+
+    // Check if already installed
+    {
+        let db = state.db.lock();
+        if db.get_addon_by_forge_id(forge_addon_id)?.is_some() {
+            return Ok(());
+        }
+    }
+
+    // Fetch addon info
+    let addon_info = state.forge.get_addon(forge_addon_id, true).await?;
+    let versions = addon_info.versions.unwrap_or_default();
+    let version = versions
+        .iter()
+        .find(|v| v.id == version_id)
+        .ok_or_else(|| anyhow::anyhow!("version {version_id} not found"))?;
+    let link = version
+        .link
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+
+    // Find parent mod by forge_mod_id
+    let parent_forge_mod_id = addon_info
+        .mod_id
+        .ok_or_else(|| anyhow::anyhow!("addon has no parent mod_id"))?;
+    let parent_mod_db_id = {
+        let db = state.db.lock();
+        let parent_mod = db
+            .get_mod_by_forge_id(parent_forge_mod_id)?
+            .ok_or_else(|| anyhow::anyhow!("parent mod {} not installed", parent_forge_mod_id))?;
+        parent_mod.id
+    };
+
+    // Download
+    let tmp_dir = tempfile::tempdir()?;
+    let archive_path = tmp_dir.path().join("addon.zip");
+    state.forge.download_file(link, &archive_path).await?;
+
+    // Install
+    let db = state.db.clone();
+    let spt_dir = state.spt_dir.clone();
+    let config = state.config_cloned();
+    let addon_name = op.mod_name.clone();
+    let addon_slug = addon_info.slug.clone();
+    let version_str = version.version.clone();
+    let mod_version_constraint = version.mod_version_constraint.clone();
+
+    web::block(move || {
+        let db = db.lock();
+        let req = crate::ops::InstallAddonRequest {
+            db: &db,
+            spt_dir: &spt_dir,
+            config: &config,
+            forge_addon_id,
+            parent_mod_id: parent_mod_db_id,
+            version_id,
+            name: &addon_name,
+            slug: addon_slug.as_deref(),
+            version: &version_str,
+            mod_version_constraint: mod_version_constraint.as_deref(),
+            archive_path: &archive_path,
+        };
+        crate::ops::install_addon_from_archive(&req)?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+
+    Ok(())
+}
+
+async fn apply_addon_update(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    let forge_addon_id = op
+        .forge_addon_id
+        .ok_or_else(|| anyhow::anyhow!("addon operation missing forge_addon_id"))?;
+    let version_id = op
+        .forge_version_id
+        .ok_or_else(|| anyhow::anyhow!("addon update op missing version_id"))?;
+
+    // Get installed addon
+    let addon_db_id = {
+        let db = state.db.lock();
+        let addon = db
+            .get_addon_by_forge_id(forge_addon_id)?
+            .ok_or_else(|| anyhow::anyhow!("addon not installed"))?;
+        addon.id
+    };
+
+    // Fetch version info
+    let addon_info = state.forge.get_addon(forge_addon_id, true).await?;
+    let versions = addon_info.versions.unwrap_or_default();
+    let version = versions
+        .iter()
+        .find(|v| v.id == version_id)
+        .ok_or_else(|| anyhow::anyhow!("version {version_id} not found"))?;
+    let link = version
+        .link
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+
+    // Download and extract
+    let tmp_dir = tempfile::tempdir()?;
+    let archive_path = tmp_dir.path().join("addon.zip");
+    state.forge.download_file(link, &archive_path).await?;
+
+    let staging_path = tmp_dir.path().join("staging");
+    std::fs::create_dir(&staging_path)?;
+
+    let spt_dir = state.spt_dir.clone();
+    let config = state.config_cloned();
+    let version_str = version.version.clone();
+    let mod_version_constraint = version.mod_version_constraint.clone();
+    let forge_addon_id = op
+        .forge_addon_id
+        .ok_or_else(|| anyhow::anyhow!("addon operation missing forge_addon_id"))?;
+
+    let staging_path2 = staging_path.clone();
+    let extracted =
+        web::block(move || crate::spt::mods::extract_mod(&archive_path, &staging_path2))
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))??;
+
+    // Update
+    crate::ops::apply_addon_update(
+        state.db.clone(),
+        spt_dir,
+        config,
+        staging_path,
+        extracted,
+        addon_db_id,
+        version_id,
+        version_str,
+        mod_version_constraint,
+        forge_addon_id,
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn apply_addon_remove(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    let forge_addon_id = op
+        .forge_addon_id
+        .ok_or_else(|| anyhow::anyhow!("addon operation missing forge_addon_id"))?;
+
+    let db = state.db.clone();
+    let spt_dir = state.spt_dir.clone();
+    let config = state.config_cloned();
+
+    web::block(move || {
+        let db = db.lock();
+        let addon = db
+            .get_addon_by_forge_id(forge_addon_id)?
+            .ok_or_else(|| anyhow::anyhow!("addon not found for forge_id {forge_addon_id}"))?;
+        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon.id, false)
     })
     .await??;
 

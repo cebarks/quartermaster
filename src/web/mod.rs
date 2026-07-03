@@ -314,6 +314,10 @@ pub fn configure_app(
             web::get().to(handlers::queue::queue_content_partial),
         )
         .route(
+            "/mods/{id}/addon-search",
+            web::get().to(handlers::mods::search_addons),
+        )
+        .route(
             "/requests",
             web::post().to(handlers::requests::create_request),
         )
@@ -586,6 +590,30 @@ pub fn configure_app(
             .route(
                 "/mods/{id}/backup",
                 web::post().to(handlers::backup::create_mod_backup),
+            )
+            .route(
+                "/mods/{id}/addons",
+                web::get().to(handlers::mods::list_addons_partial),
+            )
+            .route(
+                "/mods/{id}/addon-search",
+                web::get().to(handlers::mods::search_addons),
+            )
+            .route(
+                "/mods/{id}/install-addon",
+                web::post().to(handlers::mods::install_addon),
+            )
+            .route(
+                "/addons/{id}/update",
+                web::post().to(handlers::mods::update_addon),
+            )
+            .route(
+                "/addons/{id}/remove",
+                web::post().to(handlers::mods::remove_addon),
+            )
+            .route(
+                "/addons/{id}/toggle-disable",
+                web::post().to(handlers::mods::toggle_addon_disable),
             )
             .route(
                 "/backups/{id}/restore",
