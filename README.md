@@ -99,15 +99,20 @@ just audit      # cargo audit
 just changelog  # git-cliff changelog generation
 ```
 
-**Local dev environment** (fake SPT dir, no real server needed):
+**Local dev environment** (bootstraps a real SPT dev environment at `.dev-server/`):
 
 ```bash
-just dev-init       # create a stub SPT directory at .dev/
-just dev-serve      # build & run web UI against .dev/
-just dev-cli <ARGS> # run any quma command against .dev/
-just dev-reset-db   # wipe .dev/ database
-just dev-clean      # remove .dev/ entirely
+just dev-init       # bootstrap SPT dev environment via quma setup
+just dev-serve      # build & run web UI against .dev-server/
+just dev-cli <ARGS> # run any quma command against .dev-server/
+just dev-watch      # auto-rebuild & restart on file changes (needs cargo-watch)
+just dev-seed       # seed dev database with test data (wipes & repopulates)
+just dev-reset-db   # wipe .dev-server/ database (keeps config & structure)
+just dev-clean      # remove .dev-server/ and container entirely
+just dev-info       # show dev environment settings (port, container, worktree)
 ```
+
+Dev recipes are worktree-aware — each git worktree gets a unique port and container name for parallel development.
 
 ## Architecture
 

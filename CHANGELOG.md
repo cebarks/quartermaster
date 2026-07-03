@@ -44,6 +44,83 @@ All notable changes to Quartermaster will be documented in this file.
 - Quests filter always shows controls when profile has quests([664b819](https://github.com/cebarks/quartermaster/commit/664b8197fa172b86b054544e70d0f2ac719ce447))
 - Deduplicate filter in check_mod_loads, combine DB queries in dashboard([b62c46c](https://github.com/cebarks/quartermaster/commit/b62c46cc51c4f6f21a198fe41477f17419784699))
 - Load failure false positives and quests filter trap (#136)([4357494](https://github.com/cebarks/quartermaster/commit/4357494bba7c109f1d0c16863d26b24df7e9c5d0))
+- Update headless_list_loads test to expect redirect([c0de358](https://github.com/cebarks/quartermaster/commit/c0de358972aca85156bb9e15f68a8737066c8aa6))
+- Fall back to Podman rootless socket (#148)([4e874cf](https://github.com/cebarks/quartermaster/commit/4e874cfeb0755e4dc2c56c491d40ba3b9fa1f391))
+- Headless client stability improvements (#149)([691e45b](https://github.com/cebarks/quartermaster/commit/691e45b155be746c2d9e98d48c746f2e9ca279f5))
+- Serve static assets without auth (#151)([1c73ebc](https://github.com/cebarks/quartermaster/commit/1c73ebcad88c375068ac59908014ea38f1964954))
+- Set Content-Type on static assets so browsers apply CSS/JS (#154)([4351d29](https://github.com/cebarks/quartermaster/commit/4351d294a79011cad96b074997e1ae7a79287105))
+- Prevent error info leakage and add missing transaction in requests handler([a4e5166](https://github.com/cebarks/quartermaster/commit/a4e5166e8d18d7b9ed8109eb388722d35da70acd))
+- Prevent error info leakage and add missing transaction in requests handler (#157)([7034406](https://github.com/cebarks/quartermaster/commit/70344061899c15eb5562b5607d698f79b2083ed8))
+- Add confirmation prompt to `remove` command([9b14c15](https://github.com/cebarks/quartermaster/commit/9b14c15d27dfc0b6d62a5ef6af7ce523e714231e))
+- Add confirmation prompt to remove command (#158)([2747106](https://github.com/cebarks/quartermaster/commit/27471061519eea434f1100a9152f799634e51350))
+- Reduce DB lock contention and memory usage in runtime file scan([765aacf](https://github.com/cebarks/quartermaster/commit/765aacf78cbb6743ce42cf130af0fb170ed4096c))
+- Reduce DB lock contention and memory usage in runtime file scan (#159)([9f09959](https://github.com/cebarks/quartermaster/commit/9f09959f3bc3a2e251dfdf596f228018cde46e2f))
+- Wrap migration + version bump in a single transaction([ac1364e](https://github.com/cebarks/quartermaster/commit/ac1364e1910d3e64c3c9307bc1da927de7ca8ae0))
+- Wrap migration + version bump in a single transaction (#160)([5aa9a41](https://github.com/cebarks/quartermaster/commit/5aa9a4140b356c3edef61326ad823793e15eaf2d))
+- Harden Forge API client against token leak and serialization mismatch([3d80291](https://github.com/cebarks/quartermaster/commit/3d80291aa176d771de073a9c1e11bdf8d6118eb6))
+- Harden Forge API client against token leak and serialization mismatch (#161)([dd13f68](https://github.com/cebarks/quartermaster/commit/dd13f68e5d5d003c1a8665ddc72657e194d1f306))
+- Skip conflicting dependencies during mod install([17b86c8](https://github.com/cebarks/quartermaster/commit/17b86c894298ab9da6c3bcd78d6f872e5aea5942))
+- Skip conflicting dependencies during mod install (#163)([e0dff7f](https://github.com/cebarks/quartermaster/commit/e0dff7f3c45b2c1ebea37ec1b16428497fdd196e))
+- Harden 7z archive extraction against path traversal and anti-items([b8c3990](https://github.com/cebarks/quartermaster/commit/b8c39907303b233f7b06134225d05d089f0b4d1f))
+- Harden 7z archive extraction against path traversal and anti-items (#168)([ab0187d](https://github.com/cebarks/quartermaster/commit/ab0187d10975f91765a59d0f7b2b0049d0438344))
+- Skip symlinks in recursive directory walkers to prevent infinite recursion([62df04c](https://github.com/cebarks/quartermaster/commit/62df04c0b127856b0dca9e0d5ea57ef038bcd412))
+- Skip symlinks in recursive directory walkers (#162)([ad55117](https://github.com/cebarks/quartermaster/commit/ad551173faab86ca3e044ef871d55cdd2e4a1e7a))
+- Prevent partial filesystem state on mod update failure([43091e7](https://github.com/cebarks/quartermaster/commit/43091e7a2f8ab36d01e17430e48cb348adbf58d8))
+- Prevent partial filesystem state on mod update failure (#164)([539f450](https://github.com/cebarks/quartermaster/commit/539f4501e337ae038f13eb84c886ac8c63c0ceac))
+- Use staging directory in install_mod_from_archive to prevent orphaned files([1d6325b](https://github.com/cebarks/quartermaster/commit/1d6325be44d0c14bcc74cf531bfccf168e3b103c))
+- Use staging directory in install to prevent orphaned files (#165)([c97b0d3](https://github.com/cebarks/quartermaster/commit/c97b0d38b68de31ef5a5e14dbdfad8d38034bdfa))
+- Move filesystem renames inside DB transaction for disable/enable mod([8cffe38](https://github.com/cebarks/quartermaster/commit/8cffe384be16077e399e93a1f7c18c950838047d))
+- Move filesystem renames inside DB transaction for disable/enable mod (#166)([1d4ea0f](https://github.com/cebarks/quartermaster/commit/1d4ea0fa3a2b90c56d935f246ccfd947bf8bd320))
+- Add crash recovery for async mod updates([33cbd6d](https://github.com/cebarks/quartermaster/commit/33cbd6d9c7c066fd2a8b84e1d816edd0953400da))
+- Add crash recovery for async mod updates (#167)([a503a66](https://github.com/cebarks/quartermaster/commit/a503a66a698f36cf0be004105bf114cd92005463))
+- Close TOCTOU races in mod install/update/remove handlers([bce0b35](https://github.com/cebarks/quartermaster/commit/bce0b35d9f0aa9538d6c2d3ff421fdb6eae976e0))
+- Close TOCTOU races in mod operation handlers (#170)([6f6483d](https://github.com/cebarks/quartermaster/commit/6f6483d916e0a7c25da9f34935f9c96450621ded))
+- Raise extraction size limits and show full error chain in queue (#172)([afe4af5](https://github.com/cebarks/quartermaster/commit/afe4af5c2444fae83997d7f9beeddb32906d1cb9))
+- Harden headless client entrypoint for container restarts (#175)([a30b823](https://github.com/cebarks/quartermaster/commit/a30b8231d95578f1e5c01ed4021d1550a835ad62))
+- Restart headless containers after SPT server restart (#178)([294045f](https://github.com/cebarks/quartermaster/commit/294045f9d4f4dcfa71f4489118652915d964d571))
+- Use shared config in client supervisor to prevent ghost entries (#180)([30996dc](https://github.com/cebarks/quartermaster/commit/30996dc526940963317c9aa22802a132d2e78556))
+- Prevent logs page from freezing browser (#181)([838267a](https://github.com/cebarks/quartermaster/commit/838267a95988c9c6d72137998bfb16c464908a16))
+- Always start ClientSupervisor when Fika and Podman are available (#183)([ac0f9fc](https://github.com/cebarks/quartermaster/commit/ac0f9fc9c655dd83e791b9480a2f030b42466435))
+- Rewrite hardcoded backend URLs in SPT proxy responses (#187)([f72762a](https://github.com/cebarks/quartermaster/commit/f72762ad1de3a1f7253c77d7b92cf68b36ce4ed8))
+- Accept 'title' field in Forge API category response (#188)([522f5fa](https://github.com/cebarks/quartermaster/commit/522f5fa7c8de6b82ce8e41202d5589ac702718d0))
+- Select latest mod version by ID instead of array position (#189)([93a46db](https://github.com/cebarks/quartermaster/commit/93a46db280a72940651428307d0b206bdcb92ea0))
+- Request all versions from Forge API to prevent stale updates (#192)([f591d75](https://github.com/cebarks/quartermaster/commit/f591d7576ba65f7cefa29f99eb7cfea2da204195))
+- Handle missing config file and TLS auto-cert validation (#193)([83ab2f3](https://github.com/cebarks/quartermaster/commit/83ab2f36433f1ed337135f54a18cb46e7178085a))
+- Resolve pre-commit hook logging check failures (#191)([b26cdb7](https://github.com/cebarks/quartermaster/commit/b26cdb76eec77258bee3a46870dfc4191359bb66))
+- Match loaded mods by package.json name instead of Forge display name([1184448](https://github.com/cebarks/quartermaster/commit/1184448b83f7572b36f5b9de4d79cd7c19edeb23))
+- Match loaded mods by package.json name instead of Forge display name (#194)([9ade831](https://github.com/cebarks/quartermaster/commit/9ade8316d70715d48e2536f2fddd0a8cbcec8fbf))
+- Normalize backslash archive paths & add web dependency resolution (#196)([9b0b4ae](https://github.com/cebarks/quartermaster/commit/9b0b4aec79c6d73370c60a33cb5ff1a2e4499647))
+- Show 'Fika ?' badge for unknown compatibility in request search([b4666ea](https://github.com/cebarks/quartermaster/commit/b4666ea71550ab830b2a402e5d812eceed9a2389))
+- Match loaded mods by directory name instead of package.json name([0084415](https://github.com/cebarks/quartermaster/commit/0084415bbbe021079885492e1a5e5fccc8ef2c1e))
+- Reverse log entry ordering so newest entries appear at bottom([245dbf3](https://github.com/cebarks/quartermaster/commit/245dbf35df582b783c22de593b926e6c0e7c4d64))
+- Capture AID from SPT register response for reliable profile linking([1406b5e](https://github.com/cebarks/quartermaster/commit/1406b5e9684cfa9016d61f0813e72f2ffb055250))
+- Validate profile AID exists and is unlinked before linking([e86848c](https://github.com/cebarks/quartermaster/commit/e86848c71d84668249c5dbb8745201e6250f1b3a))
+- Resolve 5 blocking bugs (profiles, logs, load failures, Fika compat) (#201)([9f29229](https://github.com/cebarks/quartermaster/commit/9f292294b2b0e60beae66f6bc5e480f86507e2fe))
+- Return 400 instead of panicking on malformed WebSocket URI([56efcca](https://github.com/cebarks/quartermaster/commit/56efccace2a3b20dc10ed8962a6f6368bab679f9))
+- Handle concurrent config removal in client_scale instead of panicking([2da71b2](https://github.com/cebarks/quartermaster/commit/2da71b25a01d5069a0d75ebc1bceddf54dbaf232))
+- Don't leave dashboard stuck in 'restarting' state on queue drain error([450a0cf](https://github.com/cebarks/quartermaster/commit/450a0cff322b5d53267bd5eaa446625ff274ddc1))
+- Reject symlinks in 7z archives to match ZIP extraction security check([2e5b458](https://github.com/cebarks/quartermaster/commit/2e5b45836ee71e4192aeca9c3a156a5664a35242))
+- Resolve 4 production-blocking bugs (#203)([8a2f5d6](https://github.com/cebarks/quartermaster/commit/8a2f5d6035e28fead01f2aac3cc3b1f93fbd64e5))
+- Use external_url directly instead of appending internal SPT port([d8e4128](https://github.com/cebarks/quartermaster/commit/d8e41289c415a98f07ab9fc5ef0f4a9b4920436a))
+- Setup page shows internal SPT port instead of external URL (#205)([304e3c2](https://github.com/cebarks/quartermaster/commit/304e3c23b4c3f0ead1730f991e5d5bc0bfc136b8))
+- Auto-migrate deprecated NarcoNet path formats in config([5530bc1](https://github.com/cebarks/quartermaster/commit/5530bc1a0d9b216bcae473788b894eb6528b3ed1))
+- Auto-migrate deprecated NarcoNet path formats in config (#206)([e0856cd](https://github.com/cebarks/quartermaster/commit/e0856cd61edcdea6f5f28cb06854469d5736cd09))
+- Quick wins — security, correctness, and template cleanup (#207)([2243dc0](https://github.com/cebarks/quartermaster/commit/2243dc0fcc6b7af1a79c22952d348600b46e6e4d))
+- Decompress zlib request bodies before parsing raid events (#208)([b9a3578](https://github.com/cebarks/quartermaster/commit/b9a3578aa7f4907057513e1313caf811e9527105))
+- Deduplicate NarcoNet sync paths when mods share a directory (#209)([1fb6bba](https://github.com/cebarks/quartermaster/commit/1fb6bbaa69f6a72a82edef96c21bd59a84fc51eb))
+- Normalize BepInEx/plugins case in mod archives (#213)([b7ef100](https://github.com/cebarks/quartermaster/commit/b7ef1001d34212411ebf36d571a3c9089f7594ce))
+- Match loaded mods using normalized substring containment (#214)([65cfad4](https://github.com/cebarks/quartermaster/commit/65cfad475eef7f7e2eed2ccc6e0d5a77ab08a5de))
+- Include NarcoNet in its own mod sync config (#215)([bd94cc0](https://github.com/cebarks/quartermaster/commit/bd94cc0b51aae4b696301f3d0905044dec0fcd11))
+- Include IP addresses as SANs in self-signed TLS certificates (#216)([d8b4c54](https://github.com/cebarks/quartermaster/commit/d8b4c549701c28d1f98b0dfbd35f78ec12c2c076))
+- Include NarcoNet in sync and use gameroot-relative paths (#219)([a61bc60](https://github.com/cebarks/quartermaster/commit/a61bc6015dc4b73874e4ae9ab6af9f636572b414))
+- Detect proxy rewrite origin dynamically (#220)([8a4a63a](https://github.com/cebarks/quartermaster/commit/8a4a63a7d3cf62243a2bb3ad8593e26ae5cffa9f))
+- SVM config key names and editor improvements (#223)([58e3b22](https://github.com/cebarks/quartermaster/commit/58e3b22bfd2e4426b8778c51db9274086558ca25))
+- Auto-exclude runtime-generated files from NarcoNet modsync (#224)([154e05f](https://github.com/cebarks/quartermaster/commit/154e05ffc2c50bdc958fd3d90816814897a79b23))
+- Seed wine registry keys and pass through GPU devices (#225)([ce7a1cf](https://github.com/cebarks/quartermaster/commit/ce7a1cf67ea6ae6c4033f8e52917f5d6843e57ba))
+
+### CI/CD
+
+- Install mold linker on CI runners([4f66aff](https://github.com/cebarks/quartermaster/commit/4f66affd1771357ca2e2ffd544929e0580390a1e))
 
 ### Documentation
 
@@ -115,10 +192,42 @@ All notable changes to Quartermaster will be documented in this file.
 - Dev environment improvements — dev-watch and dev-seed (#135)([10f53cc](https://github.com/cebarks/quartermaster/commit/10f53ccdbda63e7118fd78ce3526e5ba1c258e63))
 - Mod backup/restore system (#139)([05b41f3](https://github.com/cebarks/quartermaster/commit/05b41f33113da11803223a080a6bfe7d2c045c4a))
 - Self-service password change, cleanup, and refactors (#138)([c963808](https://github.com/cebarks/quartermaster/commit/c963808b6c7aafba7dba5625027482e4f9e069bb))
+- Headless client fixes and Fika auto-install (#144)([71382e9](https://github.com/cebarks/quartermaster/commit/71382e9f2067fad5e2ecd43e3d1fbe5567fd233c))
+- Player bootstrap — join page, scripts, and mod archive (#146)([e817ce0](https://github.com/cebarks/quartermaster/commit/e817ce012d4763b499f42efc79dcc6dc7a3f42ea))
+- Container teardown on exit (#145)([71accf4](https://github.com/cebarks/quartermaster/commit/71accf4c08a1d7f76f053ffe71f6860d053f07b2))
+- Roll headless client management into settings tab([58cdacc](https://github.com/cebarks/quartermaster/commit/58cdacc739e7d15f35681aab9d96735a866650c7))
+- Roll headless client management into settings tab (#147)([3c17cb4](https://github.com/cebarks/quartermaster/commit/3c17cb429780282347a02077094c2f84ed005587))
+- Invite links, join page overhaul, bootstrap improvements (#153)([209a94b](https://github.com/cebarks/quartermaster/commit/209a94beca609e1582ee35373eb482406429bc1e))
+- Custom headless container image with full lifecycle management (#155)([46a65a2](https://github.com/cebarks/quartermaster/commit/46a65a268439c247a5a991040287d7e03d24ee52))
+- Logging overhaul — compact console, per-layer filtering, SQLite log viewer (#171)([647901c](https://github.com/cebarks/quartermaster/commit/647901c7e2a75d2fb3c47f261b9a1efdfa60de5f))
+- Add Install button for approved mod requests([58561d4](https://github.com/cebarks/quartermaster/commit/58561d4af580a270e84d1bedc582ff86c97a5ad6))
+- Worktree-safe dev recipes for parallel agents (#174)([4eb974c](https://github.com/cebarks/quartermaster/commit/4eb974cf2610932ba2d1e9ac9b3176b95a9fdc59))
+- Updates carousel card on mods page (#177)([2120179](https://github.com/cebarks/quartermaster/commit/212017982574936af9f95801631fa637f7bd379b))
+- Simplified join flow — web-based profile creation (#182)([3a22673](https://github.com/cebarks/quartermaster/commit/3a22673510336b0cc7a357f5f80763eb4e406f87))
+- Align Forge API client with v0 spec (#184)([90d7e74](https://github.com/cebarks/quartermaster/commit/90d7e741ff4b73903ccba47ea9111d644b258e14))
+- Add dev-server skill for dev environment lifecycle (#186)([a720322](https://github.com/cebarks/quartermaster/commit/a720322f8cf0e44421f3f823eecdee49c70f7440))
+- Use fika-installer and direct SPT server URL in bootstrap scripts (#190)([085adb2](https://github.com/cebarks/quartermaster/commit/085adb2e08b7090d79cfc156b10962f95aa47913))
+- Add user and invite deletion to admin panel (#195)([e8d3022](https://github.com/cebarks/quartermaster/commit/e8d30228b1a52dfdd7a0f85abe2eaa94961b31ad))
+- Install Fika and NarcoNet via Forge API during setup([f4814ef](https://github.com/cebarks/quartermaster/commit/f4814ef281a684693f6523da6023eee04321726b))
+- Install Fika and NarcoNet via Forge API during setup (#197)([09a526a](https://github.com/cebarks/quartermaster/commit/09a526af8400be8f3ed9d26e00def003febae5f1))
+- Add setup page template with setup steps and script downloads([c72cd74](https://github.com/cebarks/quartermaster/commit/c72cd745d33c1f6b7b0839fe05e392277e872366))
+- Add setup page handler with bootstrap script endpoints([781f1f3](https://github.com/cebarks/quartermaster/commit/781f1f39e2da77712d5f18cec2f1d98e770faead))
+- Register setup routes and add Setup link to nav([4dacdaf](https://github.com/cebarks/quartermaster/commit/4dacdafc3a7c30790459ea14335890f75ae00ced))
+- Auto-login after registration and redirect to setup page([d43efbe](https://github.com/cebarks/quartermaster/commit/d43efbe3004cece6b4eb129b8b94e80b1a86be63))
+- Add post-signup setup page with bootstrap scripts (#202)([8e2870c](https://github.com/cebarks/quartermaster/commit/8e2870cf01de59c8be36fb268d8e320954911b84))
+- Add admin profile linking with dropdown of available SPT profiles([49c083d](https://github.com/cebarks/quartermaster/commit/49c083d2cfae5db5193c80db9944b304d64fd797))
+- Fully configurable proxy backend URL rewriting (#204)([35b7f50](https://github.com/cebarks/quartermaster/commit/35b7f50ad0b8731ac07a5be33a3018382306d416))
+- Sync non-plugin BepInEx files and make default group automatic (#217)([24927d3](https://github.com/cebarks/quartermaster/commit/24927d3ce7943d55de9852f25394f894e971833a))
+- Swap headless image to claudeoris/spt-builds (#222)([75ab716](https://github.com/cebarks/quartermaster/commit/75ab7166d8fd54b0771e00c782690aad92c785fb))
 
 ### Miscellaneous
 
 - Remove docs (#71)([ca38f57](https://github.com/cebarks/quartermaster/commit/ca38f572b319fe4479bb308236633cf561e0cea9))
+- Update dependencies (actix-ws 0.4, rcgen 0.14, sha2 0.11) (#143)([7a11e83](https://github.com/cebarks/quartermaster/commit/7a11e83d1d7d2c82324aa1ba8e628005c2397a32))
+- Add git hooks for local CI linting([9285ae0](https://github.com/cebarks/quartermaster/commit/9285ae0aba450f66e8c41bf396620fb31de267e5))
+- Add git hooks for local CI linting (#185)([8fac626](https://github.com/cebarks/quartermaster/commit/8fac6261b727b554be346d2dbbe6a46458171613))
+- Remove 5 unnecessary direct dependencies (#200)([b62f8c1](https://github.com/cebarks/quartermaster/commit/b62f8c1b7f9c373d72805e0b9b6c02759a157216))
+- Bump dependencies to fix anyhow unsoundness advisory (#221)([855b2e2](https://github.com/cebarks/quartermaster/commit/855b2e285fed322675dfbf401f4f8bc1a5ffa871))
 
 ### Refactoring
 
@@ -131,6 +240,8 @@ All notable changes to Quartermaster will be documented in this file.
 - Introduce NavContext to reduce template boilerplate (#114)([feff20c](https://github.com/cebarks/quartermaster/commit/feff20c9764d74a3854806ce5015dd6e95d619b4))
 - *(rbac)* Replace Role enum with string-based roles and permission-based guards([277a872](https://github.com/cebarks/quartermaster/commit/277a8724bcfda23d4a2d9747862a683235e03d35))
 - Live config via RwLock — fix stale in-memory config after settings saves (#132)([743854b](https://github.com/cebarks/quartermaster/commit/743854b5bab11950cd49c5520f4265d1e6bcd7fb))
+- Make bootstrap helpers pub(crate) and accept archive_url param([476d0c3](https://github.com/cebarks/quartermaster/commit/476d0c3409359c180c504ad764d214cbbdc19461))
+- Simplify NarcoNet config generation (#211)([ed539f9](https://github.com/cebarks/quartermaster/commit/ed539f9f545c313bfddc02e39fa6afc16f105ff7))
 
 ### Testing
 
@@ -138,16 +249,27 @@ All notable changes to Quartermaster will be documented in this file.
 - Add web handler integration tests (#123)([53e8377](https://github.com/cebarks/quartermaster/commit/53e8377bc0676747ae0e44be9901e6b58033dec6))
 - *(rbac)* Integration tests, permission string validation, last-admin guard tests([11320bb](https://github.com/cebarks/quartermaster/commit/11320bb62be4b5963b378710e076d84469e0a074))
 
+### Build
+
+- Use mold linker for faster link times on Linux([621a4b1](https://github.com/cebarks/quartermaster/commit/621a4b1de73751cc0549e2c675a8b2311d5119fb))
+- Use mold linker for faster link times (#152)([143ace5](https://github.com/cebarks/quartermaster/commit/143ace538bcc609a87533214ae05494b42e109f5))
+
 ### Cleanup
 
 - Remove stale #[allow(dead_code)] annotations (#137)([e680b26](https://github.com/cebarks/quartermaster/commit/e680b26f47e1f4479a7778923bd2d33ef2edc8ac))
 - Squash 15 migrations into single initial schema (#140)([d377780](https://github.com/cebarks/quartermaster/commit/d377780e732567ce2273c924debc65f4cba80207))
 - Remove stale #[allow(dead_code)] annotations, round 2 (#141)([a768740](https://github.com/cebarks/quartermaster/commit/a768740238cb83396f20e1325e7894d01c8daf51))
-- Remove docs/superpowers specs and plans from repo([3b0b3ba](https://github.com/cebarks/quartermaster/commit/3b0b3bad5273945d8415dc2fddccd78b2c71ef0c))
+- Remove docs/superpowers specs from repo (#142)([e396e66](https://github.com/cebarks/quartermaster/commit/e396e66d5510ebd5f9657166d1a6736bd3277d7a))
 
 ### Security
 
 - Harden archive extraction against malicious archives (#134)([f6248b8](https://github.com/cebarks/quartermaster/commit/f6248b877bc16778d87f6a19eae09717e017b276))
+
+### Ui
+
+- Move NarcoNet from top nav to admin dropdown([c4a2945](https://github.com/cebarks/quartermaster/commit/c4a2945349f1207142df3b7f8fed2d5e6a53c779))
+- Move NarcoNet to admin dropdown (#176)([a3c3d7e](https://github.com/cebarks/quartermaster/commit/a3c3d7e22b4b86a994276aaa20ea8a3666766257))
+- Move Server Config to admin dropdown (#179)([1bbe5fc](https://github.com/cebarks/quartermaster/commit/1bbe5fcbbfb025fd8028358daf21279abb73a2d3))
 ## [0.1.0] - 2026-06-20
 
 ### Bug Fixes
