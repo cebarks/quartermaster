@@ -928,6 +928,8 @@ pub struct Config {
     #[serde(default = "default_proxy_enabled")]
     pub proxy_enabled: bool,
 
+    /// Deprecated: the proxy now auto-detects the origin from response bodies.
+    /// Retained so existing TOML files with this field still parse.
     #[serde(default = "default_proxy_rewrite_source_port")]
     pub proxy_rewrite_source_port: u16,
 

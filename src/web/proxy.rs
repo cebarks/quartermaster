@@ -233,13 +233,12 @@ pub async fn proxy_handler(
                     .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY),
             );
 
-            let (external_url_for_rewrite, source_port, target_port) = {
+            let (external_url_for_rewrite, target_port) = {
                 let cfg = state.config();
                 (
                     rewrite_target
                         .as_ref()
                         .and_then(|_| cfg.external_url.clone()),
-                    cfg.proxy_rewrite_source_port,
                     cfg.proxy_rewrite_target_port.unwrap_or(port),
                 )
             };
@@ -271,7 +270,7 @@ pub async fn proxy_handler(
                 let raw_body = resp.bytes().await.map_err(|e| {
                     actix_web::error::ErrorBadGateway(format!("failed to read response body: {e}"))
                 })?;
-                match rewrite_backend_url(&raw_body, &replacement, source_port) {
+                match rewrite_backend_url(&raw_body, &replacement) {
                     Ok(rewritten) => Ok(builder.body(rewritten)),
                     Err(e) => {
                         tracing::warn!(err = %e, "failed to rewrite backend URLs, forwarding original");
@@ -313,11 +312,7 @@ fn extract_host(url: &str) -> String {
         .to_string()
 }
 
-fn rewrite_backend_url(
-    body: &[u8],
-    replacement: &str,
-    source_port: u16,
-) -> Result<Vec<u8>, String> {
+fn rewrite_backend_url(body: &[u8], replacement: &str) -> Result<Vec<u8>, String> {
     let (json_bytes, compressed) = {
         let mut decoder = ZlibDecoder::new(body);
         let mut buf = Vec::new();
@@ -328,11 +323,28 @@ fn rewrite_backend_url(
     };
 
     let json_str = String::from_utf8(json_bytes).map_err(|e| format!("utf8: {e}"))?;
-    let loopback = format!("127.0.0.1:{source_port}");
-    let wildcard = format!("0.0.0.0:{source_port}");
-    let rewritten = json_str
-        .replace(&loopback, replacement)
-        .replace(&wildcard, replacement);
+
+    // Detect the origin (host or host:port) from the first https:// URL in
+    // the response, then replace every occurrence with the external URL origin.
+    // SPT derives the origin from the incoming Host header, which varies by
+    // proxy topology — matching specific IPs is too fragile.
+    let rewritten = if let Some(scheme_pos) = json_str.find("https://") {
+        let origin_start = scheme_pos + "https://".len();
+        if let Some(rel) = json_str[origin_start..].find(['/', '"']) {
+            let origin = json_str[origin_start..origin_start + rel].to_string();
+            if origin == replacement {
+                json_str
+            } else {
+                tracing::debug!(detected = %origin, replacement, "proxy rewriting origin");
+                json_str.replace(&origin, replacement)
+            }
+        } else {
+            json_str
+        }
+    } else {
+        json_str
+    };
+
     let new_json = rewritten.into_bytes();
 
     if compressed {
@@ -422,5 +434,75 @@ fn handle_player_registration(
                 tracing::warn!(err = %e, username = %username, "failed to auto-create user");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_replaces_loopback_origin() {
+        let body = br#"{"backendUrl":"https://127.0.0.1:6969/api","ws":"wss://127.0.0.1:6969/ws"}"#;
+        let result = rewrite_backend_url(body, "tarkov.example.com").unwrap();
+        let s = String::from_utf8(result).unwrap();
+        assert_eq!(
+            s,
+            r#"{"backendUrl":"https://tarkov.example.com/api","ws":"wss://tarkov.example.com/ws"}"#
+        );
+    }
+
+    #[test]
+    fn rewrite_replaces_lan_ip_origin() {
+        let body = br#"{"backendUrl":"https://192.168.132.64:9190","other":"https://192.168.132.64:9190/path"}"#;
+        let result = rewrite_backend_url(body, "tarkov.example.com").unwrap();
+        let s = String::from_utf8(result).unwrap();
+        assert!(s.contains("https://tarkov.example.com\""));
+        assert!(s.contains("https://tarkov.example.com/path"));
+        assert!(!s.contains("192.168.132.64"));
+    }
+
+    #[test]
+    fn rewrite_noop_when_already_correct() {
+        let body = br#"{"backendUrl":"https://tarkov.example.com/api"}"#;
+        let result = rewrite_backend_url(body, "tarkov.example.com").unwrap();
+        assert_eq!(result, body);
+    }
+
+    #[test]
+    fn rewrite_noop_when_no_urls() {
+        let body = br#"{"status":"ok","count":42}"#;
+        let result = rewrite_backend_url(body, "tarkov.example.com").unwrap();
+        assert_eq!(result, body);
+    }
+
+    #[test]
+    fn rewrite_handles_zlib_compressed_body() {
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        let json = br#"{"backendUrl":"https://0.0.0.0:6969/connect"}"#;
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(json).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let result = rewrite_backend_url(&compressed, "tarkov.example.com").unwrap();
+
+        // Result should be re-compressed; decompress to verify
+        let mut dec = ZlibDecoder::new(result.as_slice());
+        let mut decompressed = String::new();
+        std::io::Read::read_to_string(&mut dec, &mut decompressed).unwrap();
+        assert_eq!(
+            decompressed,
+            r#"{"backendUrl":"https://tarkov.example.com/connect"}"#
+        );
+    }
+
+    #[test]
+    fn rewrite_replaces_wildcard_origin() {
+        let body = br#"{"backendUrl":"https://0.0.0.0:6969"}"#;
+        let result = rewrite_backend_url(body, "tarkov.example.com").unwrap();
+        let s = String::from_utf8(result).unwrap();
+        assert_eq!(s, r#"{"backendUrl":"https://tarkov.example.com"}"#);
     }
 }
