@@ -161,8 +161,8 @@ async fn run_addon_install(
     let parent_mod = ctx.db.get_mod_by_forge_id(parent_forge_mod_id)?;
 
     if parent_mod.is_none() {
-        tracing::warn!(
-            "Parent mod (Forge ID: {}) is not installed. The addon may not work correctly.",
+        anyhow::bail!(
+            "Parent mod (Forge ID: {}) is not installed. Install it first before adding addons.",
             parent_forge_mod_id
         );
     }
