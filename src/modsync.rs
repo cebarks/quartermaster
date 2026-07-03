@@ -66,6 +66,16 @@ fn generate_config(
         .flat_map(|(key, group)| group.members.iter().map(move |&id| (id, key.as_str())))
         .collect();
 
+    // Bulk fetch all addons and group by parent_mod_id
+    let all_addons = db.list_addons()?;
+    let addons_by_parent: BTreeMap<i64, Vec<crate::db::addons::InstalledAddon>> = all_addons
+        .into_iter()
+        .filter(|a| !a.disabled)
+        .fold(BTreeMap::new(), |mut map, addon| {
+            map.entry(addon.parent_mod_id).or_default().push(addon);
+            map
+        });
+
     // Single pass: track plugin groups, collect non-plugin BepInEx files,
     // and gather archive file paths for runtime exclusion detection
     let mut has_ungrouped_plugins = false;
@@ -115,6 +125,54 @@ fn generate_config(
                     ));
                 } else if parts.len() >= 3 {
                     mod_plugin_dirs.insert(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
+                }
+            }
+        }
+
+        // Process addon files for this mod
+        if let Some(mod_addons) = addons_by_parent.get(&m.id) {
+            for addon in mod_addons {
+                let addon_files = db.get_files_for_addon(addon.id)?;
+
+                // Addon files go into the same group as their parent mod
+                let has_addon_plugin_files = addon_files
+                    .iter()
+                    .any(|f| f.file_path.starts_with("BepInEx/plugins/"));
+
+                if has_addon_plugin_files {
+                    if let Some(&group_slug) = group_for_mod.get(&m.forge_mod_id) {
+                        if group_slug == CATCH_ALL_GROUP_SLUG {
+                            has_ungrouped_plugins = true;
+                        } else {
+                            groups_with_plugins.insert(group_slug);
+                        }
+                    } else {
+                        has_ungrouped_plugins = true;
+                    }
+                }
+
+                for f in &addon_files {
+                    if f.file_path.starts_with("BepInEx/")
+                        && !f.file_path.starts_with("BepInEx/plugins/")
+                    {
+                        non_plugin_files.insert(f.file_path.clone());
+                    }
+
+                    if f.file_path.starts_with("BepInEx/plugins/") {
+                        if f.source == "archive" {
+                            archive_plugin_paths.insert(f.file_path.clone());
+                        }
+                        let parts: Vec<&str> = f.file_path.split('/').collect();
+                        if parts.len() >= 4 && parts[2].starts_with(GROUP_DIR_PREFIX) {
+                            mod_plugin_dirs.insert(format!(
+                                "{}/{}/{}/{}",
+                                parts[0], parts[1], parts[2], parts[3]
+                            ));
+                        } else if parts.len() >= 3 {
+                            mod_plugin_dirs
+                                .insert(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
+                        }
+                    }
                 }
             }
         }
@@ -321,8 +379,22 @@ pub fn ensure_mod_layout(
 
     let files = db.get_files_for_mod(mod_db_id)?;
 
+    // Also fetch addon files for this mod
+    let addons = db.list_addons_for_mod(mod_db_id)?;
+    let mut addon_files_all = Vec::new();
+    for addon in &addons {
+        let addon_files = db.get_files_for_addon(addon.id)?;
+        addon_files_all.extend(addon_files);
+    }
+
     // Only move BepInEx/plugins/ files for group layout (non-plugin files are synced directly)
     let plugin_files: Vec<&str> = files
+        .iter()
+        .filter(|f| f.file_path.starts_with("BepInEx/plugins/"))
+        .map(|f| f.file_path.as_str())
+        .collect();
+
+    let addon_plugin_files: Vec<&str> = addon_files_all
         .iter()
         .filter(|f| f.file_path.starts_with("BepInEx/plugins/"))
         .map(|f| f.file_path.as_str())
@@ -334,12 +406,21 @@ pub fn ensure_mod_layout(
         .filter(|p| p.split('/').count() >= 4)
         .collect();
 
-    if plugin_files.is_empty() {
+    let addon_plugin_files: Vec<&str> = addon_plugin_files
+        .into_iter()
+        .filter(|p| p.split('/').count() >= 4)
+        .collect();
+
+    if plugin_files.is_empty() && addon_plugin_files.is_empty() {
         return Ok(false);
     }
 
-    // Find the current mod directory from a sample file
-    let sample = plugin_files[0];
+    // Find the current mod directory from a sample file (prefer mod files, fall back to addon files)
+    let sample = plugin_files
+        .first()
+        .or_else(|| addon_plugin_files.first())
+        .copied()
+        .expect("checked above that at least one plugin file exists");
     let parts: Vec<&str> = sample.split('/').collect();
 
     let (current_prefix, mod_dir_name) =
@@ -424,8 +505,11 @@ pub fn ensure_mod_layout(
         std::fs::remove_dir_all(&src)?;
     }
 
-    // Update DB paths for this mod
+    // Update DB paths for this mod and its addons
     db.reprefix_mod_files(mod_db_id, &current_prefix, &expected_prefix)?;
+    for addon in &addons {
+        db.reprefix_addon_files(addon.id, &current_prefix, &expected_prefix)?;
+    }
 
     // Also update DB paths for any other mods sharing this directory
     // (they were validated above to be in the same group)
@@ -440,6 +524,12 @@ pub fn ensure_mod_layout(
             .any(|f| f.file_path.starts_with(&format!("{current_prefix}/")))
         {
             db.reprefix_mod_files(other.id, &current_prefix, &expected_prefix)?;
+
+            // Also update addon files for this other mod
+            let other_addons = db.list_addons_for_mod(other.id)?;
+            for other_addon in &other_addons {
+                db.reprefix_addon_files(other_addon.id, &current_prefix, &expected_prefix)?;
+            }
         }
     }
 
