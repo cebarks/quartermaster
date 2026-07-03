@@ -404,9 +404,12 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
     crate::client::converge::edit_headless_amount(&fika_config_path, new_count)?;
 
     // Clean up overlay directory
-    let overlay_dir = ctx.spt_dir.join("clients").join(client.to_string());
-    if overlay_dir.exists() {
-        std::fs::remove_dir_all(&overlay_dir).ok();
+    if let Some(ref headless) = config.headless {
+        let overlay_dir =
+            crate::client::converge::client_overlay_dir(&headless.install_dir, client);
+        if overlay_dir.exists() {
+            std::fs::remove_dir_all(&overlay_dir).ok();
+        }
     }
 
     println!(

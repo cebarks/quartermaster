@@ -112,7 +112,7 @@ fn build_hideout_areas() -> HashMap<i32, HideoutMeta> {
         (24, "Air Filtering Unit", 1),
         (25, "Weapon Stand", 2),
         (26, "Equipment Stand", 2),
-        (27, "Culture Center", 2),
+        (27, "Cultist Circle", 2),
     ];
     areas
         .iter()

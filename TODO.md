@@ -10,11 +10,8 @@
 
 ## Bugs
 - canceling an install queue item puts it back in requests (if it was previously requested)
-- CLI `delete` cleans wrong overlay directory (`cli/headless.rs` — uses `spt_dir/clients/` instead of `install_dir/.quma/clients/`)
-- scale-down in-raid check blocks on Ready clients (`clients.rs` — remove `Ready` from fika_status match, only `InRaid` should block)
 - NarcoNet tab selection broken on nav
 - account creation dropdown missing SPT dev profiles
-- magic number 236 still used for SVM mod ID in `mods.rs` — `SVM_FORGE_ID` constant exists in `svm/mod.rs` but isn't used at all call sites
 
 ## Security
 - proxy has no authentication — unauthenticated access to SPT server API (`proxy.rs`)
@@ -83,7 +80,6 @@
 ## Features
 - fika.jsonc: set client force ip
 - last logged for players (both into webui and into spt)
-- "culture center" profile page investigation
 - display profile id on profile page
 - SVM presets list should refresh from disk on page load
 - server notes page
@@ -118,10 +114,6 @@
 Items below are sourced from review/audit documents. See the linked file for full context.
 
 ### Headless Client Review (`HEADLESS_REVIEW.md`)
-
-**High:**
-- CLI `delete` cleans wrong overlay directory (`cli/headless.rs:361` — uses `spt_dir/clients/` instead of `install_dir/.quma/clients/`)
-- scale-down in-raid check blocks on Ready clients in web UI (`clients.rs:358` — remove `Ready` from match)
 
 **Medium:**
 - convergence restarts SPT server without warning users (`converge.rs:778-798`)
