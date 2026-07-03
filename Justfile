@@ -46,12 +46,6 @@ changelog:
 changelog-preview:
     git-cliff --unreleased
 
-# --- Container Image ---
-
-# Build the headless client container image
-build-headless:
-    podman build -t quma-headless:latest container/headless/
-
 # --- Development ---
 
 dev_dir := ".dev-server"
