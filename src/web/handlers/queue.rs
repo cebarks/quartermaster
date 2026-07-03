@@ -509,22 +509,11 @@ async fn apply_addon_update(op: &PendingOperation, state: &AppState) -> anyhow::
         .forge_addon_id
         .ok_or_else(|| anyhow::anyhow!("addon operation missing forge_addon_id"))?;
 
-    let spt_dir2 = spt_dir.clone();
-    let extracted = web::block(move || crate::spt::mods::extract_mod(&archive_path, &spt_dir2))
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))??;
-
-    // Move extracted files to staging
-    let spt_dir3 = spt_dir.clone();
     let staging_path2 = staging_path.clone();
-    for file in &extracted {
-        let src = spt_dir3.join(&file.path);
-        let dst = staging_path2.join(&file.path);
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(&src, &dst)?;
-    }
+    let extracted =
+        web::block(move || crate::spt::mods::extract_mod(&archive_path, &staging_path2))
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))??;
 
     // Update
     crate::ops::apply_addon_update(

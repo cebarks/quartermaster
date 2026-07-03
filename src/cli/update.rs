@@ -195,8 +195,14 @@ pub async fn apply_update_by_version(
     let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
     println!("    Updated {} files for {}", file_count, installed.name);
 
+    // Re-fetch the mod to get the updated version for compatibility check
+    let updated_mod = ctx
+        .db
+        .get_mod(installed.id)?
+        .expect("mod must exist after update");
+
     // Check for incompatible addons after parent mod update
-    check_addon_compatibility_after_update(ctx, installed).await?;
+    check_addon_compatibility_after_update(ctx, &updated_mod).await?;
 
     Ok(true)
 }

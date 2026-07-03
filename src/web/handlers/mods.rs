@@ -2387,26 +2387,15 @@ pub async fn update_addon(
             let archive_path = tmp_dir.path().join("addon.zip");
             forge.download_file(link, &archive_path).await?;
 
-            // Extract outside the DB lock
-            let staging_path = tmp_dir.path().join("staging");
-            std::fs::create_dir(&staging_path)?;
-            let spt_dir2 = spt_dir.clone();
+            // Extract to staging outside the DB lock
+            let staging_dir = tempfile::tempdir()?;
+            let staging_path = staging_dir.path().to_path_buf();
+            let archive = archive_path.clone();
+            let staging_path_clone = staging_path.clone();
             let extracted = actix_web::web::block(move || {
-                crate::spt::mods::extract_mod(&archive_path, &spt_dir2)
+                crate::spt::mods::extract_mod(&archive, &staging_path_clone)
             })
             .await??;
-
-            // Move extracted files to staging
-            let spt_dir3 = spt_dir.clone();
-            let staging_path2 = staging_path.clone();
-            for file in &extracted {
-                let src = spt_dir3.join(&file.path);
-                let dst = staging_path2.join(&file.path);
-                if let Some(parent) = dst.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::rename(&src, &dst)?;
-            }
 
             crate::ops::apply_addon_update(
                 db,
