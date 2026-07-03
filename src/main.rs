@@ -11,6 +11,7 @@ mod health;
 mod invite;
 mod logging;
 mod modsync;
+mod numa;
 mod ops;
 mod queue;
 mod server_detect;
