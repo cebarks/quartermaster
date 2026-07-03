@@ -1,7 +1,7 @@
 {% if addons.is_empty() %}
 <p class="text-muted">No addons installed.</p>
 {% else %}
-<table class="table">
+<table>
     <thead>
         <tr>
             <th>Name</th>
@@ -12,7 +12,7 @@
         </tr>
     </thead>
     <tbody>
-    {% for addon in addons %}
+    {% for addon in &addons %}
         <tr>
             <td>{{ addon.name }}</td>
             <td>{{ addon.version }}</td>

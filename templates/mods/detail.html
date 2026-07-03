@@ -156,55 +156,7 @@
                hx-swap="innerHTML">
         <div id="addon-search-results" style="margin-top: 1rem;"></div>
     </div>
-    {% if addons.is_empty() %}
-    <p class="text-muted">No addons installed.</p>
-    {% else %}
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Version</th>
-                <th>Constraint</th>
-                <th>Status</th>
-                {% if user.can("mods.disable") || user.can("mods.remove") %}<th>Actions</th>{% endif %}
-            </tr>
-        </thead>
-        <tbody>
-        {% for addon in &addons %}
-            <tr>
-                <td>{{ addon.name }}</td>
-                <td>{{ addon.version }}</td>
-                <td class="text-muted text-sm">{{ addon.mod_version_constraint.as_deref().unwrap_or("-") }}</td>
-                <td>
-                    {% if addon.disabled %}
-                    <span class="badge badge-warning">Disabled</span>
-                    {% else %}
-                    <span class="badge badge-success">Enabled</span>
-                    {% endif %}
-                </td>
-                {% if user.can("mods.disable") || user.can("mods.remove") %}
-                <td>
-                    {% if user.can("mods.disable") %}
-                    <form method="post" action="/quma/addons/{{ addon.id }}/toggle-disable" style="display:inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button class="btn btn-sm">{% if addon.disabled %}Enable{% else %}Disable{% endif %}</button>
-                    </form>
-                    {% endif %}
-                    {% if user.can("mods.remove") %}
-                    <form method="post" action="/quma/addons/{{ addon.id }}/remove" style="display:inline"
-                          data-name="{{ addon.name }}"
-                          onsubmit="return confirm('Remove addon ' + this.dataset.name + '?')">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-sm btn-danger">Remove</button>
-                    </form>
-                    {% endif %}
-                </td>
-                {% endif %}
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
+    {% include "mods/partials/addon_list.html" %}
 </div>
 
 <div hx-get="/quma/mods/{{ mod_info.id }}/backups" hx-trigger="load" hx-swap="innerHTML">

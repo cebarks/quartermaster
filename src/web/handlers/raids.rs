@@ -26,6 +26,9 @@ struct StatsPageTemplate {
     nav: NavContext,
     raid_stats: ServerRaidStats,
     active_raids: Vec<(Raid, String)>,
+    /// Alias for `raid_stats.recent_raids` so `raids/partials/recent.html` can
+    /// be `{% include %}`d without duplicating template code.
+    recent_raids: Vec<(Raid, String)>,
     leaderboard_entries: Vec<LeaderboardEntry>,
     min_raids: u32,
 }
@@ -88,7 +91,7 @@ pub async fn stats_page(
     let min_raids = state.config().leaderboard_min_raids;
 
     let db = state.db.clone();
-    let (stats, active_raids, leaderboard_entries) = web::block(move || {
+    let (mut stats, active_raids, leaderboard_entries) = web::block(move || {
         let db = db.lock();
         let stats = db.get_server_raid_stats()?;
         let active_raids = db.get_active_raids()?;
@@ -99,6 +102,7 @@ pub async fn stats_page(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let recent_raids = std::mem::take(&mut stats.recent_raids);
     let tmpl = StatsPageTemplate {
         user,
         flash,
@@ -106,6 +110,7 @@ pub async fn stats_page(
         nav,
         raid_stats: stats,
         active_raids,
+        recent_raids,
         leaderboard_entries,
         min_raids,
     };

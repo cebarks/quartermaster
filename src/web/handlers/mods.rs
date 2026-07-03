@@ -130,6 +130,9 @@ struct ModDetailTemplate {
     runtime_files: Vec<InstalledFile>,
     dependencies: Vec<DepEntry>,
     addons: Vec<InstalledAddon>,
+    /// Pre-computed permission flags for the addon table partial.
+    can_disable: bool,
+    can_remove: bool,
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
@@ -378,6 +381,8 @@ pub async fn mod_detail(
 
     let nav = NavContext::from_state(&state);
     let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
+    let can_disable = user.can("mods.disable");
+    let can_remove = user.can("mods.remove");
     let tmpl = ModDetailTemplate {
         user,
         mod_info,
@@ -385,6 +390,8 @@ pub async fn mod_detail(
         runtime_files,
         dependencies,
         addons,
+        can_disable,
+        can_remove,
         flash,
         csrf_token,
         nav,
