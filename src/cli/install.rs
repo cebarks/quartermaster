@@ -172,11 +172,9 @@ async fn run_addon_install(
     // Check mod_version_constraint against parent version if parent is installed
     if let Some(ref parent) = parent_mod {
         if let Some(constraint) = &selected_version.mod_version_constraint {
-            // For now, just warn if versions don't match exactly
-            // A proper implementation would parse semver constraints
-            if constraint != &parent.version {
+            if !super::common::version_satisfies_constraint(&parent.version, constraint) {
                 tracing::warn!(
-                    "Addon version constraint '{}' may not match parent mod version '{}'",
+                    "Addon version constraint '{}' does not match parent mod version '{}'",
                     constraint,
                     parent.version
                 );

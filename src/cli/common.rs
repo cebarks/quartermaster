@@ -334,3 +334,22 @@ pub fn confirm(prompt: &str) -> Result<bool> {
     std::io::stdin().read_line(&mut input)?;
     Ok(input.trim().eq_ignore_ascii_case("y"))
 }
+
+/// Check if a version satisfies a constraint string.
+/// Without a semver library, this does basic exact matching for plain version strings
+/// and assumes compatibility for operator-based constraints (logging at debug level).
+pub fn version_satisfies_constraint(version: &str, constraint: &str) -> bool {
+    let trimmed = constraint.trim();
+    // If constraint is an exact version string (no operators), do exact match
+    if trimmed.chars().next().is_none_or(|c| c.is_ascii_digit()) {
+        return trimmed == version;
+    }
+    // For constraints with operators (~, ^, >=, etc.), we can't evaluate them
+    // without a semver library. Log at debug level and assume compatible.
+    tracing::debug!(
+        version,
+        constraint,
+        "cannot evaluate semver constraint without semver library, assuming compatible"
+    );
+    true
+}

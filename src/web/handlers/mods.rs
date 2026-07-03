@@ -1862,6 +1862,8 @@ pub async fn file_tracking_page(
 struct AddonListTemplate {
     addons: Vec<InstalledAddon>,
     csrf_token: String,
+    can_disable: bool,
+    can_remove: bool,
 }
 
 pub async fn list_addons_partial(
@@ -1870,7 +1872,7 @@ pub async fn list_addons_partial(
     session: Session,
     path: Path<i64>,
 ) -> actix_web::Result<Html> {
-    let _user = require_auth(&req)?;
+    let user = require_auth(&req)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let mod_db_id = path.into_inner();
     let db = state.db.clone();
@@ -1883,7 +1885,15 @@ pub async fn list_addons_partial(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = AddonListTemplate { addons, csrf_token };
+    let can_disable = user.can("mods.disable");
+    let can_remove = user.can("mods.remove");
+
+    let tmpl = AddonListTemplate {
+        addons,
+        csrf_token,
+        can_disable,
+        can_remove,
+    };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 

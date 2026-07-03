@@ -218,11 +218,9 @@ async fn check_addon_compatibility_after_update(
 
     for addon in &child_addons {
         if let Some(constraint) = &addon.mod_version_constraint {
-            // For now, just warn if versions don't match exactly
-            // A proper implementation would parse semver constraints
-            if constraint != &parent_mod.version {
+            if !super::common::version_satisfies_constraint(&parent_mod.version, constraint) {
                 tracing::warn!(
-                    "Addon {} (constraint '{}') may be incompatible with updated parent mod version '{}'",
+                    "Addon {} (constraint '{}') does not match parent mod version '{}'",
                     addon.name,
                     constraint,
                     parent_mod.version
