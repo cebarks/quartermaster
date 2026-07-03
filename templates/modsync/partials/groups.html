@@ -192,9 +192,6 @@
         if (e.target.id !== 'groups-container') return;
         updateNextIndex();
         hideAssignedMods();
-        // Remove the empty-state placeholder if it exists
-        var empty = document.getElementById('groups-empty');
-        if (empty) empty.remove();
     });
 
     function updateNextIndex() {
