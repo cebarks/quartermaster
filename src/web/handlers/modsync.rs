@@ -686,8 +686,12 @@ pub async fn save_groups(
     // "default" is reserved — strip it even if validation was somehow bypassed
     new_groups.remove("default");
 
-    // Enforce no-headless: force exclude_headless=true, re-inject if missing
+    // Enforce no-headless: force invariants, re-inject if missing.
+    // ponytail: re-injection runs after dedup/validation — crafted requests
+    // omitting no-headless could cause member duplication. Accepted: requires
+    // admin+CSRF; normal UI always submits no-headless. Move before dedup if needed.
     if let Some(nh) = new_groups.get_mut("no-headless") {
+        nh.display_name = "No Headless".to_string();
         nh.exclude_headless = true;
     } else {
         let existing_nh = config

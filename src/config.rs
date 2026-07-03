@@ -517,6 +517,10 @@ impl ModSyncConfig {
     pub fn ensure_predefined_groups(&mut self) -> bool {
         let mut changed = false;
         if let Some(nh) = self.groups.get_mut("no-headless") {
+            if nh.display_name != "No Headless" {
+                nh.display_name = "No Headless".to_string();
+                changed = true;
+            }
             if !nh.exclude_headless {
                 nh.exclude_headless = true;
                 changed = true;

@@ -167,6 +167,13 @@
             opt.style.display = 'none';
         });
 
+        // Remove stale badge from the virtual default card
+        var defaultCard = form.querySelector('[data-predefined="default"]');
+        if (defaultCard) {
+            var staleBadge = defaultCard.querySelector('[data-mod-id="' + val + '"]');
+            if (staleBadge) staleBadge.remove();
+        }
+
         dropdown.value = '';
 
         // Auto-slug from name input
@@ -210,9 +217,9 @@
     }
 
     function hideAssignedMods() {
-        // Collect all currently assigned mod IDs
+        // Collect mod IDs assigned to real groups (exclude virtual default card)
         var assigned = {};
-        form.querySelectorAll('[data-members] [data-mod-id]').forEach(function(badge) {
+        form.querySelectorAll('fieldset:not([data-predefined="default"]) [data-members] [data-mod-id]').forEach(function(badge) {
             assigned[badge.getAttribute('data-mod-id')] = true;
         });
         // Hide assigned mods from all dropdowns
