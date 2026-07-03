@@ -282,6 +282,7 @@ async fn trigger_install_for_request(
         let mod_name = request.mod_name.clone();
         let mod_slug = request.mod_slug.clone();
         let update_cache = state.update_cache.clone();
+        let mod_zip_cache = state.mod_zip_cache.clone();
         let state_clone = state.clone().into_inner();
         let config = config.clone();
 
@@ -359,6 +360,7 @@ async fn trigger_install_for_request(
                 Ok(()) => {
                     tracing::info!(forge_mod_id, "mod installed from request");
                     update_cache.invalidate();
+                    mod_zip_cache.invalidate();
                     state_clone.modsync_installed.store(
                         crate::config::is_modsync_installed(&spt_dir),
                         std::sync::atomic::Ordering::Relaxed,

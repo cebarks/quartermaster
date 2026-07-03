@@ -1095,6 +1095,7 @@ pub async fn install_mod(
     let mod_name = mod_info.name.clone();
     let mod_slug = mod_info.slug.clone();
     let update_cache = state.update_cache.clone();
+    let mod_zip_cache = state.mod_zip_cache.clone();
     let state_clone = state.clone();
 
     tokio::spawn(async move {
@@ -1168,6 +1169,7 @@ pub async fn install_mod(
             Ok(()) => {
                 tracing::info!(mod_id, "mod installed successfully");
                 update_cache.invalidate();
+                mod_zip_cache.invalidate();
                 // Re-check NarcoNet detection (installing NarcoNet itself changes this)
                 state_clone.modsync_installed.store(
                     crate::config::is_modsync_installed(&spt_dir),
@@ -1315,6 +1317,7 @@ pub async fn update_mod(
     let config = state.config_cloned();
     let version = version.clone();
     let update_cache = state.update_cache.clone();
+    let mod_zip_cache = state.mod_zip_cache.clone();
     let forge_mod_id = installed.forge_mod_id;
     let state_clone = state.clone();
 
@@ -1372,6 +1375,7 @@ pub async fn update_mod(
             Ok(()) => {
                 tracing::info!(mod_db_id, "mod updated successfully");
                 update_cache.invalidate();
+                mod_zip_cache.invalidate();
                 tasks.complete(task_id, "Mod updated successfully".to_string());
             }
             Err(e) => {
@@ -1473,6 +1477,7 @@ pub async fn remove_mod(
     .map_err(WebError::from)?;
 
     state.update_cache.invalidate();
+    state.mod_zip_cache.invalidate();
     // Re-check NarcoNet detection (removing NarcoNet itself changes this)
     state.modsync_installed.store(
         crate::config::is_modsync_installed(&state.spt_dir),
@@ -1531,6 +1536,8 @@ pub async fn toggle_disable(
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
+
+    state.mod_zip_cache.invalidate();
 
     if was_disabled {
         set_flash(
@@ -1649,6 +1656,7 @@ pub async fn update_all_mods(
     let config = state.config_cloned();
     let installed = installed.clone();
     let update_cache = state.update_cache.clone();
+    let mod_zip_cache = state.mod_zip_cache.clone();
     let state_clone = state.clone();
 
     tokio::spawn(async move {
@@ -1711,6 +1719,7 @@ pub async fn update_all_mods(
         state_clone.regenerate_modsync().await;
 
         update_cache.invalidate();
+        mod_zip_cache.invalidate();
         // Re-check NarcoNet detection (updating mods might affect NarcoNet state)
         state_clone.modsync_installed.store(
             crate::config::is_modsync_installed(&spt_dir),
@@ -2182,6 +2191,7 @@ pub async fn install_addon(
     let version = version.clone();
     let addon_name = addon_info.name.clone();
     let addon_slug = addon_info.slug.clone();
+    let mod_zip_cache = state.mod_zip_cache.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -2216,6 +2226,7 @@ pub async fn install_addon(
         match result {
             Ok(_) => {
                 tasks.complete(task_id, "Addon installed successfully".to_string());
+                mod_zip_cache.invalidate();
             }
             Err(e) => {
                 tracing::error!(task_id, err = %e, "addon install failed");
@@ -2386,6 +2397,7 @@ pub async fn update_addon(
     let version = latest_version.clone();
     let addon_name = addon.name.clone();
     let parent_mod_id = addon.parent_mod_id;
+    let mod_zip_cache = state.mod_zip_cache.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -2427,6 +2439,7 @@ pub async fn update_addon(
         match result {
             Ok(_) => {
                 tasks.complete(task_id, "Addon updated successfully".to_string());
+                mod_zip_cache.invalidate();
             }
             Err(e) => {
                 tracing::error!(task_id, addon = %addon_name, parent_mod_id, err = %e, "addon update failed");
@@ -2491,6 +2504,7 @@ pub async fn remove_addon(
     match result {
         Ok(_) => {
             set_flash(&session, "Addon removed successfully", FlashType::Success);
+            state.mod_zip_cache.invalidate();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon removal failed");
@@ -2572,6 +2586,7 @@ pub async fn toggle_addon_disable(
                 "Addon disabled successfully"
             };
             set_flash(&session, msg, FlashType::Success);
+            state.mod_zip_cache.invalidate();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon toggle failed");
