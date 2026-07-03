@@ -141,6 +141,112 @@ pub fn resolve_installed_mod(
     );
 }
 
+/// Resolve a user-provided addon reference (numeric ID, name, or slug) to a Forge addon.
+pub async fn resolve_addon(
+    forge: &ForgeClient,
+    addon_ref: &str,
+) -> Result<crate::forge::models::ForgeAddon> {
+    if let Ok(id) = addon_ref.parse::<i64>() {
+        let addon = forge
+            .get_addon(id, false)
+            .await
+            .with_context(|| format!("addon with ID {id} not found on Forge"))?;
+
+        // Reject detached addons
+        if addon.mod_id.is_none() {
+            bail!("Detached addons are not supported yet.");
+        }
+
+        return Ok(addon);
+    }
+
+    let results = forge.search_addons(addon_ref).await?;
+
+    match results.len() {
+        0 => bail!("no addons found matching '{addon_ref}' on Forge"),
+        1 => {
+            let addon = results.into_iter().next().expect("length checked to be 1");
+            // Reject detached addons
+            if addon.mod_id.is_none() {
+                bail!("Detached addons are not supported yet.");
+            }
+            Ok(addon)
+        }
+        _ => {
+            if let Some(exact) = results.iter().find(|a| {
+                a.name.eq_ignore_ascii_case(addon_ref)
+                    || a.slug
+                        .as_deref()
+                        .is_some_and(|s| s.eq_ignore_ascii_case(addon_ref))
+            }) {
+                // Reject detached addons
+                if exact.mod_id.is_none() {
+                    bail!("Detached addons are not supported yet.");
+                }
+                return Ok(exact.clone());
+            }
+
+            println!("Multiple addons match '{addon_ref}':");
+            for (i, a) in results.iter().enumerate() {
+                println!(
+                    "  [{}] {} (ID: {}){}",
+                    i + 1,
+                    a.name,
+                    a.id,
+                    a.description
+                        .as_deref()
+                        .map(|d| format!(" — {}", truncate_str(d, 60)))
+                        .unwrap_or_default()
+                );
+            }
+
+            print!("Select [1-{}]: ", results.len());
+            std::io::stdout().flush()?;
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let choice: usize = input.trim().parse().with_context(|| "invalid selection")?;
+
+            if choice == 0 || choice > results.len() {
+                bail!("selection out of range");
+            }
+
+            let addon = results
+                .into_iter()
+                .nth(choice - 1)
+                .expect("bounds checked above");
+
+            // Reject detached addons
+            if addon.mod_id.is_none() {
+                bail!("Detached addons are not supported yet.");
+            }
+
+            Ok(addon)
+        }
+    }
+}
+
+/// Resolve a user-provided addon reference to an installed addon in the database.
+pub fn resolve_installed_addon(
+    addon_ref: &str,
+    ctx: &CliContext,
+) -> Result<crate::db::addons::InstalledAddon> {
+    if let Ok(forge_id) = addon_ref.parse::<i64>() {
+        if let Some(a) = ctx.db.get_addon_by_forge_id(forge_id)? {
+            return Ok(a);
+        }
+    }
+
+    if let Some(a) = ctx.db.get_addon_by_name_or_slug(addon_ref)? {
+        return Ok(a);
+    }
+
+    bail!(
+        "addon '{}' is not installed. Run `quma list` to see installed addons.",
+        addon_ref
+    );
+}
+
 /// Group untracked file paths by their mod directory, using appropriate depth for each prefix.
 /// - SPT/user/mods/ModName/... -> SPT/user/mods/ModName (4 components)
 /// - BepInEx/plugins/ModName/... -> BepInEx/plugins/ModName (3 components)

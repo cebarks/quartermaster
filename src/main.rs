@@ -101,21 +101,27 @@ async fn main() -> Result<()> {
             mod_ref,
             version,
             force,
+            addon,
         } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::install::run(mod_ref, version.as_deref(), *force, &ctx).await
+            cli::install::run(mod_ref, version.as_deref(), *force, *addon, &ctx).await
         }
-        Command::Update { mod_ref, force } => {
+        Command::Update {
+            mod_ref,
+            force,
+            addon,
+        } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::update::run(mod_ref.as_deref(), *force, &ctx).await
+            cli::update::run(mod_ref.as_deref(), *force, *addon, &ctx).await
         }
         Command::Remove {
             mod_ref,
             force,
             yes,
+            addon,
         } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::remove::run(mod_ref, *force, *yes, &ctx).await
+            cli::remove::run(mod_ref, *force, *yes, *addon, &ctx).await
         }
         Command::List { json } => {
             let ctx = init_context(&cli, &reload_handles)?;

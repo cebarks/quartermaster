@@ -6,7 +6,18 @@ use crate::db::mods::InstalledMod;
 
 use super::common::{confirm, resolve_installed_mod, CliContext};
 
-pub async fn run(mod_ref: &str, force: bool, yes: bool, ctx: &CliContext) -> Result<()> {
+pub async fn run(
+    mod_ref: &str,
+    force: bool,
+    yes: bool,
+    addon: bool,
+    ctx: &CliContext,
+) -> Result<()> {
+    // If --addon flag is set, use addon remove flow
+    if addon {
+        return run_addon_remove(mod_ref, force, yes, ctx).await;
+    }
+
     let installed = resolve_installed_mod(mod_ref, ctx)?;
 
     // Check if we should queue instead of applying
@@ -123,6 +134,76 @@ pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<(
     let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
 
     crate::ops::remove_mod_by_id(&ctx.db, &ctx.spt_dir, &ctx.config, installed.id)?;
+
+    if file_count > 0 {
+        println!("  Deleted {} files for {}", file_count, installed.name);
+    }
+
+    Ok(())
+}
+
+async fn run_addon_remove(addon_ref: &str, force: bool, yes: bool, ctx: &CliContext) -> Result<()> {
+    use super::common::resolve_installed_addon;
+
+    let installed = resolve_installed_addon(addon_ref, ctx)?;
+
+    // Check if we should queue instead of applying
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
+        .await?
+    {
+        if !yes {
+            let file_count = ctx.db.get_files_for_addon(installed.id)?.len();
+            if !confirm(&format_addon_remove_prompt(&installed.name, file_count))? {
+                println!("Removal cancelled.");
+                return Ok(());
+            }
+        }
+
+        ctx.db.insert_pending_addon_op(
+            crate::db::users::QueueAction::Remove,
+            installed.forge_addon_id,
+            None,
+            &installed.name,
+            None,
+            None,
+        )?;
+        println!(
+            "Server is running — removal of {} queued. It will be applied on next server restart.",
+            installed.name
+        );
+        return Ok(());
+    }
+
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
+
+    if !yes {
+        let file_count = ctx.db.get_files_for_addon(installed.id)?.len();
+        if !confirm(&format_addon_remove_prompt(&installed.name, file_count))? {
+            println!("Removal cancelled.");
+            return Ok(());
+        }
+    }
+
+    remove_single_addon(&installed, ctx)?;
+    println!("{} removed successfully.", installed.name);
+    Ok(())
+}
+
+fn format_addon_remove_prompt(addon_name: &str, file_count: usize) -> String {
+    match file_count {
+        0 => format!("Remove addon {}?", addon_name),
+        1 => format!("Remove addon {} (1 file)?", addon_name),
+        n => format!("Remove addon {} ({} files)?", addon_name, n),
+    }
+}
+
+fn remove_single_addon(
+    installed: &crate::db::addons::InstalledAddon,
+    ctx: &CliContext,
+) -> Result<()> {
+    let file_count = ctx.db.get_files_for_addon(installed.id)?.len();
+
+    crate::ops::remove_addon_by_id(&ctx.db, &ctx.spt_dir, &ctx.config, installed.id, false)?;
 
     if file_count > 0 {
         println!("  Deleted {} files for {}", file_count, installed.name);

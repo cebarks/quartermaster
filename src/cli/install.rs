@@ -69,8 +69,14 @@ pub async fn run(
     mod_ref: &str,
     version: Option<&str>,
     force: bool,
+    addon: bool,
     ctx: &CliContext,
 ) -> Result<()> {
+    // If --addon flag is set, use addon install flow
+    if addon {
+        return run_addon_install(mod_ref, version, force, ctx).await;
+    }
+
     let forge_mod = resolve_mod(&ctx.forge, mod_ref).await?;
     println!("Found: {} (ID: {})", forge_mod.name, forge_mod.id);
 
@@ -128,6 +134,120 @@ pub async fn run(
     Ok(())
 }
 
+async fn run_addon_install(
+    addon_ref: &str,
+    version: Option<&str>,
+    force: bool,
+    ctx: &CliContext,
+) -> Result<()> {
+    use super::common::resolve_addon;
+
+    let forge_addon = resolve_addon(&ctx.forge, addon_ref).await?;
+    println!("Found: {} (ID: {})", forge_addon.name, forge_addon.id);
+
+    // Check if addon is already installed
+    if let Some(existing) = ctx.db.get_addon_by_forge_id(forge_addon.id)? {
+        bail!(
+            "{} is already installed (version {}). Use `quma update --addon` to update it.",
+            existing.name,
+            existing.version
+        );
+    }
+
+    // Resolve parent mod
+    let parent_forge_mod_id = forge_addon
+        .mod_id
+        .ok_or_else(|| anyhow::anyhow!("detached addons are not supported"))?;
+    let parent_mod = ctx.db.get_mod_by_forge_id(parent_forge_mod_id)?;
+
+    if parent_mod.is_none() {
+        tracing::warn!(
+            "Parent mod (Forge ID: {}) is not installed. The addon may not work correctly.",
+            parent_forge_mod_id
+        );
+    }
+
+    let selected_version = pick_addon_version(ctx, &forge_addon, version).await?;
+
+    // Check mod_version_constraint against parent version if parent is installed
+    if let Some(ref parent) = parent_mod {
+        if let Some(constraint) = &selected_version.mod_version_constraint {
+            // For now, just warn if versions don't match exactly
+            // A proper implementation would parse semver constraints
+            if constraint != &parent.version {
+                tracing::warn!(
+                    "Addon version constraint '{}' may not match parent mod version '{}'",
+                    constraint,
+                    parent.version
+                );
+            }
+        }
+    }
+
+    if !confirm("Proceed with installation?")? {
+        println!("Installation cancelled.");
+        return Ok(());
+    }
+
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
+        .await?
+    {
+        ctx.db.insert_pending_addon_op(
+            crate::db::users::QueueAction::Install,
+            forge_addon.id,
+            Some(selected_version.id),
+            &forge_addon.name,
+            None,
+            None,
+        )?;
+        println!(
+            "Server is running — operation queued. It will be applied on next server restart."
+        );
+        return Ok(());
+    }
+
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
+
+    // Download and install
+    let download_url = selected_version
+        .link
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("no download URL for addon version"))?;
+
+    println!(
+        "Downloading {} v{}...",
+        forge_addon.name, selected_version.version
+    );
+    let tmp_dir = tempfile::tempdir()?;
+    let archive_path = tmp_dir.path().join("addon.zip");
+    ctx.forge.download_file(download_url, &archive_path).await?;
+
+    let parent_mod_id = parent_mod
+        .as_ref()
+        .map(|m| m.id)
+        .ok_or_else(|| anyhow::anyhow!("parent mod must be installed to install addon"))?;
+
+    crate::ops::install_addon_from_archive(&crate::ops::InstallAddonRequest {
+        db: &ctx.db,
+        spt_dir: &ctx.spt_dir,
+        config: &ctx.config,
+        forge_addon_id: forge_addon.id,
+        parent_mod_id,
+        version_id: selected_version.id,
+        name: &forge_addon.name,
+        slug: forge_addon.slug.as_deref(),
+        version: &selected_version.version,
+        mod_version_constraint: selected_version.mod_version_constraint.as_deref(),
+        archive_path: &archive_path,
+    })?;
+
+    println!(
+        "\n{} v{} installed successfully.",
+        forge_addon.name, selected_version.version
+    );
+    Ok(())
+}
+
 async fn pick_version(
     ctx: &CliContext,
     forge_mod: &crate::forge::models::ForgeMod,
@@ -179,6 +299,44 @@ async fn pick_version(
         selected.version,
         selected.spt_version.as_deref().unwrap_or("unknown")
     );
+    Ok(selected)
+}
+
+async fn pick_addon_version(
+    ctx: &CliContext,
+    forge_addon: &crate::forge::models::ForgeAddon,
+    explicit_version: Option<&str>,
+) -> Result<crate::forge::models::ForgeAddonVersion> {
+    let versions = ctx.forge.get_addon_versions(forge_addon.id).await?;
+
+    if versions.is_empty() {
+        bail!("no versions available for addon {}", forge_addon.name);
+    }
+
+    let selected = match explicit_version {
+        Some(ver) => {
+            let found = versions
+                .into_iter()
+                .find(|v| v.version == ver)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "version '{}' not found for {} on Forge",
+                        ver,
+                        forge_addon.name
+                    )
+                })?;
+            found
+        }
+        None => {
+            // Return the latest version (first in list)
+            versions
+                .into_iter()
+                .next()
+                .expect("checked non-empty above")
+        }
+    };
+
+    println!("Selected version: {}", selected.version);
     Ok(selected)
 }
 

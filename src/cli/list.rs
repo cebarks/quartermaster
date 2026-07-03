@@ -17,6 +17,16 @@ struct ModEntry {
     file_count: usize,
     installed_at: String,
     updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    addons: Vec<AddonEntry>,
+}
+
+#[derive(Serialize)]
+struct AddonEntry {
+    name: String,
+    version: String,
+    forge_addon_id: i64,
+    file_count: usize,
 }
 
 #[derive(Serialize)]
@@ -38,15 +48,45 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
 
     let all_tracked_files = ctx.db.get_all_tracked_files()?;
     let mut file_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+    let mut addon_file_counts: std::collections::HashMap<i64, usize> =
+        std::collections::HashMap::new();
     for f in &all_tracked_files {
         if let Some(mid) = f.mod_id {
             *file_counts.entry(mid).or_default() += 1;
         }
+        if let Some(aid) = f.addon_id {
+            *addon_file_counts.entry(aid).or_default() += 1;
+        }
     }
+
+    // Fetch all addons and group by parent mod
+    let all_addons = ctx.db.list_addons()?;
+    let addons_by_parent: std::collections::HashMap<i64, Vec<_>> =
+        all_addons
+            .into_iter()
+            .fold(std::collections::HashMap::new(), |mut map, addon| {
+                map.entry(addon.parent_mod_id).or_default().push(addon);
+                map
+            });
 
     let mut infra_entries = Vec::new();
     let mut mod_entries = Vec::new();
     for m in &installed_mods {
+        let addon_entries: Vec<AddonEntry> = addons_by_parent
+            .get(&m.id)
+            .map(|addons| {
+                addons
+                    .iter()
+                    .map(|a| AddonEntry {
+                        name: a.name.clone(),
+                        version: a.version.clone(),
+                        forge_addon_id: a.forge_addon_id,
+                        file_count: addon_file_counts.get(&a.id).copied().unwrap_or(0),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let entry = ModEntry {
             name: m.name.clone(),
             version: m.version.clone(),
@@ -55,6 +95,7 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
             file_count: file_counts.get(&m.id).copied().unwrap_or(0),
             installed_at: m.installed_at.clone(),
             updated_at: m.updated_at.clone(),
+            addons: addon_entries,
         };
         if INFRASTRUCTURE_FORGE_IDS.contains(&m.forge_mod_id) {
             infra_entries.push(entry);
@@ -123,6 +164,16 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
                 entry.file_count,
                 date,
             );
+
+            // Display nested addons with └─ prefix
+            for addon in &entry.addons {
+                println!(
+                    "  └─ {:<26} {:<12} {:<8}",
+                    truncate_str(&addon.name, 25),
+                    addon.version,
+                    addon.file_count,
+                );
+            }
         }
     }
 
