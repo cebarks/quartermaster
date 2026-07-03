@@ -66,11 +66,14 @@ fn generate_config(
         .flat_map(|(key, group)| group.members.iter().map(move |&id| (id, key.as_str())))
         .collect();
 
-    // Single pass: track plugin groups and collect non-plugin BepInEx files
+    // Single pass: track plugin groups, collect non-plugin BepInEx files,
+    // and gather archive file paths for runtime exclusion detection
     let mut has_ungrouped_plugins = false;
     let mut groups_with_plugins: std::collections::BTreeSet<&str> =
         std::collections::BTreeSet::new();
     let mut non_plugin_files: BTreeSet<String> = BTreeSet::new();
+    let mut archive_plugin_paths: BTreeSet<String> = BTreeSet::new();
+    let mut mod_plugin_dirs: BTreeSet<String> = BTreeSet::new();
 
     for m in &mods {
         if m.disabled {
@@ -98,6 +101,21 @@ fn generate_config(
         for f in &files {
             if f.file_path.starts_with("BepInEx/") && !f.file_path.starts_with("BepInEx/plugins/") {
                 non_plugin_files.insert(f.file_path.clone());
+            }
+
+            if f.file_path.starts_with("BepInEx/plugins/") {
+                if f.source == "archive" {
+                    archive_plugin_paths.insert(f.file_path.clone());
+                }
+                let parts: Vec<&str> = f.file_path.split('/').collect();
+                if parts.len() >= 4 && parts[2].starts_with(GROUP_DIR_PREFIX) {
+                    mod_plugin_dirs.insert(format!(
+                        "{}/{}/{}/{}",
+                        parts[0], parts[1], parts[2], parts[3]
+                    ));
+                } else if parts.len() >= 3 {
+                    mod_plugin_dirs.insert(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
+                }
             }
         }
     }
@@ -228,6 +246,19 @@ fn generate_config(
         .collect();
     if has_groups {
         exclusions.push("quma-*".to_string());
+    }
+
+    // Auto-exclude files in mod directories that aren't from the original
+    // archive. Mods like SAIN generate config files at runtime inside
+    // BepInEx/plugins/ — without exclusions, NarcoNet flags them as
+    // mismatched on every client boot.
+    if let Some(spt_dir) = spt_dir {
+        let auto = collect_runtime_exclusions(spt_dir, &archive_plugin_paths, &mod_plugin_dirs);
+        for path in auto {
+            if !exclusions.contains(&path) {
+                exclusions.push(path);
+            }
+        }
     }
 
     Ok(ModSyncOutputConfig {
@@ -473,6 +504,79 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Scan mod directories on disk and find files/directories not from mod archives.
+/// Excludes entire subdirectories when none of their contents are archive files,
+/// otherwise excludes individual untracked files.
+fn collect_runtime_exclusions(
+    spt_dir: &Path,
+    archive_paths: &BTreeSet<String>,
+    mod_dirs: &BTreeSet<String>,
+) -> Vec<String> {
+    let mut exclusions: BTreeSet<String> = BTreeSet::new();
+
+    for mod_dir_rel in mod_dirs {
+        let mod_dir_abs = spt_dir.join(mod_dir_rel);
+        if !mod_dir_abs.is_dir() {
+            continue;
+        }
+        exclude_untracked_recursive(&mod_dir_abs, spt_dir, archive_paths, &mut exclusions);
+    }
+
+    exclusions.into_iter().collect()
+}
+
+/// Walk `dir` and add exclusions for files/subdirectories not in `archive_paths`.
+/// If a subdirectory contains zero archive files, exclude it wholesale instead of
+/// listing every file individually.
+fn exclude_untracked_recursive(
+    dir: &Path,
+    spt_dir: &Path,
+    archive_paths: &BTreeSet<String>,
+    exclusions: &mut BTreeSet<String>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_symlink() {
+            continue;
+        }
+
+        if path.is_dir() {
+            let dir_prefix = path
+                .strip_prefix(spt_dir)
+                .ok()
+                .and_then(|r| r.to_str())
+                .map(|r| format!("{r}/"));
+
+            let has_archive = dir_prefix.as_ref().is_some_and(|prefix| {
+                archive_paths
+                    .range::<str, _>((
+                        std::ops::Bound::Included(prefix.as_str()),
+                        std::ops::Bound::Unbounded,
+                    ))
+                    .next()
+                    .is_some_and(|p| p.starts_with(prefix.as_str()))
+            });
+
+            if has_archive {
+                exclude_untracked_recursive(&path, spt_dir, archive_paths, exclusions);
+            } else if let Some(prefix) = dir_prefix {
+                exclusions.insert(prefix.trim_end_matches('/').to_string());
+            }
+        } else if let Ok(rel) = path.strip_prefix(spt_dir) {
+            if let Some(rel_str) = rel.to_str() {
+                if !archive_paths.contains(rel_str) {
+                    exclusions.insert(rel_str.to_string());
+                }
+            }
+        }
+    }
 }
 
 /// Check if every file on disk under `spt_dir/subdir` is in `tracked_files`.
@@ -2009,5 +2113,217 @@ mod tests {
         assert!(paths.contains(&"BepInEx/config/BigMod.cfg"));
         assert!(paths.contains(&"BepInEx/patchers/BigMod.dll"));
         assert_eq!(output.sync_paths.len(), 2);
+    }
+
+    // ─── Runtime exclusion tests ──────────────────────────────────────
+
+    #[test]
+    fn generate_config_excludes_runtime_files_on_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+
+        // Create archive files on disk
+        let sain_dir = spt_dir.join("BepInEx/plugins/SAIN");
+        std::fs::create_dir_all(&sain_dir).unwrap();
+        std::fs::write(sain_dir.join("SAIN.dll"), b"dll").unwrap();
+
+        // Create runtime-generated files (not from archive)
+        std::fs::write(sain_dir.join("BotTypes.json"), b"{}").unwrap();
+        let config_dir = sain_dir.join("Default Bot Config Values");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("Rashala.json"), b"{}").unwrap();
+        std::fs::write(config_dir.join("Killa.json"), b"{}").unwrap();
+        let presets_dir = sain_dir.join("Presets");
+        std::fs::create_dir_all(&presets_dir).unwrap();
+        std::fs::write(presets_dir.join("ConfigSettings.json"), b"{}").unwrap();
+
+        // DB only tracks the archive file
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/SAIN/SAIN.dll",
+            Some("abc123"),
+            Some(3),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, Some(spt_dir)).unwrap();
+
+        // Individual runtime file excluded
+        assert!(output
+            .exclusions
+            .contains(&"BepInEx/plugins/SAIN/BotTypes.json".to_string()));
+        // Entire directories with no archive files excluded wholesale
+        assert!(output
+            .exclusions
+            .contains(&"BepInEx/plugins/SAIN/Default Bot Config Values".to_string()));
+        assert!(output
+            .exclusions
+            .contains(&"BepInEx/plugins/SAIN/Presets".to_string()));
+        // Archive files NOT excluded
+        assert!(!output
+            .exclusions
+            .contains(&"BepInEx/plugins/SAIN/SAIN.dll".to_string()));
+    }
+
+    #[test]
+    fn generate_config_no_runtime_exclusions_without_spt_dir() {
+        let db = Database::open_in_memory().unwrap();
+        setup_db_with_client_mod(&db);
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, None).unwrap();
+
+        // Without spt_dir, no disk scan → no auto-exclusions
+        assert!(output.exclusions.is_empty());
+    }
+
+    #[test]
+    fn generate_config_runtime_exclusions_merged_with_user_exclusions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+
+        let sain_dir = spt_dir.join("BepInEx/plugins/SAIN");
+        std::fs::create_dir_all(&sain_dir).unwrap();
+        std::fs::write(sain_dir.join("SAIN.dll"), b"dll").unwrap();
+        std::fs::write(sain_dir.join("BotTypes.json"), b"{}").unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/SAIN/SAIN.dll",
+            Some("abc"),
+            Some(3),
+        )
+        .unwrap();
+
+        let mut ms_config = ModSyncConfig::default();
+        ms_config.exclusions = vec!["**/*.log".to_string()];
+
+        let output = generate_config(&ms_config, &db, false, Some(spt_dir)).unwrap();
+
+        // Both user and auto exclusions present
+        assert!(output.exclusions.contains(&"**/*.log".to_string()));
+        assert!(output
+            .exclusions
+            .contains(&"BepInEx/plugins/SAIN/BotTypes.json".to_string()));
+    }
+
+    #[test]
+    fn generate_config_runtime_exclusions_skip_disabled_mods() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+
+        let sain_dir = spt_dir.join("BepInEx/plugins/SAIN");
+        std::fs::create_dir_all(&sain_dir).unwrap();
+        std::fs::write(sain_dir.join("SAIN.dll"), b"dll").unwrap();
+        std::fs::write(sain_dir.join("BotTypes.json"), b"{}").unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/SAIN/SAIN.dll",
+            Some("abc"),
+            Some(3),
+        )
+        .unwrap();
+        db.set_mod_disabled(mod_id, true).unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, Some(spt_dir)).unwrap();
+
+        // Disabled mod → no sync paths AND no runtime exclusions
+        assert!(output.sync_paths.is_empty());
+        assert!(output.exclusions.is_empty());
+    }
+
+    #[test]
+    fn generate_config_runtime_exclusions_with_groups() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+
+        // Mod is in a group directory
+        let mod_dir = spt_dir.join("BepInEx/plugins/quma-optional/SAIN");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        std::fs::write(mod_dir.join("SAIN.dll"), b"dll").unwrap();
+        std::fs::write(mod_dir.join("BotTypes.json"), b"{}").unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/quma-optional/SAIN/SAIN.dll",
+            Some("abc"),
+            Some(3),
+        )
+        .unwrap();
+
+        let mut ms_config = ModSyncConfig::default();
+        ms_config.groups.insert(
+            "optional".to_string(),
+            crate::config::ModSyncGroup {
+                display_name: "Optional".to_string(),
+                members: vec![100],
+                enabled: None,
+                enforced: None,
+                silent: None,
+                restart_required: None,
+                exclude_headless: false,
+            },
+        );
+
+        let output = generate_config(&ms_config, &db, false, Some(spt_dir)).unwrap();
+
+        assert!(output
+            .exclusions
+            .contains(&"BepInEx/plugins/quma-optional/SAIN/BotTypes.json".to_string()));
+    }
+
+    #[test]
+    fn generate_config_no_false_exclusions_when_all_tracked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+
+        let sain_dir = spt_dir.join("BepInEx/plugins/SAIN");
+        std::fs::create_dir_all(&sain_dir).unwrap();
+        std::fs::write(sain_dir.join("SAIN.dll"), b"dll").unwrap();
+        std::fs::write(sain_dir.join("config.json"), b"{}").unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mod_id = db
+            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/SAIN/SAIN.dll",
+            Some("abc"),
+            Some(3),
+        )
+        .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/SAIN/config.json",
+            Some("def"),
+            Some(2),
+        )
+        .unwrap();
+
+        let ms_config = ModSyncConfig::default();
+        let output = generate_config(&ms_config, &db, false, Some(spt_dir)).unwrap();
+
+        // All files on disk are from the archive → no auto-exclusions
+        assert!(output.exclusions.is_empty());
     }
 }
