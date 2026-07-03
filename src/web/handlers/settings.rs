@@ -466,19 +466,25 @@ pub async fn save_headless_settings(
         image: form.image.trim().to_string(),
         isolated_paths: isolated,
         clients: Vec::new(), // clients managed via create/delete, not settings
-        ..HeadlessConfig::default()  // New fields use defaults until form is updated
+        ..HeadlessConfig::default()
     };
 
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
-    // Preserve existing client defs when saving global defaults
-    let existing_clients = config
-        .headless
-        .as_ref()
-        .map(|h| h.clients.clone())
-        .unwrap_or_default();
+    // Preserve fields not editable from the web form
+    let existing = config.headless.as_ref();
     let mut final_config = headless;
-    final_config.clients = existing_clients;
+    final_config.clients = existing.map(|h| h.clients.clone()).unwrap_or_default();
+    final_config.runner = existing.map(|h| h.runner.clone()).unwrap_or_default();
+    final_config.ntsync = existing.map(|h| h.ntsync).unwrap_or(true);
+    final_config.esync = existing.map(|h| h.esync).unwrap_or(false);
+    final_config.fsync = existing.map(|h| h.fsync).unwrap_or(false);
+    final_config.display_server = existing
+        .map(|h| h.display_server.clone())
+        .unwrap_or_default();
+    final_config.save_log_on_exit = existing.map(|h| h.save_log_on_exit).unwrap_or(true);
+    final_config.enable_log_purge = existing.map(|h| h.enable_log_purge).unwrap_or(false);
+    final_config.overwrite_fika = existing.map(|h| h.overwrite_fika).unwrap_or(true);
     config.headless = if form.install_dir.trim().is_empty() {
         None
     } else {
