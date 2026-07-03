@@ -69,7 +69,13 @@ pub fn extract_session_id(req: &HttpRequest) -> Option<String> {
     for entry in cookie_header.split(';') {
         let trimmed = entry.trim();
         if let Some(value) = trimmed.strip_prefix("PHPSESSID=") {
-            return Some(value.to_string());
+            // SPT session IDs are MongoDB ObjectIDs: exactly 24 hex chars.
+            // Reject anything else to prevent path traversal or injection.
+            if value.len() == 24 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Some(value.to_string());
+            }
+            tracing::warn!(value, "rejected invalid PHPSESSID cookie value");
+            return None;
         }
     }
     None
@@ -355,4 +361,43 @@ pub fn handle_raid_end(
     );
 
     let _ = events.send(ServerEvent::RaidEnded);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::test::TestRequest;
+
+    fn req_with_session(value: &str) -> HttpRequest {
+        TestRequest::default()
+            .insert_header(("cookie", format!("PHPSESSID={value}")))
+            .to_http_request()
+    }
+
+    #[test]
+    fn valid_session_id_accepted() {
+        let req = req_with_session("aabbccdd11223344aabbccdd");
+        assert_eq!(
+            extract_session_id(&req),
+            Some("aabbccdd11223344aabbccdd".to_string())
+        );
+    }
+
+    #[test]
+    fn path_traversal_rejected() {
+        let req = req_with_session("../../etc/passwd");
+        assert_eq!(extract_session_id(&req), None);
+    }
+
+    #[test]
+    fn too_short_rejected() {
+        let req = req_with_session("aabbcc");
+        assert_eq!(extract_session_id(&req), None);
+    }
+
+    #[test]
+    fn non_hex_rejected() {
+        let req = req_with_session("zzzzzzzzzzzzzzzzzzzzzzzz");
+        assert_eq!(extract_session_id(&req), None);
+    }
 }
