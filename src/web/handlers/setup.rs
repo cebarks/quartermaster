@@ -144,6 +144,24 @@ pub async fn setup_bootstrap_powershell(
 }
 
 pub async fn setup_mods_zip(state: web::Data<AppState>) -> actix_web::Result<HttpResponse> {
+    // Serve cached file if available
+    if let Some(path) = state.mod_zip_cache.get() {
+        let bytes = web::block(move || std::fs::read(path))
+            .await
+            .map_err(WebError::from)?
+            .map_err(WebError::from)?;
+
+        return Ok(HttpResponse::Ok()
+            .content_type("application/zip")
+            .insert_header((
+                "content-disposition",
+                "attachment; filename=\"quma-mods.zip\"",
+            ))
+            .body(bytes));
+    }
+
+    // Fallback: startup warmup hasn't finished yet — build synchronously.
+    // The background warmup will populate the cache for subsequent requests.
     let db = state.db.clone();
     let files = web::block(move || {
         let db = db.lock();

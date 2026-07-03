@@ -13,6 +13,7 @@ use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::SptInfo;
 use crate::spt::game_data::GameData;
 use crate::svm::SvmManager;
+use crate::web::mod_zip_cache::ModZipCache;
 use crate::web::proxy_metrics::ProxyMetrics;
 use crate::web::sse::ServerEvent;
 use crate::web::tasks::TaskTracker;
@@ -42,6 +43,7 @@ pub struct AppState {
     pub game_data: Arc<GameData>,
     pub proxy_metrics: ProxyMetrics,
     pub proxy_client: reqwest::Client,
+    pub mod_zip_cache: ModZipCache,
 }
 
 impl AppState {
