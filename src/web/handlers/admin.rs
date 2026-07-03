@@ -868,7 +868,7 @@ pub async fn update_role_handler(
 
     let rn = role_name.clone();
     let db = state.db.clone();
-    let affected = web::block(move || {
+    let result = web::block(move || {
         let db = db.lock();
         db.update_role_permissions(&rn, &permissions)
     })
@@ -876,14 +876,27 @@ pub async fn update_role_handler(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    if affected == 0 {
-        return render_roles_partial(
-            &state,
-            &session,
-            None,
-            Some("Admin role permissions cannot be modified".to_string()),
-        )
-        .await;
+    use crate::db::rbac::UpdatePermissionsResult;
+    match result {
+        UpdatePermissionsResult::AdminImmutable => {
+            return render_roles_partial(
+                &state,
+                &session,
+                None,
+                Some("Admin role permissions cannot be modified".to_string()),
+            )
+            .await;
+        }
+        UpdatePermissionsResult::WouldRemoveLastAdmin => {
+            return render_roles_partial(
+                &state,
+                &session,
+                None,
+                Some("Cannot remove users.manage — would leave no admin-capable users".to_string()),
+            )
+            .await;
+        }
+        UpdatePermissionsResult::Updated => {}
     }
 
     render_roles_partial(

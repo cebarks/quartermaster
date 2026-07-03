@@ -298,12 +298,12 @@ impl Database {
         &self,
         role_name: &str,
         permissions: &[Permission],
-    ) -> rusqlite::Result<usize> {
+    ) -> rusqlite::Result<UpdatePermissionsResult> {
         let role = self
             .get_role_by_name(role_name)?
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         if role.name == "admin" {
-            return Ok(0); // Admin role permissions are immutable
+            return Ok(UpdatePermissionsResult::AdminImmutable);
         }
 
         // Guard: don't remove users.manage if it would leave zero enabled users with it
@@ -328,7 +328,7 @@ impl Database {
                     |row| row.get(0),
                 )?;
                 if others_with_manage == 0 {
-                    return Ok(0);
+                    return Ok(UpdatePermissionsResult::WouldRemoveLastAdmin);
                 }
             }
         }
@@ -345,7 +345,7 @@ impl Database {
         }
         drop(stmt);
         tx.commit()?;
-        Ok(1)
+        Ok(UpdatePermissionsResult::Updated)
     }
 
     #[allow(dead_code)]
@@ -440,6 +440,13 @@ impl Database {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum UpdatePermissionsResult {
+    Updated,
+    AdminImmutable,
+    WouldRemoveLastAdmin,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum DeleteRoleResult {
     Deleted,
     NotFound,
@@ -524,7 +531,7 @@ mod tests {
                 &[Permission::ServerLogs, Permission::ServerMetrics],
             )
             .unwrap();
-        assert_eq!(affected, 1);
+        assert_eq!(affected, UpdatePermissionsResult::Updated);
         let perms = db.get_permissions_for_role("tester").unwrap();
         assert_eq!(perms.len(), 2);
         assert!(perms.contains(&Permission::ServerLogs));
@@ -537,7 +544,7 @@ mod tests {
         let affected = db
             .update_role_permissions("admin", &[Permission::ModsInstall])
             .unwrap();
-        assert_eq!(affected, 0);
+        assert_eq!(affected, UpdatePermissionsResult::AdminImmutable);
         // Admin still has all permissions
         let perms = db.get_permissions_for_role("admin").unwrap();
         assert_eq!(perms.len(), Permission::ALL.len());
