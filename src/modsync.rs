@@ -31,12 +31,9 @@ pub fn modsync_config_path(spt_dir: &Path) -> Option<PathBuf> {
     find_narconet_dir(spt_dir).map(|dir| dir.join("config.yaml"))
 }
 
-fn prepend_parent_if_needed(path: &str) -> String {
-    if path.starts_with("BepInEx/") || path == "BepInEx" {
-        format!("../{path}")
-    } else {
-        path.to_string()
-    }
+/// NarcoNet expects paths relative to the SPT game root.
+fn normalize_sync_path(path: &str) -> String {
+    path.strip_prefix("../").unwrap_or(path).to_string()
 }
 
 /// Strip characters that BepInEx forbids in config section/key names.
@@ -113,7 +110,7 @@ fn generate_config(
     // Always uses global settings — the "default" group is virtual/automatic.
     if has_ungrouped_plugins || has_groups {
         sync_paths.push(SyncPathEntry {
-            path: "../BepInEx/plugins".to_string(),
+            path: "BepInEx/plugins".to_string(),
             name: "BepInEx/plugins".to_string(),
             enabled: true,
             enforced: ms_config.enforced,
@@ -139,7 +136,7 @@ fn generate_config(
         }
 
         sync_paths.push(SyncPathEntry {
-            path: format!("../BepInEx/plugins/quma-{group_slug}"),
+            path: format!("BepInEx/plugins/quma-{group_slug}"),
             name: sanitize_name_for_bepinex(&group.display_name),
             enabled,
             enforced,
@@ -182,7 +179,7 @@ fn generate_config(
 
             if use_directory {
                 sync_paths.push(SyncPathEntry {
-                    path: prepend_parent_if_needed(subdir),
+                    path: normalize_sync_path(subdir),
                     name: subdir.clone(),
                     enabled: true,
                     enforced: ms_config.enforced,
@@ -195,7 +192,7 @@ fn generate_config(
                         continue;
                     }
                     sync_paths.push(SyncPathEntry {
-                        path: prepend_parent_if_needed(file_path),
+                        path: normalize_sync_path(file_path),
                         name: file_path.to_string(),
                         enabled: true,
                         enforced: ms_config.enforced,
@@ -209,7 +206,7 @@ fn generate_config(
 
     // Extra sync paths
     for extra in &ms_config.extra_sync_paths {
-        let path = prepend_parent_if_needed(extra);
+        let path = normalize_sync_path(extra);
         sync_paths.push(SyncPathEntry {
             path,
             name: extra.clone(),
@@ -227,7 +224,7 @@ fn generate_config(
     let mut exclusions: Vec<String> = ms_config
         .exclusions
         .iter()
-        .map(|e| prepend_parent_if_needed(e))
+        .map(|e| normalize_sync_path(e))
         .collect();
     if has_groups {
         exclusions.push("quma-*".to_string());
@@ -644,13 +641,11 @@ mod tests {
     }
 
     #[test]
-    fn prepend_parent_handles_bare_bepinex() {
-        assert_eq!(prepend_parent_if_needed("BepInEx"), "../BepInEx");
-        assert_eq!(
-            prepend_parent_if_needed("BepInEx/plugins"),
-            "../BepInEx/plugins"
-        );
-        assert_eq!(prepend_parent_if_needed("user/mods"), "user/mods");
+    fn normalize_sync_path_strips_parent_prefix() {
+        assert_eq!(normalize_sync_path("BepInEx"), "BepInEx");
+        assert_eq!(normalize_sync_path("BepInEx/plugins"), "BepInEx/plugins");
+        assert_eq!(normalize_sync_path("../BepInEx/plugins"), "BepInEx/plugins");
+        assert_eq!(normalize_sync_path("user/mods"), "user/mods");
     }
 
     #[test]
@@ -662,7 +657,7 @@ mod tests {
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
         assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
         assert!(output.sync_paths[0].enforced);
         assert!(!output.sync_paths[0].silent);
@@ -691,7 +686,7 @@ mod tests {
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
         assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
     }
 
@@ -770,7 +765,7 @@ mod tests {
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/config");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/config");
         assert_eq!(output.sync_paths[0].name, "BepInEx/config");
         assert!(output.sync_paths[0].enforced);
     }
@@ -786,7 +781,7 @@ mod tests {
 
         assert_eq!(
             output.exclusions,
-            vec!["**/*.nosync", "../BepInEx/plugins/spt"]
+            vec!["**/*.nosync", "BepInEx/plugins/spt"]
         );
     }
 
@@ -810,7 +805,7 @@ mod tests {
 
         // Both ungrouped → single category-level syncPath
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
         assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
     }
 
@@ -828,7 +823,7 @@ mod tests {
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         // Ungrouped mod → parent syncpath gets global defaults
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
         assert!(!output.sync_paths[0].enforced);
         assert!(output.sync_paths[0].silent);
         assert!(!output.sync_paths[0].restart_required);
@@ -853,10 +848,7 @@ mod tests {
 
         // Patcher files synced as individual files (no spt_dir → can't check ownership)
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(
-            output.sync_paths[0].path,
-            "../BepInEx/patchers/PatcherMod.dll"
-        );
+        assert_eq!(output.sync_paths[0].path, "BepInEx/patchers/PatcherMod.dll");
     }
 
     #[test]
@@ -888,7 +880,7 @@ mod tests {
 
         // Both NarcoNet and SAIN contribute to the ungrouped plugins path
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
         assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
     }
 
@@ -915,9 +907,8 @@ mod tests {
         let ms_config = ModSyncConfig::default();
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
-        // NarcoNet alone should produce a sync path
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
     }
 
     #[test]
@@ -927,7 +918,7 @@ mod tests {
 
         let output = ModSyncOutputConfig {
             sync_paths: vec![SyncPathEntry {
-                path: "../BepInEx/plugins/Test".to_string(),
+                path: "BepInEx/plugins/Test".to_string(),
                 name: "Test".to_string(),
                 enabled: true,
                 enforced: true,
@@ -947,10 +938,7 @@ mod tests {
 
         // Verify field values
         let sync_path = &parsed["syncPaths"][0];
-        assert_eq!(
-            sync_path["path"].as_str().unwrap(),
-            "../BepInEx/plugins/Test"
-        );
+        assert_eq!(sync_path["path"].as_str().unwrap(), "BepInEx/plugins/Test");
         assert_eq!(sync_path["name"].as_str().unwrap(), "Test");
         assert_eq!(sync_path["enabled"].as_bool().unwrap(), true);
     }
@@ -1065,7 +1053,7 @@ mod tests {
         assert!(result);
 
         let content = std::fs::read_to_string(modsync_config_path(spt_dir).unwrap()).unwrap();
-        assert!(content.contains("../BepInEx/plugins"));
+        assert!(content.contains("BepInEx/plugins"));
         assert!(content.contains("BepInEx/plugins"));
 
         // Update — add a second file
@@ -1089,7 +1077,7 @@ mod tests {
 
         let content = std::fs::read_to_string(modsync_config_path(spt_dir).unwrap()).unwrap();
         // No mods → no syncPaths (only the empty array marker)
-        assert!(!content.contains("../BepInEx/plugins"));
+        assert!(!content.contains("BepInEx/plugins"));
     }
 
     #[test]
@@ -1142,8 +1130,8 @@ mod tests {
             .map(|p| p["path"].as_str().unwrap().to_string())
             .collect();
 
-        assert!(paths.contains(&"../BepInEx/plugins".to_string()));
-        assert!(paths.contains(&"../BepInEx/config".to_string()));
+        assert!(paths.contains(&"BepInEx/plugins".to_string()));
+        assert!(paths.contains(&"BepInEx/config".to_string()));
         assert!(!paths.iter().any(|p| p.contains("ServerOnly")));
 
         let exclusions: Vec<String> = parsed["exclusions"]
@@ -1351,7 +1339,7 @@ mod tests {
         // SAIN is ungrouped, empty group has no plugin-bearing members
         // → only the parent syncpath, no group syncpaths
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
         assert!(output.sync_paths[0].enabled); // mod not in group, gets global default
         assert!(output.exclusions.is_empty()); // no groups with plugins → no quma-* exclusion
     }
@@ -1394,7 +1382,7 @@ mod tests {
 
         // Both ungrouped → single category-level syncPath
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
         assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
     }
 
@@ -1515,7 +1503,7 @@ mod tests {
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/plugins");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/plugins");
         assert_eq!(output.sync_paths[0].name, "BepInEx/plugins");
         assert!(output.sync_paths[0].enforced);
         assert!(output.exclusions.is_empty()); // no groups = no quma-* exclusion
@@ -1548,7 +1536,7 @@ mod tests {
             .iter()
             .find(|p| p.path.contains("quma-"))
             .unwrap();
-        assert_eq!(group_path.path, "../BepInEx/plugins/quma-optional");
+        assert_eq!(group_path.path, "BepInEx/plugins/quma-optional");
         assert_eq!(group_path.name, "Optional");
         assert!(!group_path.enabled);
         assert!(!group_path.enforced);
@@ -1602,8 +1590,8 @@ mod tests {
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
-        assert!(paths.contains(&"../BepInEx/plugins")); // default for SAIN
-        assert!(paths.contains(&"../BepInEx/plugins/quma-optional")); // group for Donuts
+        assert!(paths.contains(&"BepInEx/plugins")); // default for SAIN
+        assert!(paths.contains(&"BepInEx/plugins/quma-optional")); // group for Donuts
         assert!(output.exclusions.contains(&"quma-*".to_string()));
     }
 
@@ -1639,7 +1627,7 @@ mod tests {
         assert_eq!(output.sync_paths.len(), 1);
         assert_eq!(
             output.sync_paths[0].path,
-            "../BepInEx/patchers/PatcherMod/patch.dll"
+            "BepInEx/patchers/PatcherMod/patch.dll"
         );
     }
 
@@ -1823,8 +1811,8 @@ mod tests {
 
         assert_eq!(output.sync_paths.len(), 2);
         let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
-        assert!(paths.contains(&"../BepInEx/patchers/PatcherMod/helper.dll"));
-        assert!(paths.contains(&"../BepInEx/patchers/PatcherMod/patch.dll"));
+        assert!(paths.contains(&"BepInEx/patchers/PatcherMod/helper.dll"));
+        assert!(paths.contains(&"BepInEx/patchers/PatcherMod/patch.dll"));
     }
 
     #[test]
@@ -1854,7 +1842,7 @@ mod tests {
 
         // All files in patchers/ are tracked → directory-level sync
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(output.sync_paths[0].path, "../BepInEx/patchers");
+        assert_eq!(output.sync_paths[0].path, "BepInEx/patchers");
         assert_eq!(output.sync_paths[0].name, "BepInEx/patchers");
     }
 
@@ -1886,10 +1874,7 @@ mod tests {
 
         // Untracked file on disk → individual file sync
         assert_eq!(output.sync_paths.len(), 1);
-        assert_eq!(
-            output.sync_paths[0].path,
-            "../BepInEx/patchers/PatcherMod.dll"
-        );
+        assert_eq!(output.sync_paths[0].path, "BepInEx/patchers/PatcherMod.dll");
     }
 
     #[test]
@@ -1917,8 +1902,8 @@ mod tests {
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
-        assert!(paths.contains(&"../BepInEx/plugins"));
-        assert!(paths.contains(&"../BepInEx/patchers/FullMod/patcher.dll"));
+        assert!(paths.contains(&"BepInEx/plugins"));
+        assert!(paths.contains(&"BepInEx/patchers/FullMod/patcher.dll"));
         assert_eq!(output.sync_paths.len(), 2);
     }
 
@@ -1949,7 +1934,7 @@ mod tests {
             .map(|p| p.path.as_str())
             .collect();
         assert_eq!(config_paths.len(), 1);
-        assert_eq!(config_paths[0], "../BepInEx/config");
+        assert_eq!(config_paths[0], "BepInEx/config");
     }
 
     #[test]
@@ -2021,8 +2006,8 @@ mod tests {
         let output = generate_config(&ms_config, &db, false, None).unwrap();
 
         let paths: Vec<&str> = output.sync_paths.iter().map(|p| p.path.as_str()).collect();
-        assert!(paths.contains(&"../BepInEx/config/BigMod.cfg"));
-        assert!(paths.contains(&"../BepInEx/patchers/BigMod.dll"));
+        assert!(paths.contains(&"BepInEx/config/BigMod.cfg"));
+        assert!(paths.contains(&"BepInEx/patchers/BigMod.dll"));
         assert_eq!(output.sync_paths.len(), 2);
     }
 }
