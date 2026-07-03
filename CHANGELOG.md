@@ -2,7 +2,7 @@
 
 All notable changes to Quartermaster will be documented in this file.
 
-## [Unreleased]
+## [0.2.0] - 2026-07-03
 
 ### Bug Fixes
 
@@ -228,6 +228,7 @@ All notable changes to Quartermaster will be documented in this file.
 - Add git hooks for local CI linting (#185)([8fac626](https://github.com/cebarks/quartermaster/commit/8fac6261b727b554be346d2dbbe6a46458171613))
 - Remove 5 unnecessary direct dependencies (#200)([b62f8c1](https://github.com/cebarks/quartermaster/commit/b62f8c1b7f9c373d72805e0b9b6c02759a157216))
 - Bump dependencies to fix anyhow unsoundness advisory (#221)([855b2e2](https://github.com/cebarks/quartermaster/commit/855b2e285fed322675dfbf401f4f8bc1a5ffa871))
+- Verify TODO items and update project docs([37ca5a2](https://github.com/cebarks/quartermaster/commit/37ca5a2f7818a6b889aac94000141ce569d94578))
 
 ### Refactoring
 
