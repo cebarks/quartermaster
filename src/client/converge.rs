@@ -481,6 +481,8 @@ pub fn setup_client_overlay(
         debug!("Created wine-prefix directory for client {index}");
     }
 
+    ensure_winhttp_override(&wine_prefix_dir)?;
+
     for isolated_path in isolated_paths {
         let src = install_dir.join(isolated_path);
         let dst = overlay_dir.join(isolated_path);
@@ -525,6 +527,63 @@ pub fn setup_client_overlay(
         "Set up overlay for client {index} at {}",
         overlay_dir.display()
     );
+    Ok(())
+}
+
+/// Ensure the wine prefix has a `winhttp=native,builtin` DLL override in `user.reg`.
+///
+/// BepInEx uses a `winhttp.dll` doorstop to inject itself into the Unity process.
+/// Wine must load the local (native) winhttp.dll instead of its builtin one, or
+/// BepInEx never initializes. The baked container image includes this override in
+/// its `/.wine` prefix, but quma's per-client wine prefix overlay hides it. This
+/// function seeds or patches the overlay's `user.reg` so the override survives.
+fn ensure_winhttp_override(wine_prefix_dir: &Path) -> Result<()> {
+    let user_reg = wine_prefix_dir.join("user.reg");
+
+    if user_reg.exists() {
+        let content = std::fs::read_to_string(&user_reg)
+            .with_context(|| format!("failed to read {}", user_reg.display()))?;
+
+        if content.contains(r#""winhttp"="native,builtin""#) {
+            return Ok(());
+        }
+
+        // Append to existing DllOverrides section, or create one
+        if let Some(pos) = content.find("[Software\\\\Wine\\\\DllOverrides]") {
+            let insert_at = content[pos..]
+                .find('\n')
+                .map(|i| pos + i + 1)
+                .unwrap_or(content.len());
+            let mut patched = content[..insert_at].to_string();
+            patched.push_str("\"winhttp\"=\"native,builtin\"\n");
+            patched.push_str(&content[insert_at..]);
+            std::fs::write(&user_reg, patched)
+                .with_context(|| format!("failed to patch {}", user_reg.display()))?;
+        } else {
+            let mut appended = content;
+            appended.push_str("\n[Software\\\\Wine\\\\DllOverrides]\n");
+            appended.push_str("\"winhttp\"=\"native,builtin\"\n\n");
+            std::fs::write(&user_reg, appended)
+                .with_context(|| format!("failed to append to {}", user_reg.display()))?;
+        }
+
+        debug!("Patched winhttp DLL override into {}", user_reg.display());
+    } else {
+        // Seed a minimal user.reg — Proton/Wine will merge its own entries on first boot.
+        let seed = "\
+WINE REGISTRY Version 2\n\
+;; All keys relative to \\\\Registry\\\\User\\\\S-1-5-21-0-0-0-1000\n\
+\n\
+#arch=win64\n\
+\n\
+[Software\\\\Wine\\\\DllOverrides]\n\
+\"winhttp\"=\"native,builtin\"\n\
+\n";
+        std::fs::write(&user_reg, seed)
+            .with_context(|| format!("failed to seed {}", user_reg.display()))?;
+        debug!("Seeded winhttp DLL override into {}", user_reg.display());
+    }
+
     Ok(())
 }
 
