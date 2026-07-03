@@ -530,4 +530,100 @@ mod tests {
         let filtered = filter_setup_zip_files(files, &config);
         assert_eq!(filtered.len(), 1);
     }
+
+    #[test]
+    fn cache_rebuild_excludes_server_files() {
+        let spt_dir = tempfile::tempdir().unwrap();
+        make_test_file(
+            spt_dir.path(),
+            "BepInEx/plugins/mod/mod.dll",
+            b"dll-content",
+        );
+        make_test_file(spt_dir.path(), "user/mods/server-mod/package.json", b"{}");
+
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(1, 1, "hybrid-mod", Some("hybrid-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(1, "BepInEx/plugins/mod/mod.dll", Some("aaa"), Some(11))
+            .unwrap();
+        db.insert_file(1, "user/mods/server-mod/package.json", Some("bbb"), Some(2))
+            .unwrap();
+
+        let db_arc = Arc::new(Mutex::new(db));
+        // Default config has exclude_server_files=true
+        let config = Arc::new(parking_lot::RwLock::new(crate::config::Config::default()));
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, config);
+        cache.rebuild_sync();
+
+        let path = cache.get().unwrap();
+        let data = std::fs::read(&path).unwrap();
+        let reader = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();
+
+        // Default config excludes server files
+        assert_eq!(reader.len(), 1);
+        let names: Vec<_> = reader.file_names().collect();
+        assert!(names.contains(&"BepInEx/plugins/mod/mod.dll"));
+        assert!(!names.contains(&"user/mods/server-mod/package.json"));
+    }
+
+    #[test]
+    fn cache_rebuild_excludes_non_essential() {
+        let spt_dir = tempfile::tempdir().unwrap();
+        make_test_file(spt_dir.path(), "BepInEx/plugins/mod/mod.dll", b"content");
+        make_test_file(spt_dir.path(), "BepInEx/plugins/mod/README.md", b"# Readme");
+
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(1, 1, "test-mod", Some("test-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(1, "BepInEx/plugins/mod/mod.dll", Some("aaa"), Some(7))
+            .unwrap();
+        db.insert_file(1, "BepInEx/plugins/mod/README.md", Some("bbb"), Some(8))
+            .unwrap();
+
+        let db_arc = Arc::new(Mutex::new(db));
+        // Default config has exclude_non_essential=true
+        let config = Arc::new(parking_lot::RwLock::new(crate::config::Config::default()));
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, config);
+        cache.rebuild_sync();
+
+        let path = cache.get().unwrap();
+        let data = std::fs::read(&path).unwrap();
+        let reader = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();
+
+        assert_eq!(reader.len(), 1);
+        assert!(reader
+            .file_names()
+            .any(|n| n == "BepInEx/plugins/mod/mod.dll"));
+    }
+
+    #[test]
+    fn cache_rebuild_with_all_filters_disabled() {
+        let spt_dir = tempfile::tempdir().unwrap();
+        make_test_file(spt_dir.path(), "user/mods/mod/package.json", b"{}");
+        make_test_file(spt_dir.path(), "BepInEx/plugins/mod/README.md", b"# Hi");
+
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(1, 1, "test-mod", Some("test-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(1, "user/mods/mod/package.json", Some("aaa"), Some(2))
+            .unwrap();
+        db.insert_file(1, "BepInEx/plugins/mod/README.md", Some("bbb"), Some(4))
+            .unwrap();
+
+        let db_arc = Arc::new(Mutex::new(db));
+        let config = Arc::new(parking_lot::RwLock::new({
+            let mut c = crate::config::Config::default();
+            c.setup_zip.exclude_server_files = false;
+            c.setup_zip.exclude_non_essential = false;
+            c
+        }));
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, config);
+        cache.rebuild_sync();
+
+        let path = cache.get().unwrap();
+        let data = std::fs::read(&path).unwrap();
+        let reader = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();
+
+        assert_eq!(reader.len(), 2);
+    }
 }
