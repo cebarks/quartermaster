@@ -278,7 +278,7 @@ async fn join_submit_password_too_short() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body_bytes = test::read_body(resp).await;
     let body = String::from_utf8_lossy(&body_bytes);
-    assert!(body.contains("at least 8 characters"));
+    assert!(body.contains("8-128 characters"));
 }
 
 #[actix_web::test]

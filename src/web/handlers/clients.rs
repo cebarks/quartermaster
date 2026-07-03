@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Path};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::client::{ClientHealth, ClientState};
+use crate::container::ContainerManager;
 use crate::db::rbac::Permission;
 use crate::spt::headless::EHeadlessStatus;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
@@ -37,6 +40,67 @@ struct DashboardClientsStatusTemplate {
     total_count: usize,
 }
 
+fn require_container_mgr<'a>(
+    state: &'a AppState,
+    session: &Session,
+) -> Result<&'a Arc<ContainerManager>, HttpResponse> {
+    state.container_mgr.as_ref().ok_or_else(|| {
+        set_flash(
+            session,
+            "Podman socket not available. Ensure podman.socket is enabled.",
+            FlashType::Error,
+        );
+        HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/settings?tab=headless"))
+            .finish()
+    })
+}
+
+async fn resolve_client_container(
+    state: &AppState,
+    session: &Session,
+    index: u32,
+) -> Result<String, HttpResponse> {
+    let container_name = match &state.client_states {
+        Some(states) => {
+            let clients = states.read().await;
+            clients
+                .iter()
+                .find(|c| c.index == index)
+                .map(|c| c.container_name.clone())
+        }
+        None => None,
+    };
+
+    container_name.ok_or_else(|| {
+        set_flash(
+            session,
+            &format!("Client {index} not found"),
+            FlashType::Error,
+        );
+        HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/settings?tab=headless"))
+            .finish()
+    })
+}
+
+fn create_spt_client(
+    state: &AppState,
+    session: &Session,
+) -> Result<crate::spt::server::SptClient, HttpResponse> {
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
+    crate::spt::server::SptClient::new(&host, port).map_err(|e| {
+        set_flash(
+            session,
+            &format!("Failed to create SPT client: {e}"),
+            FlashType::Error,
+        );
+        HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/settings?tab=headless"))
+            .finish()
+    })
+}
+
 pub async fn client_list(req: HttpRequest) -> actix_web::Result<HttpResponse> {
     require_auth(&req)?;
     Ok(HttpResponse::SeeOther()
@@ -51,6 +115,7 @@ pub async fn client_detail(
     path: Path<u32>,
 ) -> actix_web::Result<web::Html> {
     let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
@@ -92,44 +157,14 @@ pub async fn client_restart(
 
     let index = path.into_inner();
 
-    let mgr = match state.container_mgr.as_ref() {
-        Some(m) => m,
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let mgr = match require_container_mgr(&state, &session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
     };
 
-    // Find the container name for this client
-    let container_name = match &state.client_states {
-        Some(states) => {
-            let clients = states.read().await;
-            clients
-                .iter()
-                .find(|c| c.index == index)
-                .map(|c| c.container_name.clone())
-        }
-        None => None,
-    };
-
-    let container_name = match container_name {
-        Some(name) => name,
-        None => {
-            set_flash(
-                &session,
-                &format!("Client {index} not found"),
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let container_name = match resolve_client_container(&state, &session, index).await {
+        Ok(n) => n,
+        Err(resp) => return Ok(resp),
     };
 
     if let Err(e) = mgr.restart(&container_name).await {
@@ -169,43 +204,14 @@ pub async fn client_stop(
 
     let index = path.into_inner();
 
-    let mgr = match state.container_mgr.as_ref() {
-        Some(m) => m,
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let mgr = match require_container_mgr(&state, &session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
     };
 
-    let container_name = match &state.client_states {
-        Some(states) => {
-            let clients = states.read().await;
-            clients
-                .iter()
-                .find(|c| c.index == index)
-                .map(|c| c.container_name.clone())
-        }
-        None => None,
-    };
-
-    let container_name = match container_name {
-        Some(name) => name,
-        None => {
-            set_flash(
-                &session,
-                &format!("Client {index} not found"),
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let container_name = match resolve_client_container(&state, &session, index).await {
+        Ok(n) => n,
+        Err(resp) => return Ok(resp),
     };
 
     if let Err(e) = mgr.stop(&container_name).await {
@@ -245,43 +251,14 @@ pub async fn client_start(
 
     let index = path.into_inner();
 
-    let mgr = match state.container_mgr.as_ref() {
-        Some(m) => m,
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let mgr = match require_container_mgr(&state, &session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
     };
 
-    let container_name = match &state.client_states {
-        Some(states) => {
-            let clients = states.read().await;
-            clients
-                .iter()
-                .find(|c| c.index == index)
-                .map(|c| c.container_name.clone())
-        }
-        None => None,
-    };
-
-    let container_name = match container_name {
-        Some(name) => name,
-        None => {
-            set_flash(
-                &session,
-                &format!("Client {index} not found"),
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let container_name = match resolve_client_container(&state, &session, index).await {
+        Ok(n) => n,
+        Err(resp) => return Ok(resp),
     };
 
     if let Err(e) = mgr.start(&container_name).await {
@@ -382,18 +359,9 @@ pub async fn client_scale(
     }
 
     // Get required dependencies
-    let container_mgr = match state.container_mgr.as_ref() {
-        Some(mgr) => mgr.as_ref(),
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let container_mgr = match require_container_mgr(&state, &session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
     };
 
     let headless_config = match state.config().headless.as_ref() {
@@ -422,19 +390,9 @@ pub async fn client_scale(
     }
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
-    let spt_client = match crate::spt::server::SptClient::new(&host, port) {
-        Ok(client) => client,
-        Err(e) => {
-            set_flash(
-                &session,
-                &format!("Failed to create SPT client: {e}"),
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let spt_client = match create_spt_client(&state, &session) {
+        Ok(c) => c,
+        Err(resp) => return Ok(resp),
     };
 
     // Run convergence in a background task
@@ -547,18 +505,9 @@ pub async fn client_create(
         }
     };
 
-    let container_mgr = match state.container_mgr.as_ref() {
-        Some(mgr) => mgr.as_ref(),
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let container_mgr = match require_container_mgr(&state, &session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
     };
 
     // Build updated config with one new default client appended
@@ -569,19 +518,9 @@ pub async fn client_create(
     let new_count = updated_config.client_count();
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
-    let spt_client = match crate::spt::server::SptClient::new(&host, port) {
-        Ok(client) => client,
-        Err(e) => {
-            set_flash(
-                &session,
-                &format!("Failed to create SPT client: {e}"),
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let spt_client = match create_spt_client(&state, &session) {
+        Ok(c) => c,
+        Err(resp) => return Ok(resp),
     };
 
     // Persist to config and spawn convergence
@@ -707,18 +646,9 @@ pub async fn client_delete(
         }
     }
 
-    let container_mgr = match state.container_mgr.as_ref() {
-        Some(mgr) => mgr.as_ref(),
-        None => {
-            set_flash(
-                &session,
-                "Podman socket not available. Ensure podman.socket is enabled.",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let container_mgr = match require_container_mgr(&state, &session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
     };
 
     // Build updated config with client removed (0-based index into vec)
@@ -726,19 +656,9 @@ pub async fn client_delete(
     updated_config.clients.remove((index - 1) as usize);
 
     // Create SPT client
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
-    let spt_client = match crate::spt::server::SptClient::new(&host, port) {
-        Ok(client) => client,
-        Err(e) => {
-            set_flash(
-                &session,
-                &format!("Failed to create SPT client: {e}"),
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
-                .finish());
-        }
+    let spt_client = match create_spt_client(&state, &session) {
+        Ok(c) => c,
+        Err(resp) => return Ok(resp),
     };
 
     // Stop and remove the container, persist config, then converge

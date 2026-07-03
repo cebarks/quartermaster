@@ -459,9 +459,9 @@ fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
 /// customizations in the overlay while ensuring new isolated paths are populated.
 ///
 /// Overlays live under `install_dir` (the game client directory) rather than `spt_dir`
-/// (the SPT server data directory) because the SPT server container mounts all of
-/// `spt_dir` and its entrypoint chowns the tree recursively — a wine-prefix dir
-/// with different ownership causes the server to crash on startup.
+/// (the SPT server data directory) when possible. Note: `install_dir` may still be
+/// inside `spt_dir` — the wine-prefix mount uses `:z` (Shared) instead of `:Z`
+/// (Private) to avoid SELinux MCS conflicts with the SPT server container's chown.
 pub fn setup_client_overlay(
     install_dir: &Path,
     index: u32,
@@ -1112,11 +1112,14 @@ async fn create_client_container(
         });
     }
 
+    // ponytail: Shared not Private — `:Z` gives each headless container unique MCS
+    // categories, but the SPT server entrypoint chowns the whole spt_dir tree and
+    // can't traverse dirs relabeled by a different container's `:Z`.
     volumes.push(VolumeMount {
         host_path: overlay_dir.join("wine-prefix"),
         container_path: "/.wine".to_string(),
         read_only: false,
-        selinux: SelinuxLabel::Private,
+        selinux: SelinuxLabel::Shared,
     });
 
     // Mount stubbed GPU DLLs over the originals so headless clients

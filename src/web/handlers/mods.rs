@@ -95,6 +95,22 @@ struct ModListEntry {
     addon_count: usize,
 }
 
+impl ModListEntry {
+    fn from_db_row(
+        row: (InstalledMod, usize, i64),
+        addon_counts: &std::collections::HashMap<i64, usize>,
+    ) -> Self {
+        let (mod_info, file_count, total_size) = row;
+        let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
+        ModListEntry {
+            mod_info,
+            file_count,
+            total_size,
+            addon_count,
+        }
+    }
+}
+
 struct DepEntry {
     dep: ModDependency,
     dep_mod: Option<InstalledMod>,
@@ -259,6 +275,198 @@ pub struct DepTreeQuery {
     ver: Option<String>,
 }
 
+// -- Helpers --
+
+fn empty_carousel(user: SessionUser, csrf_token: String) -> UpdatesCarouselTemplate {
+    UpdatesCarouselTemplate {
+        user,
+        entry: None,
+        total: 0,
+        index: 0,
+        prev_index: 0,
+        next_index: 0,
+        csrf_token,
+    }
+}
+
+/// Fetch installed mods from the DB (async-safe via web::block).
+async fn list_installed_mods(
+    db: std::sync::Arc<parking_lot::Mutex<crate::db::Database>>,
+) -> Result<Vec<InstalledMod>, WebError> {
+    web::block(move || {
+        let db = db.lock();
+        db.list_mods()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)
+}
+
+/// Fetch updates data from cache or Forge API.
+async fn get_or_fetch_updates(
+    state: &Data<AppState>,
+    installed: &[InstalledMod],
+) -> Option<crate::forge::models::UpdatesResponseData> {
+    if let Some(cached) = state.update_cache.get() {
+        return Some(cached);
+    }
+    let check_list: Vec<(i64, String)> = installed
+        .iter()
+        .map(|m| (m.forge_mod_id, m.version.clone()))
+        .collect();
+    match state
+        .forge
+        .check_updates(&check_list, &state.spt_info.spt_version)
+        .await
+    {
+        Ok(data) => {
+            state.update_cache.set(data.clone());
+            Some(data)
+        }
+        Err(_) => None,
+    }
+}
+
+/// Check if a mod operation should be queued (server running + queue enabled).
+async fn should_queue_operation(state: &Data<AppState>) -> bool {
+    let config = state.config_cloned();
+    crate::queue::should_queue(
+        &config,
+        false,
+        &state.spt_dir,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false)
+}
+
+/// Try to queue a mod operation. Returns Ok(Some(response)) if queued (caller should return),
+/// Ok(None) if not queued (caller should proceed with immediate operation).
+async fn try_queue_mod_op(
+    state: &Data<AppState>,
+    session: &Session,
+    action: QueueAction,
+    forge_mod_id: i64,
+    version_id: Option<i64>,
+    mod_name: &str,
+    redirect_url: &str,
+) -> Result<Option<HttpResponse>, WebError> {
+    if !should_queue_operation(state).await {
+        return Ok(None);
+    }
+    let db = state.db.clone();
+    let action_clone = action;
+    let mod_name_owned = mod_name.to_string();
+    let already_queued = web::block(move || {
+        let db = db.lock();
+        if db.has_pending_op(forge_mod_id, action_clone)? {
+            return Ok::<bool, rusqlite::Error>(true);
+        }
+        db.insert_pending_op(
+            action_clone,
+            forge_mod_id,
+            version_id,
+            &mod_name_owned,
+            None,
+            None,
+        )?;
+        Ok(false)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let action_str = match action {
+        QueueAction::Install => "install",
+        QueueAction::Update => "update",
+        QueueAction::Remove => "removal",
+    };
+    if already_queued {
+        set_flash(
+            session,
+            &format!("This mod is already queued for {action_str}"),
+            FlashType::Warning,
+        );
+    } else {
+        let past = match action {
+            QueueAction::Install => "Mod queued for install",
+            QueueAction::Update => "Update queued",
+            QueueAction::Remove => "Mod queued for removal",
+        };
+        set_flash(session, past, FlashType::Success);
+    }
+    Ok(Some(
+        HttpResponse::SeeOther()
+            .insert_header(("Location", redirect_url))
+            .finish(),
+    ))
+}
+
+/// Try to queue an addon operation. Returns Ok(Some(response)) if queued,
+/// Ok(None) if not queued.
+#[allow(clippy::too_many_arguments)]
+async fn try_queue_addon_op(
+    state: &Data<AppState>,
+    session: &Session,
+    user: &SessionUser,
+    action: QueueAction,
+    forge_addon_id: i64,
+    version_id: Option<i64>,
+    addon_name: &str,
+    redirect_url: &str,
+) -> Result<Option<HttpResponse>, WebError> {
+    if !should_queue_operation(state).await {
+        return Ok(None);
+    }
+    let db = state.db.clone();
+    let action_clone = action;
+    let addon_name_owned = addon_name.to_string();
+    let username = user.username.clone();
+    let already_queued = web::block(move || {
+        let db = db.lock();
+        if db.has_pending_addon_op(forge_addon_id, action_clone)? {
+            return Ok::<bool, rusqlite::Error>(true);
+        }
+        db.insert_pending_addon_op(
+            action_clone,
+            forge_addon_id,
+            version_id,
+            &addon_name_owned,
+            None,
+            Some(&username),
+        )?;
+        Ok(false)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let action_str = match action {
+        QueueAction::Install => "install",
+        QueueAction::Update => "update",
+        QueueAction::Remove => "removal",
+    };
+    if already_queued {
+        set_flash(
+            session,
+            &format!("This addon is already queued for {action_str}"),
+            FlashType::Warning,
+        );
+    } else {
+        let past = match action {
+            QueueAction::Install => "Addon queued for install",
+            QueueAction::Update => "Addon queued for update",
+            QueueAction::Remove => "Addon queued for removal",
+        };
+        set_flash(session, past, FlashType::Success);
+    }
+    Ok(Some(
+        HttpResponse::SeeOther()
+            .insert_header(("Location", redirect_url))
+            .finish(),
+    ))
+}
+
 // -- Handlers --
 
 pub async fn list_mods(
@@ -290,15 +498,7 @@ pub async fn list_mods(
 
     let all_entries: Vec<ModListEntry> = all_unfiltered
         .into_iter()
-        .map(|(mod_info, file_count, total_size)| {
-            let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
-            ModListEntry {
-                mod_info,
-                file_count,
-                total_size,
-                addon_count,
-            }
-        })
+        .map(|row| ModListEntry::from_db_row(row, &addon_counts))
         .collect();
 
     let (infrastructure, non_infra): (Vec<_>, Vec<_>) = all_entries
@@ -309,15 +509,7 @@ pub async fn list_mods(
 
     let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
-        .map(|(mod_info, file_count, total_size)| {
-            let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
-            ModListEntry {
-                mod_info,
-                file_count,
-                total_size,
-                addon_count,
-            }
-        })
+        .map(|row| ModListEntry::from_db_row(row, &addon_counts))
         .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
         .collect();
 
@@ -411,38 +603,16 @@ pub async fn check_updates_partial(
 ) -> actix_web::Result<Html> {
     let _user = require_auth(&req)?;
     // No capability check — dashboard shows update badges to all users.
-    let db = state.db.clone();
-    let installed = web::block(move || {
-        let db = db.lock();
-        db.list_mods()
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    let installed = list_installed_mods(state.db.clone()).await?;
 
     let updates_available = if !installed.is_empty() {
-        let updates_data = if let Some(cached) = state.update_cache.get() {
-            cached
-        } else {
-            let check_list: Vec<(i64, String)> = installed
-                .iter()
-                .map(|m| (m.forge_mod_id, m.version.clone()))
-                .collect();
-            match state
-                .forge
-                .check_updates(&check_list, &state.spt_info.spt_version)
-                .await
-            {
-                Ok(data) => {
-                    state.update_cache.set(data.clone());
-                    data
-                }
-                Err(_) => {
-                    let tmpl = UpdateBadgesTemplate {
-                        updates_available: 0,
-                    };
-                    return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-                }
+        let updates_data = match get_or_fetch_updates(&state, &installed).await {
+            Some(data) => data,
+            None => {
+                let tmpl = UpdateBadgesTemplate {
+                    updates_available: 0,
+                };
+                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
             }
         };
 
@@ -493,49 +663,27 @@ pub async fn update_status_partial(
     // so the response is silently ignored for Players.
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let db = state.db.clone();
-    let installed = web::block(move || {
-        let db = db.lock();
-        db.list_mods()
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    let installed = list_installed_mods(state.db.clone()).await?;
 
     if installed.is_empty() {
         let tmpl = UpdateStatusTemplate { entries: vec![] };
         return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
     }
 
-    let updates_data = if let Some(cached) = state.update_cache.get() {
-        cached
-    } else {
-        let check_list: Vec<(i64, String)> = installed
-            .iter()
-            .map(|m| (m.forge_mod_id, m.version.clone()))
-            .collect();
-        match state
-            .forge
-            .check_updates(&check_list, &state.spt_info.spt_version)
-            .await
-        {
-            Ok(data) => {
-                state.update_cache.set(data.clone());
-                data
-            }
-            Err(_) => {
-                let entries = installed
-                    .iter()
-                    .map(|m| UpdateStatusEntry {
-                        db_id: m.id,
-                        installed_version: m.version.clone(),
-                        new_version: None,
-                        csrf_token: csrf_token.clone(),
-                    })
-                    .collect();
-                let tmpl = UpdateStatusTemplate { entries };
-                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-            }
+    let updates_data = match get_or_fetch_updates(&state, &installed).await {
+        Some(data) => data,
+        None => {
+            let entries = installed
+                .iter()
+                .map(|m| UpdateStatusEntry {
+                    db_id: m.id,
+                    installed_version: m.version.clone(),
+                    new_version: None,
+                    csrf_token: csrf_token.clone(),
+                })
+                .collect();
+            let tmpl = UpdateStatusTemplate { entries };
+            return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
         }
     };
 
@@ -599,56 +747,18 @@ pub async fn updates_carousel_partial(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let index = query.index.unwrap_or(0);
 
-    let db = state.db.clone();
-    let installed = web::block(move || {
-        let db = db.lock();
-        db.list_mods()
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    let installed = list_installed_mods(state.db.clone()).await?;
 
     if installed.is_empty() {
-        let tmpl = UpdatesCarouselTemplate {
-            user,
-            entry: None,
-            total: 0,
-            index: 0,
-            prev_index: 0,
-            next_index: 0,
-            csrf_token,
-        };
+        let tmpl = empty_carousel(user, csrf_token);
         return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
     }
 
-    let updates_data = if let Some(cached) = state.update_cache.get() {
-        cached
-    } else {
-        let check_list: Vec<(i64, String)> = installed
-            .iter()
-            .map(|m| (m.forge_mod_id, m.version.clone()))
-            .collect();
-        match state
-            .forge
-            .check_updates(&check_list, &state.spt_info.spt_version)
-            .await
-        {
-            Ok(data) => {
-                state.update_cache.set(data.clone());
-                data
-            }
-            Err(_) => {
-                let tmpl = UpdatesCarouselTemplate {
-                    user,
-                    entry: None,
-                    total: 0,
-                    index: 0,
-                    prev_index: 0,
-                    next_index: 0,
-                    csrf_token,
-                };
-                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-            }
+    let updates_data = match get_or_fetch_updates(&state, &installed).await {
+        Some(data) => data,
+        None => {
+            let tmpl = empty_carousel(user, csrf_token);
+            return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
         }
     };
 
@@ -674,15 +784,7 @@ pub async fn updates_carousel_partial(
     let total = updatable.len();
 
     if total == 0 {
-        let tmpl = UpdatesCarouselTemplate {
-            user,
-            entry: None,
-            total: 0,
-            index: 0,
-            prev_index: 0,
-            next_index: 0,
-            csrf_token,
-        };
+        let tmpl = empty_carousel(user, csrf_token);
         return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
     }
 
@@ -1029,51 +1131,18 @@ pub async fn install_mod(
     }
 
     // Check if the operation should be queued (server running + queue enabled)
-    let config = state.config_cloned();
-    let should_queue = crate::queue::should_queue(
-        &config,
-        false,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
+    if let Some(resp) = try_queue_mod_op(
+        &state,
+        &session,
+        QueueAction::Install,
+        mod_id,
+        Some(version.id),
+        &mod_info.name,
+        "/quma/mods#queue",
     )
-    .await
-    .unwrap_or(false);
-
-    if should_queue {
-        let db = state.db.clone();
-        let mod_name = mod_info.name.clone();
-        let version_id = version.id;
-        let already_queued = web::block(move || {
-            let db = db.lock();
-            if db.has_pending_op(mod_id, crate::db::users::QueueAction::Install)? {
-                return Ok::<bool, rusqlite::Error>(true);
-            }
-            db.insert_pending_op(
-                crate::db::users::QueueAction::Install,
-                mod_id,
-                Some(version_id),
-                &mod_name,
-                None,
-                None,
-            )?;
-            Ok(false)
-        })
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-        if already_queued {
-            set_flash(
-                &session,
-                "This mod is already queued for install",
-                FlashType::Warning,
-            );
-        } else {
-            set_flash(&session, "Mod queued for install", FlashType::Success);
-        }
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods#queue"))
-            .finish());
+    .await?
+    {
+        return Ok(resp);
     }
 
     let task_id = match state
@@ -1250,52 +1319,18 @@ pub async fn update_mod(
     }
 
     // Check if the operation should be queued
-    let config = state.config_cloned();
-    let should_queue = crate::queue::should_queue(
-        &config,
-        false,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
+    if let Some(resp) = try_queue_mod_op(
+        &state,
+        &session,
+        QueueAction::Update,
+        installed.forge_mod_id,
+        Some(version.id),
+        &installed.name,
+        "/quma/mods#queue",
     )
-    .await
-    .unwrap_or(false);
-
-    if should_queue {
-        let db = state.db.clone();
-        let mod_name = installed.name.clone();
-        let version_id = version.id;
-        let forge_mod_id = installed.forge_mod_id;
-        let already_queued = web::block(move || {
-            let db = db.lock();
-            if db.has_pending_op(forge_mod_id, crate::db::users::QueueAction::Update)? {
-                return Ok::<bool, rusqlite::Error>(true);
-            }
-            db.insert_pending_op(
-                crate::db::users::QueueAction::Update,
-                forge_mod_id,
-                Some(version_id),
-                &mod_name,
-                None,
-                None,
-            )?;
-            Ok(false)
-        })
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-        if already_queued {
-            set_flash(
-                &session,
-                "This mod is already queued for update",
-                FlashType::Warning,
-            );
-        } else {
-            set_flash(&session, "Update queued", FlashType::Success);
-        }
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods#queue"))
-            .finish());
+    .await?
+    {
+        return Ok(resp);
     }
 
     let task_id =
@@ -1419,51 +1454,18 @@ pub async fn remove_mod(
     .ok_or(WebError::NotFound)?;
 
     // Check if the operation should be queued
-    let config = state.config_cloned();
-    let should_queue = crate::queue::should_queue(
-        &config,
-        false,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
+    if let Some(resp) = try_queue_mod_op(
+        &state,
+        &session,
+        QueueAction::Remove,
+        installed.forge_mod_id,
+        None,
+        &installed.name,
+        "/quma/mods#queue",
     )
-    .await
-    .unwrap_or(false);
-
-    if should_queue {
-        let db = state.db.clone();
-        let mod_name = installed.name.clone();
-        let forge_mod_id = installed.forge_mod_id;
-        let already_queued = web::block(move || {
-            let db = db.lock();
-            if db.has_pending_op(forge_mod_id, crate::db::users::QueueAction::Remove)? {
-                return Ok::<bool, rusqlite::Error>(true);
-            }
-            db.insert_pending_op(
-                crate::db::users::QueueAction::Remove,
-                forge_mod_id,
-                None,
-                &mod_name,
-                None,
-                None,
-            )?;
-            Ok(false)
-        })
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-        if already_queued {
-            set_flash(
-                &session,
-                "This mod is already queued for removal",
-                FlashType::Warning,
-            );
-        } else {
-            set_flash(&session, "Mod queued for removal", FlashType::Success);
-        }
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/mods#queue"))
-            .finish());
+    .await?
+    {
+        return Ok(resp);
     }
 
     let spt_dir = state.spt_dir.clone();
@@ -1568,14 +1570,7 @@ pub async fn update_all_mods(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let db = state.db.clone();
-    let installed = web::block(move || {
-        let db = db.lock();
-        db.list_mods()
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    let installed = list_installed_mods(state.db.clone()).await?;
 
     if installed.is_empty() {
         return Ok(HttpResponse::SeeOther()
@@ -1595,27 +1590,14 @@ pub async fn update_all_mods(
         .map_err(WebError::from)?;
 
     // Check if operations should be queued (server running + queue enabled)
-    let config = state.config_cloned();
-    let should_queue = crate::queue::should_queue(
-        &config,
-        false,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
-    )
-    .await
-    .unwrap_or(false);
-
-    if should_queue {
+    if should_queue_operation(&state).await {
         let db = state.db.clone();
         web::block(move || {
             let db = db.lock();
             for update in &results.updates {
-                if !db.has_pending_op(
-                    update.current_version.mod_id,
-                    crate::db::users::QueueAction::Update,
-                )? {
+                if !db.has_pending_op(update.current_version.mod_id, QueueAction::Update)? {
                     db.insert_pending_op(
-                        crate::db::users::QueueAction::Update,
+                        QueueAction::Update,
                         update.current_version.mod_id,
                         Some(update.recommended_version.id),
                         &update.current_version.name,
@@ -1766,15 +1748,7 @@ pub async fn list_body_partial(
 
     let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
-        .map(|(mod_info, file_count, total_size)| {
-            let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
-            ModListEntry {
-                mod_info,
-                file_count,
-                total_size,
-                addon_count,
-            }
-        })
+        .map(|row| ModListEntry::from_db_row(row, &addon_counts))
         .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
         .collect();
 
@@ -2115,51 +2089,19 @@ pub async fn install_addon(
     };
 
     // Check if the operation should be queued
-    let config = state.config_cloned();
-    let should_queue = crate::queue::should_queue(
-        &config,
-        false,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
+    if let Some(resp) = try_queue_addon_op(
+        &state,
+        &session,
+        &user,
+        QueueAction::Install,
+        addon_forge_id,
+        Some(version.id),
+        &addon_info.name,
+        &format!("/quma/mods/{}#queue", parent_mod_db_id),
     )
-    .await
-    .unwrap_or(false);
-
-    if should_queue {
-        let db = state.db.clone();
-        let addon_name = addon_info.name.clone();
-        let version_id = version.id;
-        let already_queued = web::block(move || {
-            let db = db.lock();
-            if db.has_pending_addon_op(addon_forge_id, QueueAction::Install)? {
-                return Ok::<bool, rusqlite::Error>(true);
-            }
-            db.insert_pending_addon_op(
-                QueueAction::Install,
-                addon_forge_id,
-                Some(version_id),
-                &addon_name,
-                None,
-                Some(&user.username),
-            )?;
-            Ok(false)
-        })
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-        if already_queued {
-            set_flash(
-                &session,
-                "This addon is already queued for install",
-                FlashType::Warning,
-            );
-        } else {
-            set_flash(&session, "Addon queued for install", FlashType::Success);
-        }
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", format!("/quma/mods/{}#queue", parent_mod_db_id)))
-            .finish());
+    .await?
+    {
+        return Ok(resp);
     }
 
     // Install immediately
@@ -2315,55 +2257,19 @@ pub async fn update_addon(
     }
 
     // Check if the operation should be queued
-    let config = state.config_cloned();
-    let should_queue = crate::queue::should_queue(
-        &config,
-        false,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
+    if let Some(resp) = try_queue_addon_op(
+        &state,
+        &session,
+        &user,
+        QueueAction::Update,
+        addon.forge_addon_id,
+        Some(latest_version.id),
+        &addon.name,
+        &format!("/quma/mods/{}#queue", addon.parent_mod_id),
     )
-    .await
-    .unwrap_or(false);
-
-    if should_queue {
-        let db = state.db.clone();
-        let addon_name = addon.name.clone();
-        let version_id = latest_version.id;
-        let forge_addon_id = addon.forge_addon_id;
-        let already_queued = web::block(move || {
-            let db = db.lock();
-            if db.has_pending_addon_op(forge_addon_id, QueueAction::Update)? {
-                return Ok::<bool, rusqlite::Error>(true);
-            }
-            db.insert_pending_addon_op(
-                QueueAction::Update,
-                forge_addon_id,
-                Some(version_id),
-                &addon_name,
-                None,
-                Some(&user.username),
-            )?;
-            Ok(false)
-        })
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-        if already_queued {
-            set_flash(
-                &session,
-                "This addon is already queued for update",
-                FlashType::Warning,
-            );
-        } else {
-            set_flash(&session, "Addon queued for update", FlashType::Success);
-        }
-        return Ok(HttpResponse::SeeOther()
-            .insert_header((
-                "Location",
-                format!("/quma/mods/{}#queue", addon.parent_mod_id),
-            ))
-            .finish());
+    .await?
+    {
+        return Ok(resp);
     }
 
     // Update immediately

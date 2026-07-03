@@ -60,6 +60,32 @@ fn compute_available_profiles(spt_dir: &std::path::Path, users: &[User]) -> Vec<
         .collect()
 }
 
+async fn load_users_with_profiles(
+    state: &Data<AppState>,
+) -> actix_web::Result<(Vec<(User, ProfileStatus)>, Vec<RoleRecord>, Vec<SptProfile>)> {
+    let db = state.db.clone();
+    let (all_users, roles) = web::block(move || {
+        let db = db.lock();
+        let users = db.list_users()?;
+        let roles = db.list_roles()?;
+        Ok::<_, rusqlite::Error>((users, roles))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let spt_dir = state.spt_dir.clone();
+    let profile_stats = web::block(move || load_all_profile_stats(&spt_dir))
+        .await
+        .map_err(WebError::from)?;
+
+    let profiles = build_user_profiles(&all_users, &state.spt_dir, &profile_stats);
+    let available_profiles = compute_available_profiles(&state.spt_dir, &all_users);
+    let users: Vec<(User, ProfileStatus)> = all_users.into_iter().zip(profiles).collect();
+
+    Ok((users, roles, available_profiles))
+}
+
 // -- Templates --
 
 #[derive(Template)]
@@ -232,25 +258,7 @@ pub async fn admin_page(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let flash = crate::web::flash::take_flash(&session);
 
-    let db = state.db.clone();
-    let (all_users, roles) = web::block(move || {
-        let db = db.lock();
-        let users = db.list_users()?;
-        let roles = db.list_roles()?;
-        Ok::<_, rusqlite::Error>((users, roles))
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
-
-    let spt_dir = state.spt_dir.clone();
-    let profile_stats = web::block(move || load_all_profile_stats(&spt_dir))
-        .await
-        .map_err(WebError::from)?;
-
-    let profiles = build_user_profiles(&all_users, &state.spt_dir, &profile_stats);
-    let available_profiles = compute_available_profiles(&state.spt_dir, &all_users);
-    let users: Vec<(User, ProfileStatus)> = all_users.into_iter().zip(profiles).collect();
+    let (users, roles, available_profiles) = load_users_with_profiles(&state).await?;
     let current_user_id = user.user_id;
 
     let tmpl = AdminPageTemplate {
@@ -274,25 +282,7 @@ pub async fn admin_users(
     let user = require_auth(&req)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let db = state.db.clone();
-    let (all_users, roles) = web::block(move || {
-        let db = db.lock();
-        let users = db.list_users()?;
-        let roles = db.list_roles()?;
-        Ok::<_, rusqlite::Error>((users, roles))
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
-
-    let spt_dir = state.spt_dir.clone();
-    let profile_stats = web::block(move || load_all_profile_stats(&spt_dir))
-        .await
-        .map_err(WebError::from)?;
-
-    let profiles = build_user_profiles(&all_users, &state.spt_dir, &profile_stats);
-    let available_profiles = compute_available_profiles(&state.spt_dir, &all_users);
-    let users: Vec<(User, ProfileStatus)> = all_users.into_iter().zip(profiles).collect();
+    let (users, roles, available_profiles) = load_users_with_profiles(&state).await?;
 
     let tmpl = UsersPartialTemplate {
         users,
@@ -868,7 +858,7 @@ pub async fn update_role_handler(
 
     let rn = role_name.clone();
     let db = state.db.clone();
-    let affected = web::block(move || {
+    let result = web::block(move || {
         let db = db.lock();
         db.update_role_permissions(&rn, &permissions)
     })
@@ -876,14 +866,27 @@ pub async fn update_role_handler(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    if affected == 0 {
-        return render_roles_partial(
-            &state,
-            &session,
-            None,
-            Some("Admin role permissions cannot be modified".to_string()),
-        )
-        .await;
+    use crate::db::rbac::UpdatePermissionsResult;
+    match result {
+        UpdatePermissionsResult::AdminImmutable => {
+            return render_roles_partial(
+                &state,
+                &session,
+                None,
+                Some("Admin role permissions cannot be modified".to_string()),
+            )
+            .await;
+        }
+        UpdatePermissionsResult::WouldRemoveLastAdmin => {
+            return render_roles_partial(
+                &state,
+                &session,
+                None,
+                Some("Cannot remove users.manage — would leave no admin-capable users".to_string()),
+            )
+            .await;
+        }
+        UpdatePermissionsResult::Updated => {}
     }
 
     render_roles_partial(

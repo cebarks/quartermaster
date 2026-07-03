@@ -33,6 +33,7 @@ pub async fn mod_backups_partial(
     session: Session,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsUpdate)?;
     let mod_db_id = path.into_inner();
     let csrf_token = csrf::get_or_create_token(&session);
     let db = state.db.clone();
