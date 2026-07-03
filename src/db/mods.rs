@@ -454,16 +454,35 @@ impl Database {
         old_file_paths_json: &str,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO pending_updates (mod_db_id, version_id, version_str, new_file_paths, old_file_paths)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO pending_updates (mod_db_id, version_id, version_str, new_file_paths, old_file_paths, item_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'mod')",
             params![mod_db_id, version_id, version_str, new_file_paths_json, old_file_paths_json],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(dead_code)] // Used in Task 4 (ops.rs)
+    pub fn insert_pending_addon_update(
+        &self,
+        addon_db_id: i64,
+        version_id: i64,
+        version_str: &str,
+        new_file_paths_json: &str,
+        old_file_paths_json: &str,
+        forge_addon_id: i64,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO pending_updates (mod_db_id, version_id, version_str, new_file_paths, old_file_paths, item_type, forge_addon_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'addon', ?6)",
+            params![addon_db_id, version_id, version_str, new_file_paths_json, old_file_paths_json, forge_addon_id],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn list_pending_updates(&self) -> rusqlite::Result<Vec<PendingUpdate>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_db_id, version_id, version_str, new_file_paths, old_file_paths, started_at
+            "SELECT id, mod_db_id, version_id, version_str, new_file_paths, old_file_paths, started_at,
+                    COALESCE(item_type, 'mod') as item_type, forge_addon_id
              FROM pending_updates ORDER BY id",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -475,6 +494,8 @@ impl Database {
                 new_file_paths: row.get(4)?,
                 old_file_paths: row.get(5)?,
                 started_at: row.get(6)?,
+                item_type: row.get(7)?,
+                forge_addon_id: row.get(8)?,
             })
         })?;
         rows.collect()
@@ -486,17 +507,19 @@ impl Database {
     }
 }
 
-/// A record tracking an in-progress async mod update, used for crash recovery.
+/// A record tracking an in-progress async mod/addon update, used for crash recovery.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // SQL row model — fields populated by query results
 pub struct PendingUpdate {
     pub id: i64,
-    pub mod_db_id: i64,
+    pub mod_db_id: i64, // For addons, this is the addon DB ID
     pub version_id: i64,
     pub version_str: String,
     pub new_file_paths: String, // JSON
     pub old_file_paths: String, // JSON
     pub started_at: String,
+    pub item_type: String, // "mod" or "addon"
+    pub forge_addon_id: Option<i64>,
 }
 
 fn row_to_installed_mod(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledMod> {
