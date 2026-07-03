@@ -647,7 +647,7 @@
 
     function loadHeadlessContainers() {
         const runningOnly = !headlessShowAll.checked;
-        fetch(`/quma/api/logs/headless/containers?running_only=${runningOnly}`)
+        return fetch(`/quma/api/logs/headless/containers?running_only=${runningOnly}`)
             .then(r => {
                 if (!r.ok) throw new Error('not available');
                 return r.json();
@@ -765,15 +765,23 @@
         else startHeadlessFollow();
     });
     headlessRefreshBtn.addEventListener('click', () => {
-        loadHeadlessContainers();
-        loadHeadlessLogs();
+        const current = headlessSelect.value;
+        loadHeadlessContainers().then(() => {
+            if (current && headlessSelect.querySelector('option[value="' + current + '"]')) {
+                headlessSelect.value = current;
+            }
+            loadHeadlessLogs();
+        });
     });
     headlessClearBtn.addEventListener('click', () => {
         headlessContainer.innerHTML = '';
         headlessSSEBuffer.length = 0;
     });
     headlessSearch.addEventListener('input', applyHeadlessFilters);
-    headlessShowAll.addEventListener('change', loadHeadlessContainers);
+    headlessShowAll.addEventListener('change', () => {
+        stopHeadlessFollow();
+        loadHeadlessContainers();
+    });
 
     // Disconnect SSE streams when the tab is hidden to prevent
     // invisible memory accumulation; reconnect when visible again.
