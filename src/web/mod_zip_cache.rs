@@ -100,14 +100,18 @@ impl ModZipCache {
         });
     }
 
-    /// Synchronous rebuild for use in tests and the startup fallback path.
+    /// Synchronous rebuild for use in tests. Bails out if a rebuild is
+    /// already in progress (the async path will handle it).
+    #[cfg(test)]
     pub fn rebuild_sync(&self) {
-        let _ = self.inner.rebuilding.compare_exchange(
-            false,
-            true,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        if self
+            .inner
+            .rebuilding
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
         self.do_rebuild();
     }
 
@@ -115,14 +119,21 @@ impl ModZipCache {
         // Clear dirty before we start so we detect changes during the rebuild
         self.inner.dirty.store(false, Ordering::Release);
 
-        let result = self.build_cache();
+        // Scoped guard ensures rebuilding flag is cleared even on panic
+        {
+            struct ResetOnDrop<'a>(&'a AtomicBool);
+            impl Drop for ResetOnDrop<'_> {
+                fn drop(&mut self) {
+                    self.0.store(false, Ordering::Release);
+                }
+            }
+            let _guard = ResetOnDrop(&self.inner.rebuilding);
 
-        // Always clear the rebuilding flag
-        self.inner.rebuilding.store(false, Ordering::Release);
-
-        if let Err(e) = result {
-            tracing::warn!(err = %e, "failed to rebuild mod zip cache");
+            if let Err(e) = self.build_cache() {
+                tracing::warn!(err = %e, "failed to rebuild mod zip cache");
+            }
         }
+        // rebuilding is now false (guard dropped)
 
         // If someone called invalidate() while we were rebuilding, go again
         if self.inner.dirty.swap(false, Ordering::AcqRel) {
