@@ -1,7 +1,7 @@
 {
   "minLines": 5,
   "minTokens": 50,
-  "threshold": 13,
+  "threshold": 8,
   "reporters": ["console", "threshold"],
   "ignore": [
     "**/target/**",
