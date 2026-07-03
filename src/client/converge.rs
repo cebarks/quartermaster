@@ -1,4 +1,4 @@
-use crate::config::{Config, HeadlessConfig};
+use crate::config::{Config, HeadlessConfig, HeadlessDisplayServer, HeadlessRunner};
 use crate::container::{
     ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
 };
@@ -481,6 +481,8 @@ pub fn setup_client_overlay(
         debug!("Created wine-prefix directory for client {index}");
     }
 
+    ensure_winhttp_override(&wine_prefix_dir)?;
+
     for isolated_path in isolated_paths {
         let src = install_dir.join(isolated_path);
         let dst = overlay_dir.join(isolated_path);
@@ -525,6 +527,63 @@ pub fn setup_client_overlay(
         "Set up overlay for client {index} at {}",
         overlay_dir.display()
     );
+    Ok(())
+}
+
+/// Ensure the wine prefix has a `winhttp=native,builtin` DLL override in `user.reg`.
+///
+/// BepInEx uses a `winhttp.dll` doorstop to inject itself into the Unity process.
+/// Wine must load the local (native) winhttp.dll instead of its builtin one, or
+/// BepInEx never initializes. The baked container image includes this override in
+/// its `/.wine` prefix, but quma's per-client wine prefix overlay hides it. This
+/// function seeds or patches the overlay's `user.reg` so the override survives.
+fn ensure_winhttp_override(wine_prefix_dir: &Path) -> Result<()> {
+    let user_reg = wine_prefix_dir.join("user.reg");
+
+    if user_reg.exists() {
+        let content = std::fs::read_to_string(&user_reg)
+            .with_context(|| format!("failed to read {}", user_reg.display()))?;
+
+        if content.contains(r#""winhttp"="native,builtin""#) {
+            return Ok(());
+        }
+
+        // Append to existing DllOverrides section, or create one
+        if let Some(pos) = content.find("[Software\\\\Wine\\\\DllOverrides]") {
+            let insert_at = content[pos..]
+                .find('\n')
+                .map(|i| pos + i + 1)
+                .unwrap_or(content.len());
+            let mut patched = content[..insert_at].to_string();
+            patched.push_str("\"winhttp\"=\"native,builtin\"\n");
+            patched.push_str(&content[insert_at..]);
+            std::fs::write(&user_reg, patched)
+                .with_context(|| format!("failed to patch {}", user_reg.display()))?;
+        } else {
+            let mut appended = content;
+            appended.push_str("\n[Software\\\\Wine\\\\DllOverrides]\n");
+            appended.push_str("\"winhttp\"=\"native,builtin\"\n\n");
+            std::fs::write(&user_reg, appended)
+                .with_context(|| format!("failed to append to {}", user_reg.display()))?;
+        }
+
+        debug!("Patched winhttp DLL override into {}", user_reg.display());
+    } else {
+        // Seed a minimal user.reg — Proton/Wine will merge its own entries on first boot.
+        let seed = "\
+WINE REGISTRY Version 2\n\
+;; All keys relative to \\\\Registry\\\\User\\\\S-1-5-21-0-0-0-1000\n\
+\n\
+#arch=win64\n\
+\n\
+[Software\\\\Wine\\\\DllOverrides]\n\
+\"winhttp\"=\"native,builtin\"\n\
+\n";
+        std::fs::write(&user_reg, seed)
+            .with_context(|| format!("failed to seed {}", user_reg.display()))?;
+        debug!("Seeded winhttp DLL override into {}", user_reg.display());
+    }
+
     Ok(())
 }
 
@@ -1033,7 +1092,7 @@ async fn create_client_container(
 
     volumes.push(VolumeMount {
         host_path: overlay_dir.join("wine-prefix"),
-        container_path: "/wine-prefix".to_string(),
+        container_path: "/.wine".to_string(),
         read_only: false,
         selinux: SelinuxLabel::Private,
     });
@@ -1052,23 +1111,27 @@ async fn create_client_container(
     }
 
     // Environment variables
-    let mut env = vec![
-        (
-            "UDP_PORT".to_string(),
-            client_port(headless_config.base_udp_port, index).to_string(),
-        ),
-        ("WINEPREFIX".to_string(), "/wine-prefix".to_string()),
-    ];
+    let mut env = vec![(
+        "UDP_PORT".to_string(),
+        client_port(headless_config.base_udp_port, index).to_string(),
+    )];
 
-    if let Some(ref pid) = profile_id {
-        env.push(("PROFILE_ID".to_string(), pid.clone()));
-        info!("Assigning profile {pid} to client {index}");
-    } else {
-        warn!(
-            "No profile available for client {index}. \
-             Fika status correlation will not work until a profile is assigned. \
-             Restart the SPT server to generate headless profiles, then re-scale."
-        );
+    // Always set PROFILE_ID — the claudeoris image defaults to "test" if unset,
+    // which would silently connect with a bogus profile. An empty string
+    // causes the entrypoint to fail clearly instead.
+    match profile_id {
+        Some(ref pid) => {
+            env.push(("PROFILE_ID".to_string(), pid.clone()));
+            info!("Assigning profile {pid} to client {index}");
+        }
+        None => {
+            env.push(("PROFILE_ID".to_string(), String::new()));
+            warn!(
+                "No profile available for client {index}. \
+                 Fika status correlation will not work until a profile is assigned. \
+                 Restart the SPT server to generate headless profiles, then re-scale."
+            );
+        }
     }
 
     // Route through quma's HTTPS proxy
@@ -1078,6 +1141,36 @@ async fn create_client_container(
     };
     env.push(("SERVER_URL".to_string(), proxy_host.to_string()));
     env.push(("SERVER_PORT".to_string(), config.web_port.to_string()));
+
+    // Claudeoris image runtime knobs
+    let runner_str = match headless_config.runner {
+        HeadlessRunner::Umu => "umu",
+        HeadlessRunner::Wine => "wine",
+    };
+    env.push(("RUNNER".to_string(), runner_str.to_string()));
+
+    let effective_ntsync = ntsync_available && headless_config.ntsync;
+    env.push(("NTSYNC".to_string(), effective_ntsync.to_string()));
+    env.push(("ESYNC".to_string(), headless_config.esync.to_string()));
+    env.push(("FSYNC".to_string(), headless_config.fsync.to_string()));
+
+    let display_server_str = match headless_config.display_server {
+        HeadlessDisplayServer::Gamescope => "gamescope",
+        HeadlessDisplayServer::Xvfb => "xvfb",
+    };
+    env.push(("DISPLAY_SERVER".to_string(), display_server_str.to_string()));
+    env.push((
+        "SAVE_LOG_ON_EXIT".to_string(),
+        headless_config.save_log_on_exit.to_string(),
+    ));
+    env.push((
+        "ENABLE_LOG_PURGE".to_string(),
+        headless_config.enable_log_purge.to_string(),
+    ));
+    env.push((
+        "OVERWRITE_FIKA".to_string(),
+        headless_config.overwrite_fika.to_string(),
+    ));
 
     // Labels
     let labels = vec![
