@@ -344,6 +344,7 @@ pub async fn headless_containers(
                 .next()
                 .map(|n| n.trim_start_matches('/').to_string())
         })
+        .filter(|n| is_valid_headless_name(n))
         .collect();
 
     Ok(HttpResponse::Ok().json(names))
@@ -376,6 +377,14 @@ pub async fn headless_logs_json(
     .await
     .map_err(|_| WebError::Internal(anyhow::anyhow!("podman logs timed out")))?
     .map_err(|e| WebError::Internal(anyhow::anyhow!("podman logs failed: {e}")))?;
+
+    if !output.status.success() {
+        return Err(WebError::Internal(anyhow::anyhow!(
+            "podman logs exited with status {}",
+            output.status
+        ))
+        .into());
+    }
 
     let mut lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
