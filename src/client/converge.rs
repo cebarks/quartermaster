@@ -1,4 +1,4 @@
-use crate::config::{Config, HeadlessConfig};
+use crate::config::{Config, HeadlessConfig, HeadlessDisplayServer, HeadlessRunner};
 use crate::container::{
     ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
 };
@@ -1033,7 +1033,7 @@ async fn create_client_container(
 
     volumes.push(VolumeMount {
         host_path: overlay_dir.join("wine-prefix"),
-        container_path: "/wine-prefix".to_string(),
+        container_path: "/.wine".to_string(),
         read_only: false,
         selinux: SelinuxLabel::Private,
     });
@@ -1052,23 +1052,27 @@ async fn create_client_container(
     }
 
     // Environment variables
-    let mut env = vec![
-        (
-            "UDP_PORT".to_string(),
-            client_port(headless_config.base_udp_port, index).to_string(),
-        ),
-        ("WINEPREFIX".to_string(), "/wine-prefix".to_string()),
-    ];
+    let mut env = vec![(
+        "UDP_PORT".to_string(),
+        client_port(headless_config.base_udp_port, index).to_string(),
+    )];
 
-    if let Some(ref pid) = profile_id {
-        env.push(("PROFILE_ID".to_string(), pid.clone()));
-        info!("Assigning profile {pid} to client {index}");
-    } else {
-        warn!(
-            "No profile available for client {index}. \
-             Fika status correlation will not work until a profile is assigned. \
-             Restart the SPT server to generate headless profiles, then re-scale."
-        );
+    // Always set PROFILE_ID — the claudeoris image defaults to "test" if unset,
+    // which would silently connect with a bogus profile. An empty string
+    // causes the entrypoint to fail clearly instead.
+    match profile_id {
+        Some(ref pid) => {
+            env.push(("PROFILE_ID".to_string(), pid.clone()));
+            info!("Assigning profile {pid} to client {index}");
+        }
+        None => {
+            env.push(("PROFILE_ID".to_string(), String::new()));
+            warn!(
+                "No profile available for client {index}. \
+                 Fika status correlation will not work until a profile is assigned. \
+                 Restart the SPT server to generate headless profiles, then re-scale."
+            );
+        }
     }
 
     // Route through quma's HTTPS proxy
@@ -1078,6 +1082,36 @@ async fn create_client_container(
     };
     env.push(("SERVER_URL".to_string(), proxy_host.to_string()));
     env.push(("SERVER_PORT".to_string(), config.web_port.to_string()));
+
+    // Claudeoris image runtime knobs
+    let runner_str = match headless_config.runner {
+        HeadlessRunner::Umu => "umu",
+        HeadlessRunner::Wine => "wine",
+    };
+    env.push(("RUNNER".to_string(), runner_str.to_string()));
+
+    let effective_ntsync = ntsync_available && headless_config.ntsync;
+    env.push(("NTSYNC".to_string(), effective_ntsync.to_string()));
+    env.push(("ESYNC".to_string(), headless_config.esync.to_string()));
+    env.push(("FSYNC".to_string(), headless_config.fsync.to_string()));
+
+    let display_server_str = match headless_config.display_server {
+        HeadlessDisplayServer::Gamescope => "gamescope",
+        HeadlessDisplayServer::Xvfb => "xvfb",
+    };
+    env.push(("DISPLAY_SERVER".to_string(), display_server_str.to_string()));
+    env.push((
+        "SAVE_LOG_ON_EXIT".to_string(),
+        headless_config.save_log_on_exit.to_string(),
+    ));
+    env.push((
+        "ENABLE_LOG_PURGE".to_string(),
+        headless_config.enable_log_purge.to_string(),
+    ));
+    env.push((
+        "OVERWRITE_FIKA".to_string(),
+        headless_config.overwrite_fika.to_string(),
+    ));
 
     // Labels
     let labels = vec![
