@@ -6,7 +6,7 @@ use askama::Template;
 use crate::client::ClientState;
 use crate::config::{
     Config, ConsoleFormat, ConsoleLogConfig, FileFormat, FileLogConfig, HeadlessConfig,
-    LoggingConfig, RestartPolicy, RotationPolicy, WebLogConfig,
+    HeadlessDisplayServer, LoggingConfig, RestartPolicy, RotationPolicy, WebLogConfig,
 };
 use crate::db::rbac::Permission;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
@@ -42,6 +42,7 @@ struct SettingsTemplate {
     file_format: String,
     file_rotation: String,
     restart_policy: String,
+    display_server: String,
     has_forge_token: bool,
     headless_clients: Vec<ClientState>,
     headless_converging: bool,
@@ -79,6 +80,16 @@ pub async fn settings_page(
         .map(|c| c.restart_policy.to_string())
         .unwrap_or_else(|| RestartPolicy::Auto.to_string());
 
+    let display_server = config
+        .headless
+        .as_ref()
+        .map(|c| match c.display_server {
+            HeadlessDisplayServer::Gamescope => "gamescope",
+            HeadlessDisplayServer::Xvfb => "xvfb",
+        })
+        .unwrap_or("gamescope")
+        .to_string();
+
     let has_forge_token = config.forge_token.is_some();
 
     let headless_clients = match &state.client_states {
@@ -103,6 +114,7 @@ pub async fn settings_page(
         file_format,
         file_rotation,
         restart_policy,
+        display_server,
         has_forge_token,
         headless_clients,
         headless_converging,
@@ -180,6 +192,7 @@ pub struct HeadlessSettingsForm {
     base_udp_port: u16,
     image: String,
     isolated_paths: String,
+    display_server: String,
 }
 
 pub async fn save_web_settings(
@@ -479,9 +492,10 @@ pub async fn save_headless_settings(
     final_config.ntsync = existing.map(|h| h.ntsync).unwrap_or(true);
     final_config.esync = existing.map(|h| h.esync).unwrap_or(false);
     final_config.fsync = existing.map(|h| h.fsync).unwrap_or(false);
-    final_config.display_server = existing
-        .map(|h| h.display_server.clone())
-        .unwrap_or_default();
+    final_config.display_server = match form.display_server.as_str() {
+        "xvfb" => HeadlessDisplayServer::Xvfb,
+        _ => HeadlessDisplayServer::Gamescope,
+    };
     final_config.save_log_on_exit = existing.map(|h| h.save_log_on_exit).unwrap_or(true);
     final_config.enable_log_purge = existing.map(|h| h.enable_log_purge).unwrap_or(false);
     final_config.overwrite_fika = existing.map(|h| h.overwrite_fika).unwrap_or(true);
