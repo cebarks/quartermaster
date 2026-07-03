@@ -300,6 +300,34 @@ fn extract_stats_from_pmc(pmc: PmcData) -> SptProfileStats {
     stats
 }
 
+/// Walk all items reachable from the stash root via parent→child edges,
+/// calling `visitor(item, count)` for each descendant.
+fn walk_stash_items<F>(stash_id: &str, items: &[InventoryItem], mut visitor: F)
+where
+    F: FnMut(&InventoryItem, i64),
+{
+    let mut children: HashMap<&str, Vec<&InventoryItem>> = HashMap::new();
+    for item in items {
+        if let Some(ref pid) = item.parent_id {
+            children.entry(pid.as_str()).or_default().push(item);
+        }
+    }
+    let mut stack = vec![stash_id];
+    while let Some(parent) = stack.pop() {
+        if let Some(kids) = children.get(parent) {
+            for item in kids {
+                let count = item
+                    .upd
+                    .as_ref()
+                    .and_then(|u| u.stack_objects_count)
+                    .unwrap_or(1);
+                visitor(item, count);
+                stack.push(&item.id);
+            }
+        }
+    }
+}
+
 fn calculate_stash_value(inventory: &InventoryData, prices: &HashMap<String, i64>) -> i64 {
     let stash_id = match &inventory.stash {
         Some(id) => id,
@@ -310,31 +338,12 @@ fn calculate_stash_value(inventory: &InventoryData, prices: &HashMap<String, i64
         None => return 0,
     };
 
-    let mut children: HashMap<&str, Vec<&InventoryItem>> = HashMap::new();
-    for item in items {
-        if let Some(ref pid) = item.parent_id {
-            children.entry(pid.as_str()).or_default().push(item);
-        }
-    }
-
     let mut total: i64 = 0;
-    let mut stack = vec![stash_id.as_str()];
-    while let Some(parent) = stack.pop() {
-        if let Some(kids) = children.get(parent) {
-            for item in kids {
-                let count = item
-                    .upd
-                    .as_ref()
-                    .and_then(|u| u.stack_objects_count)
-                    .unwrap_or(1);
-                if let Some(&price) = prices.get(&item.tpl) {
-                    total = total.saturating_add(price.saturating_mul(count));
-                }
-                stack.push(&item.id);
-            }
+    walk_stash_items(stash_id, items, |item, count| {
+        if let Some(&price) = prices.get(&item.tpl) {
+            total = total.saturating_add(price.saturating_mul(count));
         }
-    }
-
+    });
     total
 }
 
@@ -525,34 +534,13 @@ pub fn load_stash_items(spt_dir: &Path, profile_id: &str) -> Result<Option<Vec<S
         None => return Ok(Some(Vec::new())),
     };
 
-    // Build parent→children map, same traversal as calculate_stash_value
-    let mut children: HashMap<&str, Vec<&InventoryItem>> = HashMap::new();
-    for item in items {
-        if let Some(ref pid) = item.parent_id {
-            children.entry(pid.as_str()).or_default().push(item);
-        }
-    }
-
-    // Walk from stash root, collecting all descendants
     let mut result = Vec::new();
-    let mut stack = vec![stash_id.as_str()];
-    while let Some(parent) = stack.pop() {
-        if let Some(kids) = children.get(parent) {
-            for item in kids {
-                let count = item
-                    .upd
-                    .as_ref()
-                    .and_then(|u| u.stack_objects_count)
-                    .unwrap_or(1);
-                result.push(StashItem {
-                    tpl: item.tpl.clone(),
-                    count,
-                });
-                stack.push(&item.id);
-            }
-        }
-    }
-
+    walk_stash_items(stash_id, items, |item, count| {
+        result.push(StashItem {
+            tpl: item.tpl.clone(),
+            count,
+        });
+    });
     Ok(Some(result))
 }
 

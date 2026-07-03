@@ -681,14 +681,14 @@ fn strip_known_prefix_from_name(name: &str) -> &str {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
 
     /// Create a test ZIP archive with the given entries.
-    fn create_test_zip(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+    pub(crate) fn create_test_zip(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
         let buf = std::io::Cursor::new(Vec::new());
         let mut zip = ZipWriter::new(buf);
         let opts = SimpleFileOptions::default();

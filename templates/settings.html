@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
+{% import "clients/partials/badges.html" as badges %}
 {% block title %}Settings — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("settings", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}

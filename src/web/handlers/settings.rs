@@ -24,6 +24,15 @@ fn non_empty_opt(s: &str) -> Option<String> {
     }
 }
 
+/// Saves config to disk and refreshes the in-memory copy.
+fn persist_config(state: &AppState, config: &Config) -> Result<(), WebError> {
+    config.save(&state.config_path).map_err(WebError::from)?;
+    if let Err(e) = state.update_config_from_disk() {
+        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
+    }
+    Ok(())
+}
+
 #[derive(serde::Deserialize)]
 pub struct SettingsQuery {
     pub tab: Option<String>,
@@ -241,10 +250,7 @@ pub async fn save_web_settings(
     };
     config.proxy_enabled = form.proxy_enabled.is_some();
 
-    config.save(&state.config_path).map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
+    persist_config(&state, &config)?;
 
     set_flash(
         &session,
@@ -289,10 +295,7 @@ pub async fn save_server_settings(
     config.server_port = port;
     config.auto_start_server = form.auto_start_server.is_some();
 
-    config.save(&state.config_path).map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
+    persist_config(&state, &config)?;
 
     set_flash(&session, "Server settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
@@ -318,10 +321,7 @@ pub async fn save_queue_settings(
     config.auto_drain_on_lifecycle = form.auto_drain_on_lifecycle.is_some();
     config.update_check_interval = form.update_check_interval;
 
-    config.save(&state.config_path).map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
+    persist_config(&state, &config)?;
 
     set_flash(&session, "Queue settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
@@ -370,10 +370,7 @@ pub async fn save_forge_settings(
 
     config.forge_cache_ttl = ttl;
 
-    config.save(&state.config_path).map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
+    persist_config(&state, &config)?;
 
     set_flash(&session, "Forge settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
@@ -429,10 +426,7 @@ pub async fn save_logging_settings(
         },
     };
 
-    config.save(&state.config_path).map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
+    persist_config(&state, &config)?;
 
     let filter = crate::logging::resolve_log_filter(&config.logging, 0, None);
     state
@@ -505,10 +499,7 @@ pub async fn save_headless_settings(
         Some(final_config)
     };
 
-    config.save(&state.config_path).map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
+    persist_config(&state, &config)?;
 
     set_flash(&session, "Headless settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()

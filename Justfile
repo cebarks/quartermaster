@@ -19,7 +19,10 @@ fmt:
 check-logging:
     ./scripts/check-logging.sh
 
-lint: fmt clippy check-logging
+cpd:
+    jscpd .
+
+lint: fmt clippy check-logging cpd
 
 # Set up git hooks for local CI linting
 install-hooks:

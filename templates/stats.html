@@ -31,25 +31,7 @@
         <div class="card" style="margin-bottom:1.5rem">
             <h2>Active Raids</h2>
             <div id="active-raids" hx-get="/quma/api/raids/active" hx-trigger="sse:raidStarted, sse:raidEnded" hx-swap="innerHTML">
-                {% if active_raids.is_empty() %}
-                <p class="text-muted text-sm">No active raids.</p>
-                {% else %}
-                <table>
-                    <thead>
-                        <tr><th>Player</th><th>Map</th><th>Side</th><th>Time In Raid</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for (raid, username) in active_raids %}
-                        <tr>
-                            <td><a href="/quma/profiles/{{ username }}">{{ username }}</a></td>
-                            <td>{{ raid.map }}</td>
-                            <td>{{ raid.player_side }}</td>
-                            <td class="text-sm">{{ raid.started_at|format_uptime }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-                {% endif %}
+                {% include "raids/partials/active.html" %}
             </div>
         </div>
 
@@ -100,41 +82,7 @@
         <div class="card">
             <h2>Recent Raids</h2>
             <div id="recent-raids" hx-get="/quma/api/raids/recent" hx-trigger="sse:raidEnded" hx-swap="innerHTML">
-                {% if raid_stats.recent_raids.is_empty() %}
-                <p class="text-muted text-sm">No completed raids yet.</p>
-                {% else %}
-                <table>
-                    <thead>
-                        <tr><th>Player</th><th>Map</th><th>Side</th><th>Duration</th><th>Outcome</th><th>Ended</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for (raid, username) in raid_stats.recent_raids %}
-                        <tr onclick="window.location='/quma/raids/{{ raid.id }}'" style="cursor:pointer">
-                            <td><a href="/quma/profiles/{{ username }}">{{ username }}</a></td>
-                            <td>{{ raid.map }}</td>
-                            <td>{{ raid.player_side }}</td>
-                            <td>{% if let Some(duration) = raid.play_time_seconds %}{{ (duration / 60)|fmt("{}") }}m{% else %}—{% endif %}</td>
-                            <td>
-                                {% if let Some(status) = raid.exit_status %}
-                                    {% if status == "Survived" %}
-                                        <span class="badge badge-success">{{ status }}</span>
-                                    {% else if status == "Killed" %}
-                                        <span class="badge badge-danger">{{ status }}</span>
-                                    {% else if status == "Runner" || status == "MissingInAction" %}
-                                        <span class="badge badge-warning">{{ status }}</span>
-                                    {% else %}
-                                        <span class="badge badge-muted">{{ status }}</span>
-                                    {% endif %}
-                                {% else %}
-                                    <span class="badge badge-muted">Unknown</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-sm text-muted">{% if let Some(ended) = raid.ended_at %}{{ ended|fmt("{:.16}") }}{% else %}—{% endif %}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-                {% endif %}
+                {% include "raids/partials/recent.html" %}
             </div>
         </div>
     </div>

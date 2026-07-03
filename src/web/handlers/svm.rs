@@ -70,6 +70,15 @@ pub struct ReloadForm {
     csrf_token: String,
 }
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/// Get a reference to the SVM manager, returning 404 if SVM is not installed.
+fn require_svm(
+    state: &AppState,
+) -> actix_web::Result<&std::sync::Arc<parking_lot::RwLock<crate::svm::SvmManager>>> {
+    state.svm.as_ref().ok_or_else(|| WebError::NotFound.into())
+}
+
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 pub async fn manager_page(
@@ -86,7 +95,7 @@ pub async fn manager_page(
             .finish());
     }
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     let svm = svm.read();
 
     let tmpl = SvmManagerTemplate {
@@ -117,7 +126,7 @@ pub async fn switch_preset(
         return Err(WebError::Forbidden.into());
     }
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     {
         let mut svm = svm.write();
         svm.set_active_preset(&form.preset)
@@ -146,7 +155,7 @@ pub async fn create_preset(
         return Err(WebError::Forbidden.into());
     }
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     {
         let mut svm = svm.write();
         svm.create_preset(&form.name).map_err(WebError::from)?;
@@ -174,7 +183,7 @@ pub async fn duplicate_preset(
         return Err(WebError::Forbidden.into());
     }
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     {
         let mut svm = svm.write();
         svm.duplicate_preset(&form.src, &form.dst)
@@ -203,7 +212,7 @@ pub async fn delete_preset(
         return Err(WebError::Forbidden.into());
     }
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     {
         let mut svm = svm.write();
         svm.delete_preset(&form.name).map_err(WebError::from)?;
@@ -231,7 +240,7 @@ pub async fn reload_from_disk(
         return Err(WebError::Forbidden.into());
     }
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     {
         let mut svm = svm.write();
         svm.reload_from_disk().map_err(WebError::from)?;
@@ -255,7 +264,7 @@ pub async fn export_preset(
     crate::svm::SvmManager::validate_preset_name(&preset_name)
         .map_err(|e| WebError::BadRequest(e.to_string()))?;
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     let svm = svm.read();
 
     if !svm.list_presets().contains(&preset_name) {
@@ -290,7 +299,7 @@ pub async fn import_preset(
     crate::svm::SvmManager::validate_preset_name(&form.name)
         .map_err(|e| WebError::BadRequest(e.to_string()))?;
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
 
     let config: crate::svm::config::SvmConfig = serde_json::from_str(&form.json_content)
         .map_err(|e| WebError::BadRequest(format!("Invalid JSON: {e}")))?;
@@ -387,7 +396,7 @@ pub async fn editor_page(
     let user = require_auth(&req)?;
     require_permission(&user, Permission::SvmEdit)?;
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     let svm = svm.read();
 
     let active_section = query.section.as_deref().unwrap_or("raids");
@@ -434,7 +443,7 @@ pub async fn section_partial(
     require_permission(&user, Permission::SvmEdit)?;
 
     let section = path.into_inner();
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     let svm = svm.read();
 
     let fields = metadata::fields_for_section(&section).ok_or(WebError::NotFound)?;
@@ -472,7 +481,7 @@ pub async fn save_section(
     }
 
     let section = path.into_inner();
-    let svm_lock = state.svm.as_ref().ok_or(WebError::NotFound)?.clone();
+    let svm_lock = require_svm(&state)?.clone();
 
     // Clone current config + parse section update (no lock held during deser)
     let mut config = {
@@ -541,7 +550,7 @@ pub async fn player_view(
     let user = require_auth(&req)?;
     // No capability check — any authenticated user can view
 
-    let svm = state.svm.as_ref().ok_or(WebError::NotFound)?;
+    let svm = require_svm(&state)?;
     let svm = svm.read();
 
     let active_section = query.section.as_deref().unwrap_or("raids");

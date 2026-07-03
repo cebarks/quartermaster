@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
+{% import "clients/partials/badges.html" as badges %}
 {% block title %}Client {{ client.index }} — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("headless", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
@@ -41,48 +42,15 @@
             </tr>
             <tr>
                 <th>Container Status</th>
-                <td>
-                    {% match client.container_status %}
-                    {% when crate::client::ContainerStatus::Running %}
-                    <span class="badge badge-success">Running</span>
-                    {% when crate::client::ContainerStatus::Stopped %}
-                    <span class="badge badge-error">Stopped</span>
-                    {% when crate::client::ContainerStatus::Unknown %}
-                    <span class="badge">Unknown</span>
-                    {% endmatch %}
-                </td>
+                <td>{% call badges::container_status(client.container_status) %}{% endcall %}</td>
             </tr>
             <tr>
                 <th>Health</th>
-                <td>
-                    {% match client.health %}
-                    {% when crate::client::ClientHealth::Healthy %}
-                    <span class="status-dot up glow"></span> Healthy
-                    {% when crate::client::ClientHealth::Degraded %}
-                    <span class="status-dot degraded"></span> Degraded
-                    {% when crate::client::ClientHealth::Down %}
-                    <span class="status-dot down"></span> Down
-                    {% when crate::client::ClientHealth::GivenUp %}
-                    <span class="status-dot down"></span> Given Up
-                    {% endmatch %}
-                </td>
+                <td>{% call badges::client_health(client.health) %}{% endcall %}</td>
             </tr>
             <tr>
                 <th>Fika Status</th>
-                <td>
-                    {% if let Some(status) = client.fika_status %}
-                    {% match status %}
-                    {% when crate::spt::headless::EHeadlessStatus::Ready %}
-                    <span class="badge badge-success">Ready</span>
-                    {% when crate::spt::headless::EHeadlessStatus::InRaid %}
-                    <span class="badge badge-warning">In Raid</span>
-                    {% when crate::spt::headless::EHeadlessStatus::Unknown(_) %}
-                    <span class="badge">Unknown</span>
-                    {% endmatch %}
-                    {% else %}
-                    <span class="text-muted">Unknown</span>
-                    {% endif %}
-                </td>
+                <td>{% call badges::fika_status(client.fika_status) %}{% endcall %}</td>
             </tr>
             <tr>
                 <th>Connected Players</th>
