@@ -156,6 +156,9 @@ impl TestAppBuilder {
 
         // Build AppState
         let db_arc = Arc::new(Mutex::new(db));
+        let log_level_counts = Arc::new(parking_lot::RwLock::new(
+            db_arc.lock().log_counts_by_level().unwrap_or_default(),
+        ));
         let app_state = web::Data::new(AppState {
             db: db_arc.clone(),
             forge,
@@ -188,6 +191,7 @@ impl TestAppBuilder {
                 spt_dir.clone(),
                 db_arc.clone(),
             ),
+            log_level_counts,
         });
 
         TestApp {

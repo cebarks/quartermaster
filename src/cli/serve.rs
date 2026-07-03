@@ -60,11 +60,18 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     // Step 3: spawn LogWriter after DB is available
     let db_arc = Arc::new(Mutex::new(db));
+
+    // Initialize log level counts cache from DB
+    let log_level_counts: crate::logging::writer::LogLevelCounts = Arc::new(
+        parking_lot::RwLock::new(db_arc.lock().log_counts_by_level().unwrap_or_default()),
+    );
+
     let (_log_writer_handle, log_writer_shutdown) = crate::logging::writer::spawn(
         Arc::clone(&db_arc),
         log_rx,
         config.logging.web.retention_days,
         config.logging.web.max_entries,
+        Arc::clone(&log_level_counts),
     );
 
     if !db_arc.lock().admin_exists()? {
@@ -217,6 +224,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         converging,
         fika_installed,
         modsync_installed,
+        log_level_counts: Arc::clone(&log_level_counts),
     });
 
     // Actix-web handles SIGINT/SIGTERM internally. For SIGHUP, we race

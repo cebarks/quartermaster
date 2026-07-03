@@ -85,6 +85,7 @@ pub struct ServerContext {
     pub converging: Arc<std::sync::atomic::AtomicBool>,
     pub fika_installed: bool,
     pub modsync_installed: bool,
+    pub log_level_counts: crate::logging::writer::LogLevelCounts,
 }
 
 /// Configure the web application routes and middleware.
@@ -701,6 +702,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         converging,
         fika_installed,
         modsync_installed,
+        log_level_counts,
     } = ctx;
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
 
@@ -780,6 +782,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
         proxy_client,
         mod_zip_cache,
+        log_level_counts,
     });
 
     // Pre-warm mod ZIP cache in background

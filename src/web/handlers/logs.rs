@@ -82,15 +82,7 @@ pub async fn app_logs_count(
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ServerLogs)?;
 
-    let db = state.db.clone();
-    let counts = actix_web::web::block(move || {
-        let db = db.lock();
-        db.log_counts_by_level()
-    })
-    .await
-    .map_err(|e| WebError::Internal(anyhow::anyhow!("{e}")))?
-    .map_err(WebError::from)?;
-
+    let counts = state.log_level_counts.read().clone();
     Ok(HttpResponse::Ok().json(counts))
 }
 
