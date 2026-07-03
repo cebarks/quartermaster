@@ -158,6 +158,15 @@
         </div>
 
         <div class="form-group">
+            <label for="clients_display_server">Display Server</label>
+            <select id="clients_display_server" name="display_server">
+                <option value="gamescope"{% if display_server == "gamescope" %} selected{% endif %}>gamescope</option>
+                <option value="xvfb"{% if display_server == "xvfb" %} selected{% endif %}>xvfb</option>
+            </select>
+            <p class="text-muted text-sm mt-1">gamescope requires a DRM-capable GPU (AMD iGPU). Use xvfb on NVIDIA-only or GPU-less hosts.</p>
+        </div>
+
+        <div class="form-group">
             <label for="clients_isolated_paths">Isolated Paths (one per line)</label>
             <textarea id="clients_isolated_paths" name="isolated_paths" rows="3" class="form-control" placeholder="BepInEx/config">{% if let Some(c) = &config.headless %}{{ c.isolated_paths.join("\n") }}{% else %}BepInEx/config{% endif %}</textarea>
         </div>
