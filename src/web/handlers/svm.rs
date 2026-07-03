@@ -373,7 +373,6 @@ struct SvmEditorTemplate {
     active_preset: String,
     is_dirty: bool,
     sections: &'static [SectionMeta],
-    active_section: String,
     section_key: String,
     field_groups: Vec<FieldGroup>,
     config_json: String,
@@ -405,7 +404,6 @@ pub async fn editor_page(
         active_preset: svm.active_preset_name().to_string(),
         is_dirty: svm.is_dirty(),
         sections: SECTIONS,
-        active_section: active_section.to_string(),
         section_key: active_section.to_string(),
         field_groups,
         config_json,
@@ -420,6 +418,7 @@ pub async fn editor_page(
 #[template(path = "svm/partials/section.html")]
 struct SvmSectionPartialTemplate {
     csrf_token: String,
+    sections: &'static [SectionMeta],
     section_key: String,
     field_groups: Vec<FieldGroup>,
     config_json: String,
@@ -443,6 +442,7 @@ pub async fn section_partial(
 
     let tmpl = SvmSectionPartialTemplate {
         csrf_token: crate::web::csrf::get_or_create_token(&session),
+        sections: SECTIONS,
         section_key: section,
         field_groups: group_fields(fields),
         config_json,

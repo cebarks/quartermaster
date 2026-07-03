@@ -14,19 +14,6 @@
 </div>
 {% endif %}
 
-<div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
-    {% for s in sections %}
-    <a href="/quma/svm/edit?section={{ s.key }}"
-       class="btn btn-sm {% if s.key == active_section %}btn-primary{% else %}btn-outline{% endif %}"
-       hx-get="/quma/api/svm/edit/{{ s.key }}"
-       hx-target="#section-content"
-       hx-swap="innerHTML"
-       hx-push-url="/quma/svm/edit?section={{ s.key }}">
-        {{ s.label }}
-    </a>
-    {% endfor %}
-</div>
-
 <div id="section-content">
     {% include "svm/partials/section.html" %}
 </div>

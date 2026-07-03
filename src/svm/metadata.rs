@@ -145,49 +145,49 @@ pub fn items_fields() -> &'static [FieldMeta] {
             label: "Examine Keys",
             description: "Auto-examine all keys",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "WeaponHeatOff",
             label: "Weapon Heat Off",
             description: "Disable weapon heat buildup",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "SMGToHolster",
             label: "SMG to Holster",
-            description: "Allow SMGs in holster slot",
+            description: "This includes every SMG in the game.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "PistolToMain",
             label: "Pistol to Main",
-            description: "Allow pistols in main weapon slot",
+            description: "This includes Revolvers and Sawed-Off shotguns.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "AllExaminedItems",
             label: "All Examined Items",
             description: "All items examined by default",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "EquipRigsWithArmors",
             label: "Equip Rigs With Armors",
             description: "Allows equipping armored rigs such as AVS or Tac-Tec with armors such as the Trooper or Slick",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "RemoveSecureContainerFilters",
             label: "Remove Secure Container Filters",
             description: "Allows putting any items into any secure container CAUTION: If you plan on putting in items that can't be discarded in raid, it is highly recommended to enable the \"Remove 'Can't be dropped in Raid' tag\" option - otherwise, those items will be deleted on death, even if insured or on softcore.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "BackpackStacking",
@@ -197,7 +197,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: Some(20),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "MisfireChance",
@@ -208,7 +208,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "FragmentMult",
@@ -219,7 +219,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "HeatFactor",
@@ -230,7 +230,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "ExamineTime",
@@ -241,7 +241,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "MalfunctChanceMult",
@@ -252,7 +252,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "WeightChanger",
@@ -263,7 +263,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "ItemPriceMult",
@@ -274,14 +274,14 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "EnableCurrency",
             label: "Enable Currency",
             description: "Enable custom currency stack sizes",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Currency Stacks"),
         },
         FieldMeta {
             path: "RubStack",
@@ -291,7 +291,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Currency Stacks"),
         },
         FieldMeta {
             path: "DollarStack",
@@ -301,7 +301,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Currency Stacks"),
         },
         FieldMeta {
             path: "GPStack",
@@ -311,7 +311,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Currency Stacks"),
         },
         FieldMeta {
             path: "EuroStack",
@@ -321,29 +321,29 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Currency Stacks"),
         },
         FieldMeta {
             path: "AmmoLoadSpeed",
             label: "Ammo Load Speed Multiplier",
-            description: "Multiplies the required time to load or unload a round into or out of a magazine. The smaller the value, the faster the process.",
+            description: "Multiplies the required time to load a round into a magazine. Smaller values = faster loading.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "AmmoUnLoadSpeed",
             label: "Ammo Unload Speed Multiplier",
-            description: "Multiplier for magazine unloading speed",
+            description: "Multiplies the required time to unload a round from a magazine. Smaller values = faster unloading.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "LootExp",
@@ -354,7 +354,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "ExamineExp",
@@ -365,56 +365,56 @@ pub fn items_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Multipliers"),
         },
         FieldMeta {
             path: "AmmoSwitch",
             label: "Ammo Switch",
-            description: "Enable quick ammo switching",
+            description: "Enable custom ammo stack sizes per caliber category",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "RemoveRaidRestr",
             label: "Remove Raid Restrictions",
-            description: "Remove raid-restricted items filter",
+            description: "Enables bringing any item into a raid.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "RemoveBackpacksRestrictions",
             label: "Remove Backpack Restrictions",
             description: "Allows you to put any item into any backpack. CAUTION: If you plan on putting in items that can't be discarded in raid, it is highly recommended to enable the \"Remove 'Can't be dropped in Raid' tag\" option - otherwise, those items will be deleted on death, even if insured or on softcore.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "SurvCMSToSpec",
             label: "Surv CMS to Specialist",
             description: "Allow CMS/Surv12 in specialist slots",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "SurvCMSSecConBlock",
             label: "Surv CMS Secure Container Block",
             description: "Block CMS/Surv12 from secure container",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "NoGearPenalty",
             label: "No Gear Penalty",
             description: "Removes gear penalties like slower movement, reduced weapon ergonomics, and turning speed.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "RaidDrop",
             label: "Raid Drop",
             description: "Enables dropping any item during a raid.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "AmmoStacks.MarksmanRound",
@@ -483,7 +483,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Keys.IgnoreAccessCard",
             label: "Ignore Access Card",
-            description: "Ignore access card requirements",
+            description: "Labs Access keycard won't become infinite or have multiple uses",
             input_type: InputType::Toggle,
             subgroup: Some("Keys"),
         },
@@ -511,7 +511,7 @@ pub fn items_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Keys.AvoidOddKeys",
             label: "Avoid Odd Keys",
-            description: "Excludes keys with non-standard use counts (e.g., 2, 5, 10, 20), such as Ref's Hideout keys, the Factory Exit key, certain Streets keys (e.g., Chek 15), the Cargo key, etc. Does not affect Marked Room keys.",
+            description: "Excludes keys with non-standard use counts (e.g., 2, 5, 10, 20), such as Ref's Hideout keys, the Factory Exit key, certain Streets keys, the Cargo key, etc. Does not affect Marked Room keys.",
             input_type: InputType::Toggle,
             subgroup: Some("Keys"),
         },
@@ -624,7 +624,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "NoFuelMult",
             label: "No Fuel Multiplier",
-            description: "Multiplies the constant 0.07 by the entered value. Greater values result in faster production times without fuel.",
+            description: "Multiplies the no-fuel production constant (0.07). Greater values = faster production without fuel.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -635,7 +635,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ScavCasePrice",
             label: "Scav Case Price Multiplier",
-            description: "Modifies the price for each Scav Case offer. The smaller the value, the less you pay. Affects only currency-based offers.",
+            description: "Modifies Scav Case offer prices. Smaller values = cheaper. Only affects currency-based offers.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -646,7 +646,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ScavCaseTime",
             label: "Scav Case Time Multiplier",
-            description: "Modifies the time required to complete each Scav Case cycle. Smaller values result in faster Scav Case return times.",
+            description: "Modifies Scav Case cycle time. Smaller values = faster returns.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -657,7 +657,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "HideoutConstMult",
             label: "Hideout Construction Multiplier",
-            description: "Modifies the time required to construct something in the hideout. Smaller values result in faster construction times.",
+            description: "Modifies hideout construction time. Smaller values = faster construction.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -668,7 +668,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "HideoutProdMult",
             label: "Hideout Production Multiplier",
-            description: "Modifies the time required to produce something in the hideout. Smaller values result in faster production times.",
+            description: "Modifies hideout production time. Smaller values = faster production.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -689,7 +689,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "GPUBoostRate",
             label: "GPU Boost Rate",
-            description: "Multiplies the constant 0.041225 by the entered value. The greater the value, the more each GPU matters. To negate this constant entirely (and thus dramatically increase GPU efficiency), set the value below to 24,26.",
+            description: "Multiplies the GPU boost constant (0.041225). Greater values = more impact per GPU. Set to 24.26 to negate the constant entirely.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -700,7 +700,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "AirFilterRate",
             label: "Air Filter Rate Multiplier",
-            description: "Multiplies the constant 0.0047222222222222 by the entered value. By default it takes ~211 seconds to spend 1 unit of the air filter. Smaller values result in increased consumption times.",
+            description: "Multiplies the air filter constant (0.0047222). By default it takes ~211 seconds to spend 1 unit. Smaller values = increased consumption times.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -732,7 +732,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "FuelConsumptionRate",
             label: "Fuel Consumption Rate",
-            description: "Multiplies the constant 0.00131944444444 by the entered value. It takes 758 seconds to spend 1 unit of fuel. Smaller values result in longer-lasting fuel.",
+            description: "Multiplies the fuel consumption constant (0.00131944). It takes 758 seconds to spend 1 unit of fuel. Smaller values = longer-lasting fuel.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -743,7 +743,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RemoveConstructionsRequirements",
             label: "Remove Construction Requirements",
-            description: "Remove hideout construction requirements",
+            description: "Removes materials as a requirement for construction.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -806,7 +806,7 @@ pub fn hideout_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "PrestigeAreas",
             label: "Prestige Areas",
-            description: "By default prestige require you to have: Intellegence center Lvl 2 Security Lvl 3 Rest Space Lvl 3 This feature removes this requirement",
+            description: "By default prestige requires: Intelligence Center Lvl 2, Security Lvl 3, Rest Space Lvl 3. This removes that requirement.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -1230,7 +1230,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "UnlockQuestAssort",
             label: "Unlock Quest Assortment",
-            description: "This feature can throw a warning and may not take an effect on a custom trader mod.",
+            description: "This feature can throw a warning and may not take effect on custom trader mods.",
             input_type: InputType::Toggle,
             subgroup: None,
         },
@@ -2352,21 +2352,21 @@ pub fn player_fields() -> &'static [FieldMeta] {
             label: "Enable Fatigue",
             description: "Enable skill fatigue mechanics",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Progression"),
         },
         FieldMeta {
             path: "EnableStats",
             label: "Enable Stats",
-            description: "Enable custom PMC stats",
+            description: "Enable custom PMC stats. ATTENTION: Changes are saved to your profile — disabling this won't revert your stats. To restore defaults, re-enter default values, save, launch the game, then close it.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Progression"),
         },
         FieldMeta {
             path: "FallDamage",
             label: "Fall Damage",
             description: "Enable fall damage",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Health Settings"),
         },
         FieldMeta {
             path: "BlackStomach",
@@ -2377,7 +2377,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Health Settings"),
         },
         FieldMeta {
             path: "HydrationLoss",
@@ -2388,7 +2388,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Health Settings"),
         },
         FieldMeta {
             path: "EnergyLoss",
@@ -2399,14 +2399,14 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Health Settings"),
         },
         FieldMeta {
             path: "EnableHealth",
             label: "Enable Health",
-            description: "Enable custom health values",
+            description: "Enable custom PMC health values. ATTENTION: Changes are saved to your profile — disabling this won't revert your health. To restore defaults, re-enter default values, save, launch the game, then close it.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Health Settings"),
         },
         FieldMeta {
             path: "SkillProgMult",
@@ -2417,7 +2417,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Progression"),
         },
         FieldMeta {
             path: "WeaponSkillMult",
@@ -2428,7 +2428,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Progression"),
         },
         FieldMeta {
             path: "MaxStaminaLegs",
@@ -2438,7 +2438,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "MaxStaminaHands",
@@ -2448,21 +2448,21 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "EnableStaminaHands",
             label: "Enable Stamina Hands",
             description: "Enable custom hand stamina",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "EnableStaminaLegs",
             label: "Enable Stamina Legs",
             description: "Enable custom leg stamina",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "RegenStaminaLegs",
@@ -2473,7 +2473,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "RegenStaminaHands",
@@ -2484,7 +2484,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "JumpConsumption",
@@ -2494,7 +2494,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "LayToStand",
@@ -2504,7 +2504,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "CrouchToStand",
@@ -2514,7 +2514,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "Standing",
@@ -2525,7 +2525,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "LayingDown",
@@ -2536,7 +2536,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "Crouching",
@@ -2547,14 +2547,14 @@ pub fn player_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "UnlimitedStamina",
             label: "Unlimited Stamina",
             description: "Enable unlimited stamina",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Stamina"),
         },
         FieldMeta {
             path: "PMCStats.MaxHydration",
@@ -2852,7 +2852,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: Some(100),
             },
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "RaidTime",
@@ -2862,21 +2862,21 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "SaveQuestItems",
             label: "Save Quest Items",
             description: "Keep quest items after death",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "NoRunThrough",
             label: "No Run Through",
             description: "Removes XP requirement for the 'Survived' tag. Effectively disables 'Run Through'.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "Timeacceleration",
@@ -2886,35 +2886,35 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(20),
             },
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "SafeExit",
             label: "Safe Exit",
             description: "Allows you to leave via menu to save gear/loot. You will, however, be counted as 'Run Through' - stripping your loot from being FiR. Conflicts with the 'Softcore' option.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Softcore"),
         },
         FieldMeta {
             path: "SaveGearAfterDeath",
             label: "Save Gear After Death",
             description: "Dying, leaving via menu or getting lost will be counted as 'Run Through'. Saves your things, but removes the 'Found in Raid' tag from items. Conflicts with the 'Safe Exit' option.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Softcore"),
         },
         FieldMeta {
             path: "LabInsurance",
             label: "Lab Insurance",
             description: "Enable insurance on The Lab",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "Removelabkey",
             label: "Remove Lab Key",
             description: "Remove keycard requirement for The Lab",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "OnSurvivedState",
@@ -2924,7 +2924,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(4),
             },
-            subgroup: None,
+            subgroup: Some("Softcore"),
         },
         FieldMeta {
             path: "OnKilledState",
@@ -2934,7 +2934,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(4),
             },
-            subgroup: None,
+            subgroup: Some("Softcore"),
         },
         FieldMeta {
             path: "OnLeftState",
@@ -2944,7 +2944,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(4),
             },
-            subgroup: None,
+            subgroup: Some("Softcore"),
         },
         FieldMeta {
             path: "OnRunnerState",
@@ -2954,7 +2954,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(4),
             },
-            subgroup: None,
+            subgroup: Some("Softcore"),
         },
         FieldMeta {
             path: "OnMIAState",
@@ -2964,28 +2964,28 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(4),
             },
-            subgroup: None,
+            subgroup: Some("Softcore"),
         },
         FieldMeta {
             path: "EnableCarCoop",
             label: "Enable Car Coop",
             description: "Enable cooperative car extracts",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Transit"),
         },
         FieldMeta {
             path: "ForceBTRFriendly",
             label: "Force BTR Friendly",
             description: "Make BTR always friendly",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "ForceTransitStash",
             label: "Force Transit Stash",
             description: "Enable transit stash on all maps",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Transit"),
         },
         FieldMeta {
             path: "TransitHeight",
@@ -2995,7 +2995,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: Some(20),
             },
-            subgroup: None,
+            subgroup: Some("Transit"),
         },
         FieldMeta {
             path: "TransitWidth",
@@ -3005,21 +3005,21 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: Some(20),
             },
-            subgroup: None,
+            subgroup: Some("Transit"),
         },
         FieldMeta {
             path: "ForceBTRStash",
             label: "Force BTR Stash",
             description: "Enable BTR stash",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "EnableBTR",
             label: "Enable BTR",
             description: "Enable BTR modifications",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRCoverPrice",
@@ -3029,7 +3029,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRTaxiPrice",
@@ -3039,7 +3039,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRWoodsTimeMin",
@@ -3049,7 +3049,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRWoodsTimeMax",
@@ -3059,7 +3059,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRWoodsChance",
@@ -3069,7 +3069,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(100),
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRStreetsChance",
@@ -3079,7 +3079,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(100),
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRStreetsTimeMin",
@@ -3089,7 +3089,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRStreetsTimeMax",
@@ -3099,7 +3099,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "UsecMult",
@@ -3110,7 +3110,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("AI Multipliers"),
         },
         FieldMeta {
             path: "BearMult",
@@ -3121,7 +3121,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("AI Multipliers"),
         },
         FieldMeta {
             path: "ScavMult",
@@ -3132,7 +3132,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("AI Multipliers"),
         },
         FieldMeta {
             path: "BTRHeight",
@@ -3142,7 +3142,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: Some(20),
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "BTRWidth",
@@ -3152,7 +3152,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: Some(20),
             },
-            subgroup: None,
+            subgroup: Some("BTR"),
         },
         FieldMeta {
             path: "Season",
@@ -3162,14 +3162,14 @@ pub fn raids_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(10),
             },
-            subgroup: None,
+            subgroup: Some("Season"),
         },
         FieldMeta {
             path: "ForceSeason",
             label: "Force Season",
             description: "Force season override",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Season"),
         },
         FieldMeta {
             path: "Exfils.CarSandbox",
@@ -3254,7 +3254,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Exfils.ArmorExtract",
             label: "Armor Extract",
-            description: "Removes the 'no armor' requirement for certain extraction points. Such exits are: Lighthouse: Mountain Pass Reserve: Cliff Descent",
+            description: "Removes the 'no armor' requirement. Affects: Lighthouse Mountain Pass, Reserve Cliff Descent",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
@@ -3312,7 +3312,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Exfils.NoBackpack",
             label: "No Backpack",
-            description: "Removes the 'no backpack' requirement for certain extraction points. Such exits are: Interchange: Hole in the Fence Reserve: Sewer Manhole The Laboratory: Ventilation Shaft",
+            description: "Removes the 'no backpack' requirement. Affects: Interchange Hole in the Fence, Reserve Sewer Manhole, Labs Ventilation Shaft",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
@@ -3383,14 +3383,14 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Exfils.ChanceExtracts",
             label: "Chance Extracts",
-            description: "Chance-based exits will always be available. Such exits are: Streets: Courtyard, Primorsky Ave Taxi V-Ex Interchange: Power Station V-Ex Customs: Dorms V-Ex, Old Gas Station Woods: RUAF Gate, ZB-014, ZB-016 Shoreline: Pier Boat Laboratory: Parking Gate, Hangar Gate",
+            description: "Chance-based exits will always be available. Includes: Streets Courtyard/Primorsky Taxi; Interchange Power Station V-Ex; Customs Dorms V-Ex/Old Gas; Woods RUAF/ZB-014/ZB-016; Shoreline Pier Boat; Labs Parking/Hangar Gate",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
         FieldMeta {
             path: "Exfils.GearExtract",
             label: "Gear Extract",
-            description: "Removes the 'Red Rebel Ice Pick' and 'Paracord' requirements for extraction points. Such exits are: Lighthouse: Mountain Pass Reserve: Cliff Descent",
+            description: "Removes Red Rebel Ice Pick and Paracord requirements. Affects: Lighthouse Mountain Pass, Reserve Cliff Descent",
             input_type: InputType::Toggle,
             subgroup: Some("Exfils"),
         },
@@ -3469,7 +3469,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RaidEvents.HealthResortIncludeGuards",
             label: "Health Resort Include Guards",
-            description: "Not recommended! This is more of a stress test than a feature. You will have more than 30 AI in a single area. Enable at your own peril.",
+            description: "Not recommended! This is more of a stress test than a feature. You will have more than 30 AI in a single area.",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
@@ -3516,7 +3516,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RaidEvents.Christmas",
             label: "Christmas",
-            description: "Christmas event - enables event exclusive lights in hideout, gives you a christmas gift, allows for Santa Claus to spawn, and adds event loot to AI.",
+            description: "Christmas event — enables festive hideout lights, gives you a christmas gift, allows Santa Claus to spawn, and adds event loot to AI.",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
@@ -3530,7 +3530,7 @@ pub fn raids_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "RaidEvents.Halloween",
             label: "Halloween",
-            description: "Halloween event - enables event exclusive lights in the hideout, alters Zryachiy behavior/spawns, adds event loot to AI, as well as the ritual mechanic.",
+            description: "Halloween event — enables festive hideout lights, alters Zryachiy behavior/spawns, adds event loot to AI, and enables the ritual mechanic.",
             input_type: InputType::Toggle,
             subgroup: Some("RaidEvents"),
         },
@@ -3750,7 +3750,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Sell_mult",
             label: "Sell Multiplier",
-            description: "Multiplier for flea market sell prices",
+            description: "Sell chance multiplier. Example: selling an item for 20% less than handbook value multiplies chance by this value (default 1.24), giving ~25% greater sell chance.",
             input_type: InputType::Float {
                 min: Some(0.0),
                 max: None,
@@ -3810,7 +3810,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "Sell_chance",
             label: "Sell Chance",
-            description: "Chance for offers to sell",
+            description: "The default chance to sell an item if it is priced at the predefined value.",
             input_type: InputType::Integer {
                 min: Some(0),
                 max: Some(100),
@@ -4148,21 +4148,21 @@ pub fn services_fields() -> &'static [FieldMeta] {
             label: "Enable Heal Markup",
             description: "Enable custom healing price markup",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Healing"),
         },
         FieldMeta {
             path: "EnableInsurance",
             label: "Enable Insurance",
             description: "Enable custom insurance settings",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "EnableTimeOverride",
             label: "Enable Time Override",
             description: "Enable insurance time override",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "FreeHealLvl",
@@ -4172,7 +4172,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: Some(100),
             },
-            subgroup: None,
+            subgroup: Some("Healing"),
         },
         FieldMeta {
             path: "FreeHealRaids",
@@ -4182,7 +4182,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Healing"),
         },
         FieldMeta {
             path: "ReturnChancePrapor",
@@ -4192,7 +4192,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(100),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "ReturnChanceTherapist",
@@ -4202,17 +4202,17 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(100),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceInterval",
             label: "Insurance Interval (seconds)",
-            description: "How often the server checks for available insurance returns (in seconds). Setting this value too low may cause strain on the server - hurting performance.",
+            description: "How often the server checks for available insurance returns (in seconds). Setting too low may hurt server performance.",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceTimeOverride",
@@ -4222,7 +4222,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceAttachmentChance",
@@ -4232,7 +4232,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(0),
                 max: Some(100),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "TherapistStorageTime",
@@ -4242,7 +4242,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "PraporStorageTime",
@@ -4252,7 +4252,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "Prapor_Max",
@@ -4262,7 +4262,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "Prapor_Min",
@@ -4272,7 +4272,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "Therapist_Max",
@@ -4282,7 +4282,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "Therapist_Min",
@@ -4292,7 +4292,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 min: Some(1),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "TherapistLvl1",
@@ -4303,7 +4303,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Healing"),
         },
         FieldMeta {
             path: "TherapistLvl2",
@@ -4314,7 +4314,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Healing"),
         },
         FieldMeta {
             path: "TherapistLvl3",
@@ -4325,7 +4325,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Healing"),
         },
         FieldMeta {
             path: "TherapistLvl4",
@@ -4336,7 +4336,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Healing"),
         },
         FieldMeta {
             path: "InsuranceMultTherapistLvl1",
@@ -4347,7 +4347,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceMultTherapistLvl2",
@@ -4358,7 +4358,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceMultTherapistLvl3",
@@ -4369,7 +4369,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceMultTherapistLvl4",
@@ -4380,7 +4380,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceMultPraporLvl1",
@@ -4391,7 +4391,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceMultPraporLvl2",
@@ -4402,7 +4402,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceMultPraporLvl3",
@@ -4413,7 +4413,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "InsuranceMultPraporLvl4",
@@ -4424,42 +4424,42 @@ pub fn services_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.1),
             },
-            subgroup: None,
+            subgroup: Some("Insurance"),
         },
         FieldMeta {
             path: "EnableRepair",
             label: "Enable Repair",
             description: "Enable custom repair settings",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Clothing"),
         },
         FieldMeta {
             path: "ClothesAnySide",
             label: "Clothes Any Side",
             description: "Allows you to purchase both USEC and BEAR apparel.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Clothing"),
         },
         FieldMeta {
             path: "ClothesLevelUnlock",
             label: "Clothes Level Unlock",
-            description: "Remove level requirements for clothing",
+            description: "Removes quest, PMC level, and trader level requirements for apparel.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Clothing"),
         },
         FieldMeta {
             path: "ClothesFree",
             label: "Clothes Free",
             description: "Removes cash requirements for purchasing apparel.",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Clothing"),
         },
         FieldMeta {
             path: "ScavClothes",
             label: "Scav Clothes",
             description: "Allow scav clothing on PMC",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Clothing"),
         },
         FieldMeta {
             path: "RepairBox.NoRandomRepair",
@@ -4650,7 +4650,7 @@ pub fn quests_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "WeeklyQuests.Types",
             label: "Weekly - Quest Types",
-            description: "Daily missions are split into 3 types: Extermination, Completion, and Exploration. Extermination – Kill PMCs, Scavs, or Bosses. May require specific body parts or certain ranges (close or long). Completion - Fetch items with the 'found in raid' tag. Exploration - Exfiltrate from specific a location with the 'Survived' tag. May require a specific exit.",
+            description: "Weekly missions are split into types: Extermination, Completion, and Exploration",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: Some(10),
@@ -4700,7 +4700,7 @@ pub fn quests_fields() -> &'static [FieldMeta] {
         FieldMeta {
             path: "ScavQuests.Types",
             label: "Scav - Quest Types",
-            description: "Daily missions are split into 3 types: Extermination, Completion, and Exploration. Extermination – Kill PMCs, Scavs, or Bosses. May require specific body parts or certain ranges (close or long). Completion - Fetch items with the 'found in raid' tag. Exploration - Exfiltrate from specific a location with the 'Survived' tag. May require a specific exit.",
+            description: "Scav missions are split into types: Extermination, Completion, and Exploration",
             input_type: InputType::Integer {
                 min: Some(1),
                 max: Some(10),
@@ -5822,14 +5822,14 @@ pub fn scav_fields() -> &'static [FieldMeta] {
             label: "Hostile Bosses",
             description: "Make bosses hostile to scav players",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Behavior"),
         },
         FieldMeta {
             path: "FriendlyBosses",
             label: "Friendly Bosses",
             description: "Make bosses friendly to scav players",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Behavior"),
         },
         FieldMeta {
             path: "CarBaseStanding",
@@ -5840,45 +5840,45 @@ pub fn scav_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.01),
             },
-            subgroup: None,
+            subgroup: Some("Standing"),
         },
         FieldMeta {
             path: "ScavTimer",
             label: "Scav Timer (seconds)",
-            description: "CAUTION: Changing this will not affect the existing timer!",
+            description: "SCAV cooldown timer in seconds. CAUTION: Changing this will not affect the existing timer!",
             input_type: InputType::Integer {
                 min: Some(0),
                 max: None,
             },
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "ScavCustomPockets",
             label: "Scav Custom Pockets",
             description: "Enable custom scav pocket sizes",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "ScavLab",
             label: "Scav Lab",
             description: "Allow scav runs on The Lab",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Behavior"),
         },
         FieldMeta {
             path: "FriendlyScavs",
             label: "Friendly Scavs",
             description: "Make all scavs friendly to player scavs",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Behavior"),
         },
         FieldMeta {
             path: "HostileScavs",
             label: "Hostile Scavs",
             description: "Make all scavs hostile to player scavs",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Behavior"),
         },
         FieldMeta {
             path: "StandingFriendlyKill",
@@ -5889,7 +5889,7 @@ pub fn scav_fields() -> &'static [FieldMeta] {
                 max: Some(0.0),
                 step: Some(0.01),
             },
-            subgroup: None,
+            subgroup: Some("Standing"),
         },
         FieldMeta {
             path: "StandingPMCKill",
@@ -5900,21 +5900,21 @@ pub fn scav_fields() -> &'static [FieldMeta] {
                 max: None,
                 step: Some(0.01),
             },
-            subgroup: None,
+            subgroup: Some("Standing"),
         },
         FieldMeta {
             path: "EnableScavHealth",
             label: "Enable Scav Health",
             description: "Enable custom scav health values",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "EnableStats",
             label: "Enable Stats",
             description: "Enable custom scav stats",
             input_type: InputType::Toggle,
-            subgroup: None,
+            subgroup: Some("Miscellaneous"),
         },
         FieldMeta {
             path: "SCAVPockets.FirstWidth",

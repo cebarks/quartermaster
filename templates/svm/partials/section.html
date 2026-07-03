@@ -1,3 +1,16 @@
+<div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
+    {% for s in sections %}
+    <a href="/quma/svm/edit?section={{ s.key }}"
+       class="btn btn-sm {% if s.key == section_key %}btn-primary{% else %}btn-outline{% endif %}"
+       hx-get="/quma/api/svm/edit/{{ s.key }}"
+       hx-target="#section-content"
+       hx-swap="innerHTML"
+       hx-push-url="/quma/svm/edit?section={{ s.key }}">
+        {{ s.label }}
+    </a>
+    {% endfor %}
+</div>
+
 <script src="/quma/assets/svm-form.js"></script>
 <form id="svm-section-form" data-svm-form action="/quma/api/svm/edit/{{ section_key }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
