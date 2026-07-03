@@ -752,6 +752,9 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         .build()
         .expect("failed to build proxy HTTP client");
 
+    let mod_zip_cache =
+        crate::web::mod_zip_cache::ModZipCache::new(spt_dir.clone(), db_arc.clone());
+
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
@@ -776,7 +779,11 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         game_data,
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
         proxy_client,
+        mod_zip_cache,
     });
+
+    // Pre-warm mod ZIP cache in background
+    app_state.mod_zip_cache.invalidate();
 
     let server_builder = HttpServer::new(move || {
         App::new()
