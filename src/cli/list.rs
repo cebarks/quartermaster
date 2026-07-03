@@ -39,7 +39,9 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
     let all_tracked_files = ctx.db.get_all_tracked_files()?;
     let mut file_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     for f in &all_tracked_files {
-        *file_counts.entry(f.mod_id).or_default() += 1;
+        if let Some(mid) = f.mod_id {
+            *file_counts.entry(mid).or_default() += 1;
+        }
     }
 
     let mut infra_entries = Vec::new();

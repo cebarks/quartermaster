@@ -20,7 +20,8 @@ pub struct InstalledMod {
 #[allow(dead_code)] // SQL row model
 pub struct InstalledFile {
     pub id: i64,
-    pub mod_id: i64,
+    pub mod_id: Option<i64>,
+    pub addon_id: Option<i64>,
     pub file_path: String,
     pub file_hash: Option<String>,
     pub file_size: Option<i64>,
@@ -275,7 +276,7 @@ impl Database {
 
     pub fn get_files_for_mod(&self, mod_id: i64) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, file_path, file_hash, file_size, source
+            "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source
              FROM installed_files WHERE mod_id = ?1 ORDER BY file_path",
         )?;
         let rows = stmt.query_map(params![mod_id], row_to_installed_file)?;
@@ -291,7 +292,7 @@ impl Database {
         }
         let placeholders: String = forge_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT f.id, f.mod_id, f.file_path, f.file_hash, f.file_size, f.source
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
              FROM installed_files f
              JOIN installed_mods m ON f.mod_id = m.id
              WHERE m.forge_mod_id IN ({placeholders})
@@ -309,7 +310,7 @@ impl Database {
 
     pub fn get_all_enabled_mod_files(&self) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT f.id, f.mod_id, f.file_path, f.file_hash, f.file_size, f.source
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
              FROM installed_files f
              JOIN installed_mods m ON f.mod_id = m.id
              WHERE m.disabled = 0
@@ -328,7 +329,7 @@ impl Database {
 
     pub fn get_all_tracked_files(&self) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, file_path, file_hash, file_size, source
+            "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source
              FROM installed_files ORDER BY file_path",
         )?;
         let rows = stmt.query_map([], row_to_installed_file)?;
@@ -340,10 +341,12 @@ impl Database {
             "SELECT DISTINCT mod_id FROM installed_files
              WHERE file_path LIKE 'SPT/user/mods/%'",
         )?;
-        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        let rows = stmt.query_map([], |row| row.get::<_, Option<i64>>(0))?;
         let mut ids = std::collections::HashSet::new();
         for id in rows {
-            ids.insert(id?);
+            if let Some(id) = id? {
+                ids.insert(id);
+            }
         }
         Ok(ids)
     }
@@ -511,14 +514,15 @@ fn row_to_installed_mod(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledMo
     })
 }
 
-fn row_to_installed_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledFile> {
+pub(crate) fn row_to_installed_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledFile> {
     Ok(InstalledFile {
         id: row.get(0)?,
         mod_id: row.get(1)?,
-        file_path: row.get(2)?,
-        file_hash: row.get(3)?,
-        file_size: row.get(4)?,
-        source: row.get(5)?,
+        addon_id: row.get(2)?,
+        file_path: row.get(3)?,
+        file_hash: row.get(4)?,
+        file_size: row.get(5)?,
+        source: row.get(6)?,
     })
 }
 
