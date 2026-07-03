@@ -1,6 +1,3 @@
-// ponytail: unused until Task 4 wires this into client::converge
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 use std::path::Path;
 
@@ -68,17 +65,23 @@ impl NumaTopology {
         self.nodes.is_empty()
     }
 
+    // ponytail: used by Task 5 web UI, not wired yet
+    #[allow(dead_code)]
     pub fn nodes(&self) -> &[NumaNode] {
         &self.nodes
+    }
+
+    pub fn empty() -> Self {
+        Self { nodes: Vec::new() }
     }
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn mock_sysfs(dir: &std::path::Path, nodes: &[(u32, &str)]) {
+    pub(crate) fn mock_sysfs(dir: &std::path::Path, nodes: &[(u32, &str)]) {
         for (id, cpulist) in nodes {
             let node_dir = dir.join(format!("node{id}"));
             std::fs::create_dir_all(&node_dir).unwrap();

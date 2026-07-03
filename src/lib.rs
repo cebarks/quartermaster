@@ -11,6 +11,7 @@ pub mod health;
 pub mod invite;
 pub mod logging;
 pub mod modsync;
+pub mod numa;
 pub mod ops;
 pub mod queue;
 pub mod server_detect;

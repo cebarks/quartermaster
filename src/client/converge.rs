@@ -3,6 +3,7 @@ use crate::container::{
     ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
 };
 use crate::forge::client::ForgeClient;
+use crate::numa::NumaTopology;
 use crate::spt::profiles;
 use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
@@ -768,6 +769,32 @@ pub async fn converge(
         );
     }
 
+    let topology = NumaTopology::detect().unwrap_or_else(|e| {
+        tracing::warn!("Failed to detect NUMA topology: {e} — proceeding without NUMA pinning");
+        NumaTopology::empty()
+    });
+    if !topology.is_empty() {
+        info!(
+            "Detected {} NUMA node(s): {:?}",
+            topology.node_count(),
+            topology.node_ids()
+        );
+    }
+
+    if headless_config.numa_auto && !topology.is_empty() {
+        let unpinned_count = headless_config
+            .clients
+            .iter()
+            .filter(|c| c.cpuset_cpus.is_none() && c.cpuset_mems.is_none() && c.numa_node.is_none())
+            .count();
+        if unpinned_count > 0 && unpinned_count % topology.node_count() != 0 {
+            tracing::warn!(
+                "numa_auto: {unpinned_count} auto-assigned client(s) across {} node(s) — distribution is uneven",
+                topology.node_count()
+            );
+        }
+    }
+
     let desired_count = headless_config.client_count();
     info!("Starting convergence: desired count = {desired_count}");
 
@@ -815,6 +842,7 @@ pub async fn converge(
             current_count,
             desired_count,
             ntsync_available,
+            &topology,
         )
         .await?;
     } else if current_count > desired_count {
@@ -923,6 +951,7 @@ async fn ensure_clients(
     current_count: u32,
     desired_count: u32,
     ntsync_available: bool,
+    topology: &NumaTopology,
 ) -> Result<()> {
     info!("Ensuring clients: {current_count} → {desired_count}");
 
@@ -985,6 +1014,7 @@ async fn ensure_clients(
             profile_id,
             &effective_paths,
             ntsync_available,
+            topology,
         )
         .await?;
     }
@@ -1054,6 +1084,54 @@ async fn remove_excess_clients(
     Ok(())
 }
 
+/// Resolve the effective cpuset for a client based on the NUMA priority chain:
+/// 1. Raw cpuset_cpus/cpuset_mems (explicit override)
+/// 2. Per-client numa_node
+/// 3. Global numa_auto round-robin (0-based client_index % node_count)
+/// 4. Global numa_node
+/// 5. Unpinned (None, None)
+fn resolve_numa_cpuset(
+    headless_config: &HeadlessConfig,
+    client_index: usize,
+    topology: &NumaTopology,
+) -> Result<(Option<String>, Option<String>)> {
+    let client_def = headless_config.clients.get(client_index);
+
+    // 1. Raw cpuset override
+    if let Some(def) = client_def {
+        if def.cpuset_cpus.is_some() || def.cpuset_mems.is_some() {
+            return Ok((def.cpuset_cpus.clone(), def.cpuset_mems.clone()));
+        }
+    }
+
+    // 2. Per-client numa_node
+    if let Some(node) = client_def.and_then(|d| d.numa_node) {
+        let (cpus, mems) = topology.cpuset_for_node(node)?;
+        return Ok((Some(cpus), Some(mems)));
+    }
+
+    // 3. Global numa_auto round-robin
+    if headless_config.numa_auto {
+        if topology.is_empty() {
+            tracing::warn!("numa_auto enabled but no NUMA nodes detected — proceeding unpinned");
+            return Ok((None, None));
+        }
+        let node_ids = topology.node_ids();
+        let node = node_ids[client_index % node_ids.len()];
+        let (cpus, mems) = topology.cpuset_for_node(node)?;
+        return Ok((Some(cpus), Some(mems)));
+    }
+
+    // 4. Global numa_node
+    if let Some(node) = headless_config.numa_node {
+        let (cpus, mems) = topology.cpuset_for_node(node)?;
+        return Ok((Some(cpus), Some(mems)));
+    }
+
+    // 5. Unpinned
+    Ok((None, None))
+}
+
 /// Create a container for a single client.
 ///
 /// If `profile_id` is `Some`, the container gets a `PROFILE_ID` env var that allows
@@ -1071,6 +1149,7 @@ async fn create_client_container(
     profile_id: Option<String>,
     effective_paths: &[String],
     ntsync_available: bool,
+    topology: &NumaTopology,
 ) -> Result<()> {
     let name = client_container_name(index);
     let overlay_dir = client_overlay_dir(&headless_config.install_dir, index);
@@ -1244,6 +1323,13 @@ async fn create_client_container(
         vec!["label=disable".to_string()]
     };
 
+    // Resolve NUMA pinning
+    let client_index = (index - 1) as usize;
+    let (cpuset_cpus, cpuset_mems) = resolve_numa_cpuset(headless_config, client_index, topology)?;
+    if let (Some(ref cpus), Some(ref mems)) = (&cpuset_cpus, &cpuset_mems) {
+        info!("Client {index}: NUMA pinning cpuset_cpus={cpus} cpuset_mems={mems}");
+    }
+
     // Create the container
     let opts = CreateContainerOpts {
         name: name.clone(),
@@ -1256,8 +1342,8 @@ async fn create_client_container(
         healthcheck: None,
         devices,
         security_opt,
-        cpuset_cpus: None,
-        cpuset_mems: None,
+        cpuset_cpus,
+        cpuset_mems,
     };
 
     let container_id = container_mgr.create_container(opts).await?;
@@ -1274,6 +1360,7 @@ async fn create_client_container(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::config::HeadlessClientDef;
     use std::collections::HashSet;
 
     #[test]
@@ -1485,5 +1572,141 @@ mod tests {
         // No config file exists — should not error, just skip
         let result = write_fika_udp_port(tmp.path(), 25567);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resolve_numa_raw_cpuset_overrides_node() {
+        let h = HeadlessConfig {
+            numa_node: Some(0),
+            clients: vec![HeadlessClientDef {
+                cpuset_cpus: Some("16-23".to_string()),
+                cpuset_mems: Some("2".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        crate::numa::tests::mock_sysfs(tmp.path(), &[(0, "0-7"), (1, "8-15")]);
+        let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
+        let (cpus, mems) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
+        assert_eq!(cpus, Some("16-23".to_string()));
+        assert_eq!(mems, Some("2".to_string()));
+    }
+
+    #[test]
+    fn resolve_numa_per_client_node_overrides_global() {
+        let h = HeadlessConfig {
+            numa_node: Some(0),
+            clients: vec![HeadlessClientDef {
+                numa_node: Some(1),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        crate::numa::tests::mock_sysfs(tmp.path(), &[(0, "0-7"), (1, "8-15")]);
+        let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
+        let (cpus, mems) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
+        assert_eq!(cpus, Some("8-15".to_string()));
+        assert_eq!(mems, Some("1".to_string()));
+    }
+
+    #[test]
+    fn resolve_numa_auto_round_robin() {
+        let h = HeadlessConfig {
+            numa_auto: true,
+            clients: vec![
+                HeadlessClientDef::default(),
+                HeadlessClientDef::default(),
+                HeadlessClientDef::default(),
+            ],
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        crate::numa::tests::mock_sysfs(tmp.path(), &[(0, "0-7"), (1, "8-15")]);
+        let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
+
+        let (cpus0, mems0) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
+        let (cpus1, mems1) = resolve_numa_cpuset(&h, 1, &topo).unwrap();
+        let (cpus2, mems2) = resolve_numa_cpuset(&h, 2, &topo).unwrap();
+
+        assert_eq!(cpus0, Some("0-7".to_string()));
+        assert_eq!(mems0, Some("0".to_string()));
+        assert_eq!(cpus1, Some("8-15".to_string()));
+        assert_eq!(mems1, Some("1".to_string()));
+        assert_eq!(cpus2, Some("0-7".to_string())); // wraps around
+        assert_eq!(mems2, Some("0".to_string()));
+    }
+
+    #[test]
+    fn resolve_numa_auto_no_nodes_returns_unpinned() {
+        let h = HeadlessConfig {
+            numa_auto: true,
+            clients: vec![HeadlessClientDef::default()],
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let bogus = tmp.path().join("empty");
+        let topo = crate::numa::NumaTopology::detect_from(&bogus).unwrap();
+        let (cpus, mems) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
+        assert_eq!(cpus, None);
+        assert_eq!(mems, None);
+    }
+
+    #[test]
+    fn resolve_numa_global_default_node() {
+        let h = HeadlessConfig {
+            numa_node: Some(1),
+            clients: vec![HeadlessClientDef::default()],
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        crate::numa::tests::mock_sysfs(tmp.path(), &[(0, "0-7"), (1, "8-15")]);
+        let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
+        let (cpus, mems) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
+        assert_eq!(cpus, Some("8-15".to_string()));
+        assert_eq!(mems, Some("1".to_string()));
+    }
+
+    #[test]
+    fn resolve_numa_no_config_returns_unpinned() {
+        let h = HeadlessConfig {
+            clients: vec![HeadlessClientDef::default()],
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        crate::numa::tests::mock_sysfs(tmp.path(), &[(0, "0-7")]);
+        let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
+        let (cpus, mems) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
+        assert_eq!(cpus, None);
+        assert_eq!(mems, None);
+    }
+
+    #[test]
+    fn resolve_numa_auto_skips_clients_with_explicit_node() {
+        let h = HeadlessConfig {
+            numa_auto: true,
+            clients: vec![
+                HeadlessClientDef {
+                    numa_node: Some(1),
+                    ..Default::default()
+                },
+                HeadlessClientDef::default(), // should get auto-assigned
+            ],
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        crate::numa::tests::mock_sysfs(tmp.path(), &[(0, "0-7"), (1, "8-15")]);
+        let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
+
+        // Client 0 has explicit node 1
+        let (cpus0, mems0) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
+        assert_eq!(cpus0, Some("8-15".to_string()));
+        assert_eq!(mems0, Some("1".to_string()));
+
+        // Client 1 gets auto round-robin (0-based index 1 % 2 = node 1)
+        let (cpus1, mems1) = resolve_numa_cpuset(&h, 1, &topo).unwrap();
+        assert_eq!(cpus1, Some("8-15".to_string()));
+        assert_eq!(mems1, Some("1".to_string()));
     }
 }
