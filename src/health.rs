@@ -367,6 +367,40 @@ mod tests {
     use super::*;
     use crate::db::mods::InstalledMod;
 
+    /// Create a test InstalledMod with sensible defaults. Only the fields that
+    /// vary across tests need to be specified; use struct update syntax for
+    /// overrides like `disabled: true`.
+    fn test_mod(id: i64, forge_mod_id: i64, name: &str) -> InstalledMod {
+        InstalledMod {
+            id,
+            forge_mod_id,
+            forge_version_id: forge_mod_id + 100,
+            name: name.to_string(),
+            slug: None,
+            version: "1.0.0".to_string(),
+            installed_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: None,
+            disabled: false,
+        }
+    }
+
+    /// Build a CliContext pointing at a temp SPT directory with standard
+    /// subdirectories already created. Caller still owns the `TempDir`.
+    fn test_cli_context(spt_dir: &std::path::Path) -> crate::cli::common::CliContext {
+        crate::cli::common::CliContext {
+            spt_dir: spt_dir.to_path_buf(),
+            spt_info: crate::spt::detect::SptInfo {
+                root: spt_dir.to_path_buf(),
+                spt_version: "4.0.13".to_string(),
+                tarkov_version: "0.16.9-40087".to_string(),
+            },
+            config: crate::config::Config::default(),
+            db: crate::db::Database::open_in_memory().unwrap(),
+            forge: crate::forge::client::ForgeClient::new(None).unwrap(),
+            container_mgr: None,
+        }
+    }
+
     fn good_server() -> ServerHealth {
         ServerHealth {
             reachable: true,
@@ -435,27 +469,10 @@ mod tests {
     #[test]
     fn check_mod_loads_all_matching() {
         let installed = vec![
+            test_mod(1, 100, "ModA"),
             InstalledMod {
-                id: 1,
-                forge_mod_id: 100,
-                forge_version_id: 200,
-                name: "ModA".to_string(),
-                slug: None,
-                version: "1.0.0".to_string(),
-                installed_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: None,
-                disabled: false,
-            },
-            InstalledMod {
-                id: 2,
-                forge_mod_id: 101,
-                forge_version_id: 201,
-                name: "ModB".to_string(),
-                slug: None,
                 version: "2.0.0".to_string(),
-                installed_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: None,
-                disabled: false,
+                ..test_mod(2, 101, "ModB")
             },
         ];
         let mut loaded = std::collections::HashMap::new();
@@ -476,27 +493,10 @@ mod tests {
     #[test]
     fn check_mod_loads_detects_load_failure() {
         let installed = vec![
+            test_mod(1, 100, "WorkingMod"),
             InstalledMod {
-                id: 1,
-                forge_mod_id: 100,
-                forge_version_id: 200,
-                name: "WorkingMod".to_string(),
-                slug: None,
-                version: "1.0.0".to_string(),
-                installed_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: None,
-                disabled: false,
-            },
-            InstalledMod {
-                id: 2,
-                forge_mod_id: 101,
-                forge_version_id: 201,
-                name: "BrokenMod".to_string(),
-                slug: None,
                 version: "2.0.0".to_string(),
-                installed_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: None,
-                disabled: false,
+                ..test_mod(2, 101, "BrokenMod")
             },
         ];
         let mut loaded = std::collections::HashMap::new();
@@ -515,17 +515,7 @@ mod tests {
 
     #[test]
     fn check_mod_loads_detects_untracked() {
-        let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "TrackedMod".to_string(),
-            slug: None,
-            version: "1.0.0".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
-        }];
+        let installed = vec![test_mod(1, 100, "TrackedMod")];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("TrackedMod".to_string(), serde_json::json!({}));
         loaded.insert("ManualMod".to_string(), serde_json::json!({}));
@@ -543,17 +533,7 @@ mod tests {
 
     #[test]
     fn check_mod_loads_case_insensitive() {
-        let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "SAIN".to_string(),
-            slug: None,
-            version: "1.0.0".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
-        }];
+        let installed = vec![test_mod(1, 100, "SAIN")];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("sain".to_string(), serde_json::json!({}));
 
@@ -704,39 +684,23 @@ mod tests {
 
     #[test]
     fn check_integrity_detects_missing_file() {
-        use crate::cli::common::CliContext;
-        use crate::config::Config;
-        use crate::db::Database;
-        use crate::forge::client::ForgeClient;
-        use crate::spt::detect::SptInfo;
-
         let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
 
-        let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
-        db.insert_file(
-            mod_id,
-            "SPT/user/mods/TestMod/test.dll",
-            Some("abc123"),
-            Some(100),
-        )
-        .unwrap();
-
-        let ctx = CliContext {
-            spt_dir: spt_dir.clone(),
-            spt_info: SptInfo {
-                root: spt_dir,
-                spt_version: "4.0.13".to_string(),
-                tarkov_version: "0.16.9-40087".to_string(),
-            },
-            config: Config::default(),
-            db,
-            forge: ForgeClient::new(None).unwrap(),
-            container_mgr: None,
-        };
+        let ctx = test_cli_context(tmp.path());
+        let mod_id = ctx
+            .db
+            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .unwrap();
+        ctx.db
+            .insert_file(
+                mod_id,
+                "SPT/user/mods/TestMod/test.dll",
+                Some("abc123"),
+                Some(100),
+            )
+            .unwrap();
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
@@ -749,47 +713,32 @@ mod tests {
 
     #[test]
     fn check_integrity_detects_modified_file() {
-        use crate::cli::common::CliContext;
-        use crate::config::Config;
-        use crate::db::Database;
-        use crate::forge::client::ForgeClient;
-        use crate::spt::detect::SptInfo;
         use crate::spt::mods::compute_file_hash;
 
         let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/TestMod")).unwrap();
-        std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/TestMod")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
 
-        let file_path = spt_dir.join("SPT/user/mods/TestMod/test.dll");
+        let file_path = tmp.path().join("SPT/user/mods/TestMod/test.dll");
         std::fs::write(&file_path, b"original content").unwrap();
         let original_hash = compute_file_hash(&file_path).unwrap();
 
-        let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
-        db.insert_file(
-            mod_id,
-            "SPT/user/mods/TestMod/test.dll",
-            Some(&original_hash),
-            Some(16),
-        )
-        .unwrap();
+        let ctx = test_cli_context(tmp.path());
+        let mod_id = ctx
+            .db
+            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .unwrap();
+        ctx.db
+            .insert_file(
+                mod_id,
+                "SPT/user/mods/TestMod/test.dll",
+                Some(&original_hash),
+                Some(16),
+            )
+            .unwrap();
 
         // Tamper with the file after recording
         std::fs::write(&file_path, b"tampered content").unwrap();
-
-        let ctx = CliContext {
-            spt_dir: spt_dir.clone(),
-            spt_info: SptInfo {
-                root: spt_dir,
-                spt_version: "4.0.13".to_string(),
-                tarkov_version: "0.16.9-40087".to_string(),
-            },
-            config: Config::default(),
-            db,
-            forge: ForgeClient::new(None).unwrap(),
-            container_mgr: None,
-        };
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
@@ -804,32 +753,12 @@ mod tests {
 
     #[test]
     fn check_integrity_detects_untracked_files() {
-        use crate::cli::common::CliContext;
-        use crate::config::Config;
-        use crate::db::Database;
-        use crate::forge::client::ForgeClient;
-        use crate::spt::detect::SptInfo;
-
         let tmp = tempfile::tempdir().unwrap();
-        let spt_dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/UnknownMod")).unwrap();
-        std::fs::write(spt_dir.join("SPT/user/mods/UnknownMod/mod.dll"), b"x").unwrap();
-        std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/UnknownMod")).unwrap();
+        std::fs::write(tmp.path().join("SPT/user/mods/UnknownMod/mod.dll"), b"x").unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
 
-        let db = Database::open_in_memory().unwrap();
-
-        let ctx = CliContext {
-            spt_dir: spt_dir.clone(),
-            spt_info: SptInfo {
-                root: spt_dir,
-                spt_version: "4.0.13".to_string(),
-                tarkov_version: "0.16.9-40087".to_string(),
-            },
-            config: Config::default(),
-            db,
-            forge: ForgeClient::new(None).unwrap(),
-            container_mgr: None,
-        };
+        let ctx = test_cli_context(tmp.path());
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
@@ -844,27 +773,10 @@ mod tests {
     #[test]
     fn check_mod_loads_excludes_disabled_mods() {
         let installed = vec![
+            test_mod(1, 100, "EnabledMod"),
             InstalledMod {
-                id: 1,
-                forge_mod_id: 100,
-                forge_version_id: 200,
-                name: "EnabledMod".to_string(),
-                slug: None,
-                version: "1.0.0".to_string(),
-                installed_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: None,
-                disabled: false,
-            },
-            InstalledMod {
-                id: 2,
-                forge_mod_id: 101,
-                forge_version_id: 201,
-                name: "DisabledMod".to_string(),
-                slug: None,
-                version: "1.0.0".to_string(),
-                installed_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: None,
                 disabled: true,
+                ..test_mod(2, 101, "DisabledMod")
             },
         ];
         let mut loaded = std::collections::HashMap::new();
@@ -889,28 +801,8 @@ mod tests {
     #[test]
     fn check_mod_loads_excludes_client_only_mods() {
         let installed = vec![
-            InstalledMod {
-                id: 1,
-                forge_mod_id: 100,
-                forge_version_id: 200,
-                name: "ServerMod".to_string(),
-                slug: None,
-                version: "1.0.0".to_string(),
-                installed_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: None,
-                disabled: false,
-            },
-            InstalledMod {
-                id: 2,
-                forge_mod_id: 101,
-                forge_version_id: 201,
-                name: "ClientOnlyMod".to_string(),
-                slug: None,
-                version: "1.0.0".to_string(),
-                installed_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: None,
-                disabled: false,
-            },
+            test_mod(1, 100, "ServerMod"),
+            test_mod(2, 101, "ClientOnlyMod"),
         ];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("ServerMod".to_string(), serde_json::json!({}));
@@ -933,17 +825,7 @@ mod tests {
 
     #[test]
     fn check_mod_loads_normalized_forge_name_match() {
-        let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "Looting Bots".to_string(),
-            slug: None,
-            version: "1.0.0".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
-        }];
+        let installed = vec![test_mod(1, 100, "Looting Bots")];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("LootingBots".to_string(), serde_json::json!({}));
 
@@ -967,17 +849,7 @@ mod tests {
     #[test]
     fn check_mod_loads_author_prefixed_directory() {
         // Real-world: directory "acidphantasm-bosseshavegpcoins" loads as "Bosses Have GP Coins"
-        let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "Bosses Have Gp Coins".to_string(),
-            slug: None,
-            version: "1.0.0".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
-        }];
+        let installed = vec![test_mod(1, 100, "Bosses Have Gp Coins")];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("Bosses Have GP Coins".to_string(), serde_json::json!({}));
 
@@ -999,15 +871,8 @@ mod tests {
     fn check_mod_loads_fika_server_matches() {
         // Real-world: directory "fika-server" loads as "server"
         let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "Project Fika - Server".to_string(),
-            slug: None,
             version: "2.3.2".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
+            ..test_mod(1, 100, "Project Fika - Server")
         }];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("server".to_string(), serde_json::json!({}));
@@ -1030,15 +895,8 @@ mod tests {
     fn check_mod_loads_sain_matches_via_containment() {
         // Real-world: directory "Solarint-SAIN-ServerMod" loads as "SAIN"
         let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "SAIN - Solarint's AI Modifications".to_string(),
-            slug: None,
             version: "4.4.3".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
+            ..test_mod(1, 100, "SAIN - Solarint's AI Modifications")
         }];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("SAIN".to_string(), serde_json::json!({}));
@@ -1061,15 +919,8 @@ mod tests {
     fn check_mod_loads_dotted_directory_name() {
         // Real-world: directory "Tyfon.UIFixes.Server" loads as "UI Fixes"
         let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "UI Fixes".to_string(),
-            slug: None,
             version: "5.3.9".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
+            ..test_mod(1, 100, "UI Fixes")
         }];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("UI Fixes".to_string(), serde_json::json!({}));
@@ -1092,15 +943,8 @@ mod tests {
     fn check_mod_loads_reverse_package_directory() {
         // Real-world: directory "com.swiftxp.spt.showmethemoney" loads as "Show Me The Money"
         let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "Show Me The Money (Item Pricing)".to_string(),
-            slug: None,
             version: "2.7.0".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
+            ..test_mod(1, 100, "Show Me The Money (Item Pricing)")
         }];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("Show Me The Money".to_string(), serde_json::json!({}));
@@ -1122,17 +966,7 @@ mod tests {
     #[test]
     fn check_mod_loads_genuine_failure_still_detected() {
         // A mod that is truly not loaded should still be reported
-        let installed = vec![InstalledMod {
-            id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
-            name: "Completely Unique Mod Name".to_string(),
-            slug: None,
-            version: "1.0.0".to_string(),
-            installed_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: None,
-            disabled: false,
-        }];
+        let installed = vec![test_mod(1, 100, "Completely Unique Mod Name")];
         let mut loaded = std::collections::HashMap::new();
         loaded.insert("Totally Different Thing".to_string(), serde_json::json!({}));
 
