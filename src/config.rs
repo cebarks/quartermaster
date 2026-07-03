@@ -539,6 +539,9 @@ pub fn validate_group_slug(slug: &str) -> Result<()> {
     if slug.is_empty() {
         bail!("Group slug cannot be empty");
     }
+    if slug == "default" {
+        bail!("\"default\" is a reserved group slug");
+    }
     if slug.len() > 64 {
         bail!("Group slug too long (max 64 characters)");
     }
@@ -1073,6 +1076,13 @@ impl Config {
                             "migrated per-mod NarcoNet overrides to groups — \
                              overrides are deprecated, saved to {}",
                             path.display()
+                        );
+                        save_needed = true;
+                    }
+                    if ms.groups.remove("default").is_some() {
+                        tracing::info!(
+                            "removed reserved \"default\" group from modsync config — \
+                             ungrouped mods now use global settings automatically"
                         );
                         save_needed = true;
                     }
@@ -2060,6 +2070,7 @@ silent = true
         assert!(validate_group_slug("has space").is_err());
         assert!(validate_group_slug("has.dot").is_err());
         assert!(validate_group_slug(&"a".repeat(65)).is_err());
+        assert!(validate_group_slug("default").is_err());
     }
 
     #[test]
