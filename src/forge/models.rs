@@ -137,18 +137,21 @@ pub struct ForgeDependency {
 
 /// Response envelope for search results.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // superseded by DataWrapper<T> in client.rs
 pub struct ForgeSearchResponse {
     pub data: Vec<ForgeMod>,
 }
 
 /// Response envelope for a single mod.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // superseded by DataWrapper<T> in client.rs
 pub struct ForgeModResponse {
     pub data: ForgeMod,
 }
 
 /// Response envelope for a list of versions.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // superseded by DataWrapper<T> in client.rs
 pub struct ForgeVersionsResponse {
     pub data: Vec<ForgeVersion>,
 }
@@ -171,6 +174,7 @@ pub struct DependencyNode {
 
 /// Response envelope for the dependencies endpoint.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // superseded by DataWrapper<T> in client.rs
 pub struct DependencyResponse {
     pub data: Vec<DependencyNode>,
 }
@@ -321,6 +325,7 @@ pub struct SptVersion {
 
 /// Response envelope for SPT versions.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)] // superseded by DataWrapper<T> in client.rs
 pub struct SptVersionsResponse {
     pub data: Vec<SptVersion>,
 }

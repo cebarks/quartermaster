@@ -10,6 +10,19 @@ use super::models::*;
 const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
 const MAX_RETRIES: u32 = 2;
 
+#[derive(serde::Deserialize)]
+struct DataWrapper<T> {
+    data: T,
+}
+
+fn format_id_version_pairs(pairs: &[(&str, &str)]) -> String {
+    pairs
+        .iter()
+        .map(|(id, ver)| format!("{id}:{ver}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[derive(Clone)]
 pub struct ForgeClient {
     client: reqwest::Client,
@@ -150,19 +163,25 @@ impl ForgeClient {
         Ok(bytes)
     }
 
+    async fn fetch_and_parse<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        context: &str,
+    ) -> Result<T> {
+        let body = self
+            .send_cached(req)
+            .await
+            .with_context(|| format!("{context} request failed"))?;
+        let wrapper: DataWrapper<T> = serde_json::from_slice(&body)
+            .with_context(|| format!("{context}: failed to parse response"))?;
+        Ok(wrapper.data)
+    }
+
     /// Search mods by query string.
     pub async fn search_mods(&self, query: &str) -> Result<Vec<ForgeMod>> {
         let url = format!("{}/mods", self.base_url);
         let req = self.client.get(&url).query(&[("query", query)]);
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("search_mods request failed")?;
-
-        let parsed: ForgeSearchResponse =
-            serde_json::from_slice(&body).context("search_mods: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "search_mods").await
     }
 
     /// Fetch a single mod by ID, optionally including its versions.
@@ -172,15 +191,7 @@ impl ForgeClient {
         if include_versions {
             req = req.query(&[("include", "versions")]);
         }
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("get_mod request failed")?;
-
-        let parsed: ForgeModResponse =
-            serde_json::from_slice(&body).context("get_mod: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "get_mod").await
     }
 
     /// List versions for a mod, optionally filtered to a specific SPT version.
@@ -194,37 +205,16 @@ impl ForgeClient {
         if let Some(v) = spt_version {
             req = req.query(&[("filter[spt_version]", v)]);
         }
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("get_versions request failed")?;
-
-        let parsed: ForgeVersionsResponse =
-            serde_json::from_slice(&body).context("get_versions: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "get_versions").await
     }
 
     /// Resolve the dependency tree for a set of (identifier, version) pairs.
     /// The identifier can be a numeric mod ID or a GUID string.
     pub async fn get_dependencies(&self, mods: &[(&str, &str)]) -> Result<Vec<DependencyNode>> {
         let url = format!("{}/mods/dependencies", self.base_url);
-        let mods_param: String = mods
-            .iter()
-            .map(|(id, ver)| format!("{id}:{ver}"))
-            .collect::<Vec<_>>()
-            .join(",");
-
+        let mods_param = format_id_version_pairs(mods);
         let req = self.client.get(&url).query(&[("mods", &mods_param)]);
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("get_dependencies request failed")?;
-
-        let parsed: DependencyResponse =
-            serde_json::from_slice(&body).context("get_dependencies: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "get_dependencies").await
     }
 
     /// Check for available updates for the given mods.
@@ -262,15 +252,7 @@ impl ForgeClient {
     pub async fn search_addons(&self, query: &str) -> Result<Vec<ForgeAddon>> {
         let url = format!("{}/addons", self.base_url);
         let req = self.client.get(&url).query(&[("query", query)]);
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("search_addons request failed")?;
-
-        let parsed: ForgeAddonSearchResponse =
-            serde_json::from_slice(&body).context("search_addons: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "search_addons").await
     }
 
     #[allow(dead_code)] // used in Task 5
@@ -280,30 +262,14 @@ impl ForgeClient {
         if include_versions {
             req = req.query(&[("include", "versions")]);
         }
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("get_addon request failed")?;
-
-        let parsed: ForgeAddonResponse =
-            serde_json::from_slice(&body).context("get_addon: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "get_addon").await
     }
 
     #[allow(dead_code)] // used in Task 5
     pub async fn get_addon_versions(&self, addon_id: i64) -> Result<Vec<ForgeAddonVersion>> {
         let url = format!("{}/addon/{}/versions", self.base_url, addon_id);
         let req = self.client.get(&url);
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("get_addon_versions request failed")?;
-
-        let parsed: ForgeAddonVersionsResponse = serde_json::from_slice(&body)
-            .context("get_addon_versions: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "get_addon_versions").await
     }
 
     #[allow(dead_code)] // used in Task 4
@@ -312,22 +278,9 @@ impl ForgeClient {
         addons: &[(&str, &str)],
     ) -> Result<Vec<DependencyNode>> {
         let url = format!("{}/addons/dependencies", self.base_url);
-        let addons_param: String = addons
-            .iter()
-            .map(|(id, ver)| format!("{id}:{ver}"))
-            .collect::<Vec<_>>()
-            .join(",");
-
+        let addons_param = format_id_version_pairs(addons);
         let req = self.client.get(&url).query(&[("addons", &addons_param)]);
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("get_addon_dependencies request failed")?;
-
-        let parsed: DependencyResponse = serde_json::from_slice(&body)
-            .context("get_addon_dependencies: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "get_addon_dependencies").await
     }
 
     /// Get all known SPT versions with mod counts and release links.
@@ -335,15 +288,7 @@ impl ForgeClient {
     pub async fn get_spt_versions(&self) -> Result<Vec<SptVersion>> {
         let url = format!("{}/spt/versions", self.base_url);
         let req = self.client.get(&url);
-
-        let body = self
-            .send_cached(req)
-            .await
-            .context("get_spt_versions request failed")?;
-
-        let parsed: SptVersionsResponse =
-            serde_json::from_slice(&body).context("get_spt_versions: failed to parse response")?;
-        Ok(parsed.data)
+        self.fetch_and_parse(req, "get_spt_versions").await
     }
 
     fn is_forge_url(&self, url: &str) -> bool {

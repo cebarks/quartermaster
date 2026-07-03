@@ -19,6 +19,19 @@ struct SyncPathEntry {
     restart_required: bool,
 }
 
+impl SyncPathEntry {
+    fn with_defaults(path: String, name: String, config: &ModSyncConfig) -> Self {
+        Self {
+            path,
+            name,
+            enabled: true,
+            enforced: config.enforced,
+            silent: config.silent,
+            restart_required: config.restart_required,
+        }
+    }
+}
+
 /// The full NarcoNet config.yaml structure.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +56,76 @@ fn sanitize_name_for_bepinex(name: &str) -> String {
     name.chars()
         .filter(|c| !matches!(c, '=' | '\n' | '\t' | '\\' | '"' | '\'' | '[' | ']'))
         .collect()
+}
+
+/// Accumulated file classification state used during config generation.
+struct FileClassification<'a> {
+    has_ungrouped_plugins: bool,
+    groups_with_plugins: BTreeSet<&'a str>,
+    non_plugin_files: BTreeSet<String>,
+    archive_plugin_paths: BTreeSet<String>,
+    mod_plugin_dirs: BTreeSet<String>,
+}
+
+impl<'a> FileClassification<'a> {
+    fn new() -> Self {
+        Self {
+            has_ungrouped_plugins: false,
+            groups_with_plugins: BTreeSet::new(),
+            non_plugin_files: BTreeSet::new(),
+            archive_plugin_paths: BTreeSet::new(),
+            mod_plugin_dirs: BTreeSet::new(),
+        }
+    }
+
+    /// Classify a set of installed files, updating group/plugin tracking sets.
+    ///
+    /// Used for both mod files and addon files — addons inherit their parent mod's
+    /// group membership, so `forge_mod_id` should always be the parent mod's ID.
+    fn classify(
+        &mut self,
+        files: &[crate::db::mods::InstalledFile],
+        forge_mod_id: i64,
+        group_for_mod: &std::collections::HashMap<i64, &'a str>,
+    ) {
+        let has_plugin_files = files
+            .iter()
+            .any(|f| f.file_path.starts_with("BepInEx/plugins/"));
+
+        if has_plugin_files {
+            if let Some(&group_slug) = group_for_mod.get(&forge_mod_id) {
+                if group_slug == CATCH_ALL_GROUP_SLUG {
+                    self.has_ungrouped_plugins = true;
+                } else {
+                    self.groups_with_plugins.insert(group_slug);
+                }
+            } else {
+                self.has_ungrouped_plugins = true;
+            }
+        }
+
+        for f in files {
+            if f.file_path.starts_with("BepInEx/") && !f.file_path.starts_with("BepInEx/plugins/") {
+                self.non_plugin_files.insert(f.file_path.clone());
+            }
+
+            if f.file_path.starts_with("BepInEx/plugins/") {
+                if f.source == "archive" {
+                    self.archive_plugin_paths.insert(f.file_path.clone());
+                }
+                let parts: Vec<&str> = f.file_path.split('/').collect();
+                if parts.len() >= 4 && parts[2].starts_with(GROUP_DIR_PREFIX) {
+                    self.mod_plugin_dirs.insert(format!(
+                        "{}/{}/{}/{}",
+                        parts[0], parts[1], parts[2], parts[3]
+                    ));
+                } else if parts.len() >= 3 {
+                    self.mod_plugin_dirs
+                        .insert(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
+                }
+            }
+        }
+    }
 }
 
 /// Generate ModSync config from DB state + quartermaster config.
@@ -78,12 +161,7 @@ fn generate_config(
 
     // Single pass: track plugin groups, collect non-plugin BepInEx files,
     // and gather archive file paths for runtime exclusion detection
-    let mut has_ungrouped_plugins = false;
-    let mut groups_with_plugins: std::collections::BTreeSet<&str> =
-        std::collections::BTreeSet::new();
-    let mut non_plugin_files: BTreeSet<String> = BTreeSet::new();
-    let mut archive_plugin_paths: BTreeSet<String> = BTreeSet::new();
-    let mut mod_plugin_dirs: BTreeSet<String> = BTreeSet::new();
+    let mut fc = FileClassification::new();
 
     for m in &mods {
         if m.disabled {
@@ -91,112 +169,33 @@ fn generate_config(
         }
 
         let files = db.get_files_for_mod(m.id)?;
+        fc.classify(&files, m.forge_mod_id, &group_for_mod);
 
-        let has_plugin_files = files
-            .iter()
-            .any(|f| f.file_path.starts_with("BepInEx/plugins/"));
-
-        if has_plugin_files {
-            if let Some(&group_slug) = group_for_mod.get(&m.forge_mod_id) {
-                if group_slug == CATCH_ALL_GROUP_SLUG {
-                    has_ungrouped_plugins = true;
-                } else {
-                    groups_with_plugins.insert(group_slug);
-                }
-            } else {
-                has_ungrouped_plugins = true;
-            }
-        }
-
-        for f in &files {
-            if f.file_path.starts_with("BepInEx/") && !f.file_path.starts_with("BepInEx/plugins/") {
-                non_plugin_files.insert(f.file_path.clone());
-            }
-
-            if f.file_path.starts_with("BepInEx/plugins/") {
-                if f.source == "archive" {
-                    archive_plugin_paths.insert(f.file_path.clone());
-                }
-                let parts: Vec<&str> = f.file_path.split('/').collect();
-                if parts.len() >= 4 && parts[2].starts_with(GROUP_DIR_PREFIX) {
-                    mod_plugin_dirs.insert(format!(
-                        "{}/{}/{}/{}",
-                        parts[0], parts[1], parts[2], parts[3]
-                    ));
-                } else if parts.len() >= 3 {
-                    mod_plugin_dirs.insert(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
-                }
-            }
-        }
-
-        // Process addon files for this mod
+        // Process addon files for this mod (addons inherit parent's group)
         if let Some(mod_addons) = addons_by_parent.get(&m.id) {
             for addon in mod_addons {
                 let addon_files = db.get_files_for_addon(addon.id)?;
-
-                // Addon files go into the same group as their parent mod
-                let has_addon_plugin_files = addon_files
-                    .iter()
-                    .any(|f| f.file_path.starts_with("BepInEx/plugins/"));
-
-                if has_addon_plugin_files {
-                    if let Some(&group_slug) = group_for_mod.get(&m.forge_mod_id) {
-                        if group_slug == CATCH_ALL_GROUP_SLUG {
-                            has_ungrouped_plugins = true;
-                        } else {
-                            groups_with_plugins.insert(group_slug);
-                        }
-                    } else {
-                        has_ungrouped_plugins = true;
-                    }
-                }
-
-                for f in &addon_files {
-                    if f.file_path.starts_with("BepInEx/")
-                        && !f.file_path.starts_with("BepInEx/plugins/")
-                    {
-                        non_plugin_files.insert(f.file_path.clone());
-                    }
-
-                    if f.file_path.starts_with("BepInEx/plugins/") {
-                        if f.source == "archive" {
-                            archive_plugin_paths.insert(f.file_path.clone());
-                        }
-                        let parts: Vec<&str> = f.file_path.split('/').collect();
-                        if parts.len() >= 4 && parts[2].starts_with(GROUP_DIR_PREFIX) {
-                            mod_plugin_dirs.insert(format!(
-                                "{}/{}/{}/{}",
-                                parts[0], parts[1], parts[2], parts[3]
-                            ));
-                        } else if parts.len() >= 3 {
-                            mod_plugin_dirs
-                                .insert(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
-                        }
-                    }
-                }
+                fc.classify(&addon_files, m.forge_mod_id, &group_for_mod);
             }
         }
     }
 
     let mut sync_paths: Vec<SyncPathEntry> = Vec::new();
-    let has_groups = !groups_with_plugins.is_empty();
+    let has_groups = !fc.groups_with_plugins.is_empty();
 
     // Emit parent plugins syncPath if there are ungrouped mods OR if groups
     // need a parent path for NarcoNet's specificity/exclusion system.
     // Always uses global settings — the "default" group is virtual/automatic.
-    if has_ungrouped_plugins || has_groups {
-        sync_paths.push(SyncPathEntry {
-            path: "BepInEx/plugins".to_string(),
-            name: "BepInEx/plugins".to_string(),
-            enabled: true,
-            enforced: ms_config.enforced,
-            silent: ms_config.silent,
-            restart_required: ms_config.restart_required,
-        });
+    if fc.has_ungrouped_plugins || has_groups {
+        sync_paths.push(SyncPathEntry::with_defaults(
+            "BepInEx/plugins".to_string(),
+            "BepInEx/plugins".to_string(),
+            ms_config,
+        ));
     }
 
     // Emit one syncPath per group
-    for group_slug in &groups_with_plugins {
+    for group_slug in &fc.groups_with_plugins {
         let group = match ms_config.groups.get(*group_slug) {
             Some(g) => g,
             None => continue,
@@ -228,10 +227,10 @@ fn generate_config(
         .map(|s| s.as_str())
         .collect();
 
-    if !non_plugin_files.is_empty() {
+    if !fc.non_plugin_files.is_empty() {
         // Group files by their top-level BepInEx subdirectory (e.g. "BepInEx/patchers")
         let mut by_subdir: BTreeMap<String, Vec<&str>> = BTreeMap::new();
-        for file_path in &non_plugin_files {
+        for file_path in &fc.non_plugin_files {
             let subdir = file_path
                 .splitn(3, '/')
                 .take(2)
@@ -250,31 +249,25 @@ fn generate_config(
 
             // Check if QM owns every file in this directory on disk
             let use_directory = spt_dir
-                .map(|dir| all_files_tracked(dir, subdir, &non_plugin_files))
+                .map(|dir| all_files_tracked(dir, subdir, &fc.non_plugin_files))
                 .unwrap_or(false);
 
             if use_directory {
-                sync_paths.push(SyncPathEntry {
-                    path: normalize_sync_path(subdir),
-                    name: subdir.clone(),
-                    enabled: true,
-                    enforced: ms_config.enforced,
-                    silent: ms_config.silent,
-                    restart_required: ms_config.restart_required,
-                });
+                sync_paths.push(SyncPathEntry::with_defaults(
+                    normalize_sync_path(subdir),
+                    subdir.clone(),
+                    ms_config,
+                ));
             } else {
                 for &file_path in tracked_files {
                     if extra_set.contains(file_path) {
                         continue;
                     }
-                    sync_paths.push(SyncPathEntry {
-                        path: normalize_sync_path(file_path),
-                        name: file_path.to_string(),
-                        enabled: true,
-                        enforced: ms_config.enforced,
-                        silent: ms_config.silent,
-                        restart_required: ms_config.restart_required,
-                    });
+                    sync_paths.push(SyncPathEntry::with_defaults(
+                        normalize_sync_path(file_path),
+                        file_path.to_string(),
+                        ms_config,
+                    ));
                 }
             }
         }
@@ -282,15 +275,11 @@ fn generate_config(
 
     // Extra sync paths
     for extra in &ms_config.extra_sync_paths {
-        let path = normalize_sync_path(extra);
-        sync_paths.push(SyncPathEntry {
-            path,
-            name: extra.clone(),
-            enabled: true,
-            enforced: ms_config.enforced,
-            silent: ms_config.silent,
-            restart_required: ms_config.restart_required,
-        });
+        sync_paths.push(SyncPathEntry::with_defaults(
+            normalize_sync_path(extra),
+            extra.clone(),
+            ms_config,
+        ));
     }
 
     // Sort for deterministic output
@@ -311,7 +300,8 @@ fn generate_config(
     // BepInEx/plugins/ — without exclusions, NarcoNet flags them as
     // mismatched on every client boot.
     if let Some(spt_dir) = spt_dir {
-        let auto = collect_runtime_exclusions(spt_dir, &archive_plugin_paths, &mod_plugin_dirs);
+        let auto =
+            collect_runtime_exclusions(spt_dir, &fc.archive_plugin_paths, &fc.mod_plugin_dirs);
         for path in auto {
             if !exclusions.contains(&path) {
                 exclusions.push(path);
