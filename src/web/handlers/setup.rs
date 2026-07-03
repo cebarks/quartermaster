@@ -143,7 +143,27 @@ pub async fn setup_bootstrap_powershell(
         .body(script))
 }
 
-pub async fn setup_mods_zip(state: web::Data<AppState>) -> actix_web::Result<HttpResponse> {
+pub async fn setup_mods_zip(
+    state: web::Data<AppState>,
+    _req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    // Serve cached file if available
+    if let Some(path) = state.mod_zip_cache.get() {
+        let bytes = web::block(move || std::fs::read(path))
+            .await
+            .map_err(WebError::from)?
+            .map_err(WebError::from)?;
+
+        return Ok(HttpResponse::Ok()
+            .content_type("application/zip")
+            .insert_header((
+                "content-disposition",
+                "attachment; filename=\"quma-mods.zip\"",
+            ))
+            .body(bytes));
+    }
+
+    // Fallback: startup warmup hasn't finished yet — build synchronously
     let db = state.db.clone();
     let files = web::block(move || {
         let db = db.lock();
@@ -160,10 +180,15 @@ pub async fn setup_mods_zip(state: web::Data<AppState>) -> actix_web::Result<Htt
     }
 
     let spt_dir = state.spt_dir.clone();
-    let zip_bytes = web::block(move || build_mod_zip(&spt_dir, &files))
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::Internal)?;
+    let cache = state.mod_zip_cache.clone();
+    let zip_bytes = web::block(move || {
+        // Warm the cache as a side effect
+        cache.rebuild_sync();
+        build_mod_zip(&spt_dir, &files)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::Internal)?;
 
     Ok(HttpResponse::Ok()
         .content_type("application/zip")
