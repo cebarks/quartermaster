@@ -308,6 +308,18 @@ pub fn configure_app(
             web::get().to(handlers::logs::server_logs_stream),
         )
         .route(
+            "/logs/headless/containers",
+            web::get().to(handlers::logs::headless_containers),
+        )
+        .route(
+            "/logs/headless",
+            web::get().to(handlers::logs::headless_logs_json),
+        )
+        .route(
+            "/logs/headless/stream",
+            web::get().to(handlers::logs::headless_logs_stream),
+        )
+        .route(
             "/mods/requests",
             web::get().to(handlers::requests::requests_tab),
         )

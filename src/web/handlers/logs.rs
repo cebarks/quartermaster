@@ -6,6 +6,7 @@ use actix_web::web::{Data, Html, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use actix_web_lab::sse;
 use askama::Template;
+use bollard::query_parameters::ListContainersOptionsBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::db::logs::{LogQuery as DbLogQuery, StoredLogEntry};
@@ -37,6 +38,32 @@ pub struct AppLogQuery {
 pub struct AppLogResponse {
     entries: Vec<StoredLogEntry>,
     has_more: bool,
+}
+
+// Query structs for headless client logs
+#[derive(Deserialize)]
+pub struct HeadlessContainersQuery {
+    #[serde(default = "default_true")]
+    running_only: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+pub struct HeadlessLogQuery {
+    container: String,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub struct HeadlessStreamQuery {
+    container: String,
+}
+
+fn is_valid_headless_name(name: &str) -> bool {
+    name.starts_with("fika-headless-") && name["fika-headless-".len()..].parse::<u32>().is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +283,187 @@ pub async fn server_logs_stream(
 
         // Race: either readers finish naturally (process exits) or client disconnects.
         // Without this, readers blocked on next_line() never notice rx was dropped.
+        let stdout_abort = stdout_handle.abort_handle();
+        let stderr_abort = stderr_handle.abort_handle();
+        tokio::select! {
+            _ = async { let _ = tokio::join!(stdout_handle, stderr_handle); } => {},
+            _ = disconnect.closed() => {
+                stdout_abort.abort();
+                stderr_abort.abort();
+            }
+        }
+
+        let _ = child.kill().await;
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    Ok(sse::Sse::from_infallible_stream(stream).with_keep_alive(Duration::from_secs(15)))
+}
+
+// ---------------------------------------------------------------------------
+// Headless client log endpoints
+// ---------------------------------------------------------------------------
+
+pub async fn headless_containers(
+    state: Data<AppState>,
+    req: HttpRequest,
+    query: Query<HeadlessContainersQuery>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ServerLogs)?;
+
+    let container_mgr = state.container_mgr.as_ref().ok_or(WebError::NotFound)?;
+
+    let label_filter = format!(
+        "{}={}",
+        crate::client::converge::MANAGED_BY_LABEL,
+        crate::client::converge::MANAGED_BY_VALUE,
+    );
+    let mut filters = std::collections::HashMap::new();
+    filters.insert("label", vec![label_filter.as_str()]);
+    if query.running_only {
+        filters.insert("status", vec!["running"]);
+    }
+
+    let containers = container_mgr
+        .docker()
+        .list_containers(Some(
+            ListContainersOptionsBuilder::default()
+                .all(!query.running_only)
+                .filters(&filters)
+                .build(),
+        ))
+        .await
+        .map_err(|e| WebError::Internal(anyhow::anyhow!("{e}")))?;
+
+    let names: Vec<String> = containers
+        .into_iter()
+        .filter_map(|c| {
+            c.names?
+                .into_iter()
+                .next()
+                .map(|n| n.trim_start_matches('/').to_string())
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(names))
+}
+
+pub async fn headless_logs_json(
+    state: Data<AppState>,
+    req: HttpRequest,
+    query: Query<HeadlessLogQuery>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ServerLogs)?;
+
+    // Ensure podman is available
+    let _container_mgr = state.container_mgr.as_ref().ok_or(WebError::NotFound)?;
+
+    if !is_valid_headless_name(&query.container) {
+        return Err(WebError::BadRequest("invalid container name".into()).into());
+    }
+
+    let container = query.container.clone();
+    let tail = query.limit.unwrap_or(100).min(10000);
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::process::Command::new("podman")
+            .args(["logs", "--tail", &tail.to_string(), &container])
+            .output(),
+    )
+    .await
+    .map_err(|_| WebError::Internal(anyhow::anyhow!("podman logs timed out")))?
+    .map_err(|e| WebError::Internal(anyhow::anyhow!("podman logs failed: {e}")))?;
+
+    let mut lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(String::from)
+        .collect();
+    let stderr_lines: Vec<String> = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(String::from)
+        .collect();
+    lines.extend(stderr_lines);
+
+    Ok(HttpResponse::Ok().json(lines))
+}
+
+pub async fn headless_logs_stream(
+    state: Data<AppState>,
+    req: HttpRequest,
+    query: Query<HeadlessStreamQuery>,
+) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ServerLogs)?;
+
+    // Ensure podman is available
+    let _container_mgr = state.container_mgr.as_ref().ok_or(WebError::NotFound)?;
+
+    if !is_valid_headless_name(&query.container) {
+        return Err(WebError::BadRequest("invalid container name".into()).into());
+    }
+
+    let container = query.container.clone();
+    let (tx, rx) = tokio::sync::mpsc::channel::<sse::Event>(64);
+
+    tokio::spawn(async move {
+        let mut child = match tokio::process::Command::new("podman")
+            .args(["logs", "--follow", "--tail", "0", &container])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx
+                    .send(sse::Event::Data(
+                        sse::Data::new(format!("error: {e}")).event("error"),
+                    ))
+                    .await;
+                return;
+            }
+        };
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let disconnect = tx.clone();
+        let tx_stdout = tx.clone();
+        let tx_stderr = tx;
+
+        let stdout_handle = tokio::spawn(async move {
+            if let Some(stdout) = stdout {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut lines = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if tx_stdout
+                        .send(sse::Event::Data(sse::Data::new(line)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let stderr_handle = tokio::spawn(async move {
+            if let Some(stderr) = stderr {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if tx_stderr
+                        .send(sse::Event::Data(sse::Data::new(line)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
         let stdout_abort = stdout_handle.abort_handle();
         let stderr_abort = stderr_handle.abort_handle();
         tokio::select! {

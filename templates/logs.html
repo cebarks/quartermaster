@@ -8,6 +8,7 @@
 <div class="log-tab-bar">
     <button class="tab-btn active" data-tab="app">Application Logs</button>
     <button class="tab-btn" data-tab="server">Server Logs</button>
+    <button class="tab-btn" data-tab="headless">Headless Logs</button>
 </div>
 
 <div id="tab-app" class="tab-panel">
@@ -56,10 +57,34 @@
     </div>
 </div>
 
+<div id="tab-headless" class="tab-panel" style="display:none">
+    <div class="log-controls">
+        <div class="log-controls-left">
+            <select id="headless-container-select" class="log-search" style="width: auto; min-width: 12rem;">
+                <option value="">Select container...</option>
+            </select>
+            <label class="log-toggle text-sm" title="Show stopped containers too">
+                <input type="checkbox" id="headless-show-all"> Show all
+            </label>
+            <button id="headless-follow-btn" class="btn btn-sm btn-outline">Follow</button>
+            <button id="headless-refresh-btn" class="btn btn-sm btn-outline">Refresh</button>
+            <button id="headless-clear-btn" class="btn btn-sm btn-outline">Clear</button>
+        </div>
+        <div class="log-controls-right">
+            <input type="text" id="headless-search" class="log-search" placeholder="Search...">
+        </div>
+    </div>
+    <div id="headless-status" style="display:none" class="text-muted text-sm"></div>
+    <div id="headless-log-container" class="log-container">
+        <div class="empty-state"><p>Select a headless client to view logs</p></div>
+    </div>
+</div>
+
 <script>
 (function() {
     const MAX_LOG_ENTRIES = 2000;
     let serverLogsLoaded = false;
+    let headlessLoaded = false;
 
     function trimOldEntries(container, max) {
         const entries = container.querySelectorAll('.log-entry');
@@ -81,6 +106,10 @@
             if (btn.dataset.tab === 'server' && !serverLogsLoaded) {
                 serverLogsLoaded = true;
                 loadServerLogs();
+            }
+            if (btn.dataset.tab === 'headless' && !headlessLoaded) {
+                headlessLoaded = true;
+                loadHeadlessContainers();
             }
         });
     });
@@ -602,12 +631,157 @@
     serverClearBtn.addEventListener('click', () => { serverContainer.innerHTML = ''; serverSSEBuffer.length = 0; });
     serverSearch.addEventListener('input', applyServerFilters);
 
+    // --- Headless Logs ---
+    const headlessContainer = document.getElementById('headless-log-container');
+    const headlessSelect = document.getElementById('headless-container-select');
+    const headlessFollowBtn = document.getElementById('headless-follow-btn');
+    const headlessRefreshBtn = document.getElementById('headless-refresh-btn');
+    const headlessClearBtn = document.getElementById('headless-clear-btn');
+    const headlessSearch = document.getElementById('headless-search');
+    const headlessShowAll = document.getElementById('headless-show-all');
+    const headlessStatus = document.getElementById('headless-status');
+    let headlessFollowing = false;
+    let headlessEventSource = null;
+    let headlessSSEBuffer = [];
+    let headlessRAFPending = false;
+
+    function loadHeadlessContainers() {
+        const runningOnly = !headlessShowAll.checked;
+        fetch(`/quma/api/logs/headless/containers?running_only=${runningOnly}`)
+            .then(r => {
+                if (!r.ok) throw new Error('not available');
+                return r.json();
+            })
+            .then(containers => {
+                headlessSelect.innerHTML = '<option value="">Select container...</option>';
+                if (containers.length === 0) {
+                    headlessStatus.textContent = 'No headless clients running.';
+                    headlessStatus.style.display = '';
+                    return;
+                }
+                headlessStatus.style.display = 'none';
+                containers.sort();
+                containers.forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    headlessSelect.appendChild(opt);
+                });
+            })
+            .catch(() => {
+                headlessStatus.textContent = 'Headless clients not available (Podman not connected).';
+                headlessStatus.style.display = '';
+            });
+    }
+
+    function loadHeadlessLogs() {
+        const name = headlessSelect.value;
+        if (!name) return;
+        fetch(`/quma/api/logs/headless?container=${encodeURIComponent(name)}&limit=100`)
+            .then(r => {
+                if (!r.ok) throw new Error('failed');
+                return r.json();
+            })
+            .then(lines => {
+                headlessContainer.innerHTML = '';
+                headlessStatus.style.display = 'none';
+                lines.forEach(l => headlessContainer.appendChild(renderServerLine(l)));
+                if (lines.length === 0) {
+                    headlessContainer.innerHTML = '<div class="empty-state"><p>No logs for this container</p></div>';
+                }
+                headlessContainer.scrollTop = headlessContainer.scrollHeight;
+            })
+            .catch(() => {
+                headlessContainer.innerHTML = '';
+                headlessStatus.textContent = 'Failed to load logs for this container.';
+                headlessStatus.style.display = '';
+            });
+    }
+
+    function flushHeadlessSSEBuffer() {
+        headlessRAFPending = false;
+        if (headlessSSEBuffer.length === 0) return;
+        const lines = headlessSSEBuffer.splice(0, headlessSSEBuffer.length);
+        const frag = document.createDocumentFragment();
+        for (const line of lines) {
+            frag.appendChild(renderServerLine(line));
+        }
+        headlessContainer.appendChild(frag);
+        trimOldEntries(headlessContainer, MAX_LOG_ENTRIES);
+        applyHeadlessFilters();
+        headlessContainer.scrollTop = headlessContainer.scrollHeight;
+    }
+
+    function startHeadlessFollow() {
+        const name = headlessSelect.value;
+        if (!name || headlessEventSource) return;
+        headlessFollowing = true;
+        headlessFollowBtn.classList.add('active');
+        headlessEventSource = new EventSource(`/quma/api/logs/headless/stream?container=${encodeURIComponent(name)}`);
+        headlessEventSource.onmessage = function(e) {
+            if (headlessSSEBuffer.length >= 200) return;
+            headlessSSEBuffer.push(e.data);
+            if (!headlessRAFPending) {
+                headlessRAFPending = true;
+                requestAnimationFrame(flushHeadlessSSEBuffer);
+            }
+        };
+        headlessEventSource.addEventListener('error', function(e) {
+            if (e.data) {
+                headlessStatus.textContent = e.data;
+                headlessStatus.style.display = '';
+            }
+            stopHeadlessFollow();
+        });
+    }
+
+    function stopHeadlessFollow() {
+        if (headlessEventSource) {
+            headlessEventSource.close();
+            headlessEventSource = null;
+        }
+        headlessFollowing = false;
+        headlessFollowBtn.classList.remove('active');
+    }
+
+    function applyHeadlessFilters() {
+        const search = headlessSearch.value.toLowerCase();
+        headlessContainer.querySelectorAll('.log-entry').forEach(el => {
+            el.style.display = (!search || el.textContent.toLowerCase().includes(search)) ? '' : 'none';
+        });
+    }
+
+    headlessSelect.addEventListener('change', () => {
+        stopHeadlessFollow();
+        if (headlessSelect.value) {
+            loadHeadlessLogs();
+        } else {
+            headlessContainer.innerHTML = '<div class="empty-state"><p>Select a headless client to view logs</p></div>';
+        }
+    });
+
+    headlessFollowBtn.addEventListener('click', () => {
+        if (headlessFollowing) stopHeadlessFollow();
+        else startHeadlessFollow();
+    });
+    headlessRefreshBtn.addEventListener('click', () => {
+        loadHeadlessContainers();
+        loadHeadlessLogs();
+    });
+    headlessClearBtn.addEventListener('click', () => {
+        headlessContainer.innerHTML = '';
+        headlessSSEBuffer.length = 0;
+    });
+    headlessSearch.addEventListener('input', applyHeadlessFilters);
+    headlessShowAll.addEventListener('change', loadHeadlessContainers);
+
     // Disconnect SSE streams when the tab is hidden to prevent
     // invisible memory accumulation; reconnect when visible again.
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
             stopSSE();
             if (serverFollowing) stopServerFollow();
+            if (headlessFollowing) stopHeadlessFollow();
         } else {
             if (liveMode) connectSSE();
             // Server follow does not auto-reconnect — user must click Follow again
