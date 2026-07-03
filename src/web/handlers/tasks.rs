@@ -3,7 +3,8 @@ use actix_web::web::{Data, Form, Html, Path};
 use actix_web::HttpRequest;
 use askama::Template;
 
-use crate::web::auth::require_auth;
+use crate::db::rbac::Permission;
+use crate::web::auth::{require_auth, require_permission};
 use crate::web::error::WebError;
 use crate::web::state::AppState;
 use crate::web::tasks::TaskView;
@@ -34,7 +35,8 @@ pub async fn dismiss_task(
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ServerControl)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
