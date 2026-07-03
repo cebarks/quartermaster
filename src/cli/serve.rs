@@ -67,7 +67,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         config.logging.web.max_entries,
     );
 
-    if !db_arc.lock().admin_exists()? {
+    if !db_arc.lock().has_user_manager()? {
         anyhow::bail!("No admin user exists. Run `quma setup` first to create an admin account.");
     }
 
