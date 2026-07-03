@@ -11,11 +11,22 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
 
     for op in &pending {
         println!("  Applying: {} {}...", op.action, op.mod_name);
+
+        // Skip addon operations for now (will be implemented in Task 5)
+        if op.item_type == "addon" {
+            println!("    Skipped — addon operations not yet implemented");
+            continue;
+        }
+
+        let forge_mod_id = op
+            .forge_mod_id
+            .expect("mod operation must have forge_mod_id");
+
         match op.action {
             crate::db::users::QueueAction::Install => {
                 if let Some(version_id) = op.forge_version_id {
                     if let Err(e) =
-                        crate::cli::install::install_with_deps(ctx, op.forge_mod_id, version_id)
+                        crate::cli::install::install_with_deps(ctx, forge_mod_id, version_id)
                             .await
                             .with_context(|| {
                                 format!("failed to apply queued install of {}", op.mod_name)
@@ -35,7 +46,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                 }
             }
             crate::db::users::QueueAction::Remove => {
-                if let Some(installed) = ctx.db.get_mod_by_forge_id(op.forge_mod_id)? {
+                if let Some(installed) = ctx.db.get_mod_by_forge_id(forge_mod_id)? {
                     // Check reverse dependencies like interactive remove does
                     let reverse_deps =
                         crate::cli::remove::collect_all_reverse_deps(installed.id, ctx)?;
@@ -71,7 +82,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
             }
             crate::db::users::QueueAction::Update => {
                 if let (Some(installed), Some(version_id)) = (
-                    ctx.db.get_mod_by_forge_id(op.forge_mod_id)?,
+                    ctx.db.get_mod_by_forge_id(forge_mod_id)?,
                     op.forge_version_id,
                 ) {
                     if let Err(e) =

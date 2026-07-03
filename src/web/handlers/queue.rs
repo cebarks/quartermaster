@@ -233,26 +233,34 @@ async fn download_to_temp(state: &AppState, link: &str) -> anyhow::Result<tempfi
 }
 
 pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    // Skip addon operations (will be implemented in Task 7)
+    if op.item_type == "addon" {
+        anyhow::bail!("addon operations not yet implemented");
+    }
+
+    let forge_mod_id = op
+        .forge_mod_id
+        .expect("mod operation must have forge_mod_id");
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("install op missing version_id"))?;
 
     {
         let db = state.db.lock();
-        if db.get_mod_by_forge_id(op.forge_mod_id)?.is_some() {
+        if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
             return Ok(());
         }
     }
 
     let (link, version_str, full_version) =
-        resolve_version_link(state, op.forge_mod_id, version_id).await?;
+        resolve_version_link(state, forge_mod_id, version_id).await?;
 
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
         &state.spt_dir,
         &state.config_cloned(),
-        op.forge_mod_id,
+        forge_mod_id,
         &full_version,
     )
     .await?;
@@ -264,7 +272,6 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let spt_dir = state.spt_dir.clone();
     let config = state.config_cloned();
     let mod_name = op.mod_name.clone();
-    let forge_mod_id = op.forge_mod_id;
 
     let db_id = web::block(move || {
         let db = db.lock();
@@ -294,18 +301,26 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
 }
 
 pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    // Skip addon operations (will be implemented in Task 7)
+    if op.item_type == "addon" {
+        anyhow::bail!("addon operations not yet implemented");
+    }
+
+    let forge_mod_id = op
+        .forge_mod_id
+        .expect("mod operation must have forge_mod_id");
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("update op missing version_id"))?;
     let (link, version_str, full_version) =
-        resolve_version_link(state, op.forge_mod_id, version_id).await?;
+        resolve_version_link(state, forge_mod_id, version_id).await?;
 
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
         &state.spt_dir,
         &state.config_cloned(),
-        op.forge_mod_id,
+        forge_mod_id,
         &full_version,
     )
     .await?;
@@ -316,7 +331,6 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
     let config = state.config_cloned();
-    let forge_mod_id = op.forge_mod_id;
 
     let mod_db_id = web::block(move || {
         let db = db.lock();
@@ -343,10 +357,17 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
 }
 
 pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
+    // Skip addon operations (will be implemented in Task 7)
+    if op.item_type == "addon" {
+        anyhow::bail!("addon operations not yet implemented");
+    }
+
+    let forge_mod_id = op
+        .forge_mod_id
+        .expect("mod operation must have forge_mod_id");
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
     let config = state.config_cloned();
-    let forge_mod_id = op.forge_mod_id;
 
     web::block(move || {
         let db = db.lock();

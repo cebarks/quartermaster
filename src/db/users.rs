@@ -99,12 +99,14 @@ impl fmt::Display for QueueAction {
 pub struct PendingOperation {
     pub id: i64,
     pub action: QueueAction,
-    pub forge_mod_id: i64,
+    pub forge_mod_id: Option<i64>, // NULL for addon ops
     pub forge_version_id: Option<i64>,
-    pub mod_name: String,
+    pub mod_name: String, // addon name for addon ops
     pub metadata: Option<String>,
     pub queued_at: String,
     pub queued_by: Option<String>,
+    pub item_type: String,           // "mod" or "addon"
+    pub forge_addon_id: Option<i64>, // set for addon ops
 }
 
 impl Database {
@@ -440,17 +442,49 @@ impl Database {
         queued_by: Option<&str>,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by, item_type, forge_addon_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'mod', NULL)",
             params![action.as_str(), forge_mod_id, forge_version_id, mod_name, metadata, queued_by],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(dead_code)] // used in Task 5
+    pub fn insert_pending_addon_op(
+        &self,
+        action: QueueAction,
+        forge_addon_id: i64,
+        forge_version_id: Option<i64>,
+        addon_name: &str,
+        metadata: Option<&str>,
+        queued_by: Option<&str>,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by, item_type, forge_addon_id)
+             VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'addon', ?6)",
+            params![action.as_str(), forge_version_id, addon_name, metadata, queued_by, forge_addon_id],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn has_pending_op(&self, forge_mod_id: i64, action: QueueAction) -> rusqlite::Result<bool> {
         let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM pending_operations WHERE forge_mod_id = ?1 AND action = ?2",
+            "SELECT COUNT(*) FROM pending_operations WHERE forge_mod_id = ?1 AND action = ?2 AND item_type = 'mod'",
             params![forge_mod_id, action.as_str()],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    #[allow(dead_code)] // used in Task 5
+    pub fn has_pending_addon_op(
+        &self,
+        forge_addon_id: i64,
+        action: QueueAction,
+    ) -> rusqlite::Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM pending_operations WHERE forge_addon_id = ?1 AND action = ?2 AND item_type = 'addon'",
+            params![forge_addon_id, action.as_str()],
             |row| row.get(0),
         )?;
         Ok(count > 0)
@@ -458,7 +492,7 @@ impl Database {
 
     pub fn list_pending_ops(&self) -> rusqlite::Result<Vec<PendingOperation>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, action, forge_mod_id, forge_version_id, mod_name, metadata, queued_at, queued_by
+            "SELECT id, action, forge_mod_id, forge_version_id, mod_name, metadata, queued_at, queued_by, item_type, forge_addon_id
              FROM pending_operations ORDER BY queued_at",
         )?;
         let rows = stmt.query_map([], row_to_pending_op)?;
@@ -519,5 +553,7 @@ fn row_to_pending_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingOperati
         metadata: row.get(5)?,
         queued_at: row.get(6)?,
         queued_by: row.get(7)?,
+        item_type: row.get(8)?,
+        forge_addon_id: row.get(9)?,
     })
 }
