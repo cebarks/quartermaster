@@ -4,12 +4,101 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use globset::{Glob, GlobSetBuilder};
 use parking_lot::Mutex;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
+use crate::config::SetupZipConfig;
 use crate::db::mods::InstalledFile;
 use crate::db::Database;
+
+const NON_ESSENTIAL_NAMES: &[&str] = &[
+    "readme",
+    "readme.md",
+    "readme.txt",
+    "license",
+    "license.txt",
+    "license.md",
+    "changelog",
+    "changelog.md",
+    "changelog.txt",
+];
+
+const NON_ESSENTIAL_EXTENSIONS: &[&str] = &["url", "html", "htm"];
+
+fn is_non_essential(path: &str) -> bool {
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    let lower = filename.to_ascii_lowercase();
+    if NON_ESSENTIAL_NAMES.contains(&lower.as_str()) {
+        return true;
+    }
+    if let Some(ext) = lower.rsplit('.').next() {
+        if ext != lower && NON_ESSENTIAL_EXTENSIONS.contains(&ext) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn filter_setup_zip_files(
+    files: Vec<InstalledFile>,
+    config: &SetupZipConfig,
+) -> Vec<InstalledFile> {
+    let include_set = build_globset(&config.include_patterns);
+    let exclude_set = build_globset(&config.exclude_patterns);
+
+    files
+        .into_iter()
+        .filter(|f| {
+            let path = &f.file_path;
+
+            // 1. Force-include overrides everything
+            if let Some(ref set) = include_set {
+                if set.is_match(path) {
+                    return true;
+                }
+            }
+
+            // 2. User exclude patterns
+            if let Some(ref set) = exclude_set {
+                if set.is_match(path) {
+                    return false;
+                }
+            }
+
+            // 3. Server-only files
+            if config.exclude_server_files && path.starts_with("user/mods/") {
+                return false;
+            }
+
+            // 4. Non-essential files
+            if config.exclude_non_essential && is_non_essential(path) {
+                return false;
+            }
+
+            true
+        })
+        .collect()
+}
+
+fn build_globset(patterns: &[String]) -> Option<globset::GlobSet> {
+    if patterns.is_empty() {
+        return None;
+    }
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        match Glob::new(pattern) {
+            Ok(glob) => {
+                builder.add(glob);
+            }
+            Err(e) => {
+                tracing::warn!(pattern = %pattern, err = %e, "invalid glob pattern in setup_zip config, skipping");
+            }
+        }
+    }
+    builder.build().ok()
+}
 
 /// Write a ZIP archive of mod files directly to disk (no in-memory buffer).
 pub fn build_mod_zip_to_file(
@@ -170,6 +259,7 @@ impl ModZipCache {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::config::SetupZipConfig;
     use crate::db::mods::InstalledFile;
     use std::io::Write;
 
@@ -308,5 +398,119 @@ mod tests {
         // Rebuild with empty DB should remove it
         cache.rebuild_sync();
         assert!(cache.get().is_none());
+    }
+
+    #[test]
+    fn filter_excludes_server_files_by_default() {
+        let config = SetupZipConfig::default();
+        let files = vec![
+            test_file(1, "user/mods/test-mod/package.json"),
+            test_file(1, "BepInEx/plugins/test-mod/test.dll"),
+        ];
+        let filtered = filter_setup_zip_files(files, &config);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].file_path, "BepInEx/plugins/test-mod/test.dll");
+    }
+
+    #[test]
+    fn filter_keeps_server_files_when_disabled() {
+        let config = SetupZipConfig {
+            exclude_server_files: false,
+            ..SetupZipConfig::default()
+        };
+        let files = vec![
+            test_file(1, "user/mods/test-mod/package.json"),
+            test_file(1, "BepInEx/plugins/test-mod/test.dll"),
+        ];
+        let filtered = filter_setup_zip_files(files, &config);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn filter_excludes_non_essential_by_default() {
+        let config = SetupZipConfig::default();
+        let files = vec![
+            test_file(1, "BepInEx/plugins/mod/mod.dll"),
+            test_file(1, "BepInEx/plugins/mod/README.md"),
+            test_file(1, "BepInEx/plugins/mod/LICENSE"),
+            test_file(1, "BepInEx/plugins/mod/CHANGELOG.txt"),
+            test_file(1, "BepInEx/plugins/mod/info.url"),
+            test_file(1, "BepInEx/plugins/mod/docs.html"),
+        ];
+        let filtered = filter_setup_zip_files(files, &config);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].file_path, "BepInEx/plugins/mod/mod.dll");
+    }
+
+    #[test]
+    fn filter_non_essential_case_insensitive() {
+        let config = SetupZipConfig::default();
+        let files = vec![
+            test_file(1, "BepInEx/plugins/mod/readme.MD"),
+            test_file(1, "BepInEx/plugins/mod/license.TXT"),
+            test_file(1, "BepInEx/plugins/mod/Changelog.md"),
+        ];
+        let filtered = filter_setup_zip_files(files, &config);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn filter_user_exclude_patterns() {
+        let config = SetupZipConfig {
+            exclude_patterns: vec!["**/*.pdb".to_string()],
+            ..SetupZipConfig::default()
+        };
+        let files = vec![
+            test_file(1, "BepInEx/plugins/mod/mod.dll"),
+            test_file(1, "BepInEx/plugins/mod/mod.pdb"),
+        ];
+        let filtered = filter_setup_zip_files(files, &config);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].file_path, "BepInEx/plugins/mod/mod.dll");
+    }
+
+    #[test]
+    fn filter_include_overrides_all_excludes() {
+        let config = SetupZipConfig {
+            exclude_server_files: true,
+            exclude_non_essential: true,
+            exclude_patterns: vec!["**/*.json".to_string()],
+            include_patterns: vec!["user/mods/special/**".to_string()],
+        };
+        let files = vec![
+            test_file(1, "user/mods/special/package.json"),
+            test_file(1, "user/mods/other/package.json"),
+        ];
+        let filtered = filter_setup_zip_files(files, &config);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].file_path, "user/mods/special/package.json");
+    }
+
+    #[test]
+    fn filter_all_disabled_passes_everything() {
+        let config = SetupZipConfig {
+            exclude_server_files: false,
+            exclude_non_essential: false,
+            exclude_patterns: vec![],
+            include_patterns: vec![],
+        };
+        let files = vec![
+            test_file(1, "user/mods/mod/package.json"),
+            test_file(1, "BepInEx/plugins/mod/README.md"),
+            test_file(1, "BepInEx/plugins/mod/mod.dll"),
+        ];
+        let filtered = filter_setup_zip_files(files, &config);
+        assert_eq!(filtered.len(), 3);
+    }
+
+    #[test]
+    fn filter_invalid_glob_is_skipped_gracefully() {
+        let config = SetupZipConfig {
+            exclude_patterns: vec!["[invalid".to_string()],
+            ..SetupZipConfig::default()
+        };
+        let files = vec![test_file(1, "BepInEx/plugins/mod/mod.dll")];
+        let filtered = filter_setup_zip_files(files, &config);
+        assert_eq!(filtered.len(), 1);
     }
 }
