@@ -510,6 +510,38 @@ impl ModSyncConfig {
 
         true
     }
+
+    /// Ensure predefined groups exist with correct invariants.
+    /// Seeds `no-headless` if missing; forces `exclude_headless = true` on it
+    /// if hand-edited. Returns `true` if any changes were made.
+    pub fn ensure_predefined_groups(&mut self) -> bool {
+        let mut changed = false;
+        if let Some(nh) = self.groups.get_mut("no-headless") {
+            if nh.display_name != "No Headless" {
+                nh.display_name = "No Headless".to_string();
+                changed = true;
+            }
+            if !nh.exclude_headless {
+                nh.exclude_headless = true;
+                changed = true;
+            }
+        } else {
+            self.groups.insert(
+                "no-headless".to_string(),
+                ModSyncGroup {
+                    display_name: "No Headless".to_string(),
+                    members: Vec::new(),
+                    enabled: None,
+                    enforced: None,
+                    silent: None,
+                    restart_required: None,
+                    exclude_headless: true,
+                },
+            );
+            changed = true;
+        }
+        changed
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -550,6 +582,9 @@ pub fn validate_group_slug(slug: &str) -> Result<()> {
     }
     if slug == "default" {
         bail!("\"default\" is a reserved group slug");
+    }
+    if slug == "no-headless" {
+        bail!("\"no-headless\" is a reserved group slug");
     }
     if slug.len() > 64 {
         bail!("Group slug too long (max 64 characters)");
@@ -1135,6 +1170,10 @@ impl Config {
                             "removed reserved \"default\" group from modsync config — \
                              ungrouped mods now use global settings automatically"
                         );
+                        save_needed = true;
+                    }
+                    if ms.ensure_predefined_groups() {
+                        tracing::info!("seeded predefined modsync groups");
                         save_needed = true;
                     }
                 }
@@ -2136,7 +2175,6 @@ silent = true
     #[test]
     fn validate_group_slug_accepts_valid() {
         assert!(validate_group_slug("optional").is_ok());
-        assert!(validate_group_slug("no-headless").is_ok());
         assert!(validate_group_slug("group-2").is_ok());
         assert!(validate_group_slug("a").is_ok());
     }
@@ -2151,6 +2189,66 @@ silent = true
         assert!(validate_group_slug("has.dot").is_err());
         assert!(validate_group_slug(&"a".repeat(65)).is_err());
         assert!(validate_group_slug("default").is_err());
+    }
+
+    #[test]
+    fn validate_group_slug_rejects_no_headless() {
+        assert!(validate_group_slug("no-headless").is_err());
+    }
+
+    #[test]
+    fn ensure_predefined_groups_seeds_no_headless() {
+        let mut ms = ModSyncConfig::default();
+        assert!(!ms.groups.contains_key("no-headless"));
+        assert!(ms.ensure_predefined_groups());
+        assert!(ms.groups.contains_key("no-headless"));
+        let nh = &ms.groups["no-headless"];
+        assert_eq!(nh.display_name, "No Headless");
+        assert!(nh.members.is_empty());
+        assert!(nh.exclude_headless);
+        assert_eq!(nh.enabled, None);
+        assert_eq!(nh.enforced, None);
+        assert_eq!(nh.silent, None);
+        assert_eq!(nh.restart_required, None);
+    }
+
+    #[test]
+    fn ensure_predefined_groups_preserves_existing_no_headless() {
+        let mut ms = ModSyncConfig::default();
+        ms.groups.insert(
+            "no-headless".to_string(),
+            ModSyncGroup {
+                display_name: "No Headless".to_string(),
+                members: vec![100, 200],
+                enabled: Some(false),
+                enforced: None,
+                silent: None,
+                restart_required: None,
+                exclude_headless: true,
+            },
+        );
+        assert!(!ms.ensure_predefined_groups());
+        assert_eq!(ms.groups["no-headless"].members, vec![100, 200]);
+        assert_eq!(ms.groups["no-headless"].enabled, Some(false));
+    }
+
+    #[test]
+    fn ensure_predefined_groups_forces_exclude_headless_true() {
+        let mut ms = ModSyncConfig::default();
+        ms.groups.insert(
+            "no-headless".to_string(),
+            ModSyncGroup {
+                display_name: "No Headless".to_string(),
+                members: vec![100],
+                enabled: None,
+                enforced: None,
+                silent: None,
+                restart_required: None,
+                exclude_headless: false, // hand-edited to false
+            },
+        );
+        assert!(ms.ensure_predefined_groups());
+        assert!(ms.groups["no-headless"].exclude_headless);
     }
 
     #[test]
@@ -2295,6 +2393,11 @@ exclusions = ["../BepInEx/plugins/spt"]
         let toml_content = r#"
 [modsync]
 extra_sync_paths = ["BepInEx/config"]
+
+[modsync.groups.no-headless]
+display_name = "No Headless"
+members = []
+exclude_headless = true
 "#;
         std::fs::write(&config_path, toml_content).expect("write");
         let mtime_before = std::fs::metadata(&config_path).unwrap().modified().unwrap();

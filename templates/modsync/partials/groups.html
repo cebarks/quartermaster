@@ -18,12 +18,6 @@
         Groups let you apply shared settings to sets of mods. Group settings override globals; per-mod overrides still win.
     </p>
 
-    {% if groups.is_empty() %}
-    <div id="groups-empty" class="text-muted text-sm" style="padding: 1rem; text-align: center; border: 1px dashed var(--border); border-radius: 4px">
-        No groups defined. Click "Add Group" to create one.
-    </div>
-    {% endif %}
-
     <div id="groups-container">
         {% for group in groups %}
             {{ group.render().unwrap_or_default()|safe }}
@@ -38,7 +32,7 @@
 
     // ── Serialize all group cards to JSON ──────────────────────────
     function serializeGroups() {
-        var cards = form.querySelectorAll('fieldset[data-group-index]');
+        var cards = form.querySelectorAll('fieldset[data-group-index]:not([data-predefined="default"])');
         var groups = [];
         cards.forEach(function(card) {
             var nameInput = card.querySelector('[data-field="display_name"]');
@@ -117,8 +111,6 @@
                     opt.disabled = false;
                     opt.style.display = '';
                 });
-                // Remove empty-state message if no groups left
-                updateEmptyState();
             }
             return;
         }
@@ -127,7 +119,7 @@
         var removeGroup = e.target.closest('[data-remove-group]');
         if (removeGroup) {
             var card = removeGroup.closest('fieldset[data-group-index]');
-            if (card) {
+            if (card && !card.hasAttribute('data-predefined')) {
                 // Re-enable all member mods in other dropdowns
                 card.querySelectorAll('[data-members] [data-mod-id]').forEach(function(badge) {
                     var modId = badge.getAttribute('data-mod-id');
@@ -137,7 +129,6 @@
                     });
                 });
                 card.remove();
-                updateEmptyState();
             }
             return;
         }
@@ -176,6 +167,13 @@
             opt.style.display = 'none';
         });
 
+        // Remove stale badge from the virtual default card
+        var defaultCard = form.querySelector('[data-predefined="default"]');
+        if (defaultCard) {
+            var staleBadge = defaultCard.querySelector('[data-mod-id="' + val + '"]');
+            if (staleBadge) staleBadge.remove();
+        }
+
         dropdown.value = '';
 
         // Auto-slug from name input
@@ -201,9 +199,6 @@
         if (e.target.id !== 'groups-container') return;
         updateNextIndex();
         hideAssignedMods();
-        // Remove the empty-state placeholder if it exists
-        var empty = document.getElementById('groups-empty');
-        if (empty) empty.remove();
     });
 
     function updateNextIndex() {
@@ -222,9 +217,9 @@
     }
 
     function hideAssignedMods() {
-        // Collect all currently assigned mod IDs
+        // Collect mod IDs assigned to real groups (exclude virtual default card)
         var assigned = {};
-        form.querySelectorAll('[data-members] [data-mod-id]').forEach(function(badge) {
+        form.querySelectorAll('fieldset:not([data-predefined="default"]) [data-members] [data-mod-id]').forEach(function(badge) {
             assigned[badge.getAttribute('data-mod-id')] = true;
         });
         // Hide assigned mods from all dropdowns
@@ -234,20 +229,6 @@
                 opt.style.display = 'none';
             }
         });
-    }
-
-    function updateEmptyState() {
-        var cards = form.querySelectorAll('fieldset[data-group-index]');
-        var container = document.getElementById('groups-container');
-        var empty = document.getElementById('groups-empty');
-        if (cards.length === 0 && !empty && container) {
-            var div = document.createElement('div');
-            div.id = 'groups-empty';
-            div.className = 'text-muted text-sm';
-            div.style.cssText = 'padding: 1rem; text-align: center; border: 1px dashed var(--border); border-radius: 4px';
-            div.textContent = 'No groups defined. Click "Add Group" to create one.';
-            container.parentNode.insertBefore(div, container);
-        }
     }
 
     // Initial pass: hide assigned mods from dropdowns

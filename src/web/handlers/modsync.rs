@@ -268,6 +268,7 @@ struct GroupMember {
 #[template(path = "modsync/partials/group_card.html")]
 struct GroupCardTemplate {
     index: usize,
+    predefined: String, // "", "default", or "no-headless"
     display_name: String,
     slug: String,
     enabled_val: String,
@@ -344,7 +345,7 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
 
     let all_mods = fetch_mods_with_client_files(state).await?;
 
-    // Build set of assigned mod IDs across all groups
+    // Build set of assigned mod IDs across all config groups
     let mut assigned: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for group in ms_config.groups.values() {
         for &id in &group.members {
@@ -359,7 +360,70 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
         .collect();
 
     let mut group_cards: Vec<GroupCardTemplate> = Vec::new();
-    for (idx, (slug, group)) in ms_config.groups.iter().enumerate() {
+    let mut card_index: usize = 0;
+
+    // ── 1. Virtual "default" card ──────────────────────────────────
+    {
+        let default_members: Vec<GroupMember> = all_mods
+            .iter()
+            .filter(|(id, _, has_client)| *has_client && !assigned.contains(id))
+            .map(|(forge_id, name, _)| GroupMember {
+                forge_id: *forge_id,
+                name: name.clone(),
+                installed: true,
+                has_client_files: true,
+            })
+            .collect();
+
+        group_cards.push(GroupCardTemplate {
+            index: card_index,
+            predefined: "default".to_string(),
+            display_name: "Default".to_string(),
+            slug: "default".to_string(),
+            enabled_val: if ms_config.enabled {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            },
+            enforced_val: if ms_config.enforced {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            },
+            silent_val: if ms_config.silent {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            },
+            restart_required_val: if ms_config.restart_required {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            },
+            exclude_headless: false,
+            members: default_members,
+            available_mods: Vec::new(), // no add dropdown for default
+        });
+        card_index += 1;
+    }
+
+    // ── 2. Predefined "no-headless" card, then custom groups ───────
+    // Sort: no-headless first, then custom groups in BTreeMap order
+    let mut ordered_slugs: Vec<&String> = ms_config.groups.keys().collect();
+    ordered_slugs.sort_by(|a, b| {
+        let a_pred = a.as_str() == "no-headless";
+        let b_pred = b.as_str() == "no-headless";
+        b_pred.cmp(&a_pred).then(a.cmp(b))
+    });
+
+    for slug in ordered_slugs {
+        let group = &ms_config.groups[slug];
+        let predefined = if slug == "no-headless" {
+            "no-headless".to_string()
+        } else {
+            String::new()
+        };
+
         let members: Vec<GroupMember> = group
             .members
             .iter()
@@ -382,8 +446,6 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
             })
             .collect();
 
-        // For this card, available = global available + mods assigned to THIS group
-        // (since this group already "owns" them)
         let card_available: Vec<AvailableMod> = all_mods
             .iter()
             .filter(|(id, _, has_client)| {
@@ -396,7 +458,8 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
             .collect();
 
         group_cards.push(GroupCardTemplate {
-            index: idx,
+            index: card_index,
+            predefined,
             display_name: group.display_name.clone(),
             slug: slug.clone(),
             enabled_val: opt_bool_to_val(group.enabled),
@@ -407,9 +470,10 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
             members,
             available_mods: card_available,
         });
+        card_index += 1;
     }
 
-    let next_index = group_cards.len();
+    let next_index = card_index;
     let tmpl = GroupsPartialTemplate {
         csrf_token: csrf_token.to_string(),
         groups: group_cards,
@@ -472,6 +536,7 @@ pub async fn new_group_card(
 
     let tmpl = GroupCardTemplate {
         index: query.index,
+        predefined: String::new(),
         display_name: String::new(),
         slug: String::new(),
         enabled_val: String::new(),
@@ -540,8 +605,8 @@ pub async fn save_groups(
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| crate::config::slugify(&display_name));
 
-        if validate_group_slug(&slug).is_err() {
-            continue; // Skip groups with invalid slugs
+        if slug != "no-headless" && validate_group_slug(&slug).is_err() {
+            continue;
         }
 
         // Parse members, keeping only valid mod IDs with client files
@@ -614,12 +679,37 @@ pub async fn save_groups(
         }
     }
 
-    // "default" is reserved — strip it even if validation was somehow bypassed
-    new_groups.remove("default");
-
     // Load-then-mutate: only replace the groups field
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
+
+    // "default" is reserved — strip it even if validation was somehow bypassed
+    new_groups.remove("default");
+
+    // Enforce no-headless: force invariants, re-inject if missing.
+    // ponytail: re-injection runs after dedup/validation — crafted requests
+    // omitting no-headless could cause member duplication. Accepted: requires
+    // admin+CSRF; normal UI always submits no-headless. Move before dedup if needed.
+    if let Some(nh) = new_groups.get_mut("no-headless") {
+        nh.display_name = "No Headless".to_string();
+        nh.exclude_headless = true;
+    } else {
+        let existing_nh = config
+            .modsync
+            .as_ref()
+            .and_then(|ms| ms.groups.get("no-headless"))
+            .cloned()
+            .unwrap_or_else(|| ModSyncGroup {
+                display_name: "No Headless".to_string(),
+                members: Vec::new(),
+                enabled: None,
+                enforced: None,
+                silent: None,
+                restart_required: None,
+                exclude_headless: true,
+            });
+        new_groups.insert("no-headless".to_string(), existing_nh);
+    }
     if let Some(ref mut ms) = config.modsync {
         ms.groups = new_groups;
     } else {

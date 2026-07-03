@@ -1,60 +1,91 @@
-<fieldset data-group-index="{{ index }}" class="card" style="position: relative; margin-bottom: 1rem">
+<fieldset data-group-index="{{ index }}"{% if !predefined.is_empty() %} data-predefined="{{ predefined }}"{% endif %} class="card" style="position: relative; margin-bottom: 1rem{% if predefined == "default" %}; border-style: dashed{% endif %}">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem">
         <div style="flex: 1">
             <label class="text-sm text-muted" style="display: block; margin-bottom: 0.25rem">Group Name</label>
+            {% if predefined.is_empty() %}
             <input type="text" data-field="display_name" value="{{ display_name }}"
                    placeholder="e.g. Optional Mods"
                    style="width: 100%; padding: 0.4rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-size: 0.9rem">
+            {% else %}
+            <input type="hidden" data-field="display_name" value="{{ display_name }}">
+            <span style="font-size: 0.9rem; font-weight: 600">{{ display_name }}</span>
+            {% endif %}
         </div>
         <div style="margin-left: 1rem; text-align: right">
             <label class="text-sm text-muted" style="display: block; margin-bottom: 0.25rem">Slug</label>
             <span data-field="slug" class="text-muted text-sm" style="font-family: monospace">{{ slug }}</span>
         </div>
+        {% if predefined.is_empty() %}
         <button type="button" class="btn btn-sm btn-danger" data-remove-group
                 style="margin-left: 1rem; padding: 0.15rem 0.5rem; font-size: 0.75rem"
                 title="Delete group">&times;</button>
+        {% endif %}
     </div>
+
+    {% if predefined == "default" %}
+    <p class="text-sm text-muted" style="margin-bottom: 0.75rem">
+        Mods not assigned to any group. Settings inherited from global defaults.
+    </p>
+    {% endif %}
 
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; margin-bottom: 0.75rem">
         <div>
             <label class="text-sm text-muted" style="display: block; margin-bottom: 0.25rem">Enabled</label>
+            {% if predefined == "default" %}
+            <span class="text-sm">{{ enabled_val }} <span class="text-muted">(global)</span></span>
+            {% else %}
             <select data-field="enabled" style="width: 100%; padding: 0.35rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text)">
                 <option value=""{% if enabled_val.is_empty() %} selected{% endif %}>default</option>
                 <option value="true"{% if enabled_val == "true" %} selected{% endif %}>yes</option>
                 <option value="false"{% if enabled_val == "false" %} selected{% endif %}>no</option>
             </select>
+            {% endif %}
         </div>
         <div>
             <label class="text-sm text-muted" style="display: block; margin-bottom: 0.25rem">Enforced</label>
+            {% if predefined == "default" %}
+            <span class="text-sm">{{ enforced_val }} <span class="text-muted">(global)</span></span>
+            {% else %}
             <select data-field="enforced" style="width: 100%; padding: 0.35rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text)">
                 <option value=""{% if enforced_val.is_empty() %} selected{% endif %}>default</option>
                 <option value="true"{% if enforced_val == "true" %} selected{% endif %}>yes</option>
                 <option value="false"{% if enforced_val == "false" %} selected{% endif %}>no</option>
             </select>
+            {% endif %}
         </div>
         <div>
             <label class="text-sm text-muted" style="display: block; margin-bottom: 0.25rem">Silent</label>
+            {% if predefined == "default" %}
+            <span class="text-sm">{{ silent_val }} <span class="text-muted">(global)</span></span>
+            {% else %}
             <select data-field="silent" style="width: 100%; padding: 0.35rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text)">
                 <option value=""{% if silent_val.is_empty() %} selected{% endif %}>default</option>
                 <option value="true"{% if silent_val == "true" %} selected{% endif %}>yes</option>
                 <option value="false"{% if silent_val == "false" %} selected{% endif %}>no</option>
             </select>
+            {% endif %}
         </div>
         <div>
             <label class="text-sm text-muted" style="display: block; margin-bottom: 0.25rem">Restart Required</label>
+            {% if predefined == "default" %}
+            <span class="text-sm">{{ restart_required_val }} <span class="text-muted">(global)</span></span>
+            {% else %}
             <select data-field="restart_required" style="width: 100%; padding: 0.35rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text)">
                 <option value=""{% if restart_required_val.is_empty() %} selected{% endif %}>default</option>
                 <option value="true"{% if restart_required_val == "true" %} selected{% endif %}>yes</option>
                 <option value="false"{% if restart_required_val == "false" %} selected{% endif %}>no</option>
             </select>
+            {% endif %}
         </div>
     </div>
 
+    {% if predefined != "default" %}
     <div style="margin-bottom: 0.75rem">
         <label class="text-sm text-muted" style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer">
-            <input type="checkbox" data-field="exclude_headless"{% if exclude_headless %} checked{% endif %}> Exclude from headless clients
+            <input type="checkbox" data-field="exclude_headless"{% if exclude_headless %} checked{% endif %}{% if predefined == "no-headless" %} disabled{% endif %}> Exclude from headless clients
         </label>
     </div>
+    {% endif %}
 
     <div style="margin-bottom: 0.5rem">
         <label class="text-sm text-muted" style="display: block; margin-bottom: 0.35rem">Members</label>
@@ -73,12 +104,15 @@
                 {% else %}
                     Mod #{{ member.forge_id }} (not installed)
                 {% endif %}
+                {% if predefined != "default" %}
                 <button type="button" data-remove-member style="background: none; border: none; color: inherit; cursor: pointer; padding: 0; font-size: 1rem; line-height: 1" title="Remove">&times;</button>
+                {% endif %}
             </span>
             {% endfor %}
         </div>
     </div>
 
+    {% if predefined != "default" %}
     <div>
         <select data-add-mod style="padding: 0.35rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-size: 0.85rem; min-width: 200px">
             <option value="">Add mod...</option>
@@ -87,4 +121,5 @@
             {% endfor %}
         </select>
     </div>
+    {% endif %}
 </fieldset>
