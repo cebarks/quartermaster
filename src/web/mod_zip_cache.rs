@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::config::SetupZipConfig;
+use crate::config::{Config, SetupZipConfig};
 use crate::db::mods::InstalledFile;
 use crate::db::Database;
 
@@ -132,6 +132,7 @@ pub fn build_mod_zip_to_file(
 struct Inner {
     spt_dir: PathBuf,
     db: Arc<Mutex<Database>>,
+    config: Arc<parking_lot::RwLock<Config>>,
     cache_path: PathBuf,
     tmp_path: PathBuf,
     rebuilding: AtomicBool,
@@ -144,7 +145,11 @@ pub struct ModZipCache {
 }
 
 impl ModZipCache {
-    pub fn new(spt_dir: PathBuf, db: Arc<Mutex<Database>>) -> Self {
+    pub fn new(
+        spt_dir: PathBuf,
+        db: Arc<Mutex<Database>>,
+        config: Arc<parking_lot::RwLock<Config>>,
+    ) -> Self {
         let cache_dir = spt_dir.join("quartermaster-cache");
         let _ = std::fs::create_dir_all(&cache_dir);
 
@@ -154,6 +159,7 @@ impl ModZipCache {
                 tmp_path: cache_dir.join("all-mods.zip.tmp"),
                 spt_dir,
                 db,
+                config,
                 rebuilding: AtomicBool::new(false),
                 dirty: AtomicBool::new(false),
             }),
@@ -231,13 +237,17 @@ impl ModZipCache {
     }
 
     fn build_cache(&self) -> anyhow::Result<()> {
-        let files = {
+        let (files, setup_zip_config) = {
             let db = self.inner.db.lock();
-            db.get_all_enabled_mod_files()?
+            let files = db.get_all_enabled_mod_files()?;
+            let config = self.inner.config.read();
+            let setup_zip_config = config.setup_zip.clone();
+            (files, setup_zip_config)
         };
 
+        let files = filter_setup_zip_files(files, &setup_zip_config);
+
         if files.is_empty() {
-            // No mods — remove stale cache
             let _ = std::fs::remove_file(&self.inner.cache_path);
             return Ok(());
         }
@@ -262,6 +272,13 @@ mod tests {
     use crate::config::SetupZipConfig;
     use crate::db::mods::InstalledFile;
     use std::io::Write;
+
+    fn test_config() -> Arc<parking_lot::RwLock<crate::config::Config>> {
+        let mut c = crate::config::Config::default();
+        c.setup_zip.exclude_server_files = false;
+        c.setup_zip.exclude_non_essential = false;
+        Arc::new(parking_lot::RwLock::new(c))
+    }
 
     fn make_test_file(dir: &std::path::Path, rel_path: &str, content: &[u8]) {
         let full = dir.join(rel_path);
@@ -320,7 +337,7 @@ mod tests {
         let spt_dir = tempfile::tempdir().unwrap();
         let db = Database::open_in_memory().unwrap();
         let db_arc = Arc::new(Mutex::new(db));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc);
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, test_config());
         assert!(cache.get().is_none());
     }
 
@@ -337,7 +354,7 @@ mod tests {
             .unwrap();
 
         let db_arc = Arc::new(Mutex::new(db));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc);
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, test_config());
 
         // Directly call rebuild (synchronous, for testing)
         cache.rebuild_sync();
@@ -359,7 +376,7 @@ mod tests {
             .unwrap();
 
         let db_arc = Arc::new(Mutex::new(db));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc.clone());
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc.clone(), test_config());
         cache.rebuild_sync();
 
         let path = cache.get().unwrap();
@@ -389,7 +406,7 @@ mod tests {
         let spt_dir = tempfile::tempdir().unwrap();
         let db = Database::open_in_memory().unwrap();
         let db_arc = Arc::new(Mutex::new(db));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc);
+        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, test_config());
 
         // Create a dummy cache file
         std::fs::write(&cache.inner.cache_path, b"dummy").unwrap();

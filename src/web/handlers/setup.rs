@@ -9,6 +9,7 @@ use crate::web::handlers::join::{
     build_mod_zip, build_spt_server_url, generate_bash_script, generate_powershell_script,
     DEFAULT_SERVER_NAME, FIKA_INSTALLER_URL,
 };
+use crate::web::mod_zip_cache::filter_setup_zip_files;
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
@@ -162,14 +163,21 @@ pub async fn setup_mods_zip(state: web::Data<AppState>) -> actix_web::Result<Htt
 
     // Fallback: startup warmup hasn't finished yet — build synchronously.
     // The background warmup will populate the cache for subsequent requests.
+    let setup_zip_config = {
+        let config = state.config.read();
+        config.setup_zip.clone()
+    };
+
     let db = state.db.clone();
-    let files = web::block(move || {
+    let mut files = web::block(move || {
         let db = db.lock();
         db.get_all_enabled_mod_files()
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
+
+    files = filter_setup_zip_files(files, &setup_zip_config);
 
     if files.is_empty() {
         return Ok(HttpResponse::ServiceUnavailable()

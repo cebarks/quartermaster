@@ -752,8 +752,11 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         .build()
         .expect("failed to build proxy HTTP client");
 
-    let mod_zip_cache =
-        crate::web::mod_zip_cache::ModZipCache::new(spt_dir.clone(), db_arc.clone());
+    let mod_zip_cache = crate::web::mod_zip_cache::ModZipCache::new(
+        spt_dir.clone(),
+        db_arc.clone(),
+        config_handle.clone(),
+    );
 
     let app_state = web::Data::new(AppState {
         db: db_arc,
