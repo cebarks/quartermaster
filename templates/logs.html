@@ -14,6 +14,7 @@
     <div class="log-controls">
         <div class="log-controls-left">
             <button id="app-live-toggle" class="btn btn-sm btn-outline active">Live</button>
+            <span id="app-sse-status" class="text-muted text-sm" style="display:none"></span>
             <button id="app-refresh-btn" class="btn btn-sm btn-outline">Refresh</button>
             <button id="app-clear-btn" class="btn btn-sm btn-outline">Clear</button>
         </div>
@@ -249,7 +250,7 @@
             appContainer.scrollTop = appContainer.scrollHeight;
         } catch (e) {
             console.error('Failed to load logs:', e);
-            appContainer.innerHTML = '<div class="empty-state"><p>Error loading logs</p></div>';
+            appContainer.innerHTML = '<div class="empty-state"><p>Failed to load logs</p><button class="btn btn-sm" onclick="location.reload()">Retry</button></div>';
         }
     }
 
@@ -324,12 +325,28 @@
         updateScrollIndicators();
     }
 
+    let appReconnectDelay = 1000;
+    const MAX_RECONNECT_DELAY = 30000;
+    const MAX_SSE_RETRIES = 10;
+    let appReconnectTimer = null;
+    let appRetryCount = 0;
+    const appSSEStatus = document.getElementById('app-sse-status');
+
+    function showSSEStatus(msg) {
+        appSSEStatus.textContent = msg;
+        appSSEStatus.style.display = msg ? 'inline' : 'none';
+    }
+
     function connectSSE() {
         if (appEventSource) appEventSource.close();
+        if (appReconnectTimer) { clearTimeout(appReconnectTimer); appReconnectTimer = null; }
         appSSEBuffer.length = 0;
+        showSSEStatus('');
         appEventSource = new EventSource('/quma/api/logs/app/stream');
         appEventSource.onmessage = (event) => {
             if (!liveMode) return;
+            appReconnectDelay = 1000;
+            appRetryCount = 0;
             if (appSSEBuffer.length >= 200) return;
             try {
                 appSSEBuffer.push(JSON.parse(event.data));
@@ -342,15 +359,34 @@
             }
         };
         appEventSource.onerror = () => {
-            console.error('SSE connection error');
+            appEventSource.close();
+            appEventSource = null;
+            if (!liveMode) return;
+            appRetryCount++;
+            if (appRetryCount >= MAX_SSE_RETRIES) {
+                showSSEStatus('Connection lost — click Live to retry');
+                liveMode = false;
+                appLiveToggle.classList.remove('active');
+                return;
+            }
+            showSSEStatus(`Disconnected — reconnecting (${appRetryCount}/${MAX_SSE_RETRIES})...`);
+            appReconnectTimer = setTimeout(() => {
+                appReconnectTimer = null;
+                connectSSE();
+            }, appReconnectDelay);
+            appReconnectDelay = Math.min(appReconnectDelay * 2, MAX_RECONNECT_DELAY);
         };
     }
 
     function stopSSE() {
+        if (appReconnectTimer) { clearTimeout(appReconnectTimer); appReconnectTimer = null; }
         if (appEventSource) {
             appEventSource.close();
             appEventSource = null;
         }
+        appRetryCount = 0;
+        appReconnectDelay = 1000;
+        showSSEStatus('');
     }
 
     // Event listeners
@@ -574,6 +610,7 @@
             if (serverFollowing) stopServerFollow();
         } else {
             if (liveMode) connectSSE();
+            // Server follow does not auto-reconnect — user must click Follow again
         }
     });
 })();
