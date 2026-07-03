@@ -1,0 +1,15 @@
+{
+  "minLines": 5,
+  "minTokens": 50,
+  "threshold": 13,
+  "reporters": ["console", "threshold"],
+  "ignore": [
+    "**/target/**",
+    "**/.dev-server/**",
+    "**/node_modules/**",
+    "**/htmx.min.js",
+    "**/*.min.js",
+    "**/*.min.css"
+  ],
+  "mode": "mild"
+}
