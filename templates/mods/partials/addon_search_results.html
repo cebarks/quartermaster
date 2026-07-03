@@ -1,0 +1,30 @@
+{% if let Some(err) = error %}
+<div class="alert alert-danger">{{ err }}</div>
+{% else if results.is_empty() %}
+<p class="text-muted">No addons found. Try a different search term.</p>
+{% else %}
+<table class="table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for result in results %}
+        <tr>
+            <td>{{ result.name }}</td>
+            <td class="text-muted text-sm">{{ result.description.as_deref().unwrap_or("-") }}</td>
+            <td>
+                <form method="post" action="/quma/mods/{{ parent_mod_db_id }}/install-addon" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="addon_id" value="{{ result.id }}">
+                    <button type="submit" class="btn btn-sm btn-success">Install</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}

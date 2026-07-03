@@ -25,7 +25,7 @@
         <thead>
             <tr>
                 <th>Action</th>
-                <th>Mod</th>
+                <th>Item</th>
                 <th>Queued</th>
                 <th>By</th>
                 {% if user.can("queue.manage") %}<th>Actions</th>{% endif %}
@@ -41,7 +41,12 @@
                     {% else %}<span class="badge badge-muted">{{ op.action }}</span>
                     {% endif %}
                 </td>
-                <td>{{ op.mod_name }}</td>
+                <td>
+                    {{ op.mod_name }}
+                    {% if op.item_type == "addon" %}
+                    <span class="badge badge-info" style="margin-left: 0.5rem;">addon</span>
+                    {% endif %}
+                </td>
                 <td class="text-muted text-sm">{{ op.queued_at }}</td>
                 <td class="text-muted text-sm">
                     {% if let Some(by) = op.queued_by.as_deref() %}
