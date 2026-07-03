@@ -540,8 +540,8 @@ pub async fn save_groups(
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| crate::config::slugify(&display_name));
 
-        if validate_group_slug(&slug).is_err() {
-            continue; // Skip groups with invalid slugs
+        if slug != "no-headless" && validate_group_slug(&slug).is_err() {
+            continue;
         }
 
         // Parse members, keeping only valid mod IDs with client files
@@ -614,12 +614,33 @@ pub async fn save_groups(
         }
     }
 
-    // "default" is reserved — strip it even if validation was somehow bypassed
-    new_groups.remove("default");
-
     // Load-then-mutate: only replace the groups field
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
+
+    // "default" is reserved — strip it even if validation was somehow bypassed
+    new_groups.remove("default");
+
+    // Enforce no-headless: force exclude_headless=true, re-inject if missing
+    if let Some(nh) = new_groups.get_mut("no-headless") {
+        nh.exclude_headless = true;
+    } else {
+        let existing_nh = config
+            .modsync
+            .as_ref()
+            .and_then(|ms| ms.groups.get("no-headless"))
+            .cloned()
+            .unwrap_or_else(|| ModSyncGroup {
+                display_name: "No Headless".to_string(),
+                members: Vec::new(),
+                enabled: None,
+                enforced: None,
+                silent: None,
+                restart_required: None,
+                exclude_headless: true,
+            });
+        new_groups.insert("no-headless".to_string(), existing_nh);
+    }
     if let Some(ref mut ms) = config.modsync {
         ms.groups = new_groups;
     } else {
