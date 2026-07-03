@@ -481,7 +481,7 @@ pub fn setup_client_overlay(
         debug!("Created wine-prefix directory for client {index}");
     }
 
-    ensure_winhttp_override(&wine_prefix_dir)?;
+    ensure_wine_registry(&wine_prefix_dir)?;
 
     for isolated_path in isolated_paths {
         let src = install_dir.join(isolated_path);
@@ -530,58 +530,78 @@ pub fn setup_client_overlay(
     Ok(())
 }
 
-/// Ensure the wine prefix has a `winhttp=native,builtin` DLL override in `user.reg`.
+/// Ensure the wine prefix `user.reg` has the registry keys EFT needs under Proton:
 ///
-/// BepInEx uses a `winhttp.dll` doorstop to inject itself into the Unity process.
-/// Wine must load the local (native) winhttp.dll instead of its builtin one, or
-/// BepInEx never initializes. The baked container image includes this override in
-/// its `/.wine` prefix, but quma's per-client wine prefix overlay hides it. This
-/// function seeds or patches the overlay's `user.reg` so the override survives.
-fn ensure_winhttp_override(wine_prefix_dir: &Path) -> Result<()> {
+/// 1. `winhttp=native,builtin` DLL override — BepInEx uses a `winhttp.dll` doorstop
+///    to inject itself. Without this override Wine uses its builtin winhttp.dll and
+///    BepInEx never loads.
+///
+/// 2. `ProxyEnable=0` under Internet Settings — Mono's `AutoWebProxyScriptEngine`
+///    reads Windows proxy config from the registry. When the key is absent (fresh
+///    wine prefix), it dereferences null and crashes every HTTP request, blocking
+///    SPT's client patches from initializing.
+///
+/// The baked container image includes these in its `/.wine` prefix, but quma's
+/// per-client wine prefix overlay hides them. This function seeds or patches the
+/// overlay's `user.reg` so they survive.
+fn ensure_wine_registry(wine_prefix_dir: &Path) -> Result<()> {
     let user_reg = wine_prefix_dir.join("user.reg");
+
+    let winhttp_entry = r#""winhttp"="native,builtin""#;
+    let proxy_section = "[Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Internet Settings]";
+    let proxy_entry = "\"ProxyEnable\"=dword:00000000";
 
     if user_reg.exists() {
         let content = std::fs::read_to_string(&user_reg)
             .with_context(|| format!("failed to read {}", user_reg.display()))?;
 
-        if content.contains(r#""winhttp"="native,builtin""#) {
+        let needs_winhttp = !content.contains(winhttp_entry);
+        let needs_proxy = !content.contains(proxy_entry);
+
+        if !needs_winhttp && !needs_proxy {
             return Ok(());
         }
 
-        // Append to existing DllOverrides section, or create one
-        if let Some(pos) = content.find("[Software\\\\Wine\\\\DllOverrides]") {
-            let insert_at = content[pos..]
-                .find('\n')
-                .map(|i| pos + i + 1)
-                .unwrap_or(content.len());
-            let mut patched = content[..insert_at].to_string();
-            patched.push_str("\"winhttp\"=\"native,builtin\"\n");
-            patched.push_str(&content[insert_at..]);
-            std::fs::write(&user_reg, patched)
-                .with_context(|| format!("failed to patch {}", user_reg.display()))?;
-        } else {
-            let mut appended = content;
-            appended.push_str("\n[Software\\\\Wine\\\\DllOverrides]\n");
-            appended.push_str("\"winhttp\"=\"native,builtin\"\n\n");
-            std::fs::write(&user_reg, appended)
-                .with_context(|| format!("failed to append to {}", user_reg.display()))?;
+        let mut patched = content;
+
+        if needs_winhttp {
+            if let Some(pos) = patched.find("[Software\\\\Wine\\\\DllOverrides]") {
+                let insert_at = patched[pos..]
+                    .find('\n')
+                    .map(|i| pos + i + 1)
+                    .unwrap_or(patched.len());
+                patched.insert_str(insert_at, &format!("{winhttp_entry}\n"));
+            } else {
+                patched.push_str(&format!(
+                    "\n[Software\\\\Wine\\\\DllOverrides]\n{winhttp_entry}\n\n"
+                ));
+            }
         }
 
-        debug!("Patched winhttp DLL override into {}", user_reg.display());
+        if needs_proxy {
+            patched.push_str(&format!("\n{proxy_section}\n{proxy_entry}\n\n"));
+        }
+
+        std::fs::write(&user_reg, patched)
+            .with_context(|| format!("failed to patch {}", user_reg.display()))?;
+        debug!("Patched wine registry in {}", user_reg.display());
     } else {
-        // Seed a minimal user.reg — Proton/Wine will merge its own entries on first boot.
-        let seed = "\
-WINE REGISTRY Version 2\n\
-;; All keys relative to \\\\Registry\\\\User\\\\S-1-5-21-0-0-0-1000\n\
-\n\
-#arch=win64\n\
-\n\
-[Software\\\\Wine\\\\DllOverrides]\n\
-\"winhttp\"=\"native,builtin\"\n\
-\n";
+        let seed = format!(
+            "WINE REGISTRY Version 2\n\
+             ;; All keys relative to \\\\Registry\\\\User\\\\S-1-5-21-0-0-0-1000\n\
+             \n\
+             #arch=win64\n\
+             \n\
+             [Software\\\\Wine\\\\DllOverrides]\n\
+             {winhttp_entry}\n\
+             \n\
+             {proxy_section}\n\
+             {proxy_entry}\n\
+             \n"
+        );
         std::fs::write(&user_reg, seed)
             .with_context(|| format!("failed to seed {}", user_reg.display()))?;
-        debug!("Seeded winhttp DLL override into {}", user_reg.display());
+        debug!("Seeded wine registry in {}", user_reg.display());
     }
 
     Ok(())
@@ -1192,6 +1212,25 @@ async fn create_client_container(
             path_in_container: Some("/dev/ntsync".to_string()),
             cgroup_permissions: Some("rwm".to_string()),
         });
+    }
+
+    // Pass through DRI render nodes so the EFT Unity engine can initialize.
+    // Without a GPU device, Unity hangs during graphics init even with -nographics.
+    for entry in std::fs::read_dir("/dev/dri")
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("card") || name.starts_with("renderD") {
+            let path = entry.path().to_string_lossy().to_string();
+            devices.push(DeviceMapping {
+                path_on_host: Some(path.clone()),
+                path_in_container: Some(path),
+                cgroup_permissions: Some("rwm".to_string()),
+            });
+        }
     }
 
     let security_opt = if devices.is_empty() {
