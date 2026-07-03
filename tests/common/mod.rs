@@ -184,6 +184,10 @@ impl TestAppBuilder {
             game_data: Arc::new(GameData::load_empty()),
             proxy_metrics: ProxyMetrics::new(),
             proxy_client,
+            mod_zip_cache: spt_quartermaster::web::mod_zip_cache::ModZipCache::new(
+                spt_dir.clone(),
+                db_arc.clone(),
+            ),
         });
 
         TestApp {
