@@ -412,14 +412,20 @@ impl Default for Traders {
 #[serde(rename_all = "PascalCase", default)]
 pub struct Fence {
     pub enable_fence: bool,
+    #[serde(rename = "ArmorDurability_Max")]
     pub armor_durability_max: i32,
+    #[serde(rename = "GunDurability_Max")]
     pub gun_durability_max: i32,
+    #[serde(rename = "ArmorDurability_Min")]
     pub armor_durability_min: i32,
+    #[serde(rename = "GunDurability_Min")]
     pub gun_durability_min: i32,
     pub price_mult: f64,
     pub premium_amount_on_sale: i32,
     pub preset_count: i32,
+    #[serde(rename = "StockTime_Min")]
     pub stock_time_min: i32,
+    #[serde(rename = "StockTime_Max")]
     pub stock_time_max: i32,
     pub amount_on_sale: i32,
     pub preset_mult: f64,
@@ -452,6 +458,7 @@ pub struct TraderMarkup {
     pub fence: i32,
     pub prapor: i32,
     pub jaeger: i32,
+    #[serde(rename = "Ref")]
     pub ref_field: i32,
     pub mechanic: i32,
     pub skier: i32,
@@ -483,6 +490,7 @@ pub struct TraderSell {
     pub jaeger: f64,
     pub mechanic: f64,
     pub skier: f64,
+    #[serde(rename = "Ref")]
     pub ref_field: f64,
     pub therapist: f64,
 }
@@ -539,15 +547,23 @@ pub struct Airdrops {
     pub medical: AirdropContents,
     pub barter: AirdropContents,
     pub weapon: AirdropContents,
+    #[serde(rename = "Sandbox_air")]
     pub sandbox_air: i32,
+    #[serde(rename = "Streets_air")]
     pub streets_air: i32,
     pub airtime_min: i32,
     pub airtime_max: i32,
+    #[serde(rename = "Lighthouse_air")]
     pub lighthouse_air: i32,
+    #[serde(rename = "Bigmap_air")]
     pub bigmap_air: i32,
+    #[serde(rename = "Interchange_air")]
     pub interchange_air: i32,
+    #[serde(rename = "Shoreline_air")]
     pub shoreline_air: i32,
+    #[serde(rename = "Reserve_air")]
     pub reserve_air: i32,
+    #[serde(rename = "Woods_air")]
     pub woods_air: i32,
 }
 
@@ -717,6 +733,7 @@ pub struct Player {
     pub enable_fatigue: bool,
     #[serde(rename = "PMCStats")]
     pub pmc_stats: Stats,
+    #[serde(rename = "CharXP")]
     pub char_xp: CharXp,
     pub raid_mult: RaidMult,
     pub enable_stats: bool,
@@ -807,7 +824,9 @@ pub struct Health {
 pub struct DiedHealth {
     pub saveeffects: bool,
     pub savehealth: bool,
+    #[serde(rename = "Health_blacked")]
     pub health_blacked: f64,
+    #[serde(rename = "Health_death")]
     pub health_death: f64,
 }
 
@@ -1197,12 +1216,18 @@ pub struct Fleamarket {
     #[serde(rename = "DisableBSGList")]
     pub disable_bsg_list: bool,
     pub enable_fleamarket: bool,
+    #[serde(rename = "Sell_mult")]
     pub sell_mult: f64,
+    #[serde(rename = "Tradeoffer_max")]
     pub tradeoffer_max: i32,
+    #[serde(rename = "Rep_loss")]
     pub rep_loss: f64,
     pub tiered_flea: bool,
+    #[serde(rename = "Rep_gain")]
     pub rep_gain: f64,
+    #[serde(rename = "Tradeoffer_min")]
     pub tradeoffer_min: i32,
+    #[serde(rename = "Sell_chance")]
     pub sell_chance: i32,
     pub fees_mult: f64,
     pub dynamic_offers: DynamicOffers,
@@ -1238,19 +1263,33 @@ impl Default for Fleamarket {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct FleaConditions {
+    #[serde(rename = "FleaFood_Min")]
     pub flea_food_min: i32,
+    #[serde(rename = "FleaArmor_Min")]
     pub flea_armor_min: i32,
+    #[serde(rename = "FleaFood_Max")]
     pub flea_food_max: i32,
+    #[serde(rename = "FleaArmor_Max")]
     pub flea_armor_max: i32,
+    #[serde(rename = "FleaMedical_Min")]
     pub flea_medical_min: i32,
+    #[serde(rename = "FleaSpec_Min")]
     pub flea_spec_min: i32,
+    #[serde(rename = "FleaMedical_Max")]
     pub flea_medical_max: i32,
+    #[serde(rename = "FleaSpec_Max")]
     pub flea_spec_max: i32,
+    #[serde(rename = "FleaWeapons_Min")]
     pub flea_weapons_min: i32,
+    #[serde(rename = "FleaVests_Min")]
     pub flea_vests_min: i32,
+    #[serde(rename = "FleaKeys_Min")]
     pub flea_keys_min: i32,
+    #[serde(rename = "FleaWeapons_Max")]
     pub flea_weapons_max: i32,
+    #[serde(rename = "FleaVests_Max")]
     pub flea_vests_max: i32,
+    #[serde(rename = "FleaKeys_Max")]
     pub flea_keys_max: i32,
 }
 
@@ -1281,18 +1320,28 @@ pub struct DynamicOffers {
     pub expire_threshold: i32,
     pub bundle_offer_chance: i32,
     pub barter_chance: i32,
+    #[serde(rename = "Stack_min")]
     pub stack_min: i32,
+    #[serde(rename = "PerOffer_min")]
     pub per_offer_min: i32,
+    #[serde(rename = "Stack_max")]
     pub stack_max: i32,
+    #[serde(rename = "PerOffer_max")]
     pub per_offer_max: i32,
     pub eurooffers: i32,
     pub dollaroffers: i32,
     pub roubleoffers: i32,
+    #[serde(rename = "NonStack_min")]
     pub non_stack_min: i32,
+    #[serde(rename = "Time_min")]
     pub time_min: i32,
+    #[serde(rename = "Price_min")]
     pub price_min: f64,
+    #[serde(rename = "NonStack_max")]
     pub non_stack_max: i32,
+    #[serde(rename = "Time_max")]
     pub time_max: i32,
+    #[serde(rename = "Price_max")]
     pub price_max: f64,
 }
 
@@ -1339,9 +1388,13 @@ pub struct Services {
     pub insurance_attachment_chance: i32,
     pub therapist_storage_time: i32,
     pub prapor_storage_time: i32,
+    #[serde(rename = "Prapor_Max")]
     pub prapor_max: i32,
+    #[serde(rename = "Prapor_Min")]
     pub prapor_min: i32,
+    #[serde(rename = "Therapist_Max")]
     pub therapist_max: i32,
+    #[serde(rename = "Therapist_Min")]
     pub therapist_min: i32,
     pub therapist_lvl1: f64,
     pub therapist_lvl2: f64,
@@ -2199,6 +2252,7 @@ pub struct Pmc {
     pub chances_enable: bool,
     #[serde(rename = "PMCRatio")]
     pub pmc_ratio: i32,
+    #[serde(rename = "DisableLowLevelPMC")]
     pub disable_low_level_pmc: bool,
     pub lootable_melee: bool,
     #[serde(rename = "EnablePMC")]
@@ -2232,7 +2286,9 @@ pub struct PmcChance {
     pub pmc_all_name_prefix: i32,
     #[serde(rename = "PMCLooseWep")]
     pub pmc_loose_wep: i32,
+    #[serde(rename = "HostileSamePMC")]
     pub hostile_same_pmc: i32,
+    #[serde(rename = "HostilePMC")]
     pub hostile_pmc: i32,
     #[serde(rename = "PMCWepEnhance")]
     pub pmc_wep_enhance: i32,
@@ -2266,6 +2322,7 @@ pub struct Custom {
     pub disable_pmc_messages: bool,
     #[serde(rename = "IDChanger")]
     pub id_changer: bool,
+    #[serde(rename = "FleaMultID")]
     pub flea_mult_id: String,
     #[serde(rename = "IDDefault")]
     pub id_default: String,
@@ -2338,5 +2395,105 @@ mod tests {
         assert!(json.get("raids").is_none());
         let raids = json.get("Raids").unwrap();
         assert!(raids.get("RaidTime").is_some());
+    }
+
+    #[test]
+    fn svm_key_names_match_dll_expectations() {
+        let config = SvmConfig::default();
+        let json = serde_json::to_value(&config).unwrap();
+
+        // Fence underscore-style keys
+        let fence = &json["Traders"]["Fence"];
+        assert!(
+            fence.get("ArmorDurability_Max").is_some(),
+            "expected ArmorDurability_Max"
+        );
+        assert!(
+            fence.get("GunDurability_Min").is_some(),
+            "expected GunDurability_Min"
+        );
+        assert!(
+            fence.get("StockTime_Max").is_some(),
+            "expected StockTime_Max"
+        );
+
+        // Ref trader (not RefField)
+        assert!(
+            json["Traders"]["TraderMarkup"].get("Ref").is_some(),
+            "expected Ref not RefField"
+        );
+        assert!(
+            json["Traders"]["TraderSell"].get("Ref").is_some(),
+            "expected Ref not RefField"
+        );
+
+        // CharXP (not CharXp)
+        assert!(
+            json["Player"].get("CharXP").is_some(),
+            "expected CharXP not CharXp"
+        );
+
+        // DiedHealth underscore keys
+        let died = &json["Player"]["DiedHealth"];
+        assert!(
+            died.get("Health_blacked").is_some(),
+            "expected Health_blacked"
+        );
+        assert!(died.get("Health_death").is_some(), "expected Health_death");
+
+        // Fleamarket underscore keys
+        let flea = &json["Fleamarket"];
+        assert!(flea.get("Sell_mult").is_some(), "expected Sell_mult");
+        assert!(flea.get("Rep_gain").is_some(), "expected Rep_gain");
+        assert!(
+            flea.get("Tradeoffer_max").is_some(),
+            "expected Tradeoffer_max"
+        );
+        assert!(flea.get("Sell_chance").is_some(), "expected Sell_chance");
+
+        // FleaConditions
+        let cond = &flea["FleaConditions"];
+        assert!(cond.get("FleaFood_Min").is_some(), "expected FleaFood_Min");
+        assert!(
+            cond.get("FleaArmor_Max").is_some(),
+            "expected FleaArmor_Max"
+        );
+
+        // DynamicOffers
+        let dyn_o = &flea["DynamicOffers"];
+        assert!(dyn_o.get("Stack_min").is_some(), "expected Stack_min");
+        assert!(dyn_o.get("PerOffer_max").is_some(), "expected PerOffer_max");
+        assert!(dyn_o.get("NonStack_min").is_some(), "expected NonStack_min");
+        assert!(dyn_o.get("Time_max").is_some(), "expected Time_max");
+        assert!(dyn_o.get("Price_min").is_some(), "expected Price_min");
+
+        // Services
+        let svc = &json["Services"];
+        assert!(svc.get("Prapor_Max").is_some(), "expected Prapor_Max");
+        assert!(svc.get("Therapist_Min").is_some(), "expected Therapist_Min");
+
+        // Airdrops
+        let air = &json["Loot"]["Airdrops"];
+        assert!(air.get("Bigmap_air").is_some(), "expected Bigmap_air");
+        assert!(air.get("Sandbox_air").is_some(), "expected Sandbox_air");
+
+        // PMC
+        let pmc = &json["PMC"];
+        assert!(
+            pmc.get("DisableLowLevelPMC").is_some(),
+            "expected DisableLowLevelPMC"
+        );
+        let chance = &pmc["PMCChance"];
+        assert!(
+            chance.get("HostileSamePMC").is_some(),
+            "expected HostileSamePMC"
+        );
+        assert!(chance.get("HostilePMC").is_some(), "expected HostilePMC");
+
+        // Custom
+        assert!(
+            json["Custom"].get("FleaMultID").is_some(),
+            "expected FleaMultID"
+        );
     }
 }

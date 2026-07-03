@@ -1288,7 +1288,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
             subgroup: Some("Fence"),
         },
         FieldMeta {
-            path: "Fence.ArmorDurabilityMax",
+            path: "Fence.ArmorDurability_Max",
             label: "Armor Durability Max",
             description: "Maximum armor durability at Fence",
             input_type: InputType::Integer {
@@ -1298,7 +1298,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
             subgroup: Some("Fence"),
         },
         FieldMeta {
-            path: "Fence.GunDurabilityMax",
+            path: "Fence.GunDurability_Max",
             label: "Gun Durability Max",
             description: "Maximum gun durability at Fence",
             input_type: InputType::Integer {
@@ -1308,7 +1308,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
             subgroup: Some("Fence"),
         },
         FieldMeta {
-            path: "Fence.ArmorDurabilityMin",
+            path: "Fence.ArmorDurability_Min",
             label: "Armor Durability Min",
             description: "Minimum armor durability at Fence",
             input_type: InputType::Integer {
@@ -1318,7 +1318,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
             subgroup: Some("Fence"),
         },
         FieldMeta {
-            path: "Fence.GunDurabilityMin",
+            path: "Fence.GunDurability_Min",
             label: "Gun Durability Min",
             description: "Minimum gun durability at Fence",
             input_type: InputType::Integer {
@@ -1359,7 +1359,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
             subgroup: Some("Fence"),
         },
         FieldMeta {
-            path: "Fence.StockTimeMin",
+            path: "Fence.StockTime_Min",
             label: "Stock Time Min (minutes)",
             description: "Minimum time for stock refresh",
             input_type: InputType::Integer {
@@ -1369,7 +1369,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
             subgroup: Some("Fence"),
         },
         FieldMeta {
-            path: "Fence.StockTimeMax",
+            path: "Fence.StockTime_Max",
             label: "Stock Time Max (minutes)",
             description: "Maximum time for stock refresh",
             input_type: InputType::Integer {
@@ -1450,7 +1450,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
             subgroup: Some("Trader Markup"),
         },
         FieldMeta {
-            path: "TraderMarkup.RefField",
+            path: "TraderMarkup.Ref",
             label: "Ref Markup",
             description: "Ref price markup percentage",
             input_type: InputType::Integer {
@@ -1556,7 +1556,7 @@ pub fn traders_fields() -> &'static [FieldMeta] {
             subgroup: Some("Trader Sell"),
         },
         FieldMeta {
-            path: "TraderSell.RefField",
+            path: "TraderSell.Ref",
             label: "Ref Sell Multiplier",
             description: "Multiplier for selling to Ref",
             input_type: InputType::Float {
@@ -1911,7 +1911,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
             subgroup: Some("Locations"),
         },
         FieldMeta {
-            path: "Airdrops.SandboxAir",
+            path: "Airdrops.Sandbox_air",
             label: "Ground Zero Airdrops",
             description: "Airdrop chance on Ground Zero",
             input_type: InputType::Integer {
@@ -1921,7 +1921,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
             subgroup: Some("Airdrops"),
         },
         FieldMeta {
-            path: "Airdrops.StreetsAir",
+            path: "Airdrops.Streets_air",
             label: "Streets Airdrops",
             description: "Airdrop chance on Streets",
             input_type: InputType::Integer {
@@ -1951,7 +1951,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
             subgroup: Some("Airdrops"),
         },
         FieldMeta {
-            path: "Airdrops.LighthouseAir",
+            path: "Airdrops.Lighthouse_air",
             label: "Lighthouse Airdrops",
             description: "Airdrop chance on Lighthouse",
             input_type: InputType::Integer {
@@ -1961,7 +1961,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
             subgroup: Some("Airdrops"),
         },
         FieldMeta {
-            path: "Airdrops.BigmapAir",
+            path: "Airdrops.Bigmap_air",
             label: "Customs Airdrops",
             description: "Airdrop chance on Customs",
             input_type: InputType::Integer {
@@ -1971,7 +1971,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
             subgroup: Some("Airdrops"),
         },
         FieldMeta {
-            path: "Airdrops.InterchangeAir",
+            path: "Airdrops.Interchange_air",
             label: "Interchange Airdrops",
             description: "Airdrop chance on Interchange",
             input_type: InputType::Integer {
@@ -1981,7 +1981,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
             subgroup: Some("Airdrops"),
         },
         FieldMeta {
-            path: "Airdrops.ShorelineAir",
+            path: "Airdrops.Shoreline_air",
             label: "Shoreline Airdrops",
             description: "Airdrop chance on Shoreline",
             input_type: InputType::Integer {
@@ -1991,7 +1991,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
             subgroup: Some("Airdrops"),
         },
         FieldMeta {
-            path: "Airdrops.ReserveAir",
+            path: "Airdrops.Reserve_air",
             label: "Reserve Airdrops",
             description: "Airdrop chance on Reserve",
             input_type: InputType::Integer {
@@ -2001,7 +2001,7 @@ pub fn loot_fields() -> &'static [FieldMeta] {
             subgroup: Some("Airdrops"),
         },
         FieldMeta {
-            path: "Airdrops.WoodsAir",
+            path: "Airdrops.Woods_air",
             label: "Woods Airdrops",
             description: "Airdrop chance on Woods",
             input_type: InputType::Integer {
@@ -2577,7 +2577,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
             subgroup: Some("Stats"),
         },
         FieldMeta {
-            path: "CharXp.ScavKill",
+            path: "CharXP.ScavKill",
             label: "Scav Kill XP",
             description: "Base experience for killing a scav",
             input_type: InputType::Integer {
@@ -2587,7 +2587,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
             subgroup: Some("CharXp"),
         },
         FieldMeta {
-            path: "CharXp.ScavHMult",
+            path: "CharXP.ScavHMult",
             label: "Scav Headshot Multiplier",
             description: "Multiplier for scav headshot kills",
             input_type: InputType::Float {
@@ -2598,7 +2598,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
             subgroup: Some("CharXp"),
         },
         FieldMeta {
-            path: "CharXp.PMCKill",
+            path: "CharXP.PMCKill",
             label: "PMC Kill XP",
             description: "Base experience for killing a PMC",
             input_type: InputType::Integer {
@@ -2608,7 +2608,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
             subgroup: Some("CharXp"),
         },
         FieldMeta {
-            path: "CharXp.PMCHMult",
+            path: "CharXP.PMCHMult",
             label: "PMC Headshot Multiplier",
             description: "Multiplier for PMC headshot kills",
             input_type: InputType::Float {
@@ -2810,7 +2810,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
             subgroup: Some("DiedHealth"),
         },
         FieldMeta {
-            path: "DiedHealth.HealthBlacked",
+            path: "DiedHealth.Health_blacked",
             label: "Health Blacked Multiplier",
             description: "Health multiplier for blacked limbs after death",
             input_type: InputType::Float {
@@ -2821,7 +2821,7 @@ pub fn player_fields() -> &'static [FieldMeta] {
             subgroup: Some("DiedHealth"),
         },
         FieldMeta {
-            path: "DiedHealth.HealthDeath",
+            path: "DiedHealth.Health_death",
             label: "Health Death Multiplier",
             description: "Health multiplier after death",
             input_type: InputType::Float {
@@ -3748,7 +3748,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "SellMult",
+            path: "Sell_mult",
             label: "Sell Multiplier",
             description: "Multiplier for flea market sell prices",
             input_type: InputType::Float {
@@ -3759,7 +3759,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "TradeofferMax",
+            path: "Tradeoffer_max",
             label: "Trade Offer Max",
             description: "Maximum trade offers",
             input_type: InputType::Integer {
@@ -3769,7 +3769,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "RepLoss",
+            path: "Rep_loss",
             label: "Rep Loss",
             description: "Reputation loss on failed sale",
             input_type: InputType::Float {
@@ -3787,7 +3787,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "RepGain",
+            path: "Rep_gain",
             label: "Rep Gain",
             description: "Reputation gain on successful sale",
             input_type: InputType::Float {
@@ -3798,7 +3798,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "TradeofferMin",
+            path: "Tradeoffer_min",
             label: "Trade Offer Min",
             description: "Minimum trade offers",
             input_type: InputType::Integer {
@@ -3808,7 +3808,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "SellChance",
+            path: "Sell_chance",
             label: "Sell Chance",
             description: "Chance for offers to sell",
             input_type: InputType::Integer {
@@ -3829,7 +3829,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "FleaConditions.FleaFoodMin",
+            path: "FleaConditions.FleaFood_Min",
             label: "Food Min Condition",
             description: "Minimum condition for food items",
             input_type: InputType::Integer {
@@ -3839,7 +3839,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaArmorMin",
+            path: "FleaConditions.FleaArmor_Min",
             label: "Armor Min Condition",
             description: "Minimum condition for armor items",
             input_type: InputType::Integer {
@@ -3849,7 +3849,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaFoodMax",
+            path: "FleaConditions.FleaFood_Max",
             label: "Food Max Condition",
             description: "Maximum condition for food items",
             input_type: InputType::Integer {
@@ -3859,7 +3859,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaArmorMax",
+            path: "FleaConditions.FleaArmor_Max",
             label: "Armor Max Condition",
             description: "Maximum condition for armor items",
             input_type: InputType::Integer {
@@ -3869,7 +3869,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaMedicalMin",
+            path: "FleaConditions.FleaMedical_Min",
             label: "Medical Min Condition",
             description: "Minimum condition for medical items",
             input_type: InputType::Integer {
@@ -3879,7 +3879,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaSpecMin",
+            path: "FleaConditions.FleaSpec_Min",
             label: "Specialist Min Condition",
             description: "Minimum condition for specialist items",
             input_type: InputType::Integer {
@@ -3889,7 +3889,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaMedicalMax",
+            path: "FleaConditions.FleaMedical_Max",
             label: "Medical Max Condition",
             description: "Maximum condition for medical items",
             input_type: InputType::Integer {
@@ -3899,7 +3899,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaSpecMax",
+            path: "FleaConditions.FleaSpec_Max",
             label: "Specialist Max Condition",
             description: "Maximum condition for specialist items",
             input_type: InputType::Integer {
@@ -3909,7 +3909,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaWeaponsMin",
+            path: "FleaConditions.FleaWeapons_Min",
             label: "Weapons Min Condition",
             description: "Minimum condition for weapons",
             input_type: InputType::Integer {
@@ -3919,7 +3919,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaVestsMin",
+            path: "FleaConditions.FleaVests_Min",
             label: "Vests Min Condition",
             description: "Minimum condition for vests",
             input_type: InputType::Integer {
@@ -3929,7 +3929,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaKeysMin",
+            path: "FleaConditions.FleaKeys_Min",
             label: "Keys Min Condition",
             description: "Minimum condition for keys",
             input_type: InputType::Integer {
@@ -3939,7 +3939,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaWeaponsMax",
+            path: "FleaConditions.FleaWeapons_Max",
             label: "Weapons Max Condition",
             description: "Maximum condition for weapons",
             input_type: InputType::Integer {
@@ -3949,7 +3949,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaVestsMax",
+            path: "FleaConditions.FleaVests_Max",
             label: "Vests Max Condition",
             description: "Maximum condition for vests",
             input_type: InputType::Integer {
@@ -3959,7 +3959,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("FleaConditions"),
         },
         FieldMeta {
-            path: "FleaConditions.FleaKeysMax",
+            path: "FleaConditions.FleaKeys_Max",
             label: "Keys Max Condition",
             description: "Maximum condition for keys",
             input_type: InputType::Integer {
@@ -3999,7 +3999,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.StackMin",
+            path: "DynamicOffers.Stack_min",
             label: "Stack Min",
             description: "Minimum stack size",
             input_type: InputType::Integer {
@@ -4009,7 +4009,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.PerOfferMin",
+            path: "DynamicOffers.PerOffer_min",
             label: "Per Offer Min",
             description: "Minimum items per offer",
             input_type: InputType::Integer {
@@ -4019,7 +4019,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.StackMax",
+            path: "DynamicOffers.Stack_max",
             label: "Stack Max",
             description: "Maximum stack size",
             input_type: InputType::Integer {
@@ -4029,7 +4029,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.PerOfferMax",
+            path: "DynamicOffers.PerOffer_max",
             label: "Per Offer Max",
             description: "Maximum items per offer",
             input_type: InputType::Integer {
@@ -4069,7 +4069,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.NonStackMin",
+            path: "DynamicOffers.NonStack_min",
             label: "Non-Stack Min",
             description: "Minimum non-stackable items",
             input_type: InputType::Integer {
@@ -4079,7 +4079,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.TimeMin",
+            path: "DynamicOffers.Time_min",
             label: "Time Min (hours)",
             description: "Minimum time for offers",
             input_type: InputType::Integer {
@@ -4089,7 +4089,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.PriceMin",
+            path: "DynamicOffers.Price_min",
             label: "Price Min Multiplier",
             description: "Minimum price multiplier",
             input_type: InputType::Float {
@@ -4100,7 +4100,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.NonStackMax",
+            path: "DynamicOffers.NonStack_max",
             label: "Non-Stack Max",
             description: "Maximum non-stackable items",
             input_type: InputType::Integer {
@@ -4110,7 +4110,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.TimeMax",
+            path: "DynamicOffers.Time_max",
             label: "Time Max (hours)",
             description: "Maximum time for offers",
             input_type: InputType::Integer {
@@ -4120,7 +4120,7 @@ pub fn fleamarket_fields() -> &'static [FieldMeta] {
             subgroup: Some("DynamicOffers"),
         },
         FieldMeta {
-            path: "DynamicOffers.PriceMax",
+            path: "DynamicOffers.Price_max",
             label: "Price Max Multiplier",
             description: "Maximum price multiplier",
             input_type: InputType::Float {
@@ -4255,7 +4255,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "PraporMax",
+            path: "Prapor_Max",
             label: "Prapor Max Return (hours)",
             description: "Maximum return time for Prapor insurance",
             input_type: InputType::Integer {
@@ -4265,7 +4265,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "PraporMin",
+            path: "Prapor_Min",
             label: "Prapor Min Return (hours)",
             description: "Minimum return time for Prapor insurance",
             input_type: InputType::Integer {
@@ -4275,7 +4275,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "TherapistMax",
+            path: "Therapist_Max",
             label: "Therapist Max Return (hours)",
             description: "Maximum return time for Therapist insurance",
             input_type: InputType::Integer {
@@ -4285,7 +4285,7 @@ pub fn services_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "TherapistMin",
+            path: "Therapist_Min",
             label: "Therapist Min Return (hours)",
             description: "Minimum return time for Therapist insurance",
             input_type: InputType::Integer {
@@ -6851,7 +6851,7 @@ pub fn custom_fields() -> &'static [FieldMeta] {
             subgroup: None,
         },
         FieldMeta {
-            path: "FleaMultId",
+            path: "FleaMultID",
             label: "Flea Multiplier ID",
             description: "Flea market multiplier by item ID (format: id:multiplier)",
             input_type: InputType::Text,
