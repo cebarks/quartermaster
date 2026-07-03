@@ -4,6 +4,7 @@ pub mod error;
 pub mod flash;
 pub mod handlers;
 pub mod invite;
+pub mod mod_zip_cache;
 pub mod nav;
 pub mod proxy;
 pub mod proxy_metrics;
