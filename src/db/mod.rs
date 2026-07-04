@@ -44,6 +44,7 @@ impl Database {
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
         schema::run_migrations(&conn)?;
+        rbac::sync_builtin_role_permissions(&conn)?;
 
         Ok(Self { conn })
     }

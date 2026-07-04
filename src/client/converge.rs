@@ -22,8 +22,8 @@ impl Drop for ConvergingGuard {
 }
 
 /// Label key for marking containers as managed by quartermaster
-const MANAGED_BY_LABEL: &str = "quma.managed-by";
-const MANAGED_BY_VALUE: &str = "quartermaster-clients";
+pub const MANAGED_BY_LABEL: &str = "quma.managed-by";
+pub const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 
 use crate::config::FIKA_CLIENT_FORGE_ID;
 

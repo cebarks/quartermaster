@@ -157,6 +157,9 @@ impl TestAppBuilder {
         // Build AppState
         let db_arc = Arc::new(Mutex::new(db));
         let config_arc = Arc::new(parking_lot::RwLock::new(config.clone()));
+        let log_level_counts = Arc::new(parking_lot::RwLock::new(
+            db_arc.lock().log_counts_by_level().unwrap_or_default(),
+        ));
         let app_state = web::Data::new(AppState {
             db: db_arc.clone(),
             forge,
@@ -190,6 +193,7 @@ impl TestAppBuilder {
                 db_arc.clone(),
                 config_arc.clone(),
             ),
+            log_level_counts,
         });
 
         TestApp {
@@ -237,7 +241,7 @@ impl TestApp {
                 .wrap(middleware::NormalizePath::new(
                     middleware::TrailingSlash::MergeOnly,
                 ))
-                .configure(|cfg| configure_app(cfg, session_key, false, false)),
+                .configure(|cfg| configure_app(cfg, session_key, false, false, None, None)),
         )
         .await
     }

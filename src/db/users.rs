@@ -146,13 +146,10 @@ impl Database {
         rows.collect()
     }
 
-    pub fn admin_exists(&self) -> rusqlite::Result<bool> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM users WHERE role = ?1",
-            params!["admin"],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
+    pub fn has_user_manager(&self) -> rusqlite::Result<bool> {
+        Ok(self
+            .count_users_with_permission(crate::db::rbac::Permission::UsersManage.as_str(), None)?
+            > 0)
     }
 
     pub fn get_user_by_id(&self, id: i64) -> rusqlite::Result<Option<User>> {

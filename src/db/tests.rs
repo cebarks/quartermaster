@@ -265,17 +265,24 @@ fn insert_user_without_profile() {
 }
 
 #[test]
-fn admin_exists_check() {
+fn has_user_manager_check() {
     let db = test_db();
-    assert!(!db.admin_exists().unwrap());
+    assert!(!db.has_user_manager().unwrap());
 
     db.insert_user("player1", Some("p1"), Some("pw"), "player")
         .unwrap();
-    assert!(!db.admin_exists().unwrap());
+    assert!(!db.has_user_manager().unwrap());
 
     db.insert_user("admin1", Some("a1"), Some("pw"), "admin")
         .unwrap();
-    assert!(db.admin_exists().unwrap());
+    assert!(db.has_user_manager().unwrap());
+
+    // Custom role with users.manage should also count
+    db.create_role("ops", "Ops", &[crate::db::rbac::Permission::UsersManage])
+        .unwrap();
+    db.insert_user("ops1", Some("o1"), Some("pw"), "ops")
+        .unwrap();
+    assert!(db.has_user_manager().unwrap());
 }
 
 #[test]

@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::container::ContainerManager;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
+use crate::logging::writer::LogLevelCounts;
 use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::SptInfo;
 use crate::spt::game_data::GameData;
@@ -44,6 +45,7 @@ pub struct AppState {
     pub proxy_metrics: ProxyMetrics,
     pub proxy_client: reqwest::Client,
     pub mod_zip_cache: ModZipCache,
+    pub log_level_counts: LogLevelCounts,
 }
 
 impl AppState {

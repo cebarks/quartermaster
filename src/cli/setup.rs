@@ -441,7 +441,7 @@ fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database
         .with_context(|| format!("failed to create database at {}", db_path.display()))?;
     println!("Database initialized at {}", db_path.display());
 
-    if db.admin_exists()? {
+    if db.has_user_manager()? {
         println!("Admin user already exists.");
     } else {
         let password_hash = hash_password(admin_password)?;

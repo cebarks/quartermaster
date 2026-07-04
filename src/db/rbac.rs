@@ -177,7 +177,7 @@ pub fn validate_role_name(name: &str) -> Result<(), &'static str> {
 // Database Operations
 // ──────────────────────────────────────────────────────────────────────────────
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::Database;
 
@@ -454,6 +454,27 @@ pub enum DeleteRoleResult {
     HasUsers(i64),
 }
 
+/// Idempotently ensure the admin role has all permissions from Permission::ALL.
+/// Called after migrations to pick up newly added permissions on upgrade.
+/// Additive only — never removes permissions.
+pub fn sync_builtin_role_permissions(conn: &Connection) -> rusqlite::Result<()> {
+    let admin_id: Option<i64> = conn
+        .query_row("SELECT id FROM roles WHERE name = 'admin'", [], |row| {
+            row.get(0)
+        })
+        .optional()?;
+
+    if let Some(id) = admin_id {
+        for perm in Permission::ALL {
+            conn.execute(
+                "INSERT OR IGNORE INTO role_permissions (role_id, permission) VALUES (?1, ?2)",
+                params![id, perm.as_str()],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
@@ -601,5 +622,28 @@ mod tests {
         assert!(validate_role_name("curator").is_ok());
         assert!(validate_role_name("mod-curator").is_ok());
         assert!(validate_role_name("role123").is_ok());
+    }
+
+    #[test]
+    fn sync_restores_removed_admin_permission() {
+        let db = Database::open_in_memory().unwrap();
+        // Admin starts with all permissions
+        let perms_before = db.get_permissions_for_role("admin").unwrap();
+        assert_eq!(perms_before.len(), Permission::ALL.len());
+
+        // Manually remove one permission
+        db.conn().execute(
+            "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name = 'admin') AND permission = 'settings.manage'",
+            [],
+        ).unwrap();
+        let perms_after_delete = db.get_permissions_for_role("admin").unwrap();
+        assert_eq!(perms_after_delete.len(), Permission::ALL.len() - 1);
+        assert!(!perms_after_delete.contains(&Permission::SettingsManage));
+
+        // Sync should restore it
+        sync_builtin_role_permissions(db.conn()).unwrap();
+        let perms_after_sync = db.get_permissions_for_role("admin").unwrap();
+        assert_eq!(perms_after_sync.len(), Permission::ALL.len());
+        assert!(perms_after_sync.contains(&Permission::SettingsManage));
     }
 }
