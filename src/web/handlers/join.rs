@@ -567,8 +567,8 @@ pub async fn bootstrap_bash(
 
     let config = state.config.read();
     let external_url = match &config.external_url {
-        Some(url) => url.clone(),
-        None => {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => {
             return Ok(referrer_policy(
                 HttpResponse::ServiceUnavailable()
                     .content_type("text/plain")
@@ -627,8 +627,8 @@ pub async fn bootstrap_powershell(
 
     let config = state.config.read();
     let external_url = match &config.external_url {
-        Some(url) => url.clone(),
-        None => {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => {
             return Ok(referrer_policy(
                 HttpResponse::ServiceUnavailable()
                     .content_type("text/plain")
@@ -1021,6 +1021,15 @@ mod tests {
         assert_eq!(
             build_spt_server_url("https://tarkov.example.com:443"),
             "https://tarkov.example.com:443"
+        );
+    }
+
+    #[test]
+    fn build_spt_server_url_rejects_empty() {
+        let result = build_spt_server_url("");
+        assert_eq!(
+            result, "https://",
+            "empty input produces invalid URL — callers must guard"
         );
     }
 
