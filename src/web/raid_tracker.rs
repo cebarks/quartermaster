@@ -16,7 +16,7 @@ use crate::web::sse::ServerEvent;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RaidStartRequest {
-    pub server_id: String,
+    pub server_id: Option<String>,
     pub location: String,
     pub time_variant: Option<String>,
     pub player_side: Option<String>,
@@ -218,7 +218,7 @@ pub fn handle_raid_start(
     let raid_id = match db_lock.insert_raid(
         user.id,
         &spt_profile_id,
-        Some(&start_req.server_id),
+        start_req.server_id.as_deref(),
         start_req.player_side.as_deref().unwrap_or("Unknown"),
         snapshot.faction.as_deref(),
         &start_req.location,
@@ -399,5 +399,20 @@ mod tests {
     fn non_hex_rejected() {
         let req = req_with_session("zzzzzzzzzzzzzzzzzzzzzzzz");
         assert_eq!(extract_session_id(&req), None);
+    }
+
+    #[test]
+    fn raid_start_parses_null_server_id() {
+        let json = r#"{"serverId":null,"location":"factory4_day","timeVariant":"PAST","playerSide":"Pmc"}"#;
+        let req: RaidStartRequest = serde_json::from_str(json).unwrap();
+        assert!(req.server_id.is_none());
+        assert_eq!(req.location, "factory4_day");
+    }
+
+    #[test]
+    fn raid_start_parses_present_server_id() {
+        let json = r#"{"serverId":"abc123","location":"Customs"}"#;
+        let req: RaidStartRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.server_id.as_deref(), Some("abc123"));
     }
 }
