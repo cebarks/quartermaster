@@ -104,6 +104,66 @@ async fn resolve_client_container(
     })
 }
 
+async fn client_lifecycle(
+    state: &Data<AppState>,
+    req: &HttpRequest,
+    session: &Session,
+    csrf_token: &str,
+    index: u32,
+    action: &str,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+
+    if !crate::web::csrf::validate_token(session, csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let mgr = match require_container_mgr(state, session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
+    };
+
+    let container_name = match resolve_client_container(state, session, index).await {
+        Ok(n) => n,
+        Err(resp) => return Ok(resp),
+    };
+
+    let result = match action {
+        "start" => mgr.start(&container_name).await,
+        "stop" => mgr.stop(&container_name).await,
+        "restart" => mgr.restart(&container_name).await,
+        _ => unreachable!(),
+    };
+
+    let verb_past = match action {
+        "start" => "starting",
+        "stop" => "stopped",
+        "restart" => "restarting",
+        _ => unreachable!(),
+    };
+
+    if let Err(e) = result {
+        tracing::error!(container = %container_name, action, err = %e, "client lifecycle action failed");
+        set_flash(
+            session,
+            &format!("Failed to {action} client {index}: {e}"),
+            FlashType::Error,
+        );
+    } else {
+        tracing::info!(container = %container_name, action, "client lifecycle action succeeded");
+        set_flash(
+            session,
+            &format!("Client {index} {verb_past}"),
+            FlashType::Success,
+        );
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .finish())
+}
+
 fn create_spt_client(
     state: &AppState,
     session: &Session,
@@ -243,44 +303,15 @@ pub async fn client_restart(
     path: Path<u32>,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    let user = require_auth(&req)?;
-    require_permission(&user, Permission::HeadlessManage)?;
-
-    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
-        return Err(WebError::Forbidden.into());
-    }
-
-    let index = path.into_inner();
-
-    let mgr = match require_container_mgr(&state, &session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    let container_name = match resolve_client_container(&state, &session, index).await {
-        Ok(n) => n,
-        Err(resp) => return Ok(resp),
-    };
-
-    if let Err(e) = mgr.restart(&container_name).await {
-        tracing::error!(container = %container_name, err = %e, "failed to restart client");
-        set_flash(
-            &session,
-            &format!("Failed to restart client {index}: {e}"),
-            FlashType::Error,
-        );
-    } else {
-        tracing::info!(container = %container_name, "client restarted");
-        set_flash(
-            &session,
-            &format!("Client {index} restarting"),
-            FlashType::Success,
-        );
-    }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/quma/headless/{index}")))
-        .finish())
+    client_lifecycle(
+        &state,
+        &req,
+        &session,
+        &form.csrf_token,
+        path.into_inner(),
+        "restart",
+    )
+    .await
 }
 
 pub async fn client_stop(
@@ -290,44 +321,15 @@ pub async fn client_stop(
     path: Path<u32>,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    let user = require_auth(&req)?;
-    require_permission(&user, Permission::HeadlessManage)?;
-
-    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
-        return Err(WebError::Forbidden.into());
-    }
-
-    let index = path.into_inner();
-
-    let mgr = match require_container_mgr(&state, &session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    let container_name = match resolve_client_container(&state, &session, index).await {
-        Ok(n) => n,
-        Err(resp) => return Ok(resp),
-    };
-
-    if let Err(e) = mgr.stop(&container_name).await {
-        tracing::error!(container = %container_name, err = %e, "failed to stop client");
-        set_flash(
-            &session,
-            &format!("Failed to stop client {index}: {e}"),
-            FlashType::Error,
-        );
-    } else {
-        tracing::info!(container = %container_name, "client stopped");
-        set_flash(
-            &session,
-            &format!("Client {index} stopped"),
-            FlashType::Success,
-        );
-    }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/quma/headless/{index}")))
-        .finish())
+    client_lifecycle(
+        &state,
+        &req,
+        &session,
+        &form.csrf_token,
+        path.into_inner(),
+        "stop",
+    )
+    .await
 }
 
 pub async fn client_start(
@@ -337,44 +339,15 @@ pub async fn client_start(
     path: Path<u32>,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    let user = require_auth(&req)?;
-    require_permission(&user, Permission::HeadlessManage)?;
-
-    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
-        return Err(WebError::Forbidden.into());
-    }
-
-    let index = path.into_inner();
-
-    let mgr = match require_container_mgr(&state, &session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    let container_name = match resolve_client_container(&state, &session, index).await {
-        Ok(n) => n,
-        Err(resp) => return Ok(resp),
-    };
-
-    if let Err(e) = mgr.start(&container_name).await {
-        tracing::error!(container = %container_name, err = %e, "failed to start client");
-        set_flash(
-            &session,
-            &format!("Failed to start client {index}: {e}"),
-            FlashType::Error,
-        );
-    } else {
-        tracing::info!(container = %container_name, "client started");
-        set_flash(
-            &session,
-            &format!("Client {index} starting"),
-            FlashType::Success,
-        );
-    }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/quma/headless/{index}")))
-        .finish())
+    client_lifecycle(
+        &state,
+        &req,
+        &session,
+        &form.csrf_token,
+        path.into_inner(),
+        "start",
+    )
+    .await
 }
 
 #[derive(serde::Deserialize)]
