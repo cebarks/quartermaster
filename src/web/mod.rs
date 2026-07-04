@@ -29,7 +29,8 @@ use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 
-use actix_governor::{Governor, GovernorConfigBuilder};
+use actix_governor::governor::middleware::NoOpMiddleware;
+use actix_governor::{Governor, GovernorConfig, GovernorConfigBuilder, PeerIpKeyExtractor};
 use actix_web::middleware::from_fn;
 
 use crate::config::Config;
@@ -105,19 +106,9 @@ pub fn configure_app(
     session_key: Key,
     tls_enabled: bool,
     enable_rate_limiting: bool,
+    governor_conf: Option<GovernorConfig<PeerIpKeyExtractor, NoOpMiddleware>>,
+    search_governor_conf: Option<GovernorConfig<PeerIpKeyExtractor, NoOpMiddleware>>,
 ) {
-    let governor_conf = GovernorConfigBuilder::default()
-        .seconds_per_request(12) // 5 per minute = 1 per 12 seconds replenish
-        .burst_size(5) // allow bursting up to 5
-        .finish()
-        .expect("invalid governor config");
-
-    let search_governor_conf = GovernorConfigBuilder::default()
-        .seconds_per_request(6) // 10 per minute = 1 per 6 seconds replenish
-        .burst_size(10)
-        .finish()
-        .expect("invalid search governor config");
-
     // Build the /quma scope with all routes and middleware
     let mut quma_scope = web::scope("/quma")
         .wrap(
@@ -140,42 +131,45 @@ pub fn configure_app(
 
     // Rate-limited auth routes
     if enable_rate_limiting {
+        let gov = governor_conf
+            .as_ref()
+            .expect("governor config required when rate limiting enabled");
         quma_scope = quma_scope
             .service(
                 web::resource("/login")
-                    .wrap(Governor::new(&governor_conf))
+                    .wrap(Governor::new(gov))
                     .route(web::post().to(handlers::auth::login_submit)),
             )
             .service(
                 web::resource("/reset-password")
-                    .wrap(Governor::new(&governor_conf))
+                    .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::auth::reset_password_page))
                     .route(web::post().to(handlers::auth::reset_password_submit)),
             )
             .service(
                 web::resource("/join")
-                    .wrap(Governor::new(&governor_conf))
+                    .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::join::join_page))
                     .route(web::post().to(handlers::join::join_submit)),
             )
             .service(
                 web::resource("/join/mods.zip")
-                    .wrap(Governor::new(&governor_conf))
+                    .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::join::mod_archive)),
             )
             .service(
                 web::resource("/join/bootstrap.sh")
-                    .wrap(Governor::new(&governor_conf))
+                    .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::join::bootstrap_bash)),
             )
             .service(
                 web::resource("/join/bootstrap.ps1")
-                    .wrap(Governor::new(&governor_conf))
+                    .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::join::bootstrap_powershell)),
             )
             .service(
                 web::resource("/setup/mods.zip")
-                    .wrap(Governor::new(&governor_conf))
+                    .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::setup::setup_mods_zip)),
             );
     } else {
@@ -433,20 +427,23 @@ pub fn configure_app(
 
     // Rate-limited search routes
     if enable_rate_limiting {
+        let search_gov = search_governor_conf
+            .as_ref()
+            .expect("search governor config required when rate limiting enabled");
         api_scope = api_scope
             .service(
                 web::resource("/requests/search")
-                    .wrap(Governor::new(&search_governor_conf))
+                    .wrap(Governor::new(search_gov))
                     .route(web::get().to(handlers::requests::search_mods)),
             )
             .service(
                 web::resource("/mods/search")
-                    .wrap(Governor::new(&search_governor_conf))
+                    .wrap(Governor::new(search_gov))
                     .route(web::get().to(handlers::mods::search_mods)),
             )
             .service(
                 web::resource("/mods/{id}/compat-check")
-                    .wrap(Governor::new(&search_governor_conf))
+                    .wrap(Governor::new(search_gov))
                     .route(web::get().to(handlers::mods::compat_check)),
             );
     } else {
@@ -466,223 +463,235 @@ pub fn configure_app(
     quma_scope = quma_scope.service(api_scope);
 
     // Authenticated routes (admin checks are per-handler via require_admin())
-    quma_scope = quma_scope.service(
-        web::scope("")
-            .wrap(from_fn(auth::auth_middleware))
-            .route(
-                "/change-password",
-                web::get().to(handlers::auth::change_password_page),
-            )
-            .service(
-                web::resource("/change-password")
-                    .wrap(Governor::new(&governor_conf))
-                    .route(web::post().to(handlers::auth::change_password_submit)),
-            )
-            .route("/", web::get().to(handlers::dashboard::dashboard))
-            .route("/setup", web::get().to(handlers::setup::setup_page))
-            .route(
-                "/setup/bootstrap.sh",
-                web::get().to(handlers::setup::setup_bootstrap_bash),
-            )
-            .route(
-                "/setup/bootstrap.ps1",
-                web::get().to(handlers::setup::setup_bootstrap_powershell),
-            )
-            .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
-            .route("/logs", web::get().to(handlers::logs::logs_page))
-            .route("/metrics", web::get().to(handlers::metrics::metrics_page))
-            .route("/admin", web::get().to(handlers::admin::admin_page))
-            .route("/mods", web::get().to(handlers::mods::list_mods))
-            .route("/files", web::get().to(handlers::mods::file_tracking_page))
-            .route("/modsync", web::get().to(handlers::modsync::modsync_page))
-            .route(
-                "/modsync/settings",
-                web::post().to(handlers::modsync::save_settings),
-            )
-            .route(
-                "/modsync/groups",
-                web::post().to(handlers::modsync::save_groups),
-            )
-            .route("/svm", web::get().to(handlers::svm::manager_page))
-            .route("/svm/view", web::get().to(handlers::svm::player_view))
-            .route("/svm/edit", web::get().to(handlers::svm::editor_page))
-            .route(
-                "/svm/preset/switch",
-                web::post().to(handlers::svm::switch_preset),
-            )
-            .route(
-                "/svm/preset/create",
-                web::post().to(handlers::svm::create_preset),
-            )
-            .route(
-                "/svm/preset/duplicate",
-                web::post().to(handlers::svm::duplicate_preset),
-            )
-            .route(
-                "/svm/preset/delete",
-                web::post().to(handlers::svm::delete_preset),
-            )
-            .route(
-                "/svm/preset/export/{name}",
-                web::get().to(handlers::svm::export_preset),
-            )
-            .route(
-                "/svm/preset/import",
-                web::post().to(handlers::svm::import_preset),
-            )
-            .route(
-                "/svm/reload",
-                web::post().to(handlers::svm::reload_from_disk),
-            )
-            .route(
-                "/settings",
-                web::get().to(handlers::settings::settings_page),
-            )
-            .route(
-                "/settings/web",
-                web::post().to(handlers::settings::save_web_settings),
-            )
-            .route(
-                "/settings/server",
-                web::post().to(handlers::settings::save_server_settings),
-            )
-            .route(
-                "/settings/queue",
-                web::post().to(handlers::settings::save_queue_settings),
-            )
-            .route(
-                "/settings/forge",
-                web::post().to(handlers::settings::save_forge_settings),
-            )
-            .route(
-                "/settings/logging",
-                web::post().to(handlers::settings::save_logging_settings),
-            )
-            .route(
-                "/settings/headless",
-                web::post().to(handlers::settings::save_headless_settings),
-            )
-            .route("/headless", web::get().to(handlers::clients::client_list))
-            .route(
-                "/headless/{n}",
-                web::get().to(handlers::clients::client_detail),
-            )
-            .route("/stats", web::get().to(handlers::raids::stats_page))
-            .route(
-                "/raids/{raid_id}",
-                web::get().to(handlers::raids::raid_detail_page),
-            )
-            .route(
-                "/profiles/{username}/raids",
-                web::get().to(handlers::raids::player_raids_page),
-            )
-            .route(
-                "/profiles/{username}",
-                web::get().to(handlers::profiles::profile_page),
-            )
-            .route("/mods/install", web::post().to(handlers::mods::install_mod))
-            .route(
-                "/mods/update-all",
-                web::post().to(handlers::mods::update_all_mods),
-            )
-            .route(
-                "/mods/{id}/update",
-                web::post().to(handlers::mods::update_mod),
-            )
-            .route(
-                "/mods/{id}/remove",
-                web::post().to(handlers::mods::remove_mod),
-            )
-            .route(
-                "/mods/{id}/toggle-disable",
-                web::post().to(handlers::mods::toggle_disable),
-            )
-            .route(
-                "/mods/{id}/backups",
-                web::get().to(handlers::backup::mod_backups_partial),
-            )
-            .route(
-                "/mods/{id}/backup",
-                web::post().to(handlers::backup::create_mod_backup),
-            )
-            .route(
-                "/mods/{id}/addons",
-                web::get().to(handlers::mods::list_addons_partial),
-            )
-            .route(
-                "/mods/{id}/addon-search",
-                web::get().to(handlers::mods::search_addons),
-            )
-            .route(
-                "/mods/{id}/install-addon",
-                web::post().to(handlers::mods::install_addon),
-            )
-            .route(
-                "/addons/{id}/update",
-                web::post().to(handlers::mods::update_addon),
-            )
-            .route(
-                "/addons/{id}/remove",
-                web::post().to(handlers::mods::remove_addon),
-            )
-            .route(
-                "/addons/{id}/toggle-disable",
-                web::post().to(handlers::mods::toggle_addon_disable),
-            )
-            .route(
-                "/backups/{id}/restore",
-                web::post().to(handlers::backup::restore_backup),
-            )
-            .route(
-                "/admin/backups",
-                web::get().to(handlers::backup::admin_backups_page),
-            )
-            .route(
-                "/admin/backups/full",
-                web::post().to(handlers::backup::create_full_backup),
-            )
-            .route(
-                "/server/start",
-                web::post().to(handlers::server::start_server),
-            )
-            .route(
-                "/server/stop",
-                web::post().to(handlers::server::stop_server),
-            )
-            .route(
-                "/server/restart",
-                web::post().to(handlers::server::restart_server),
-            )
-            .route(
-                "/queue/{id}/cancel",
-                web::post().to(handlers::queue::cancel_op),
-            )
-            .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
-            .route(
-                "/headless/{n}/restart",
-                web::post().to(handlers::clients::client_restart),
-            )
-            .route(
-                "/headless/{n}/stop",
-                web::post().to(handlers::clients::client_stop),
-            )
-            .route(
-                "/headless/{n}/start",
-                web::post().to(handlers::clients::client_start),
-            )
-            .route(
-                "/headless/scale",
-                web::post().to(handlers::clients::client_scale),
-            )
-            .route(
-                "/headless/create",
-                web::post().to(handlers::clients::client_create),
-            )
-            .route(
-                "/headless/{n}/delete",
-                web::post().to(handlers::clients::client_delete),
-            ),
+    let mut auth_scope = web::scope("").wrap(from_fn(auth::auth_middleware)).route(
+        "/change-password",
+        web::get().to(handlers::auth::change_password_page),
     );
+
+    // Conditionally add rate-limited change-password POST
+    if enable_rate_limiting {
+        let gov = governor_conf
+            .as_ref()
+            .expect("governor config required when rate limiting enabled");
+        auth_scope = auth_scope.service(
+            web::resource("/change-password")
+                .wrap(Governor::new(gov))
+                .route(web::post().to(handlers::auth::change_password_submit)),
+        );
+    } else {
+        auth_scope = auth_scope.route(
+            "/change-password",
+            web::post().to(handlers::auth::change_password_submit),
+        );
+    }
+
+    auth_scope = auth_scope
+        .route("/", web::get().to(handlers::dashboard::dashboard))
+        .route("/setup", web::get().to(handlers::setup::setup_page))
+        .route(
+            "/setup/bootstrap.sh",
+            web::get().to(handlers::setup::setup_bootstrap_bash),
+        )
+        .route(
+            "/setup/bootstrap.ps1",
+            web::get().to(handlers::setup::setup_bootstrap_powershell),
+        )
+        .route("/mods/{id}", web::get().to(handlers::mods::mod_detail))
+        .route("/logs", web::get().to(handlers::logs::logs_page))
+        .route("/metrics", web::get().to(handlers::metrics::metrics_page))
+        .route("/admin", web::get().to(handlers::admin::admin_page))
+        .route("/mods", web::get().to(handlers::mods::list_mods))
+        .route("/files", web::get().to(handlers::mods::file_tracking_page))
+        .route("/modsync", web::get().to(handlers::modsync::modsync_page))
+        .route(
+            "/modsync/settings",
+            web::post().to(handlers::modsync::save_settings),
+        )
+        .route(
+            "/modsync/groups",
+            web::post().to(handlers::modsync::save_groups),
+        )
+        .route("/svm", web::get().to(handlers::svm::manager_page))
+        .route("/svm/view", web::get().to(handlers::svm::player_view))
+        .route("/svm/edit", web::get().to(handlers::svm::editor_page))
+        .route(
+            "/svm/preset/switch",
+            web::post().to(handlers::svm::switch_preset),
+        )
+        .route(
+            "/svm/preset/create",
+            web::post().to(handlers::svm::create_preset),
+        )
+        .route(
+            "/svm/preset/duplicate",
+            web::post().to(handlers::svm::duplicate_preset),
+        )
+        .route(
+            "/svm/preset/delete",
+            web::post().to(handlers::svm::delete_preset),
+        )
+        .route(
+            "/svm/preset/export/{name}",
+            web::get().to(handlers::svm::export_preset),
+        )
+        .route(
+            "/svm/preset/import",
+            web::post().to(handlers::svm::import_preset),
+        )
+        .route(
+            "/svm/reload",
+            web::post().to(handlers::svm::reload_from_disk),
+        )
+        .route(
+            "/settings",
+            web::get().to(handlers::settings::settings_page),
+        )
+        .route(
+            "/settings/web",
+            web::post().to(handlers::settings::save_web_settings),
+        )
+        .route(
+            "/settings/server",
+            web::post().to(handlers::settings::save_server_settings),
+        )
+        .route(
+            "/settings/queue",
+            web::post().to(handlers::settings::save_queue_settings),
+        )
+        .route(
+            "/settings/forge",
+            web::post().to(handlers::settings::save_forge_settings),
+        )
+        .route(
+            "/settings/logging",
+            web::post().to(handlers::settings::save_logging_settings),
+        )
+        .route(
+            "/settings/headless",
+            web::post().to(handlers::settings::save_headless_settings),
+        )
+        .route("/headless", web::get().to(handlers::clients::client_list))
+        .route(
+            "/headless/{n}",
+            web::get().to(handlers::clients::client_detail),
+        )
+        .route("/stats", web::get().to(handlers::raids::stats_page))
+        .route(
+            "/raids/{raid_id}",
+            web::get().to(handlers::raids::raid_detail_page),
+        )
+        .route(
+            "/profiles/{username}/raids",
+            web::get().to(handlers::raids::player_raids_page),
+        )
+        .route(
+            "/profiles/{username}",
+            web::get().to(handlers::profiles::profile_page),
+        )
+        .route("/mods/install", web::post().to(handlers::mods::install_mod))
+        .route(
+            "/mods/update-all",
+            web::post().to(handlers::mods::update_all_mods),
+        )
+        .route(
+            "/mods/{id}/update",
+            web::post().to(handlers::mods::update_mod),
+        )
+        .route(
+            "/mods/{id}/remove",
+            web::post().to(handlers::mods::remove_mod),
+        )
+        .route(
+            "/mods/{id}/toggle-disable",
+            web::post().to(handlers::mods::toggle_disable),
+        )
+        .route(
+            "/mods/{id}/backups",
+            web::get().to(handlers::backup::mod_backups_partial),
+        )
+        .route(
+            "/mods/{id}/backup",
+            web::post().to(handlers::backup::create_mod_backup),
+        )
+        .route(
+            "/mods/{id}/addons",
+            web::get().to(handlers::mods::list_addons_partial),
+        )
+        .route(
+            "/mods/{id}/addon-search",
+            web::get().to(handlers::mods::search_addons),
+        )
+        .route(
+            "/mods/{id}/install-addon",
+            web::post().to(handlers::mods::install_addon),
+        )
+        .route(
+            "/addons/{id}/update",
+            web::post().to(handlers::mods::update_addon),
+        )
+        .route(
+            "/addons/{id}/remove",
+            web::post().to(handlers::mods::remove_addon),
+        )
+        .route(
+            "/addons/{id}/toggle-disable",
+            web::post().to(handlers::mods::toggle_addon_disable),
+        )
+        .route(
+            "/backups/{id}/restore",
+            web::post().to(handlers::backup::restore_backup),
+        )
+        .route(
+            "/admin/backups",
+            web::get().to(handlers::backup::admin_backups_page),
+        )
+        .route(
+            "/admin/backups/full",
+            web::post().to(handlers::backup::create_full_backup),
+        )
+        .route(
+            "/server/start",
+            web::post().to(handlers::server::start_server),
+        )
+        .route(
+            "/server/stop",
+            web::post().to(handlers::server::stop_server),
+        )
+        .route(
+            "/server/restart",
+            web::post().to(handlers::server::restart_server),
+        )
+        .route(
+            "/queue/{id}/cancel",
+            web::post().to(handlers::queue::cancel_op),
+        )
+        .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
+        .route(
+            "/headless/{n}/restart",
+            web::post().to(handlers::clients::client_restart),
+        )
+        .route(
+            "/headless/{n}/stop",
+            web::post().to(handlers::clients::client_stop),
+        )
+        .route(
+            "/headless/{n}/start",
+            web::post().to(handlers::clients::client_start),
+        )
+        .route(
+            "/headless/scale",
+            web::post().to(handlers::clients::client_scale),
+        )
+        .route(
+            "/headless/create",
+            web::post().to(handlers::clients::client_create),
+        )
+        .route(
+            "/headless/{n}/delete",
+            web::post().to(handlers::clients::client_delete),
+        );
+
+    quma_scope = quma_scope.service(auth_scope);
 
     cfg.service(quma_scope);
 
@@ -800,7 +809,21 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     // Pre-warm mod ZIP cache in background
     app_state.mod_zip_cache.invalidate();
 
+    let governor_conf = GovernorConfigBuilder::default()
+        .seconds_per_request(12)
+        .burst_size(5)
+        .finish()
+        .expect("invalid governor config");
+
+    let search_governor_conf = GovernorConfigBuilder::default()
+        .seconds_per_request(6)
+        .burst_size(10)
+        .finish()
+        .expect("invalid search governor config");
+
     let server_builder = HttpServer::new(move || {
+        let gov = governor_conf.clone();
+        let search_gov = search_governor_conf.clone();
         App::new()
             .app_data(app_state.clone())
             .app_data(web::PayloadConfig::new(64 * 1024 * 1024))
@@ -813,8 +836,24 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
                     .add(("X-Content-Type-Options", "nosniff"))
                     .add(("X-Frame-Options", "DENY")),
             )
-            .configure(|cfg| configure_app(cfg, session_key.clone(), tls_enabled, true))
+            .configure(|cfg| {
+                configure_app(
+                    cfg,
+                    session_key.clone(),
+                    tls_enabled,
+                    true,
+                    Some(gov),
+                    Some(search_gov),
+                )
+            })
     });
+
+    let server_builder = if let Some(workers) = config.web_workers {
+        let workers = workers.clamp(1, 256);
+        server_builder.workers(workers)
+    } else {
+        server_builder
+    };
 
     let server = if config.tls_enabled {
         let tls_config = crate::tls::load_or_generate_tls_config(&config, &spt_dir_for_tls)

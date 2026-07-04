@@ -239,7 +239,7 @@ impl TestApp {
                 .wrap(middleware::NormalizePath::new(
                     middleware::TrailingSlash::MergeOnly,
                 ))
-                .configure(|cfg| configure_app(cfg, session_key, false, false)),
+                .configure(|cfg| configure_app(cfg, session_key, false, false, None, None)),
         )
         .await
     }

@@ -16,16 +16,12 @@
 ## Security
 - proxy has no authentication — unauthenticated access to SPT server API (`proxy.rs`)
 - `dismiss_task` has no permission check — any user can dismiss any task (`tasks.rs`)
-- CSRF token not rotated after use (`csrf.rs`)
-- per-worker rate limiting, not global (`mod.rs`)
 - `update_role_permissions` returns ambiguous `Ok(0)` for two different guard conditions (`rbac.rs`)
 - `client_detail` page accessible without `HeadlessManage` permission (`clients.rs`)
 - `mod_backups_partial` readable by any authenticated user (`backup.rs` — mutating actions check `ModsUpdate`, but data is served without permission check)
-- `admin_exists()` uses hardcoded role name instead of checking `UsersManage` permission (`users.rs`)
 - no FK constraint on `users.role` → `roles.name` (`migrations/001`)
 - `role_permissions.permission` column is unconstrained (`migrations/001`)
 - cookie-based sessions can't be individually revoked
-- no mechanism to sync role permissions on upgrade
 
 ## Core Architecture
 - consolidate all mod management logic from all paths (web handlers bypass `ops.rs` in places)

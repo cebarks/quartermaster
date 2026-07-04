@@ -978,6 +978,10 @@ pub struct Config {
     #[serde(default = "default_web_port")]
     pub web_port: u16,
 
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_workers: Option<usize>,
+
     #[serde(default = "default_update_check_interval")]
     pub update_check_interval: u64,
 
@@ -1054,6 +1058,7 @@ impl Default for Config {
             server_port: None,
             web_bind: "0.0.0.0".to_string(),
             web_port: 9190,
+            web_workers: None,
             update_check_interval: 300,
             forge_cache_ttl: Some(86400),
             headless: None,
@@ -1237,6 +1242,7 @@ impl Config {
         env_override!(redacted: self.forge_token, "QUMA_FORGE_TOKEN");
         env_override!(str: self.web_bind, "QUMA_WEB_BIND");
         env_override!(parse: self.web_port, "QUMA_WEB_PORT", u16);
+        env_override!(opt_parse: self.web_workers, "QUMA_WEB_WORKERS", usize);
         env_override!(opt_str: self.server_container, "QUMA_SERVER_CONTAINER");
         env_override!(opt_str: self.server_host, "QUMA_SERVER_HOST");
         env_override!(opt_parse: self.server_port, "QUMA_SERVER_PORT", u16);
