@@ -82,8 +82,11 @@
     {% if predefined != "default" %}
     <div style="margin-bottom: 0.75rem">
         <label class="text-sm text-muted" style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer">
-            <input type="checkbox" data-field="exclude_headless"{% if exclude_headless %} checked{% endif %}{% if predefined == "no-headless" %} disabled{% endif %}> Exclude from headless clients
+            <input type="checkbox" data-field="exclude_headless"{% if exclude_headless %} checked{% endif %}{% if predefined == "no-headless" %} disabled{% endif %}> Exclude from headless
         </label>
+        <p class="text-muted text-sm" style="margin-left: 1.5rem; margin-top: 0.25rem">
+            Mods in this group won't be synced to headless client containers
+        </p>
     </div>
     {% endif %}
 

@@ -92,20 +92,28 @@ struct ModListEntry {
     file_count: usize,
     total_size: i64,
     addon_count: usize,
+    has_client_files: bool,
+    excluded_from_headless: bool,
 }
 
 impl ModListEntry {
     fn from_db_row(
         row: (InstalledMod, usize, i64),
         addon_counts: &std::collections::HashMap<i64, usize>,
+        client_file_mods: &std::collections::HashSet<i64>,
+        excluded_mods: &std::collections::HashSet<i64>,
     ) -> Self {
         let (mod_info, file_count, total_size) = row;
         let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
+        let has_client_files = client_file_mods.contains(&mod_info.id);
+        let excluded_from_headless = excluded_mods.contains(&mod_info.forge_mod_id);
         ModListEntry {
             mod_info,
             file_count,
             total_size,
             addon_count,
+            has_client_files,
+            excluded_from_headless,
         }
     }
 }
@@ -478,20 +486,36 @@ pub async fn list_mods(
     let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
 
-    let (all_unfiltered, filtered_entries, addon_counts) = web::block(move || {
+    let (all_unfiltered, filtered_entries, addon_counts, all_files) = web::block(move || {
         let db = db.lock();
         let all = db.list_mods_with_file_counts()?;
         let filtered = db.list_mods_filtered(&filter)?;
         let addon_counts = db.count_addons_by_mod()?;
-        Ok::<_, anyhow::Error>((all, filtered, addon_counts))
+        let files = db.get_all_tracked_files()?;
+        Ok::<_, anyhow::Error>((all, filtered, addon_counts, files))
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    // ponytail: build set of mod IDs with client files
+    let client_file_mods: std::collections::HashSet<i64> = all_files
+        .into_iter()
+        .filter(|f| crate::headless_sync::is_client_file(&f.file_path))
+        .filter_map(|f| f.mod_id)
+        .collect();
+
+    // ponytail: build set of forge mod IDs excluded from headless
+    let config = state.config_cloned();
+    let excluded_mods: std::collections::HashSet<i64> = all_unfiltered
+        .iter()
+        .filter(|(m, _, _)| crate::ops::is_excluded_from_headless(&config, m.forge_mod_id))
+        .map(|(m, _, _)| m.forge_mod_id)
+        .collect();
+
     let all_entries: Vec<ModListEntry> = all_unfiltered
         .into_iter()
-        .map(|row| ModListEntry::from_db_row(row, &addon_counts))
+        .map(|row| ModListEntry::from_db_row(row, &addon_counts, &client_file_mods, &excluded_mods))
         .collect();
 
     let (infrastructure, non_infra): (Vec<_>, Vec<_>) = all_entries
@@ -502,7 +526,7 @@ pub async fn list_mods(
 
     let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
-        .map(|row| ModListEntry::from_db_row(row, &addon_counts))
+        .map(|row| ModListEntry::from_db_row(row, &addon_counts, &client_file_mods, &excluded_mods))
         .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
         .collect();
 
@@ -1685,19 +1709,34 @@ pub async fn list_body_partial(
     let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
 
-    let (filtered_entries, addon_counts) = web::block(move || {
+    let (filtered_entries, addon_counts, all_files, all_mods) = web::block(move || {
         let db = db.lock();
         let filtered = db.list_mods_filtered(&filter)?;
         let addon_counts = db.count_addons_by_mod()?;
-        Ok::<_, anyhow::Error>((filtered, addon_counts))
+        let files = db.get_all_tracked_files()?;
+        let mods = db.list_mods_with_file_counts()?;
+        Ok::<_, anyhow::Error>((filtered, addon_counts, files, mods))
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let client_file_mods: std::collections::HashSet<i64> = all_files
+        .into_iter()
+        .filter(|f| crate::headless_sync::is_client_file(&f.file_path))
+        .filter_map(|f| f.mod_id)
+        .collect();
+
+    let config = state.config_cloned();
+    let excluded_mods: std::collections::HashSet<i64> = all_mods
+        .iter()
+        .filter(|(m, _, _)| crate::ops::is_excluded_from_headless(&config, m.forge_mod_id))
+        .map(|(m, _, _)| m.forge_mod_id)
+        .collect();
+
     let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
-        .map(|row| ModListEntry::from_db_row(row, &addon_counts))
+        .map(|row| ModListEntry::from_db_row(row, &addon_counts, &client_file_mods, &excluded_mods))
         .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
         .collect();
 

@@ -146,6 +146,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                                     &forge,
                                     &spt_info.spt_version,
                                     Arc::clone(&converging),
+                                    &db_arc,
                                 )
                                 .await
                                 {

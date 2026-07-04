@@ -3,14 +3,6 @@
 </div>
 
 <div class="card">
-    <h2>{% if has_headless_groups %}Player {% endif %}Config</h2>
-    <pre style="white-space: pre-wrap; font-size: 0.85rem; max-height: 600px; overflow-y: auto">{{ player_yaml }}</pre>
+    <h2>NarcoNet Config</h2>
+    <pre style="white-space: pre-wrap; font-size: 0.85rem; max-height: 600px; overflow-y: auto">{{ yaml }}</pre>
 </div>
-
-{% if has_headless_groups %}
-<div class="card">
-    <h2>Headless Config</h2>
-    <p class="text-muted text-sm mb-1">Mods in headless-excluded groups have <code>enabled: false</code>.</p>
-    <pre style="white-space: pre-wrap; font-size: 0.85rem; max-height: 600px; overflow-y: auto">{{ headless_yaml }}</pre>
-</div>
-{% endif %}

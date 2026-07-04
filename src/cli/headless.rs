@@ -4,9 +4,12 @@ use futures_util::StreamExt;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use parking_lot::Mutex;
+
 use crate::client::converge::client_container_name;
 use crate::config::{is_fika_installed, Config, HeadlessClientDef, HeadlessConfig};
 use crate::container::ContainerManager;
+use crate::db::Database;
 use crate::server_detect;
 use crate::spt::headless::EHeadlessStatus;
 use crate::spt::server::SptClient;
@@ -309,6 +312,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
         crate::server_detect::resolve_server_addr(&config, &ctx.spt_dir);
     let spt_client = SptClient::new(&server_host, server_port)?;
     let converging = Arc::new(AtomicBool::new(false));
+    let db = db_arc_for_converge(ctx)?;
 
     crate::client::converge::converge(
         container_mgr,
@@ -322,6 +326,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
         &ctx.forge,
         &ctx.spt_info.spt_version,
         converging,
+        &db,
     )
     .await?;
 
@@ -574,6 +579,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
     let spt_client = SptClient::new(&server_host, server_port)?;
     let converging = Arc::new(AtomicBool::new(false));
+    let db = db_arc_for_converge(ctx)?;
 
     println!("Converging to {} client(s)...", count);
     crate::client::converge::converge(
@@ -588,6 +594,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
         &ctx.forge,
         &ctx.spt_info.spt_version,
         converging,
+        &db,
     )
     .await?;
 
@@ -602,6 +609,15 @@ fn require_headless_config(config: &Config) -> Result<&HeadlessConfig> {
              Add a [headless] section to quartermaster.toml or run `quma setup`."
         )
     })
+}
+
+/// Open a DB connection wrapped for convergence (which needs Arc<Mutex<Database>>).
+/// CLI context owns a bare Database, so we open a second read-only connection.
+fn db_arc_for_converge(ctx: &CliContext) -> Result<Arc<Mutex<Database>>> {
+    let db_path = ctx.spt_dir.join("quartermaster.db");
+    let db = Database::open(&db_path)
+        .with_context(|| format!("failed to open database at {}", db_path.display()))?;
+    Ok(Arc::new(Mutex::new(db)))
 }
 
 fn require_container_manager(ctx: &CliContext) -> Result<&ContainerManager> {

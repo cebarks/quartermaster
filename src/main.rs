@@ -7,6 +7,7 @@ mod config;
 mod container;
 mod db;
 mod forge;
+mod headless_sync;
 mod health;
 mod invite;
 mod logging;
