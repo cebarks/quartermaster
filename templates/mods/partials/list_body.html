@@ -47,6 +47,13 @@
         {% if m.addon_count > 0 %}
         <span class="badge badge-info" style="margin-left: 0.5rem;" title="{{ m.addon_count }} addon{% if m.addon_count != 1 %}s{% endif %}">{{ m.addon_count }}</span>
         {% endif %}
+        {% if m.has_client_files %}
+            {% if m.excluded_from_headless %}
+        <span class="badge" style="margin-left: 0.5rem; background-color: var(--text-muted); color: var(--bg);" title="Excluded from headless client sync">headless</span>
+            {% else %}
+        <span class="badge badge-success" style="margin-left: 0.5rem;" title="Synced to headless clients">headless</span>
+            {% endif %}
+        {% endif %}
     </td>
     <td><span id="mod-version-{{ m.mod_info.id }}">{{ m.mod_info.version }}</span></td>
     <td class="text-muted">{{ m.file_count }}</td>
