@@ -124,16 +124,14 @@ pub async fn ws_proxy_handler(
                                 break;
                             }
                         }
+                        // Respond to client pings locally instead of forwarding
+                        // upstream. Each hop manages its own keepalive.
                         Some(Ok(actix_ws::Message::Ping(data))) => {
-                            if upstream_sink.send(tungstenite::Message::Ping(data.to_vec().into())).await.is_err() {
+                            if client_session.pong(&data).await.is_err() {
                                 break;
                             }
                         }
-                        Some(Ok(actix_ws::Message::Pong(data))) => {
-                            if upstream_sink.send(tungstenite::Message::Pong(data.to_vec().into())).await.is_err() {
-                                break;
-                            }
-                        }
+                        Some(Ok(actix_ws::Message::Pong(_))) => {}
                         Some(Ok(actix_ws::Message::Close(_))) | Some(Err(_)) | None => {
                             let _ = upstream_sink.send(tungstenite::Message::Close(None)).await;
                             client_closed = true;
@@ -155,16 +153,11 @@ pub async fn ws_proxy_handler(
                                 break;
                             }
                         }
-                        Some(Ok(tungstenite::Message::Ping(data))) => {
-                            if client_session.ping(&data).await.is_err() {
-                                break;
-                            }
-                        }
-                        Some(Ok(tungstenite::Message::Pong(data))) => {
-                            if client_session.pong(&data).await.is_err() {
-                                break;
-                            }
-                        }
+                        // Upstream pings are auto-answered by tungstenite; don't
+                        // relay them to the client (Fika's EmitOnPing=true would
+                        // feed the binary payload to the JSON parser).
+                        Some(Ok(tungstenite::Message::Ping(_))) => {}
+                        Some(Ok(tungstenite::Message::Pong(_))) => {}
                         Some(Ok(tungstenite::Message::Close(_))) | Some(Err(_)) | None => {
                             let _ = client_session.close(None).await;
                             break;
