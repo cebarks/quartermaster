@@ -2,29 +2,30 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% import "clients/partials/badges.html" as badges %}
-{% block title %}Client {{ client.index }} — Quartermaster{% endblock %}
+{% block title %}Client {{ client.state.index }} — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("headless", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
-    <h1>Client {{ client.index }}</h1>
+    <h1>Client {{ client.state.index }}</h1>
     {% if user.can("headless.manage") %}
     <div class="flex gap-1">
-        <form method="post" action="/quma/headless/{{ client.index }}/start" style="display:inline">
+        <a href="/quma/logs?tab=headless&container={{ client.state.container_name }}" class="btn btn-sm">Logs</a>
+        <form method="post" action="/quma/headless/{{ client.state.index }}/start" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
         </form>
-        <form method="post" action="/quma/headless/{{ client.index }}/restart" style="display:inline"
-              onsubmit="return confirm('Restart client {{ client.index }}?')">
+        <form method="post" action="/quma/headless/{{ client.state.index }}/restart" style="display:inline"
+              onsubmit="return confirm('Restart client {{ client.state.index }}?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Restart</button>
         </form>
-        <form method="post" action="/quma/headless/{{ client.index }}/stop" style="display:inline"
-              onsubmit="return confirm('Stop client {{ client.index }}?')">
+        <form method="post" action="/quma/headless/{{ client.state.index }}/stop" style="display:inline"
+              onsubmit="return confirm('Stop client {{ client.state.index }}?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-danger">{% call icons::stop() %}{% endcall %} Stop</button>
         </form>
-        <form method="post" action="/quma/headless/{{ client.index }}/delete" style="display:inline"
-              onsubmit="return confirm('Delete headless client {{ client.index }}? This will stop and remove the container.')">
+        <form method="post" action="/quma/headless/{{ client.state.index }}/delete" style="display:inline"
+              onsubmit="return confirm('Delete headless client {{ client.state.index }}? This will stop and remove the container.')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-danger">{% call icons::trash() %}{% endcall %} Delete</button>
         </form>
@@ -38,19 +39,19 @@
         <tbody>
             <tr>
                 <th>Container Name</th>
-                <td><code>{{ client.container_name }}</code></td>
+                <td><code>{{ client.state.container_name }}</code></td>
             </tr>
             <tr>
                 <th>Container Status</th>
-                <td>{% call badges::container_status(client.container_status) %}{% endcall %}</td>
+                <td>{% call badges::container_status(client.state.container_status) %}{% endcall %}</td>
             </tr>
             <tr>
                 <th>Health</th>
-                <td>{% call badges::client_health(client.health) %}{% endcall %}</td>
+                <td>{% call badges::client_health(client.state.health) %}{% endcall %}</td>
             </tr>
             <tr>
                 <th>Fika Status</th>
-                <td>{% call badges::fika_status(client.fika_status) %}{% endcall %}</td>
+                <td>{% call badges::fika_status(client.state.fika_status) %}{% endcall %}</td>
             </tr>
             <tr>
                 <th>Connected Players</th>
@@ -58,7 +59,7 @@
                     {% if client.players.is_empty() %}
                     <span class="text-muted">None</span>
                     {% else %}
-                    {% for player in client.players %}{% if !loop.first %}, {% endif %}<a href="/quma/profiles/{{ player }}">{{ player }}</a>{% endfor %}
+                    {% for player in client.players %}{% if !loop.first %}, {% endif %}<a href="/quma/profiles/{{ player.id }}">{{ player.name }}</a>{% endfor %}
                     {% endif %}
                 </td>
             </tr>
@@ -73,7 +74,7 @@
             <tr>
                 <th>CPU Usage</th>
                 <td>
-                    {% if let Some(cpu) = client.cpu_percent %}
+                    {% if let Some(cpu) = client.state.cpu_percent %}
                     {{ cpu }}%
                     {% else %}
                     <span class="text-muted">Unknown</span>
@@ -83,7 +84,7 @@
             <tr>
                 <th>Memory Usage</th>
                 <td>
-                    {% if let Some(mem) = client.memory_mb %}
+                    {% if let Some(mem) = client.state.memory_mb %}
                     {{ mem }} MB
                     {% else %}
                     <span class="text-muted">Unknown</span>
@@ -100,12 +101,12 @@
         <tbody>
             <tr>
                 <th>Total Restarts</th>
-                <td>{{ client.restart_count }}</td>
+                <td>{{ client.state.restart_count }}</td>
             </tr>
             <tr>
                 <th>Last Restart</th>
                 <td>
-                    {% if let Some(ts) = client.last_restart %}
+                    {% if let Some(ts) = client.state.last_restart %}
                     {{ ts.format("%Y-%m-%d %H:%M:%S UTC") }}
                     {% else %}
                     <span class="text-muted">Never</span>
@@ -115,8 +116,8 @@
             <tr>
                 <th>Consecutive Failures</th>
                 <td>
-                    {% if client.consecutive_failures > 0 %}
-                    <span style="color: var(--error)">{{ client.consecutive_failures }}</span>
+                    {% if client.state.consecutive_failures > 0 %}
+                    <span style="color: var(--error)">{{ client.state.consecutive_failures }}</span>
                     {% else %}
                     0
                     {% endif %}
@@ -125,7 +126,7 @@
             <tr>
                 <th>Restarting</th>
                 <td>
-                    {% if client.restarting %}
+                    {% if client.state.restarting %}
                     <span class="badge badge-warning">Yes</span>
                     {% else %}
                     <span class="text-muted">No</span>

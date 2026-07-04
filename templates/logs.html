@@ -481,6 +481,32 @@
         });
     });
 
+    // Deep-link support: ?tab=headless&container=fika-headless-1
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialTab = urlParams.get('tab');
+    const initialContainer = urlParams.get('container');
+
+    if (initialTab) {
+        const tabBtn = document.querySelector(`.tab-btn[data-tab="${initialTab}"]`);
+        if (tabBtn) {
+            if (initialTab === 'headless' && initialContainer) {
+                headlessLoaded = true;
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+                tabBtn.classList.add('active');
+                document.getElementById('tab-headless').style.display = '';
+                loadHeadlessContainers().then(() => {
+                    if (headlessSelect.querySelector('option[value="' + initialContainer + '"]')) {
+                        headlessSelect.value = initialContainer;
+                        loadHeadlessLogs();
+                    }
+                });
+            } else {
+                tabBtn.click();
+            }
+        }
+    }
+
     // Initialize — connect SSE only after initial load finishes
     // to prevent the SSE firehose from starving the main thread
     loadInitialLogs().then(() => { if (liveMode) connectSSE(); });
