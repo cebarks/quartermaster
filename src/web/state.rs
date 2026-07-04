@@ -74,6 +74,16 @@ impl AppState {
         Ok(())
     }
 
+    pub fn persist_config(&self, config: &Config) -> Result<(), crate::web::error::WebError> {
+        config
+            .save(&self.config_path)
+            .map_err(crate::web::error::WebError::from)?;
+        if let Err(e) = self.update_config_from_disk() {
+            tracing::warn!(err = %e, "failed to refresh in-memory config after save");
+        }
+        Ok(())
+    }
+
     pub fn get_server_transition(&self) -> Option<String> {
         self.server_transition.lock().clone()
     }

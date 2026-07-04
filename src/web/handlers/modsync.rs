@@ -229,12 +229,7 @@ pub async fn save_settings(
 
     // Update config and save
     new_config.modsync = Some(ms_config);
-    new_config
-        .save(&state.config_path)
-        .map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
+    state.persist_config(&new_config)?;
     drop(_guard);
 
     // Regenerate NarcoNet config.yaml
@@ -718,10 +713,7 @@ pub async fn save_groups(
             ..crate::config::ModSyncConfig::default()
         });
     }
-    config.save(&state.config_path).map_err(WebError::from)?;
-    if let Err(e) = state.update_config_from_disk() {
-        tracing::warn!(err = %e, "failed to refresh in-memory config after save");
-    }
+    state.persist_config(&config)?;
 
     drop(_guard);
 
