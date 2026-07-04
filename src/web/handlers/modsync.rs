@@ -883,30 +883,19 @@ pub async fn mods_partial(
 async fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
     let ms_config = state.config().modsync.clone().ok_or(WebError::NotFound)?;
 
-    let has_headless_groups = ms_config.groups.values().any(|g| g.exclude_headless);
     let ms_config_clone = ms_config.clone();
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
 
-    let (player, headless) = web::block(move || {
+    let yaml = web::block(move || {
         let db = db.lock();
-        let player = crate::modsync::preview_config(&ms_config_clone, &db, false, Some(&spt_dir))?;
-        let headless = if has_headless_groups {
-            crate::modsync::preview_config(&ms_config_clone, &db, true, Some(&spt_dir))?
-        } else {
-            String::new()
-        };
-        Ok::<_, anyhow::Error>((player, headless))
+        crate::modsync::preview_config(&ms_config_clone, &db, Some(&spt_dir))
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = PreviewPartialTemplate {
-        player_yaml: player,
-        headless_yaml: headless,
-        has_headless_groups,
-    };
+    let tmpl = PreviewPartialTemplate { yaml };
     tmpl.render().map_err(WebError::from)
 }
 
@@ -915,9 +904,7 @@ async fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
 #[derive(Template)]
 #[template(path = "modsync/partials/preview.html")]
 struct PreviewPartialTemplate {
-    player_yaml: String,
-    headless_yaml: String,
-    has_headless_groups: bool,
+    yaml: String,
 }
 
 pub async fn preview_partial(
@@ -930,30 +917,19 @@ pub async fn preview_partial(
 
     let ms_config = state.config().modsync.clone().ok_or(WebError::NotFound)?;
 
-    let has_headless_groups = ms_config.groups.values().any(|g| g.exclude_headless);
     let ms_config_clone = ms_config.clone();
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
 
-    let (player_yaml, headless_yaml) = web::block(move || {
+    let yaml = web::block(move || {
         let db = db.lock();
-        let player = crate::modsync::preview_config(&ms_config_clone, &db, false, Some(&spt_dir))?;
-        let headless = if has_headless_groups {
-            crate::modsync::preview_config(&ms_config_clone, &db, true, Some(&spt_dir))?
-        } else {
-            String::new()
-        };
-        Ok::<_, anyhow::Error>((player, headless))
+        crate::modsync::preview_config(&ms_config_clone, &db, Some(&spt_dir))
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let tmpl = PreviewPartialTemplate {
-        player_yaml,
-        headless_yaml,
-        has_headless_groups,
-    };
+    let tmpl = PreviewPartialTemplate { yaml };
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(tmpl.render().map_err(WebError::from)?))
