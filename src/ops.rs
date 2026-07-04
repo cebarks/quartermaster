@@ -302,6 +302,15 @@ pub fn update_mod_from_archive(
     );
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_update")?;
 
+    let mod_info = db
+        .get_mod(mod_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("mod not found for update"))?;
+    let effective_root = if mod_info.disabled {
+        disabled_stash_dir(spt_dir)
+    } else {
+        spt_dir.to_path_buf()
+    };
+
     // Compute stale paths for headless sync before remove_stale_files consumes old_paths
     let new_paths_set: std::collections::HashSet<&str> =
         extracted.iter().map(|f| f.path.as_str()).collect();
@@ -314,8 +323,8 @@ pub fn update_mod_from_archive(
     // Copy new files first (overwriting any shared with old version), so that
     // if copying fails mid-way the old files that weren't overwritten remain
     // intact. This is strictly safer than delete-all-then-copy-all.
-    move_staged_files(staging_dir.path(), spt_dir, &extracted)?;
-    remove_stale_files(spt_dir, old_paths, &extracted)?;
+    move_staged_files(staging_dir.path(), &effective_root, &extracted)?;
+    remove_stale_files(&effective_root, old_paths, &extracted)?;
 
     let tx = db.begin_transaction()?;
     db.delete_files_for_mod(mod_db_id)?;
@@ -376,6 +385,12 @@ pub fn update_addon_from_archive(
         "auto_update_addon",
     )?;
 
+    let effective_root = if addon.disabled {
+        disabled_stash_dir(spt_dir)
+    } else {
+        spt_dir.to_path_buf()
+    };
+
     // Compute stale paths for headless sync before remove_stale_files consumes old_paths
     let new_paths_set: std::collections::HashSet<&str> =
         extracted.iter().map(|f| f.path.as_str()).collect();
@@ -388,8 +403,8 @@ pub fn update_addon_from_archive(
     // Copy new files first (overwriting any shared with old version), so that
     // if copying fails mid-way the old files that weren't overwritten remain
     // intact. This is strictly safer than delete-all-then-copy-all.
-    move_staged_files(staging_dir.path(), spt_dir, &extracted)?;
-    remove_stale_files(spt_dir, old_paths, &extracted)?;
+    move_staged_files(staging_dir.path(), &effective_root, &extracted)?;
+    remove_stale_files(&effective_root, old_paths, &extracted)?;
 
     let tx = db.begin_transaction()?;
     db.delete_files_for_addon(addon_db_id)?;
@@ -463,7 +478,7 @@ pub async fn apply_mod_update(
     let config_backup = config;
     let version_str_step1 = version_str.clone();
     let new_files_json_step1 = new_files_json;
-    let (old_paths, pending_id) = actix_web::web::block(move || {
+    let (old_paths, pending_id, is_disabled) = actix_web::web::block(move || {
         let db = db_step1.lock();
         crate::backup::auto_backup_mod(
             &db,
@@ -472,6 +487,10 @@ pub async fn apply_mod_update(
             mod_db_id,
             "auto_update",
         )?;
+        let mod_info = db
+            .get_mod(mod_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("mod not found for update"))?;
+        let is_disabled = mod_info.disabled;
         let files = db.get_files_for_mod(mod_db_id)?;
         let old_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
         let old_files_json =
@@ -487,7 +506,7 @@ pub async fn apply_mod_update(
         )?;
         tracing::debug!(mod_db_id, pending_id, "pending update marker written");
 
-        Ok::<_, anyhow::Error>((old_paths, pending_id))
+        Ok::<_, anyhow::Error>((old_paths, pending_id, is_disabled))
     })
     .await??;
 
@@ -497,7 +516,12 @@ pub async fn apply_mod_update(
     let spt_dir_fs = spt_dir.clone();
     let old_paths_fs = old_paths.clone();
     let (extracted, stale_paths) = actix_web::web::block(move || {
-        move_staged_files(&staging_path, &spt_dir_fs, &extracted)?;
+        let effective_root = if is_disabled {
+            disabled_stash_dir(&spt_dir_fs)
+        } else {
+            spt_dir_fs.clone()
+        };
+        move_staged_files(&staging_path, &effective_root, &extracted)?;
         // Compute stale paths before remove_stale_files consumes old_paths_fs
         let new_paths_set: std::collections::HashSet<&str> =
             extracted.iter().map(|f| f.path.as_str()).collect();
@@ -505,7 +529,7 @@ pub async fn apply_mod_update(
             .into_iter()
             .filter(|p| !new_paths_set.contains(p.as_str()))
             .collect();
-        remove_stale_files(&spt_dir_fs, old_paths, &extracted)?;
+        remove_stale_files(&effective_root, old_paths, &extracted)?;
         Ok::<_, anyhow::Error>((extracted, stale))
     })
     .await??;
@@ -598,11 +622,12 @@ pub async fn apply_addon_update(
     let config_backup = config;
     let version_str_step1 = version_str.clone();
     let new_files_json_step1 = new_files_json;
-    let (old_paths, pending_id, _parent_mod_id) = actix_web::web::block(move || {
+    let (old_paths, pending_id, _parent_mod_id, is_disabled) = actix_web::web::block(move || {
         let db = db_step1.lock();
         let addon = db
             .get_addon(addon_db_id)?
             .ok_or_else(|| anyhow::anyhow!("addon not found"))?;
+        let is_disabled = addon.disabled;
         crate::backup::auto_backup_mod(
             &db,
             &spt_dir_backup,
@@ -630,7 +655,7 @@ pub async fn apply_addon_update(
             "pending addon update marker written"
         );
 
-        Ok::<_, anyhow::Error>((old_paths, pending_id, addon.parent_mod_id))
+        Ok::<_, anyhow::Error>((old_paths, pending_id, addon.parent_mod_id, is_disabled))
     })
     .await??;
 
@@ -640,7 +665,12 @@ pub async fn apply_addon_update(
     let spt_dir_fs = spt_dir.clone();
     let old_paths_fs = old_paths.clone();
     let (extracted, stale_paths) = actix_web::web::block(move || {
-        move_staged_files(&staging_path, &spt_dir_fs, &extracted)?;
+        let effective_root = if is_disabled {
+            disabled_stash_dir(&spt_dir_fs)
+        } else {
+            spt_dir_fs.clone()
+        };
+        move_staged_files(&staging_path, &effective_root, &extracted)?;
         // Compute stale paths before remove_stale_files consumes old_paths_fs
         let new_paths_set: std::collections::HashSet<&str> =
             extracted.iter().map(|f| f.path.as_str()).collect();
@@ -648,7 +678,7 @@ pub async fn apply_addon_update(
             .into_iter()
             .filter(|p| !new_paths_set.contains(p.as_str()))
             .collect();
-        remove_stale_files(&spt_dir_fs, old_paths, &extracted)?;
+        remove_stale_files(&effective_root, old_paths, &extracted)?;
         Ok::<_, anyhow::Error>((extracted, stale))
     })
     .await??;
@@ -1013,10 +1043,17 @@ pub fn remove_mod_by_id(
     }
 
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_remove")?;
+    let mod_info_for_disable = db.get_mod(mod_db_id)?;
+    let is_disabled = mod_info_for_disable.as_ref().map_or(false, |m| m.disabled);
     let files = db.get_files_for_mod(mod_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = file_paths.len(), "deleting mod files");
-    crate::spt::mods::delete_mod_files(spt_dir, &file_paths)?;
+    let delete_root = if is_disabled {
+        disabled_stash_dir(spt_dir)
+    } else {
+        spt_dir.to_path_buf()
+    };
+    crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
     // Clean up empty quma-* group directories after mod removal
     for path in &file_paths {
@@ -1110,7 +1147,12 @@ pub fn remove_addon_by_id(
     let files = db.get_files_for_addon(addon_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = file_paths.len(), "deleting addon files");
-    crate::spt::mods::delete_mod_files(spt_dir, &file_paths)?;
+    let delete_root = if addon.disabled {
+        disabled_stash_dir(spt_dir)
+    } else {
+        spt_dir.to_path_buf()
+    };
+    crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
     // Remove client files from headless before DB delete loses the file list
     {
@@ -2738,5 +2780,41 @@ mod tests {
 
         // Only one record should exist
         assert_eq!(db.list_pending_updates().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn remove_disabled_mod_deletes_from_stash() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+        let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
+
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip.path(),
+        })
+        .unwrap();
+
+        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        assert!(spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod/package.json")
+            .exists());
+
+        remove_mod_by_id(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+
+        // Files should be gone from stash
+        assert!(!spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod")
+            .exists());
+        // DB record gone
+        assert!(db.get_mod(db_id).unwrap().is_none());
     }
 }
