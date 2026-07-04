@@ -590,7 +590,7 @@ mod tests {
             "source_code_links": [
                 {"url": "https://github.com/example/big-brain", "label": "GitHub"}
             ],
-            "detail_url": "https://forge.sp-tarkov.com/mods/42/big-brain",
+            "detail_url": "https://forge.sp-tarkov.com/mod/42/big-brain",
             "fika_compatibility": true,
             "featured": true,
             "contains_ai_content": false,
@@ -609,7 +609,7 @@ mod tests {
         assert_eq!(m.downloads, Some(55212644));
         assert_eq!(
             m.detail_url.as_deref(),
-            Some("https://forge.sp-tarkov.com/mods/42/big-brain")
+            Some("https://forge.sp-tarkov.com/mod/42/big-brain")
         );
         assert_eq!(m.featured, Some(true));
         assert_eq!(m.contains_ai_content, Some(false));
