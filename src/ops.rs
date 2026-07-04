@@ -888,7 +888,8 @@ fn recover_single_update(
     }
 
     // Check if the mod row still exists
-    if db.get_mod(record.mod_db_id)?.is_none() {
+    let mod_info = db.get_mod(record.mod_db_id)?;
+    if mod_info.is_none() {
         tracing::warn!(
             pending_id = record.id,
             mod_db_id = record.mod_db_id,
@@ -898,12 +899,19 @@ fn recover_single_update(
         return Ok(());
     }
 
+    // Determine effective root: stash if disabled, canonical otherwise
+    let effective_root = if mod_info.as_ref().is_some_and(|m| m.disabled) {
+        disabled_stash_dir(spt_dir)
+    } else {
+        spt_dir.to_path_buf()
+    };
+
     let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
         .context("failed to parse new_file_paths JSON from pending_updates")?;
     let old_paths: Vec<String> = serde_json::from_str(&record.old_file_paths)
         .context("failed to parse old_file_paths JSON from pending_updates")?;
 
-    match assess_recovery_state(spt_dir, &new_files, &old_paths) {
+    match assess_recovery_state(&effective_root, &new_files, &old_paths) {
         RecoveryOutcome::AllNewPresent => {
             let tx = db.begin_transaction()?;
             db.delete_files_for_mod(record.mod_db_id)?;
@@ -919,7 +927,7 @@ fn recover_single_update(
             );
         }
         RecoveryOutcome::PartialCopy { present, total } => {
-            cleanup_partial_copy(spt_dir, &new_files, &old_paths);
+            cleanup_partial_copy(&effective_root, &new_files, &old_paths);
             db.delete_pending_update(record.id)?;
             tracing::warn!(
                 mod_db_id = record.mod_db_id,
@@ -957,7 +965,8 @@ fn recover_single_addon_update(
     spt_dir: &Path,
     record: &crate::db::mods::PendingUpdate,
 ) -> Result<()> {
-    if db.get_addon(record.mod_db_id)?.is_none() {
+    let addon_info = db.get_addon(record.mod_db_id)?;
+    if addon_info.is_none() {
         tracing::warn!(
             pending_id = record.id,
             addon_db_id = record.mod_db_id,
@@ -967,12 +976,19 @@ fn recover_single_addon_update(
         return Ok(());
     }
 
+    // Determine effective root: stash if disabled, canonical otherwise
+    let effective_root = if addon_info.as_ref().is_some_and(|a| a.disabled) {
+        disabled_stash_dir(spt_dir)
+    } else {
+        spt_dir.to_path_buf()
+    };
+
     let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
         .context("failed to parse new_file_paths JSON from pending_updates")?;
     let old_paths: Vec<String> = serde_json::from_str(&record.old_file_paths)
         .context("failed to parse old_file_paths JSON from pending_updates")?;
 
-    match assess_recovery_state(spt_dir, &new_files, &old_paths) {
+    match assess_recovery_state(&effective_root, &new_files, &old_paths) {
         RecoveryOutcome::AllNewPresent => {
             let tx = db.begin_transaction()?;
             db.delete_files_for_addon(record.mod_db_id)?;
@@ -994,7 +1010,7 @@ fn recover_single_addon_update(
             );
         }
         RecoveryOutcome::PartialCopy { present, total } => {
-            cleanup_partial_copy(spt_dir, &new_files, &old_paths);
+            cleanup_partial_copy(&effective_root, &new_files, &old_paths);
             db.delete_pending_update(record.id)?;
             tracing::warn!(
                 addon_db_id = record.mod_db_id,
@@ -1506,67 +1522,18 @@ pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a DB file path to its on-disk location, accounting for disabled state.
-#[allow(dead_code)] // Used by addon operations (Task 5/7)
-pub fn resolve_mod_path(spt_dir: &Path, file_path: &str, disabled: bool) -> PathBuf {
-    if disabled {
-        disabled_stash_dir(spt_dir).join(file_path)
-    } else {
-        spt_dir.join(file_path)
-    }
-}
-
-/// Build renames to move files from canonical location into the stash.
-#[allow(dead_code)] // Used by addon operations (Task 5/7)
-fn build_stash_renames(
-    spt_dir: &Path,
-    top_dirs: &[String],
-    loose: &[&str],
-) -> Vec<(PathBuf, PathBuf)> {
-    let stash = disabled_stash_dir(spt_dir);
-    let mut renames = Vec::new();
-    for dir in top_dirs {
-        renames.push((spt_dir.join(dir), stash.join(dir)));
-    }
-    for loose_path in loose {
-        renames.push((spt_dir.join(loose_path), stash.join(loose_path)));
-    }
-    renames
-}
-
-/// Build renames to move files from the stash back to canonical location.
-#[allow(dead_code)] // Used by addon operations (Task 5/7)
-fn build_unstash_renames(
-    spt_dir: &Path,
-    top_dirs: &[String],
-    loose: &[&str],
-) -> Vec<(PathBuf, PathBuf)> {
-    let stash = disabled_stash_dir(spt_dir);
-    let mut renames = Vec::new();
-    for dir in top_dirs {
-        renames.push((stash.join(dir), spt_dir.join(dir)));
-    }
-    for loose_path in loose {
-        renames.push((stash.join(loose_path), spt_dir.join(loose_path)));
-    }
-    renames
-}
-
 /// Split top-level directories into exclusive (safe to move as a whole) and
 /// shared (other mods also have files under them — must move individual files).
-/// Excludes the mod's own addon files from the overlap check.
+/// Excludes the mod's own disabled addon files from the overlap check, but
+/// enabled addon files count as overlap (to avoid orphaning them).
 fn filter_shared_dirs(
     db: &Database,
     mod_db_id: i64,
     top_dirs: &[String],
 ) -> (Vec<String>, Vec<String>) {
-    // Collect addon IDs belonging to this mod so we can exclude them
-    let own_addon_ids: std::collections::HashSet<i64> = db
-        .list_addons_for_mod(mod_db_id)
-        .unwrap_or_default()
-        .iter()
-        .map(|a| a.id)
-        .collect();
+    // Collect addons belonging to this mod so we can check their disabled state
+    let own_addons = db.list_addons_for_mod(mod_db_id).unwrap_or_default();
+    let own_addon_ids: std::collections::HashSet<i64> = own_addons.iter().map(|a| a.id).collect();
 
     let all_files = db.get_all_enabled_mod_files().unwrap_or_default();
     let other_files: Vec<&str> = all_files
@@ -1576,10 +1543,14 @@ fn filter_shared_dirs(
             if f.mod_id == Some(mod_db_id) && f.addon_id.is_none() {
                 return false;
             }
-            // Exclude this mod's own addon files
+            // Only exclude disabled own addons — enabled ones count as overlap
             if let Some(aid) = f.addon_id {
                 if own_addon_ids.contains(&aid) {
-                    return false;
+                    let addon_disabled = own_addons.iter().any(|a| a.id == aid && a.disabled);
+                    if addon_disabled {
+                        return false;
+                    }
+                    // Enabled own addon files count as overlap
                 }
             }
             true
@@ -1656,8 +1627,6 @@ fn rename_batch(renames: &[(PathBuf, PathBuf)]) -> Result<Vec<(PathBuf, PathBuf)
     }
     Ok(completed)
 }
-
-// ponytail: temporary addon helpers for .disabled pattern (removed in Task 5/7)
 
 /// Disable a mod by moving its files to the stash directory at
 /// `<spt_dir>/quartermaster/disabled/`, preserving relative paths.
@@ -1869,6 +1838,18 @@ pub fn disable_addon(
         let src = spt_dir.join(&file.file_path);
         let dst = stash.join(&file.file_path);
         renames.push((src, dst));
+    }
+
+    // Handle stash collisions: remove stale stash entries before moving
+    for (_, dst) in &renames {
+        if dst.exists() {
+            tracing::warn!(path = %dst.display(), "removing stale stash entry before addon disable");
+            if dst.is_dir() {
+                std::fs::remove_dir_all(dst)?;
+            } else {
+                std::fs::remove_file(dst)?;
+            }
+        }
     }
 
     for (_, dst) in &renames {
@@ -2435,24 +2416,6 @@ mod tests {
         let top_dirs = vec!["SPT/user/mods/TestMod".to_string()];
         let loose = find_loose_files(&paths, &top_dirs);
         assert_eq!(loose, vec!["BepInEx/plugins/loose.dll"]);
-    }
-
-    #[test]
-    fn resolve_mod_path_enabled() {
-        let spt_dir = PathBuf::from("/spt");
-        assert_eq!(
-            resolve_mod_path(&spt_dir, "SPT/user/mods/TestMod/package.json", false),
-            PathBuf::from("/spt/SPT/user/mods/TestMod/package.json")
-        );
-    }
-
-    #[test]
-    fn resolve_mod_path_disabled() {
-        let spt_dir = PathBuf::from("/spt");
-        assert_eq!(
-            resolve_mod_path(&spt_dir, "SPT/user/mods/TestMod/package.json", true),
-            PathBuf::from("/spt/quartermaster/disabled/SPT/user/mods/TestMod/package.json")
-        );
     }
 
     #[test]
