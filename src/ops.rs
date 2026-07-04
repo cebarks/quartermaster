@@ -495,10 +495,18 @@ pub async fn apply_mod_update(
     // Copy new files first, then delete stale-only old files. If copying
     // fails partway, old files that weren't overwritten remain intact.
     let spt_dir_fs = spt_dir.clone();
-    let extracted = actix_web::web::block(move || {
+    let old_paths_fs = old_paths.clone();
+    let (extracted, stale_paths) = actix_web::web::block(move || {
         move_staged_files(&staging_path, &spt_dir_fs, &extracted)?;
+        // Compute stale paths before remove_stale_files consumes old_paths_fs
+        let new_paths_set: std::collections::HashSet<&str> =
+            extracted.iter().map(|f| f.path.as_str()).collect();
+        let stale: Vec<String> = old_paths_fs
+            .into_iter()
+            .filter(|p| !new_paths_set.contains(p.as_str()))
+            .collect();
         remove_stale_files(&spt_dir_fs, old_paths, &extracted)?;
-        Ok::<_, anyhow::Error>(extracted)
+        Ok::<_, anyhow::Error>((extracted, stale))
     })
     .await??;
 
@@ -532,6 +540,13 @@ pub async fn apply_mod_update(
     if result.is_ok() && config_sync.headless.is_some() {
         let _ = actix_web::web::block(move || {
             let db = db_sync.lock();
+            // Remove stale files, then install new files
+            maybe_sync_headless_with_files(
+                &config_sync,
+                &spt_dir_sync,
+                &stale_paths,
+                SyncOp::Remove,
+            );
             maybe_sync_headless(&config_sync, &spt_dir_sync, &db, mod_db_id, SyncOp::Install);
             Ok::<_, anyhow::Error>(())
         })
@@ -623,10 +638,18 @@ pub async fn apply_addon_update(
     // Copy new files first, then delete stale-only old files. If copying
     // fails partway, old files that weren't overwritten remain intact.
     let spt_dir_fs = spt_dir.clone();
-    let extracted = actix_web::web::block(move || {
+    let old_paths_fs = old_paths.clone();
+    let (extracted, stale_paths) = actix_web::web::block(move || {
         move_staged_files(&staging_path, &spt_dir_fs, &extracted)?;
+        // Compute stale paths before remove_stale_files consumes old_paths_fs
+        let new_paths_set: std::collections::HashSet<&str> =
+            extracted.iter().map(|f| f.path.as_str()).collect();
+        let stale: Vec<String> = old_paths_fs
+            .into_iter()
+            .filter(|p| !new_paths_set.contains(p.as_str()))
+            .collect();
         remove_stale_files(&spt_dir_fs, old_paths, &extracted)?;
-        Ok::<_, anyhow::Error>(extracted)
+        Ok::<_, anyhow::Error>((extracted, stale))
     })
     .await??;
 
@@ -678,6 +701,13 @@ pub async fn apply_addon_update(
                 .map(|m| is_excluded_from_headless(&config_sync, m.forge_mod_id))
                 .unwrap_or(false);
             if !excluded {
+                // Remove stale files, then install new files
+                maybe_sync_headless_with_files(
+                    &config_sync,
+                    &spt_dir_sync,
+                    &stale_paths,
+                    SyncOp::Remove,
+                );
                 let files: Vec<String> = db
                     .get_files_for_addon(addon_db_id)
                     .unwrap_or_default()
