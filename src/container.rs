@@ -108,6 +108,8 @@ pub struct CreateContainerOpts {
     pub healthcheck: Option<HealthConfig>,
     pub devices: Vec<DeviceMapping>,
     pub security_opt: Vec<String>,
+    pub cpuset_cpus: Option<String>,
+    pub cpuset_mems: Option<String>,
 }
 
 impl CreateContainerOpts {
@@ -311,6 +313,8 @@ impl ContainerManager {
                 } else {
                     Some(opts.security_opt.clone())
                 },
+                cpuset_cpus: opts.cpuset_cpus.clone(),
+                cpuset_mems: opts.cpuset_mems.clone(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -448,6 +452,8 @@ mod tests {
             healthcheck: None,
             devices: vec![],
             security_opt: vec![],
+            cpuset_cpus: None,
+            cpuset_mems: None,
         };
         let labels = opts.all_labels();
         assert!(labels.iter().any(|(k, v)| k == "managed-by" && v == "quma"));
@@ -466,8 +472,30 @@ mod tests {
             healthcheck: None,
             devices: vec![],
             security_opt: vec![],
+            cpuset_cpus: None,
+            cpuset_mems: None,
         };
         assert!(opts.devices.is_empty());
+    }
+
+    #[test]
+    fn create_container_opts_cpuset_defaults_none() {
+        let opts = CreateContainerOpts {
+            name: "test".to_string(),
+            image: "test:latest".to_string(),
+            env: vec![],
+            volumes: vec![],
+            ports: vec![],
+            labels: vec![],
+            user: None,
+            healthcheck: None,
+            devices: vec![],
+            security_opt: vec![],
+            cpuset_cpus: None,
+            cpuset_mems: None,
+        };
+        assert!(opts.cpuset_cpus.is_none());
+        assert!(opts.cpuset_mems.is_none());
     }
 
     #[test]

@@ -332,6 +332,8 @@ fn prompt_forge_token() -> Result<Option<String>> {
     }
 }
 
+// TODO(debt): server container NUMA pinning deferred — bootstrap creates the container
+// before Config exists. Needs a `quma server recreate` command or setup refactor.
 fn create_container_opts(data_dir: &Path, container_name: &str) -> CreateContainerOpts {
     CreateContainerOpts {
         name: container_name.to_string(),
@@ -363,6 +365,8 @@ fn create_container_opts(data_dir: &Path, container_name: &str) -> CreateContain
         }),
         devices: vec![],
         security_opt: vec![],
+        cpuset_cpus: None,
+        cpuset_mems: None,
     }
 }
 

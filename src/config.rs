@@ -668,6 +668,12 @@ pub fn slugify(name: &str) -> String {
 pub struct HeadlessClientDef {
     #[serde(default)]
     pub extra_isolated_paths: Vec<String>,
+    #[serde(default)]
+    pub numa_node: Option<u32>,
+    #[serde(default)]
+    pub cpuset_cpus: Option<String>,
+    #[serde(default)]
+    pub cpuset_mems: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -720,6 +726,10 @@ pub struct HeadlessConfig {
     pub enable_log_purge: bool,
     #[serde(default = "default_overwrite_fika")]
     pub overwrite_fika: bool,
+    #[serde(default)]
+    pub numa_auto: bool,
+    #[serde(default)]
+    pub numa_node: Option<u32>,
 }
 
 impl Default for HeadlessConfig {
@@ -741,6 +751,8 @@ impl Default for HeadlessConfig {
             save_log_on_exit: default_save_log_on_exit(),
             enable_log_purge: false,
             overwrite_fika: default_overwrite_fika(),
+            numa_auto: false,
+            numa_node: None,
         }
     }
 }
@@ -762,6 +774,40 @@ impl HeadlessConfig {
         if self.clients.is_empty() {
             return Ok(());
         }
+        if self.numa_auto && self.numa_node.is_some() {
+            bail!(
+                "headless.numa_auto and headless.numa_node are mutually exclusive — \
+                 use numa_auto for round-robin or numa_node for a fixed default, not both"
+            );
+        }
+
+        // Warn if configured NUMA nodes don't exist on this system
+        let topology = crate::numa::NumaTopology::detect().unwrap_or_else(|e| {
+            tracing::warn!("Failed to detect NUMA topology: {e}");
+            crate::numa::NumaTopology::empty()
+        });
+
+        if !topology.is_empty() {
+            if let Some(node) = self.numa_node {
+                if topology.cpuset_for_node(node).is_err() {
+                    tracing::warn!(
+                        "headless.numa_node = {node} does not match any detected NUMA node (available: {:?})",
+                        topology.node_ids()
+                    );
+                }
+            }
+            for (i, client) in self.clients.iter().enumerate() {
+                if let Some(node) = client.numa_node {
+                    if topology.cpuset_for_node(node).is_err() {
+                        tracing::warn!(
+                            "headless.clients[{i}].numa_node = {node} does not match any detected NUMA node (available: {:?})",
+                            topology.node_ids()
+                        );
+                    }
+                }
+            }
+        }
+
         if !is_fika_installed(spt_dir) {
             bail!(
                 "Fika server mod not found at {}. Dedicated client management requires Fika.",
@@ -1788,9 +1834,11 @@ install_dir = "/opt/fika"
             clients: vec![
                 HeadlessClientDef {
                     extra_isolated_paths: vec![],
+                    ..Default::default()
                 },
                 HeadlessClientDef {
                     extra_isolated_paths: vec!["BepInEx/cache".to_string()],
+                    ..Default::default()
                 },
             ],
             ..HeadlessConfig::default()
@@ -2705,5 +2753,132 @@ include_patterns = ["user/mods/special/**"]
         let serialized = toml::to_string_pretty(&config).unwrap();
         let reloaded: Config = toml::from_str(&serialized).unwrap();
         assert_eq!(config.setup_zip, reloaded.setup_zip);
+    }
+
+    #[test]
+    fn headless_numa_node_parses() {
+        let toml_str = r#"
+[headless]
+install_dir = "/opt/client"
+numa_node = 2
+
+[[headless.clients]]
+extra_isolated_paths = []
+
+[[headless.clients]]
+numa_node = 3
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let h = config.headless.unwrap();
+        assert_eq!(h.numa_node, Some(2));
+        assert!(!h.numa_auto);
+        assert_eq!(h.clients[0].numa_node, None);
+        assert_eq!(h.clients[1].numa_node, Some(3));
+    }
+
+    #[test]
+    fn headless_numa_auto_parses() {
+        let toml_str = r#"
+[headless]
+install_dir = "/opt/client"
+numa_auto = true
+
+[[headless.clients]]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let h = config.headless.unwrap();
+        assert!(h.numa_auto);
+        assert_eq!(h.numa_node, None);
+    }
+
+    #[test]
+    fn headless_client_cpuset_override_parses() {
+        let toml_str = r#"
+[headless]
+install_dir = "/opt/client"
+
+[[headless.clients]]
+cpuset_cpus = "0-7,16-23"
+cpuset_mems = "0"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let h = config.headless.unwrap();
+        assert_eq!(h.clients[0].cpuset_cpus, Some("0-7,16-23".to_string()));
+        assert_eq!(h.clients[0].cpuset_mems, Some("0".to_string()));
+    }
+
+    #[test]
+    fn headless_numa_auto_and_node_rejects() {
+        let toml_str = r#"
+[headless]
+install_dir = "/tmp/test-client"
+numa_auto = true
+numa_node = 1
+
+[[headless.clients]]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let h = config.headless.unwrap();
+        let full_config = Config {
+            headless: Some(h.clone()),
+            server_container: Some("spt".to_string()),
+            ..Default::default()
+        };
+        // Create a temp dir for install_dir so other validations pass
+        let tmp = tempfile::tempdir().unwrap();
+        let install_dir = tmp.path().join("client");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        // Create fika-server dir
+        let spt_dir = tmp.path().join("spt");
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/fika-server")).unwrap();
+
+        let mut h_mut = h;
+        h_mut.install_dir = install_dir;
+        let result = h_mut.validate(&full_config, &spt_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("numa_auto"));
+    }
+
+    #[test]
+    fn headless_config_without_numa_parses_unchanged() {
+        let toml_str = r#"
+[headless]
+install_dir = "/opt/client"
+
+[[headless.clients]]
+extra_isolated_paths = ["BepInEx/plugins"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let h = config.headless.unwrap();
+        assert_eq!(h.numa_node, None);
+        assert!(!h.numa_auto);
+        assert_eq!(h.clients[0].numa_node, None);
+        assert_eq!(h.clients[0].cpuset_cpus, None);
+        assert_eq!(h.clients[0].cpuset_mems, None);
+    }
+
+    #[test]
+    fn headless_validate_warns_on_unknown_numa_node() {
+        // This test verifies the validation doesn't error on unknown nodes
+        // (it warns, but we can't easily capture tracing warns in a unit test).
+        // Instead, verify validate() succeeds when a valid numa_node is set.
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path().join("spt");
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/fika-server")).unwrap();
+        let install_dir = tmp.path().join("client");
+        std::fs::create_dir_all(&install_dir).unwrap();
+
+        let h = HeadlessConfig {
+            install_dir,
+            clients: vec![HeadlessClientDef::default()],
+            numa_node: Some(99), // nonexistent node — should warn, not error
+            ..Default::default()
+        };
+        let config = Config {
+            server_container: Some("spt".to_string()),
+            ..Default::default()
+        };
+        // validate() should succeed (warn, not bail)
+        assert!(h.validate(&config, &spt_dir).is_ok());
     }
 }

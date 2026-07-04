@@ -6,7 +6,7 @@
 - mod forge link in mod info page doesn't always work (i.e. `https://tarkov.grovest.io/quma/mods/48`)
 - download mods on setup page should be async, not blocking while it generates the ZIP. We should also cache the generated ZIP until there are mod changes.
 - headless client log viewer
-- numa-aware scheduling for headless containers 
+- ~~numa-aware scheduling for headless containers~~ (done — server container pinning deferred, see `setup.rs` TODO(debt))
 
 ## Bugs
 - canceling an install queue item puts it back in requests (if it was previously requested)

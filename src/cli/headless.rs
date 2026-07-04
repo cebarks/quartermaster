@@ -294,6 +294,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
 
     let new_def = HeadlessClientDef {
         extra_isolated_paths: extra_isolated_paths.to_vec(),
+        ..Default::default()
     };
 
     let headless = config.headless.get_or_insert_with(HeadlessConfig::default);
