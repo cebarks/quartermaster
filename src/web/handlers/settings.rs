@@ -3,13 +3,11 @@ use actix_web::web::{Data, Form, Query};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
-use crate::client::ClientState;
 use crate::config::{
     Config, ConsoleFormat, ConsoleLogConfig, FileFormat, FileLogConfig, HeadlessConfig,
     HeadlessDisplayServer, LoggingConfig, RestartPolicy, RotationPolicy, WebLogConfig,
 };
 use crate::db::rbac::Permission;
-use crate::numa::NumaTopology;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
@@ -51,13 +49,7 @@ struct SettingsTemplate {
     console_format: String,
     file_format: String,
     file_rotation: String,
-    restart_policy: String,
-    display_server: String,
     has_forge_token: bool,
-    headless_clients: Vec<ClientState>,
-    headless_converging: bool,
-    headless_target_count: u32,
-    numa_nodes: Vec<(u32, String)>,
 }
 
 pub async fn settings_page(
@@ -73,7 +65,7 @@ pub async fn settings_page(
 
     let config = Config::load(&state.config_path).map_err(WebError::from)?;
 
-    const VALID_TABS: &[&str] = &["web", "server", "queue", "forge", "logging", "headless"];
+    const VALID_TABS: &[&str] = &["web", "server", "queue", "forge", "logging"];
     let active_tab = query
         .tab
         .as_deref()
@@ -81,47 +73,10 @@ pub async fn settings_page(
         .unwrap_or("web")
         .to_string();
 
-    // Format enum values for template
     let console_format = config.logging.console.format.to_string();
     let file_format = config.logging.file.format.to_string();
     let file_rotation = config.logging.file.rotation.to_string();
-    let restart_policy = config
-        .headless
-        .as_ref()
-        .map(|c| c.restart_policy.to_string())
-        .unwrap_or_else(|| RestartPolicy::Auto.to_string());
-
-    let display_server = config
-        .headless
-        .as_ref()
-        .map(|c| match c.display_server {
-            HeadlessDisplayServer::Gamescope => "gamescope",
-            HeadlessDisplayServer::Xvfb => "xvfb",
-        })
-        .unwrap_or("gamescope")
-        .to_string();
-
     let has_forge_token = config.forge_token.is_some();
-
-    let headless_clients = match &state.client_states {
-        Some(states) => states.read().await.clone(),
-        None => vec![],
-    };
-    let headless_converging = state.converging.load(std::sync::atomic::Ordering::Relaxed);
-    let headless_target_count = config
-        .headless
-        .as_ref()
-        .map(|h| h.client_count())
-        .unwrap_or(0);
-
-    let numa_nodes: Vec<(u32, String)> = NumaTopology::detect()
-        .map(|t| {
-            t.nodes()
-                .iter()
-                .map(|n| (n.id, n.cpulist.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
 
     let tmpl = SettingsTemplate {
         user,
@@ -133,13 +88,7 @@ pub async fn settings_page(
         console_format,
         file_format,
         file_rotation,
-        restart_policy,
-        display_server,
         has_forge_token,
-        headless_clients,
-        headless_converging,
-        headless_target_count,
-        numa_nodes,
     };
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
@@ -214,6 +163,9 @@ pub struct HeadlessSettingsForm {
     image: String,
     isolated_paths: String,
     display_server: String,
+    #[serde(default)]
+    numa_policy: String,
+    numa_node: Option<u32>,
 }
 
 pub async fn save_web_settings(
@@ -476,7 +428,17 @@ pub async fn save_headless_settings(
         .filter(|l| !l.is_empty())
         .collect();
 
-    let headless = HeadlessConfig {
+    let (numa_auto, numa_node) = match form.numa_policy.as_str() {
+        "auto" => (true, None),
+        "node" => (false, form.numa_node),
+        _ => (false, None),
+    };
+
+    let _guard = state.config_lock.lock();
+    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
+    let existing = config.headless.as_ref();
+
+    let final_config = HeadlessConfig {
         install_dir: std::path::PathBuf::from(form.install_dir.trim()),
         restart_policy,
         max_restart_attempts: form.max_restart_attempts,
@@ -484,27 +446,22 @@ pub async fn save_headless_settings(
         base_udp_port: form.base_udp_port,
         image: form.image.trim().to_string(),
         isolated_paths: isolated,
-        clients: Vec::new(), // clients managed via create/delete, not settings
-        ..HeadlessConfig::default()
+        display_server: match form.display_server.as_str() {
+            "xvfb" => HeadlessDisplayServer::Xvfb,
+            _ => HeadlessDisplayServer::Gamescope,
+        },
+        numa_auto,
+        numa_node,
+        clients: existing.map(|h| h.clients.clone()).unwrap_or_default(),
+        runner: existing.map(|h| h.runner.clone()).unwrap_or_default(),
+        ntsync: existing.map(|h| h.ntsync).unwrap_or(true),
+        esync: existing.map(|h| h.esync).unwrap_or(false),
+        fsync: existing.map(|h| h.fsync).unwrap_or(false),
+        save_log_on_exit: existing.map(|h| h.save_log_on_exit).unwrap_or(true),
+        enable_log_purge: existing.map(|h| h.enable_log_purge).unwrap_or(false),
+        overwrite_fika: existing.map(|h| h.overwrite_fika).unwrap_or(true),
     };
 
-    let _guard = state.config_lock.lock();
-    let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
-    // Preserve fields not editable from the web form
-    let existing = config.headless.as_ref();
-    let mut final_config = headless;
-    final_config.clients = existing.map(|h| h.clients.clone()).unwrap_or_default();
-    final_config.runner = existing.map(|h| h.runner.clone()).unwrap_or_default();
-    final_config.ntsync = existing.map(|h| h.ntsync).unwrap_or(true);
-    final_config.esync = existing.map(|h| h.esync).unwrap_or(false);
-    final_config.fsync = existing.map(|h| h.fsync).unwrap_or(false);
-    final_config.display_server = match form.display_server.as_str() {
-        "xvfb" => HeadlessDisplayServer::Xvfb,
-        _ => HeadlessDisplayServer::Gamescope,
-    };
-    final_config.save_log_on_exit = existing.map(|h| h.save_log_on_exit).unwrap_or(true);
-    final_config.enable_log_purge = existing.map(|h| h.enable_log_purge).unwrap_or(false);
-    final_config.overwrite_fika = existing.map(|h| h.overwrite_fika).unwrap_or(true);
     config.headless = if form.install_dir.trim().is_empty() {
         None
     } else {
@@ -515,6 +472,6 @@ pub async fn save_headless_settings(
 
     set_flash(&session, "Headless settings saved", FlashType::Success);
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/settings?tab=headless"))
+        .insert_header(("Location", "/quma/headless"))
         .finish())
 }

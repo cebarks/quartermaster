@@ -859,6 +859,78 @@ pub async fn converge(
         info!("Already at desired count ({desired_count}), checking for overlay updates");
     }
 
+    // Reconcile NUMA pinning on containers that existed before this convergence.
+    // New containers (from scale-up) already have the correct pinning; only
+    // pre-existing ones can be stale.
+    let pre_existing_count = current_count.min(desired_count);
+    for i in 1..=pre_existing_count {
+        let name = client_container_name(i);
+        let client_index = (i - 1) as usize;
+        let (desired_cpus, desired_mems) =
+            resolve_numa_cpuset(headless_config, client_index, &topology)?;
+
+        let container_info = match container_mgr.inspect(&name).await {
+            Ok(info) => info,
+            Err(_) => continue,
+        };
+
+        let current_cpus = container_info
+            .host_config
+            .as_ref()
+            .and_then(|hc| hc.cpuset_cpus.as_ref())
+            .filter(|s| !s.is_empty())
+            .cloned();
+        let current_mems = container_info
+            .host_config
+            .as_ref()
+            .and_then(|hc| hc.cpuset_mems.as_ref())
+            .filter(|s| !s.is_empty())
+            .cloned();
+
+        if current_cpus == desired_cpus && current_mems == desired_mems {
+            continue;
+        }
+
+        let profile_id = container_info
+            .config
+            .as_ref()
+            .and_then(|c| c.env.as_ref())
+            .and_then(|env| {
+                env.iter()
+                    .find_map(|e| e.strip_prefix("PROFILE_ID=").map(|v| v.to_string()))
+            })
+            .filter(|s| !s.is_empty());
+
+        info!(
+            "Client {i}: NUMA pinning changed ({:?} → {:?}), recreating container",
+            current_cpus, desired_cpus
+        );
+
+        if container_mgr.is_running(&name).await.unwrap_or(false) {
+            container_mgr
+                .stop(&name)
+                .await
+                .with_context(|| format!("failed to stop client {i} for NUMA reconciliation"))?;
+        }
+        container_mgr
+            .remove_container(&name)
+            .await
+            .with_context(|| format!("failed to remove client {i} for NUMA reconciliation"))?;
+
+        let effective_paths = headless_config.effective_isolated_paths(client_index);
+        create_client_container(
+            container_mgr,
+            headless_config,
+            config,
+            i,
+            profile_id,
+            &effective_paths,
+            ntsync_available,
+            &topology,
+        )
+        .await?;
+    }
+
     // Update overlays for all defined clients (using effective paths)
     for (i, _client_def) in headless_config.clients.iter().enumerate() {
         let index = (i + 1) as u32;

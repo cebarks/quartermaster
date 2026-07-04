@@ -6,14 +6,34 @@ use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::client::{ClientHealth, ClientState};
+use crate::config::{Config, HeadlessDisplayServer, RestartPolicy};
 use crate::container::ContainerManager;
 use crate::db::rbac::Permission;
+use crate::numa::NumaTopology;
 use crate::spt::headless::EHeadlessStatus;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
+
+#[derive(Template)]
+#[template(path = "headless.html")]
+struct HeadlessPageTemplate {
+    user: SessionUser,
+    flash: Option<FlashMessage>,
+    csrf_token: String,
+    nav: NavContext,
+    config: Config,
+    restart_policy: String,
+    display_server: String,
+    headless_clients: Vec<ClientState>,
+    headless_converging: bool,
+    headless_target_count: u32,
+    numa_nodes: Vec<(u32, String)>,
+    numa_policy: String,
+    numa_node: Option<u32>,
+}
 
 #[derive(Template)]
 #[template(path = "clients/detail.html")]
@@ -51,7 +71,7 @@ fn require_container_mgr<'a>(
             FlashType::Error,
         );
         HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/settings?tab=headless"))
+            .insert_header(("Location", "/quma/headless"))
             .finish()
     })
 }
@@ -79,7 +99,7 @@ async fn resolve_client_container(
             FlashType::Error,
         );
         HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/settings?tab=headless"))
+            .insert_header(("Location", "/quma/headless"))
             .finish()
     })
 }
@@ -96,16 +116,91 @@ fn create_spt_client(
             FlashType::Error,
         );
         HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/settings?tab=headless"))
+            .insert_header(("Location", "/quma/headless"))
             .finish()
     })
 }
 
-pub async fn client_list(req: HttpRequest) -> actix_web::Result<HttpResponse> {
-    require_auth(&req)?;
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/settings?tab=headless"))
-        .finish())
+pub async fn headless_page(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::SettingsManage)?;
+    let flash = take_flash(&session);
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let config = Config::load(&state.config_path).map_err(WebError::from)?;
+
+    let restart_policy = config
+        .headless
+        .as_ref()
+        .map(|c| c.restart_policy.to_string())
+        .unwrap_or_else(|| RestartPolicy::Auto.to_string());
+
+    let display_server = config
+        .headless
+        .as_ref()
+        .map(|c| match c.display_server {
+            HeadlessDisplayServer::Gamescope => "gamescope",
+            HeadlessDisplayServer::Xvfb => "xvfb",
+        })
+        .unwrap_or("gamescope")
+        .to_string();
+
+    let headless_clients = match &state.client_states {
+        Some(states) => states.read().await.clone(),
+        None => vec![],
+    };
+    let headless_converging = state.converging.load(std::sync::atomic::Ordering::Relaxed);
+    let headless_target_count = config
+        .headless
+        .as_ref()
+        .map(|h| h.client_count())
+        .unwrap_or(0);
+
+    let numa_nodes: Vec<(u32, String)> = NumaTopology::detect()
+        .map(|t| {
+            t.nodes()
+                .iter()
+                .map(|n| (n.id, n.cpulist.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let (numa_policy, numa_node) = config
+        .headless
+        .as_ref()
+        .map(|h| {
+            if h.numa_auto {
+                ("auto".to_string(), None)
+            } else if h.numa_node.is_some() {
+                ("node".to_string(), h.numa_node)
+            } else {
+                ("none".to_string(), None)
+            }
+        })
+        .unwrap_or_else(|| ("none".to_string(), None));
+
+    let tmpl = HeadlessPageTemplate {
+        user,
+        flash,
+        csrf_token,
+        nav: NavContext::from_state(&state),
+        config,
+        restart_policy,
+        display_server,
+        headless_clients,
+        headless_converging,
+        headless_target_count,
+        numa_nodes,
+        numa_policy,
+        numa_node,
+    };
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(tmpl.render().map_err(WebError::from)?))
 }
 
 pub async fn client_detail(
@@ -314,7 +409,7 @@ pub async fn client_scale(
             FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/settings?tab=headless"))
+            .insert_header(("Location", "/quma/headless"))
             .finish());
     }
 
@@ -353,7 +448,7 @@ pub async fn client_scale(
                 FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
+                .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     }
@@ -373,7 +468,7 @@ pub async fn client_scale(
                 FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
+                .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
@@ -458,7 +553,7 @@ pub async fn client_scale(
     );
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/settings?tab=headless"))
+        .insert_header(("Location", "/quma/headless"))
         .finish())
 }
 
@@ -500,7 +595,7 @@ pub async fn client_create(
                 FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
+                .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
@@ -581,7 +676,7 @@ pub async fn client_create(
     );
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/settings?tab=headless"))
+        .insert_header(("Location", "/quma/headless"))
         .finish())
 }
 
@@ -610,7 +705,7 @@ pub async fn client_delete(
                 FlashType::Error,
             );
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/settings?tab=headless"))
+                .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
@@ -623,7 +718,7 @@ pub async fn client_delete(
             FlashType::Error,
         );
         return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/settings?tab=headless"))
+            .insert_header(("Location", "/quma/headless"))
             .finish());
     }
 
@@ -640,7 +735,7 @@ pub async fn client_delete(
                     FlashType::Error,
                 );
                 return Ok(HttpResponse::SeeOther()
-                    .insert_header(("Location", "/quma/settings?tab=headless"))
+                    .insert_header(("Location", "/quma/headless"))
                     .finish());
             }
         }
@@ -730,7 +825,7 @@ pub async fn client_delete(
     );
 
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/settings?tab=headless"))
+        .insert_header(("Location", "/quma/headless"))
         .finish())
 }
 
