@@ -6,43 +6,29 @@
 <h1>Admin Panel</h1>
 
 <div class="tab-bar">
-    <button class="tab active" id="tab-users"
+    <button class="tab active" data-tab="users"
             hx-get="/quma/api/admin/users"
             hx-target="#admin-content"
             hx-swap="innerHTML"
             hx-push-url="#users"
-            onclick="setActiveTab(this)">Users</button>
-    <button class="tab" id="tab-invites"
+            onclick="tabSwitch(this)">Users</button>
+    <button class="tab" data-tab="invites"
             hx-get="/quma/api/admin/invites"
             hx-target="#admin-content"
             hx-swap="innerHTML"
             hx-push-url="#invites"
-            onclick="setActiveTab(this)">Invites</button>
-    <button class="tab" id="tab-roles"
+            onclick="tabSwitch(this)">Invites</button>
+    <button class="tab" data-tab="roles"
             hx-get="/quma/api/admin/roles"
             hx-target="#admin-content"
             hx-swap="innerHTML"
             hx-push-url="#roles"
-            onclick="setActiveTab(this)">Roles</button>
+            onclick="tabSwitch(this)">Roles</button>
 </div>
 
 <div id="admin-content">
     {% include "admin/partials/users.html" %}
 </div>
 
-<script>
-function setActiveTab(el) {
-    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
-    el.classList.add('active');
-}
-document.addEventListener('DOMContentLoaded', function() {
-    if (location.hash === '#invites') {
-        var btn = document.getElementById('tab-invites');
-        if (btn) { btn.click(); }
-    } else if (location.hash === '#roles') {
-        var btn = document.getElementById('tab-roles');
-        if (btn) { btn.click(); }
-    }
-});
-</script>
+<script>document.addEventListener('DOMContentLoaded', function() { tabRestore('hash'); });</script>
 {% endblock %}
