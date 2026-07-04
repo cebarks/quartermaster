@@ -9,6 +9,7 @@ use crate::config::{
     HeadlessDisplayServer, LoggingConfig, RestartPolicy, RotationPolicy, WebLogConfig,
 };
 use crate::db::rbac::Permission;
+use crate::numa::NumaTopology;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
@@ -56,6 +57,7 @@ struct SettingsTemplate {
     headless_clients: Vec<ClientState>,
     headless_converging: bool,
     headless_target_count: u32,
+    numa_nodes: Vec<(u32, String)>,
 }
 
 pub async fn settings_page(
@@ -112,6 +114,15 @@ pub async fn settings_page(
         .map(|h| h.client_count())
         .unwrap_or(0);
 
+    let numa_nodes: Vec<(u32, String)> = NumaTopology::detect()
+        .map(|t| {
+            t.nodes()
+                .iter()
+                .map(|n| (n.id, n.cpulist.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     let tmpl = SettingsTemplate {
         user,
         flash,
@@ -128,6 +139,7 @@ pub async fn settings_page(
         headless_clients,
         headless_converging,
         headless_target_count,
+        numa_nodes,
     };
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
