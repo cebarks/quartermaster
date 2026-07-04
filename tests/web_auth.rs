@@ -352,7 +352,7 @@ async fn join_submit_username_taken_locked_account() {
     // Create a locked account (no password, like the proxy auto-creates)
     {
         let db = app.db.lock();
-        db.insert_user("lockeduser", Some("profile-123"), None, "player")
+        db.insert_user("lockeduser", Some("profile-123"), None, "player", false)
             .unwrap();
     }
 

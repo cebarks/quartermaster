@@ -13,6 +13,8 @@ pub struct User {
     pub disabled: bool,
     pub created_at: String,
     pub password_changed_at: Option<String>,
+    #[allow(dead_code)] // filtered in SQL, not accessed in Rust
+    pub is_headless: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,10 +120,11 @@ impl Database {
         spt_profile_id: Option<&str>,
         password_hash: Option<&str>,
         role: &str,
+        is_headless: bool,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO users (username, spt_profile_id, password_hash, role) VALUES (?1, ?2, ?3, ?4)",
-            params![username, spt_profile_id, password_hash, role],
+            "INSERT INTO users (username, spt_profile_id, password_hash, role, is_headless) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![username, spt_profile_id, password_hash, role, is_headless],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -129,7 +132,7 @@ impl Database {
     pub fn get_user_by_username(&self, username: &str) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at, is_headless
                  FROM users WHERE username = ?1",
                 params![username],
                 row_to_user,
@@ -139,7 +142,7 @@ impl Database {
 
     pub fn list_users(&self) -> rusqlite::Result<Vec<User>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+            "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at, is_headless
              FROM users ORDER BY username",
         )?;
         let rows = stmt.query_map([], row_to_user)?;
@@ -155,7 +158,7 @@ impl Database {
     pub fn get_user_by_id(&self, id: i64) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at, is_headless
                  FROM users WHERE id = ?1",
                 params![id],
                 row_to_user,
@@ -166,7 +169,7 @@ impl Database {
     pub fn get_user_by_spt_profile_id(&self, profile_id: &str) -> rusqlite::Result<Option<User>> {
         self.conn
             .query_row(
-                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at
+                "SELECT id, username, spt_profile_id, password_hash, role, disabled, created_at, password_changed_at, is_headless
                  FROM users WHERE spt_profile_id = ?1",
                 params![profile_id],
                 row_to_user,
@@ -517,6 +520,7 @@ fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         disabled: row.get(5)?,
         created_at: row.get(6)?,
         password_changed_at: row.get(7)?,
+        is_headless: row.get(8)?,
     })
 }
 
