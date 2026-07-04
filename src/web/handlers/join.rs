@@ -725,17 +725,16 @@ trap cleanup EXIT
 
 # Step 1: Install Fika via official installer (Wine)
 echo "Downloading Fika Installer..."
-curl -sSL -o Fika-Installer.exe "$FIKA_INSTALLER_URL"
+curl -fsSL -o Fika-Installer.exe "$FIKA_INSTALLER_URL"
 
 echo "Installing Fika (via Wine)..."
-echo "NOTE: Fika-Installer is a Windows application — firewall rules will not apply under Wine."
-wine Fika-Installer.exe install fika || echo "WARNING: Fika Installer exited with code $?, continuing..."
+wine Fika-Installer.exe install fika
 
 # Step 2: Download additional mods (NarcoNet, etc.)
 TMPFILE=$(mktemp /tmp/quma-mods-XXXXXX.zip)
 
 echo "Downloading additional mods..."
-curl -sSL -o "$TMPFILE" "$ARCHIVE_URL"
+curl -fsSL -o "$TMPFILE" "$ARCHIVE_URL"
 
 echo "Extracting mods..."
 unzip -o "$TMPFILE" -d .
@@ -746,7 +745,8 @@ if [ -f "$LAUNCHER_CONFIG" ]; then
         python3 -c "
 import json, sys
 with open(sys.argv[1]) as f: cfg = json.load(f)
-cfg.setdefault('Server', {{}})['Url'] = sys.argv[2]
+cfg['Server'] = cfg.get('Server') or {{}}
+cfg['Server']['Url'] = sys.argv[2]
 with open(sys.argv[1], 'w') as f: json.dump(cfg, f, indent=2)
 " "$LAUNCHER_CONFIG" "$SPT_SERVER_URL"
         echo "Launcher configured: server address set to $SPT_SERVER_URL"
@@ -930,6 +930,10 @@ mod tests {
         assert!(script.contains("FIKA_INSTALLER_URL="));
         assert!(script.contains("Fika-Installer.exe"));
         assert!(script.contains("wine Fika-Installer.exe install fika"));
+        assert!(
+            !script.contains("|| echo"),
+            "wine failure should not be swallowed"
+        );
     }
 
     #[test]
@@ -941,6 +945,20 @@ mod tests {
         );
         assert!(script.contains("SPT_SERVER_URL='https://example.com:6969'"));
         assert!(script.contains("server address set to $SPT_SERVER_URL"));
+    }
+
+    #[test]
+    fn bash_script_uses_curl_fail_flag() {
+        let script = generate_bash_script(
+            "Server",
+            "https://example.com/quma/join/mods.zip?code=code1",
+            TEST_SPT_URL,
+        );
+        assert!(script.contains("curl -fsSL"), "curl should use --fail flag");
+        assert!(
+            !script.contains("curl -sSL "),
+            "should not have curl without --fail"
+        );
     }
 
     #[test]
