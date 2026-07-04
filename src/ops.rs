@@ -1463,47 +1463,6 @@ fn rename_batch(renames: &[(PathBuf, PathBuf)]) -> Result<Vec<(PathBuf, PathBuf)
 }
 
 // ponytail: temporary addon helpers for .disabled pattern (removed in Task 5/7)
-fn build_disable_renames(
-    spt_dir: &Path,
-    top_dirs: &[String],
-    loose: &[&str],
-) -> Vec<(PathBuf, PathBuf)> {
-    let mut renames = Vec::new();
-    for dir in top_dirs {
-        let src = spt_dir.join(dir);
-        let dst = spt_dir.join(format!("{dir}.disabled"));
-        renames.push((src, dst));
-    }
-    for loose_path in loose {
-        let src = spt_dir.join(loose_path);
-        let dst = spt_dir.join(format!("{loose_path}.disabled"));
-        renames.push((src, dst));
-    }
-    renames
-}
-
-fn build_enable_renames(
-    spt_dir: &Path,
-    top_dirs: &[String],
-    loose: &[&str],
-) -> Vec<(PathBuf, PathBuf)> {
-    let mut renames = Vec::new();
-    for dir in top_dirs {
-        if let Some(restored) = dir.strip_suffix(".disabled") {
-            let src = spt_dir.join(dir);
-            let dst = spt_dir.join(restored);
-            renames.push((src, dst));
-        }
-    }
-    for loose_path in loose {
-        if let Some(restored) = loose_path.strip_suffix(".disabled") {
-            let src = spt_dir.join(loose_path);
-            let dst = spt_dir.join(restored);
-            renames.push((src, dst));
-        }
-    }
-    renames
-}
 
 /// Disable a mod by moving its files to the stash directory at
 /// `<spt_dir>/quartermaster/disabled/`, preserving relative paths.
@@ -1680,10 +1639,9 @@ pub fn enable_mod(
     Ok(())
 }
 
-/// Disable an addon by renaming its top-level directories and loose files with
-/// a `.disabled` suffix, updating file paths in the database, and marking
-/// the addon as disabled.
-#[allow(dead_code)] // Used in Task 5 and Task 7
+/// Disable an addon by moving its files to the stash directory.
+/// DB file paths are not modified.
+#[allow(dead_code)]
 pub fn disable_addon(
     db: &Database,
     spt_dir: &Path,
@@ -1698,9 +1656,6 @@ pub fn disable_addon(
     }
 
     let files = db.get_files_for_addon(addon_db_id)?;
-    let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
-    let top_dirs = find_top_level_mod_dirs(&file_paths);
-    let loose = find_loose_files(&file_paths, &top_dirs);
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "disabling addon");
 
@@ -1712,33 +1667,27 @@ pub fn disable_addon(
         "auto_disable_addon",
     )?;
 
-    // Begin transaction: update DB first, then filesystem
-    let tx = db.begin_transaction()?;
-
-    // Update file paths in the database
-    for dir in &top_dirs {
-        let old_prefix = dir;
-        let new_prefix = format!("{}.disabled", dir);
-        db.reprefix_addon_files(addon_db_id, old_prefix, &new_prefix)?;
+    // For addons, always move individual files since the parent mod likely
+    // shares the same top-level directory
+    let stash = disabled_stash_dir(spt_dir);
+    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for file in &files {
+        let src = spt_dir.join(&file.file_path);
+        let dst = stash.join(&file.file_path);
+        renames.push((src, dst));
     }
-    for loose_path in &loose {
-        // For loose files, we need to manually update each file path
-        let file_id = files
-            .iter()
-            .find(|f| f.file_path == *loose_path)
-            .map(|f| f.id);
-        if let Some(fid) = file_id {
-            let new_path = format!("{}.disabled", loose_path);
-            db.rename_file_path(fid, &new_path)?;
+
+    for (_, dst) in &renames {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
         }
     }
 
+    let tx = db.begin_transaction()?;
     db.set_addon_disabled(addon_db_id, true)?;
 
-    let renames = build_disable_renames(spt_dir, &top_dirs, &loose);
     let completed = rename_batch(&renames)?;
 
-    // Commit transaction -- undo renames if commit fails
     if let Err(e) = tx.commit() {
         undo_renames(&completed);
         return Err(e.into());
@@ -1748,10 +1697,8 @@ pub fn disable_addon(
     Ok(())
 }
 
-/// Enable a previously disabled addon by removing the `.disabled` suffix from
-/// its directories and files, updating file paths in the database, and
-/// clearing the disabled flag.
-#[allow(dead_code)] // Used in Task 5 and Task 7
+/// Enable a previously disabled addon by moving files from stash back to canonical location.
+#[allow(dead_code)]
 pub fn enable_addon(
     db: &Database,
     spt_dir: &Path,
@@ -1767,8 +1714,6 @@ pub fn enable_addon(
 
     let files = db.get_files_for_addon(addon_db_id)?;
     let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
-    let top_dirs = find_top_level_mod_dirs(&file_paths);
-    let loose = find_loose_files(&file_paths, &top_dirs);
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "enabling addon");
 
@@ -1780,44 +1725,31 @@ pub fn enable_addon(
         "auto_enable_addon",
     )?;
 
-    // Begin transaction: update DB first, then filesystem
+    let stash = disabled_stash_dir(spt_dir);
+    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for file in &files {
+        let src = stash.join(&file.file_path);
+        let dst = spt_dir.join(&file.file_path);
+        renames.push((src, dst));
+    }
+
+    for (_, dst) in &renames {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
     let tx = db.begin_transaction()?;
-
-    // Update file paths in the database (strip .disabled from paths)
-    for dir in &top_dirs {
-        if dir.ends_with(".disabled") {
-            let old_prefix = dir;
-            let new_prefix = dir
-                .strip_suffix(".disabled")
-                .expect("checked by ends_with above");
-            db.reprefix_addon_files(addon_db_id, old_prefix, new_prefix)?;
-        }
-    }
-    for loose_path in &loose {
-        if loose_path.ends_with(".disabled") {
-            let file_id = files
-                .iter()
-                .find(|f| f.file_path == *loose_path)
-                .map(|f| f.id);
-            if let Some(fid) = file_id {
-                let new_path = loose_path
-                    .strip_suffix(".disabled")
-                    .expect("checked by ends_with above");
-                db.rename_file_path(fid, new_path)?;
-            }
-        }
-    }
-
     db.set_addon_disabled(addon_db_id, false)?;
 
-    let renames = build_enable_renames(spt_dir, &top_dirs, &loose);
     let completed = rename_batch(&renames)?;
 
-    // Commit transaction -- undo renames if commit fails
     if let Err(e) = tx.commit() {
         undo_renames(&completed);
         return Err(e.into());
     }
+
+    cleanup_empty_stash_dirs(spt_dir, &file_paths);
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon enabled");
     Ok(())
