@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,6 +7,8 @@ use tokio::sync::mpsc;
 
 use crate::db::Database;
 use crate::logging::LogEntry;
+
+pub type LogLevelCounts = Arc<parking_lot::RwLock<HashMap<String, i64>>>;
 
 pub struct LogWriterHandle {
     shutdown_tx: mpsc::Sender<()>,
@@ -22,6 +25,7 @@ pub fn spawn(
     mut rx: mpsc::UnboundedReceiver<LogEntry>,
     retention_days: u64,
     max_entries: u64,
+    counts: LogLevelCounts,
 ) -> (tokio::task::JoinHandle<()>, LogWriterHandle) {
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -34,10 +38,16 @@ pub fn spawn(
         // Prune at startup
         {
             let db = Arc::clone(&db);
+            let counts = Arc::clone(&counts);
             let _ = tokio::task::spawn_blocking(move || {
                 let db = db.lock();
                 if let Err(e) = db.prune_logs_batch(retention_days, max_entries, 10_000) {
                     tracing::warn!(err = %e, "failed to prune old log entries at startup");
+                }
+                // Recalculate counts after prune
+                match db.log_counts_by_level() {
+                    Ok(fresh) => *counts.write() = fresh,
+                    Err(e) => tracing::warn!(err = %e, "failed to load log counts after prune"),
                 }
             })
             .await;
@@ -53,20 +63,26 @@ pub fn spawn(
                 Some(entry) = rx.recv() => {
                     batch.push(entry);
                     if batch.len() >= 100 {
-                        flush_batch(&db, &mut batch).await;
+                        flush_batch(&db, &mut batch, &counts).await;
                     }
                 }
                 _ = flush_timer.tick() => {
                     if !batch.is_empty() {
-                        flush_batch(&db, &mut batch).await;
+                        flush_batch(&db, &mut batch, &counts).await;
                     }
                 }
                 _ = prune_interval.tick() => {
                     let db = Arc::clone(&db);
+                    let counts = Arc::clone(&counts);
                     let _ = tokio::task::spawn_blocking(move || {
                         let db = db.lock();
                         if let Err(e) = db.prune_logs_batch(retention_days, max_entries, 10_000) {
                             tracing::warn!(err = %e, "failed to prune old log entries");
+                        }
+                        // Recalculate counts after prune
+                        match db.log_counts_by_level() {
+                            Ok(fresh) => *counts.write() = fresh,
+                            Err(e) => tracing::warn!(err = %e, "failed to reload log counts after prune"),
                         }
                     }).await;
                 }
@@ -76,7 +92,7 @@ pub fn spawn(
                         batch.push(entry);
                     }
                     if !batch.is_empty() {
-                        flush_batch(&db, &mut batch).await;
+                        flush_batch(&db, &mut batch, &counts).await;
                     }
                     break;
                 }
@@ -87,16 +103,29 @@ pub fn spawn(
     (handle, LogWriterHandle { shutdown_tx })
 }
 
-/// Flush accumulated log entries to the DB via spawn_blocking.
-/// MUST use spawn_blocking — the DB is behind a parking_lot::Mutex and
-/// acquiring it on the async runtime blocks the tokio worker thread.
-async fn flush_batch(db: &Arc<Mutex<Database>>, batch: &mut Vec<LogEntry>) {
+async fn flush_batch(
+    db: &Arc<Mutex<Database>>,
+    batch: &mut Vec<LogEntry>,
+    counts: &LogLevelCounts,
+) {
     let db = Arc::clone(db);
     let entries = std::mem::take(batch);
+    // Accumulate deltas before spawning blocking task
+    let mut deltas: HashMap<String, i64> = HashMap::new();
+    for entry in &entries {
+        *deltas.entry(entry.level.clone()).or_default() += 1;
+    }
+    let counts = Arc::clone(counts);
     let _ = tokio::task::spawn_blocking(move || {
         let db = db.lock();
         if let Err(e) = db.insert_log_batch(&entries) {
             eprintln!("failed to write log batch to DB: {e}");
+            return;
+        }
+        // Update cached counts
+        let mut c = counts.write();
+        for (level, delta) in deltas {
+            *c.entry(level).or_default() += delta;
         }
     })
     .await;

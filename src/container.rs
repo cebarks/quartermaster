@@ -149,6 +149,10 @@ impl ContainerManager {
         })
     }
 
+    pub fn docker(&self) -> &Docker {
+        &self.docker
+    }
+
     pub async fn start(&self, container: &str) -> Result<()> {
         tracing::debug!(container, "starting container");
         self.docker

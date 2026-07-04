@@ -10,6 +10,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/004_invite_codes_cascade.sql"),
     include_str!("../../migrations/005_addon_support.sql"),
     include_str!("../../migrations/006_constraints.sql"),
+    include_str!("../../migrations/007_log_indexes.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
