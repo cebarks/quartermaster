@@ -1836,7 +1836,6 @@ pub fn enable_mod(
 
 /// Disable an addon by moving its files to the stash directory.
 /// DB file paths are not modified.
-#[allow(dead_code)]
 pub fn disable_addon(
     db: &Database,
     spt_dir: &Path,
@@ -1893,7 +1892,6 @@ pub fn disable_addon(
 }
 
 /// Enable a previously disabled addon by moving files from stash back to canonical location.
-#[allow(dead_code)]
 pub fn enable_addon(
     db: &Database,
     spt_dir: &Path,

@@ -1867,7 +1867,7 @@ mod tests {
             .unwrap();
         db.insert_file(
             mod_id,
-            "BepInEx/plugins/SAIN.disabled/SAIN.dll",
+            "BepInEx/plugins/SAIN/SAIN.dll",
             Some("abc"),
             Some(4),
         )
