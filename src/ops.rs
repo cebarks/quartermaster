@@ -1307,6 +1307,128 @@ fn find_loose_files<'a>(file_paths: &'a [String], top_dirs: &[String]) -> Vec<&'
         .collect()
 }
 
+/// Root of the disabled-mod stash: `<spt_dir>/quartermaster/disabled/`.
+pub fn disabled_stash_dir(spt_dir: &Path) -> PathBuf {
+    spt_dir.join("quartermaster/disabled")
+}
+
+/// Resolve a DB file path to its on-disk location, accounting for disabled state.
+pub fn resolve_mod_path(spt_dir: &Path, file_path: &str, disabled: bool) -> PathBuf {
+    if disabled {
+        disabled_stash_dir(spt_dir).join(file_path)
+    } else {
+        spt_dir.join(file_path)
+    }
+}
+
+/// Build renames to move files from canonical location into the stash.
+fn build_stash_renames(
+    spt_dir: &Path,
+    top_dirs: &[String],
+    loose: &[&str],
+) -> Vec<(PathBuf, PathBuf)> {
+    let stash = disabled_stash_dir(spt_dir);
+    let mut renames = Vec::new();
+    for dir in top_dirs {
+        renames.push((spt_dir.join(dir), stash.join(dir)));
+    }
+    for loose_path in loose {
+        renames.push((spt_dir.join(loose_path), stash.join(loose_path)));
+    }
+    renames
+}
+
+/// Build renames to move files from the stash back to canonical location.
+fn build_unstash_renames(
+    spt_dir: &Path,
+    top_dirs: &[String],
+    loose: &[&str],
+) -> Vec<(PathBuf, PathBuf)> {
+    let stash = disabled_stash_dir(spt_dir);
+    let mut renames = Vec::new();
+    for dir in top_dirs {
+        renames.push((stash.join(dir), spt_dir.join(dir)));
+    }
+    for loose_path in loose {
+        renames.push((stash.join(loose_path), spt_dir.join(loose_path)));
+    }
+    renames
+}
+
+/// Split top-level directories into exclusive (safe to move as a whole) and
+/// shared (other mods also have files under them — must move individual files).
+/// Excludes the mod's own addon files from the overlap check.
+fn filter_shared_dirs(
+    db: &Database,
+    mod_db_id: i64,
+    top_dirs: &[String],
+) -> (Vec<String>, Vec<String>) {
+    // Collect addon IDs belonging to this mod so we can exclude them
+    let own_addon_ids: std::collections::HashSet<i64> = db
+        .list_addons_for_mod(mod_db_id)
+        .unwrap_or_default()
+        .iter()
+        .map(|a| a.id)
+        .collect();
+
+    let all_files = db.get_all_enabled_mod_files().unwrap_or_default();
+    let other_files: Vec<&str> = all_files
+        .iter()
+        .filter(|f| {
+            // Exclude this mod's own files
+            if f.mod_id == Some(mod_db_id) && f.addon_id.is_none() {
+                return false;
+            }
+            // Exclude this mod's own addon files
+            if let Some(aid) = f.addon_id {
+                if own_addon_ids.contains(&aid) {
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|f| f.file_path.as_str())
+        .collect();
+
+    let mut exclusive = Vec::new();
+    let mut shared = Vec::new();
+    for dir in top_dirs {
+        let has_overlap = other_files.iter().any(|p| p.starts_with(dir.as_str()));
+        if has_overlap {
+            shared.push(dir.clone());
+        } else {
+            exclusive.push(dir.clone());
+        }
+    }
+    (exclusive, shared)
+}
+
+/// Remove empty directories in the stash, walking upward from moved paths.
+/// Stops at (never removes) the `quartermaster/disabled/` root.
+fn cleanup_empty_stash_dirs(spt_dir: &Path, paths: &[String]) {
+    let stash_root = disabled_stash_dir(spt_dir);
+    for rel_path in paths {
+        let mut dir = stash_root.join(rel_path);
+        // Start from the parent of the moved item
+        while let Some(parent) = dir.parent().map(|p| p.to_path_buf()) {
+            if parent == stash_root || !parent.starts_with(&stash_root) {
+                break;
+            }
+            match std::fs::read_dir(&parent) {
+                Ok(mut entries) => {
+                    if entries.next().is_none() {
+                        let _ = std::fs::remove_dir(&parent);
+                    } else {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+            dir = parent;
+        }
+    }
+}
+
 /// Undo a list of completed renames in reverse order (dst -> src).
 fn undo_renames(completed: &[(PathBuf, PathBuf)]) {
     for (src, dst) in completed.iter().rev() {
@@ -2148,6 +2270,91 @@ mod tests {
         let top_dirs = vec!["SPT/user/mods/TestMod".to_string()];
         let loose = find_loose_files(&paths, &top_dirs);
         assert_eq!(loose, vec!["BepInEx/plugins/loose.dll"]);
+    }
+
+    #[test]
+    fn resolve_mod_path_enabled() {
+        let spt_dir = PathBuf::from("/spt");
+        assert_eq!(
+            resolve_mod_path(&spt_dir, "SPT/user/mods/TestMod/package.json", false),
+            PathBuf::from("/spt/SPT/user/mods/TestMod/package.json")
+        );
+    }
+
+    #[test]
+    fn resolve_mod_path_disabled() {
+        let spt_dir = PathBuf::from("/spt");
+        assert_eq!(
+            resolve_mod_path(&spt_dir, "SPT/user/mods/TestMod/package.json", true),
+            PathBuf::from("/spt/quartermaster/disabled/SPT/user/mods/TestMod/package.json")
+        );
+    }
+
+    #[test]
+    fn disabled_stash_dir_path() {
+        let spt_dir = PathBuf::from("/spt");
+        assert_eq!(
+            disabled_stash_dir(&spt_dir),
+            PathBuf::from("/spt/quartermaster/disabled")
+        );
+    }
+
+    #[test]
+    fn filter_shared_dirs_detects_overlap() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Mod A owns BepInEx/plugins/SharedDir/a.dll
+        let mod_a = db.insert_mod(100, 200, "ModA", None, "1.0.0").unwrap();
+        db.insert_file(
+            mod_a,
+            "BepInEx/plugins/SharedDir/a.dll",
+            Some("aaa"),
+            Some(100),
+        )
+        .unwrap();
+
+        // Mod B also has files under BepInEx/plugins/SharedDir/
+        let mod_b = db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        db.insert_file(
+            mod_b,
+            "BepInEx/plugins/SharedDir/b.dll",
+            Some("bbb"),
+            Some(100),
+        )
+        .unwrap();
+
+        let top_dirs = vec!["BepInEx/plugins/SharedDir".to_string()];
+        let (exclusive, shared) = filter_shared_dirs(&db, mod_a, &top_dirs);
+        assert!(exclusive.is_empty());
+        assert_eq!(shared, vec!["BepInEx/plugins/SharedDir"]);
+    }
+
+    #[test]
+    fn filter_shared_dirs_exclusive_when_no_overlap() {
+        let db = Database::open_in_memory().unwrap();
+
+        let mod_a = db.insert_mod(100, 200, "ModA", None, "1.0.0").unwrap();
+        db.insert_file(
+            mod_a,
+            "SPT/user/mods/ModA/package.json",
+            Some("aaa"),
+            Some(100),
+        )
+        .unwrap();
+
+        let mod_b = db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        db.insert_file(
+            mod_b,
+            "SPT/user/mods/ModB/package.json",
+            Some("bbb"),
+            Some(100),
+        )
+        .unwrap();
+
+        let top_dirs = vec!["SPT/user/mods/ModA".to_string()];
+        let (exclusive, shared) = filter_shared_dirs(&db, mod_a, &top_dirs);
+        assert_eq!(exclusive, vec!["SPT/user/mods/ModA"]);
+        assert!(shared.is_empty());
     }
 
     #[test]
