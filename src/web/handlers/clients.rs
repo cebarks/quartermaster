@@ -473,6 +473,7 @@ pub async fn client_scale(
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
+    let db_clone = state.db.clone();
 
     tokio::spawn(async move {
         let result = crate::client::converge::converge(
@@ -484,6 +485,7 @@ pub async fn client_scale(
             &forge_clone,
             &spt_version_clone,
             converging_clone,
+            &db_clone,
         )
         .await;
 
@@ -601,6 +603,7 @@ pub async fn client_create(
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
+    let db_clone = state.db.clone();
 
     tokio::spawn(async move {
         // Persist first
@@ -633,6 +636,7 @@ pub async fn client_create(
             &forge_clone,
             &spt_version_clone,
             converging_clone,
+            &db_clone,
         )
         .await;
 
@@ -739,6 +743,7 @@ pub async fn client_delete(
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
+    let db_clone = state.db.clone();
 
     tokio::spawn(async move {
         // Stop/remove the container for the deleted index
@@ -782,6 +787,7 @@ pub async fn client_delete(
             &forge_clone,
             &spt_version_clone,
             converging_clone,
+            &db_clone,
         )
         .await;
 
