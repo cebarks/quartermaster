@@ -1,4 +1,4 @@
-<div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
+<div class="svm-tabs">
     {% for s in sections %}
     <a href="/quma/svm/edit?section={{ s.key }}"
        class="btn btn-sm {% if s.key == section_key %}btn-primary{% else %}btn-outline{% endif %}"
@@ -6,9 +6,14 @@
        hx-target="#section-content"
        hx-swap="innerHTML"
        hx-push-url="/quma/svm/edit?section={{ s.key }}">
-        {{ s.label }}
+        {{ s.label }}<span class="svm-tab-count">{{ s.field_count }}</span>
     </a>
     {% endfor %}
+</div>
+
+<div class="svm-search">
+    <input type="text" id="svm-field-search" placeholder="Filter fields..." autocomplete="off">
+    <div class="svm-search-count" id="svm-search-count"></div>
 </div>
 
 <script src="/quma/assets/svm-form.js"></script>
@@ -18,19 +23,19 @@
     <div class="card">
         {% for group in field_groups %}
             {% if let Some(label) = group.label %}
-            <fieldset style="margin-top: 1rem; border: 1px solid var(--border); padding: 1rem; border-radius: 4px">
+            <fieldset class="svm-fieldset">
             <legend><strong>{{ label }}</strong></legend>
             {% endif %}
 
             {% for field in group.fields %}
-            <div class="form-group" style="display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: start; padding: 0.5rem 0; border-bottom: 1px solid var(--border)">
+            <div class="svm-field" data-svm-searchable="{{ field.label }} {{ field.description }} {{ field.path }}">
                 <div>
-                    <label style="white-space: normal">{{ field.label }}</label>
+                    <label>{{ field.label }}</label>
                     {% if !field.description.is_empty() %}
-                    <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem; line-height: 1.3">{{ field.description }}</div>
+                    <div class="svm-field-desc">{{ field.description }}</div>
                     {% endif %}
                 </div>
-                <div style="padding-top: 0.15rem">
+                <div class="svm-field-input">
                 {% match field.input_type %}
                     {% when InputType::Toggle %}
                         <input type="checkbox" name="{{ field.path }}" data-svm-field>
@@ -38,16 +43,16 @@
                         <input type="number" name="{{ field.path }}" data-svm-field
                             {% if let Some(mn) = min %} min="{{ mn }}"{% endif %}
                             {% if let Some(mx) = max %} max="{{ mx }}"{% endif %}
-                            step="1" style="width: 8rem">
+                            step="1">
                     {% when InputType::Float { min, max, step } %}
                         <input type="number" name="{{ field.path }}" data-svm-field
                             {% if let Some(mn) = min %} min="{{ mn }}"{% endif %}
                             {% if let Some(mx) = max %} max="{{ mx }}"{% endif %}
-                            step="{{ step.unwrap_or(0.01) }}" style="width: 8rem">
+                            step="{{ step.unwrap_or(0.01) }}">
                     {% when InputType::Text %}
-                        <input type="text" name="{{ field.path }}" data-svm-field style="width: 16rem">
+                        <input type="text" name="{{ field.path }}" data-svm-field>
                     {% when InputType::Textarea %}
-                        <textarea name="{{ field.path }}" data-svm-field rows="4" style="width: 100%"></textarea>
+                        <textarea name="{{ field.path }}" data-svm-field rows="4"></textarea>
                 {% endmatch %}
                 </div>
             </div>
@@ -58,7 +63,7 @@
             {% endif %}
         {% endfor %}
 
-        <div style="margin-top: 1rem; text-align: right">
+        <div class="svm-save-row">
             <button type="submit" class="btn btn-primary">Save</button>
         </div>
     </div>
@@ -67,8 +72,7 @@
 <script>
 (function() {
     var config = {{ config_json|safe }};
-    var form = document.getElementById('svm-section-form');
-    form.querySelectorAll('[data-svm-field]').forEach(function(el) {
+    document.getElementById('svm-section-form').querySelectorAll('[data-svm-field]').forEach(function(el) {
         var keys = el.name.split('.');
         var val = config;
         for (var i = 0; i < keys.length; i++) {
@@ -84,3 +88,4 @@
     });
 })();
 </script>
+<script src="/quma/assets/svm-search.js"></script>

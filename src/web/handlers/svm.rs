@@ -4,7 +4,7 @@ use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::db::rbac::Permission;
-use crate::svm::metadata::{self, FieldMeta, InputType, SectionMeta, SECTIONS};
+use crate::svm::metadata::{self, FieldMeta, InputType, SECTIONS};
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
@@ -329,6 +329,25 @@ pub struct FieldGroup {
     pub fields: Vec<&'static FieldMeta>,
 }
 
+pub struct SectionWithCount {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub field_count: usize,
+}
+
+fn sections_with_counts() -> Vec<SectionWithCount> {
+    SECTIONS
+        .iter()
+        .map(|s| SectionWithCount {
+            key: s.key,
+            label: s.label,
+            field_count: metadata::fields_for_section(s.key)
+                .map(|f| f.len())
+                .unwrap_or(0),
+        })
+        .collect()
+}
+
 fn group_fields(fields: &'static [FieldMeta]) -> Vec<FieldGroup> {
     let mut groups: Vec<FieldGroup> = Vec::new();
     for field in fields {
@@ -381,7 +400,7 @@ struct SvmEditorTemplate {
     nav: NavContext,
     active_preset: String,
     is_dirty: bool,
-    sections: &'static [SectionMeta],
+    sections: Vec<SectionWithCount>,
     section_key: String,
     field_groups: Vec<FieldGroup>,
     config_json: String,
@@ -412,7 +431,7 @@ pub async fn editor_page(
         nav: NavContext::from_state(&state),
         active_preset: svm.active_preset_name().to_string(),
         is_dirty: svm.is_dirty(),
-        sections: SECTIONS,
+        sections: sections_with_counts(),
         section_key: active_section.to_string(),
         field_groups,
         config_json,
@@ -427,7 +446,7 @@ pub async fn editor_page(
 #[template(path = "svm/partials/section.html")]
 struct SvmSectionPartialTemplate {
     csrf_token: String,
-    sections: &'static [SectionMeta],
+    sections: Vec<SectionWithCount>,
     section_key: String,
     field_groups: Vec<FieldGroup>,
     config_json: String,
@@ -451,7 +470,7 @@ pub async fn section_partial(
 
     let tmpl = SvmSectionPartialTemplate {
         csrf_token: crate::web::csrf::get_or_create_token(&session),
-        sections: SECTIONS,
+        sections: sections_with_counts(),
         section_key: section,
         field_groups: group_fields(fields),
         config_json,
@@ -535,7 +554,7 @@ struct SvmPlayerViewTemplate {
     csrf_token: String,
     nav: NavContext,
     active_preset: String,
-    sections: &'static [SectionMeta],
+    sections: Vec<SectionWithCount>,
     active_section: String,
     field_groups: Vec<FieldGroup>,
     config_json: String,
@@ -564,7 +583,7 @@ pub async fn player_view(
         csrf_token: crate::web::csrf::get_or_create_token(&session),
         nav: NavContext::from_state(&state),
         active_preset: svm.active_preset_name().to_string(),
-        sections: SECTIONS,
+        sections: sections_with_counts(),
         active_section: active_section.to_string(),
         field_groups,
         config_json,

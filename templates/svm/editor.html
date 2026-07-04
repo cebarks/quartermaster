@@ -3,13 +3,13 @@
 {% block title %}SVM Editor — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("svm", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">
+<div class="flex-between">
     <h1>SVM Configuration — {{ active_preset }}</h1>
     <a href="/quma/svm" class="btn btn-outline">Back to Presets</a>
 </div>
 
 {% if is_dirty %}
-<div class="toast toast-warning" style="margin-bottom: 1rem">
+<div class="toast toast-warning">
     SVM changes pending — restart required
 </div>
 {% endif %}
