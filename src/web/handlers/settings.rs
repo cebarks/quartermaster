@@ -158,6 +158,8 @@ pub struct HeadlessSettingsForm {
     #[serde(default)]
     numa_policy: String,
     numa_node: Option<u32>,
+    #[serde(default)]
+    use_upnp: Option<String>,
 }
 
 pub async fn save_web_settings(
@@ -453,6 +455,7 @@ pub async fn save_headless_settings(
         enable_log_purge: existing.map(|h| h.enable_log_purge).unwrap_or(false),
         overwrite_fika: existing.map(|h| h.overwrite_fika).unwrap_or(true),
         server_ready_timeout: form.server_ready_timeout,
+        use_upnp: form.use_upnp.is_some(),
     };
 
     config.headless = if form.install_dir.trim().is_empty() {

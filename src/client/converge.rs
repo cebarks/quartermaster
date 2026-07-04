@@ -38,6 +38,10 @@ static AMOUNT_RE: LazyLock<regex::Regex> =
 static PORT_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex"));
 
+/// Regex for editing Use UPnP in Fika client config
+static UPNP_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?m)^(Use UPnP\s*=\s*)\S+").expect("valid regex"));
+
 /// Edit the headless amount in fika.jsonc using targeted text replacement to preserve comments.
 ///
 /// This function does NOT parse the full JSON - it uses a regex to find and replace only the
@@ -455,6 +459,38 @@ fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
     Ok(())
 }
 
+/// Write the Use UPnP setting into the Fika client config in a per-client overlay.
+fn write_fika_upnp(overlay_dir: &Path, enabled: bool) -> Result<()> {
+    let cfg_path = overlay_dir.join("BepInEx/config/com.fika.core.cfg");
+    if !cfg_path.exists() {
+        debug!(
+            "Fika config not found at {}, skipping UPnP write",
+            cfg_path.display()
+        );
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&cfg_path)
+        .with_context(|| format!("failed to read {}", cfg_path.display()))?;
+
+    if !UPNP_RE.is_match(&content) {
+        debug!(
+            "No Use UPnP setting found in {}, skipping",
+            cfg_path.display()
+        );
+        return Ok(());
+    }
+
+    let updated = UPNP_RE
+        .replace(&content, format!("${{1}}{enabled}"))
+        .to_string();
+    std::fs::write(&cfg_path, &updated)
+        .with_context(|| format!("failed to write {}", cfg_path.display()))?;
+
+    debug!("Set Use UPnP to {enabled} in {}", cfg_path.display());
+    Ok(())
+}
+
 /// Set up overlay directory for a client, copying isolated paths from the install directory.
 ///
 /// Creates `<install_dir>/.quma/clients/<index>/` and recursively copies any paths from
@@ -470,6 +506,7 @@ pub fn setup_client_overlay(
     index: u32,
     isolated_paths: &[String],
     base_udp_port: u16,
+    use_upnp: bool,
 ) -> Result<()> {
     let overlay_dir = client_overlay_dir(install_dir, index);
 
@@ -520,6 +557,7 @@ pub fn setup_client_overlay(
 
     let port = client_port(base_udp_port, index);
     write_fika_udp_port(&overlay_dir, port)?;
+    write_fika_upnp(&overlay_dir, use_upnp)?;
 
     // Stub out GPU-specific DLLs that crash in headless (no-GPU) containers.
     // DLSSImporter.dll dereferences a null pointer when no GPU is present,
@@ -1007,6 +1045,7 @@ pub async fn converge(
             index,
             &effective_paths,
             headless_config.base_udp_port,
+            headless_config.use_upnp,
         )?;
     }
 
@@ -1310,6 +1349,7 @@ async fn create_client_container(
         index,
         effective_paths,
         headless_config.base_udp_port,
+        headless_config.use_upnp,
     )?;
 
     // Build volume mounts
@@ -1566,7 +1606,14 @@ mod tests {
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
         std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
 
-        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
+        setup_client_overlay(
+            &install_dir,
+            1,
+            &["BepInEx/config".to_string()],
+            25565,
+            false,
+        )
+        .unwrap();
 
         let overlay_file = install_dir.join(".quma/clients/1/BepInEx/config/test.cfg");
         assert!(overlay_file.exists());
@@ -1592,7 +1639,14 @@ mod tests {
 
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
 
-        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
+        setup_client_overlay(
+            &install_dir,
+            1,
+            &["BepInEx/config".to_string()],
+            25565,
+            false,
+        )
+        .unwrap();
 
         let wine_prefix_dir = install_dir.join(".quma/clients/1/wine-prefix");
         assert!(wine_prefix_dir.exists());
@@ -1616,7 +1670,14 @@ mod tests {
         // Existing overlay from initial setup
         std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
         std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
-        setup_client_overlay(&install_dir, 1, &["BepInEx/config".to_string()], 25565).unwrap();
+        setup_client_overlay(
+            &install_dir,
+            1,
+            &["BepInEx/config".to_string()],
+            25565,
+            false,
+        )
+        .unwrap();
 
         // Now add a new isolated path
         std::fs::create_dir_all(install_dir.join("BepInEx/cache")).unwrap();
@@ -1626,6 +1687,7 @@ mod tests {
             1,
             &["BepInEx/config".to_string(), "BepInEx/cache".to_string()],
             25565,
+            false,
         )
         .unwrap();
 
@@ -1721,6 +1783,33 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // No config file exists — should not error, just skip
         let result = write_fika_udp_port(tmp.path(), 25567);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn write_fika_upnp_updates_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join("BepInEx/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let cfg_path = config_dir.join("com.fika.core.cfg");
+        std::fs::write(
+            &cfg_path,
+            "[Network]\n\n## Use UPnP\n# Setting type: Boolean\n# Default value: false\nUse UPnP = false\n",
+        )
+        .unwrap();
+
+        write_fika_upnp(tmp.path(), true).unwrap();
+
+        let content = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(content.contains("Use UPnP = true"));
+        assert!(!content.contains("Use UPnP = false"));
+    }
+
+    #[test]
+    fn write_fika_upnp_no_config_file_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = write_fika_upnp(tmp.path(), true);
         assert!(result.is_ok());
     }
 
