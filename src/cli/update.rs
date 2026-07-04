@@ -39,7 +39,14 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
 
     let mods_to_check: Vec<InstalledMod> = match mod_ref {
         Some(r) => vec![resolve_installed_mod(r, ctx)?],
-        None => ctx.db.list_mods()?,
+        None => {
+            let all = ctx.db.list_mods()?;
+            if ctx.config.update_disabled_mods {
+                all
+            } else {
+                all.into_iter().filter(|m| !m.disabled).collect()
+            }
+        }
     };
 
     if mods_to_check.is_empty() {

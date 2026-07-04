@@ -1087,6 +1087,9 @@ pub struct Config {
     #[serde(default = "default_update_check_interval")]
     pub update_check_interval: u64,
 
+    #[serde(default)]
+    pub update_disabled_mods: bool,
+
     #[serde(default = "default_forge_cache_ttl")]
     pub forge_cache_ttl: Option<u64>,
 
@@ -1166,6 +1169,7 @@ impl Default for Config {
             web_port: 9190,
             web_workers: None,
             update_check_interval: 300,
+            update_disabled_mods: false,
             forge_cache_ttl: Some(86400),
             headless: None,
             modsync: None,

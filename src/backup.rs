@@ -78,12 +78,12 @@ pub fn resolve_backup_dir(spt_dir: &Path, config: &crate::config::Config) -> Res
     Ok(spt_dir.join(backup_dir))
 }
 
-/// Copy a list of tracked files from `spt_dir` into a backup `dest` directory,
+/// Copy a list of tracked files from `base_dir` into a backup `dest` directory,
 /// preserving relative paths. Returns the total size of successfully copied files.
-fn copy_files_to_backup(files: &[InstalledFile], spt_dir: &Path, dest: &Path) -> Result<i64> {
+fn copy_files_to_backup(files: &[InstalledFile], base_dir: &Path, dest: &Path) -> Result<i64> {
     let mut total_size: i64 = 0;
     for file in files {
-        let src = spt_dir.join(&file.file_path);
+        let src = base_dir.join(&file.file_path);
         let dst = dest.join(&file.file_path);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
@@ -104,13 +104,13 @@ fn copy_files_to_backup(files: &[InstalledFile], spt_dir: &Path, dest: &Path) ->
 /// Returns `(total_size, copied_file_paths)`.
 fn copy_files_for_manifest(
     files: &[InstalledFile],
-    spt_dir: &Path,
+    base_dir: &Path,
     dest_subdir: &Path,
 ) -> Result<(i64, Vec<String>)> {
     let mut total_size: i64 = 0;
     let mut file_paths: Vec<String> = Vec::new();
     for file in files {
-        let src = spt_dir.join(&file.file_path);
+        let src = base_dir.join(&file.file_path);
         let dst = dest_subdir.join(&file.file_path);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
@@ -173,11 +173,6 @@ pub fn backup_mod(
 
     // Also get addon files for this mod
     let addons = db.list_addons_for_mod(mod_db_id)?;
-    let mut addon_files_all = Vec::new();
-    for addon in &addons {
-        let addon_files = db.get_files_for_addon(addon.id)?;
-        addon_files_all.extend(addon_files);
-    }
 
     let backup_dir = resolve_backup_dir(spt_dir, config)?;
     let mod_backup_dir = backup_dir
@@ -189,8 +184,16 @@ pub fn backup_mod(
     let bid = unique_backup_id(&mod_backup_dir);
     let dest = mod_backup_dir.join(&bid);
 
-    let mut total_size = copy_files_to_backup(&files, spt_dir, &dest)?;
-    total_size += copy_files_to_backup(&addon_files_all, spt_dir, &dest)?;
+    let base_dir = crate::ops::resolve_mod_root(spt_dir, mod_info.disabled);
+    let mut total_size = copy_files_to_backup(&files, &base_dir, &dest)?;
+    // For addon files, only use stash if the addon itself is disabled.
+    // Disabling a parent mod does NOT move addon files — they stay at
+    // canonical paths unless the addon is independently disabled.
+    for addon in &addons {
+        let addon_files = db.get_files_for_addon(addon.id)?;
+        let addon_base = crate::ops::resolve_mod_root(spt_dir, addon.disabled);
+        total_size += copy_files_to_backup(&addon_files, &addon_base, &dest)?;
+    }
 
     let backup_path = format!(
         "{}/mods/{}/{}",
@@ -211,10 +214,14 @@ pub fn backup_mod(
         Some(total_size),
     )?;
 
+    let addon_file_count: usize = addons
+        .iter()
+        .map(|a| db.get_files_for_addon(a.id).unwrap_or_default().len())
+        .sum();
     tracing::info!(
         mod_db_id,
         backup_id = %bid,
-        file_count = files.len() + addon_files_all.len(),
+        file_count = files.len() + addon_file_count,
         total_size,
         "mod backed up"
     );
@@ -254,7 +261,8 @@ pub fn backup_full(
     let mods = db.list_mods()?;
     for m in &mods {
         let files = db.get_files_for_mod(m.id)?;
-        let (size, file_paths) = copy_files_for_manifest(&files, spt_dir, &mods_dest)?;
+        let base = crate::ops::resolve_mod_root(spt_dir, m.disabled);
+        let (size, file_paths) = copy_files_for_manifest(&files, &base, &mods_dest)?;
         total_size += size;
         manifest_mods.push(ManifestMod {
             forge_mod_id: m.forge_mod_id,
@@ -275,7 +283,8 @@ pub fn backup_full(
             .ok_or_else(|| anyhow::anyhow!("addon parent mod {} not found", addon.parent_mod_id))?;
 
         let addon_files = db.get_files_for_addon(addon.id)?;
-        let (size, file_paths) = copy_files_for_manifest(&addon_files, spt_dir, &mods_dest)?;
+        let addon_base = crate::ops::resolve_mod_root(spt_dir, addon.disabled);
+        let (size, file_paths) = copy_files_for_manifest(&addon_files, &addon_base, &mods_dest)?;
         total_size += size;
         manifest_addons.push(ManifestAddon {
             forge_addon_id: addon.forge_addon_id,
@@ -414,7 +423,8 @@ pub fn restore_mod_backup(
             // Delete current files from disk and DB
             let current_files = db.get_files_for_mod(existing.id)?;
             let paths: Vec<String> = current_files.into_iter().map(|f| f.file_path).collect();
-            crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
+            let delete_root = crate::ops::resolve_mod_root(spt_dir, existing.disabled);
+            crate::spt::mods::delete_mod_files(&delete_root, &paths)?;
             db.delete_files_for_mod(existing.id)?;
             existing.id
         }
@@ -458,6 +468,9 @@ pub fn restore_mod_backup(
     {
         db.update_mod(mod_db_id, version_id, version)?;
     }
+
+    // Restored files are placed at canonical paths (enabled state)
+    db.set_mod_disabled(mod_db_id, false)?;
 
     db.set_backup_restored(backup_db_id)?;
     tx.commit()?;
@@ -519,7 +532,8 @@ pub fn restore_full_backup(
         for m in &all_mods {
             let files = db.get_files_for_mod(m.id)?;
             let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
-            crate::spt::mods::delete_mod_files(spt_dir, &paths)?;
+            let delete_root = crate::ops::resolve_mod_root(spt_dir, m.disabled);
+            crate::spt::mods::delete_mod_files(&delete_root, &paths)?;
             db.delete_files_for_mod(m.id)?;
             db.delete_mod(m.id)?;
         }
@@ -981,6 +995,41 @@ mod tests {
         let m = db.get_mod_by_forge_id(100).unwrap().unwrap();
         assert_eq!(m.name, "TestMod");
         assert_eq!(m.version, "1.0.0");
+    }
+
+    #[test]
+    fn backup_mod_finds_disabled_files_in_stash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
+
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let config = crate::config::Config::default();
+
+        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+
+        // Create file in stash (as if disabled)
+        let stash_path = spt_dir.join("quartermaster/disabled/SPT/user/mods/TestMod/package.json");
+        std::fs::create_dir_all(stash_path.parent().unwrap()).unwrap();
+        std::fs::write(&stash_path, b"{}").unwrap();
+
+        // DB stores canonical path
+        db.insert_file(
+            mod_id,
+            "SPT/user/mods/TestMod/package.json",
+            Some("abc"),
+            Some(2),
+        )
+        .unwrap();
+        db.set_mod_disabled(mod_id, true).unwrap();
+
+        let backup_id = backup_mod(&db, spt_dir, &config, mod_id, "manual").unwrap();
+        let backup = db.get_backup(backup_id).unwrap().unwrap();
+        assert!(
+            backup.backup_size.unwrap_or(0) > 0,
+            "backup should have found files in stash"
+        );
     }
 
     #[test]

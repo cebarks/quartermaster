@@ -23,7 +23,7 @@ echo ""
 echo "--- Checking: bare 'id' field in logging macros in mod-related files ---"
 # Look for logging macros (debug!, info!, warn!, error!) that contain bare 'id ='
 # This is more precise than checking all 'id =' in the file (which catches SQL)
-VIOLATIONS=$(rg -n '(debug!|info!|warn!|error!)\(.*id\s*=' src/ops.rs src/forge/ src/web/handlers/mods.rs src/db/mods.rs --glob '*.rs' 2>/dev/null | rg -v 'mod_id|user_id|version_id|forge_id|raid_id|request_id|task_id|csrf' || true)
+VIOLATIONS=$(rg -n '(debug!|info!|warn!|error!)\(.*id\s*=' src/ops.rs src/forge/ src/web/handlers/mods.rs src/db/mods.rs --glob '*.rs' 2>/dev/null | rg -v 'mod_id|user_id|version_id|forge_id|raid_id|request_id|task_id|addon_id|csrf' || true)
 if [ -n "$VIOLATIONS" ]; then
     echo "WARN: bare 'id' field in logging (should be mod_id, user_id, etc.):"
     echo "$VIOLATIONS"
