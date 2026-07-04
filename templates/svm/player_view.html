@@ -5,24 +5,29 @@
 {% block content %}
 <h1>Server Configuration — {{ active_preset }}</h1>
 
-<div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
+<div class="svm-tabs">
     {% for s in sections %}
     <a href="/quma/svm/view?section={{ s.key }}"
        class="btn btn-sm {% if s.key == active_section %}btn-primary{% else %}btn-outline{% endif %}">
-        {{ s.label }}
+        {{ s.label }}<span class="svm-tab-count">{{ s.field_count }}</span>
     </a>
     {% endfor %}
+</div>
+
+<div class="svm-search">
+    <input type="text" id="svm-field-search" placeholder="Filter fields..." autocomplete="off">
+    <div class="svm-search-count" id="svm-search-count"></div>
 </div>
 
 <div class="card">
     {% for group in field_groups %}
         {% if let Some(label) = group.label %}
-        <h3 style="margin-top: 1.5rem; margin-bottom: 0.5rem; font-size: 1.1rem; color: var(--primary)">{{ label }}</h3>
+        <h3 class="svm-subgroup-title">{{ label }}</h3>
         {% endif %}
         {% for field in group.fields %}
-        <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border)">
+        <div class="svm-field" data-svm-searchable="{{ field.label }} {{ field.description }} {{ field.path }}">
             <span title="{{ field.description }}">{{ field.label }}</span>
-            <span id="val-{{ field.path }}" class="text-muted">—</span>
+            <span class="svm-field-value" data-svm-view="{{ field.path }}">—</span>
         </div>
         {% endfor %}
     {% endfor %}
@@ -31,27 +36,22 @@
 <script>
 (function() {
     var config = {{ config_json|safe }};
-    {% for group in field_groups %}
-    {% for field in group.fields %}
-    (function() {
-        var keys = "{{ field.path }}".split('.');
+    document.querySelectorAll('[data-svm-view]').forEach(function(el) {
+        var keys = el.getAttribute('data-svm-view').split('.');
         var val = config;
         for (var i = 0; i < keys.length; i++) {
             if (val == null) return;
             val = val[keys[i]];
         }
-        var el = document.getElementById('val-{{ field.path }}');
-        if (el && val !== undefined && val !== null) {
-            if (typeof val === 'boolean') {
-                el.textContent = val ? '✓ Enabled' : '✗ Disabled';
-                el.style.color = val ? 'var(--success)' : 'var(--text-muted)';
-            } else {
-                el.textContent = val;
-            }
+        if (val === undefined || val === null) return;
+        if (typeof val === 'boolean') {
+            el.textContent = val ? '✓ Enabled' : '✗ Disabled';
+            if (val) el.classList.add('enabled');
+        } else {
+            el.textContent = val;
         }
-    })();
-    {% endfor %}
-    {% endfor %}
+    });
 })();
 </script>
+<script src="/quma/assets/svm-search.js"></script>
 {% endblock %}
