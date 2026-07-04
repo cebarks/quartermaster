@@ -862,6 +862,14 @@ pub(crate) fn build_mod_zip(
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for file in files {
+        if std::path::Path::new(&file.file_path).is_absolute()
+            || file.file_path.split('/').any(|c| c == "..")
+            || file.file_path.split('\\').any(|c| c == "..")
+        {
+            tracing::warn!(path = %file.file_path, "skipping file with unsafe path in mod archive");
+            continue;
+        }
+
         let full_path = spt_dir.join(&file.file_path);
         match std::fs::read(&full_path) {
             Ok(data) => {
@@ -996,5 +1004,47 @@ mod tests {
             build_spt_server_url("https://tarkov.example.com:443"),
             "https://tarkov.example.com:443"
         );
+    }
+
+    #[test]
+    fn build_mod_zip_rejects_path_traversal() {
+        let spt_dir = tempfile::tempdir().unwrap();
+        let secret = spt_dir.path().join("../secret.txt");
+        std::fs::write(&secret, b"sensitive data").unwrap();
+
+        let files = vec![crate::db::mods::InstalledFile {
+            id: 0,
+            mod_id: Some(1),
+            addon_id: None,
+            file_path: "../secret.txt".to_string(),
+            file_hash: None,
+            file_size: None,
+            source: "archive".to_string(),
+        }];
+
+        let zip_bytes = build_mod_zip(spt_dir.path(), &files).unwrap();
+        let reader = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        assert_eq!(reader.len(), 0, "traversal path should be skipped");
+
+        std::fs::remove_file(&secret).ok();
+    }
+
+    #[test]
+    fn build_mod_zip_rejects_absolute_path() {
+        let spt_dir = tempfile::tempdir().unwrap();
+
+        let files = vec![crate::db::mods::InstalledFile {
+            id: 0,
+            mod_id: Some(1),
+            addon_id: None,
+            file_path: "/etc/passwd".to_string(),
+            file_hash: None,
+            file_size: None,
+            source: "archive".to_string(),
+        }];
+
+        let zip_bytes = build_mod_zip(spt_dir.path(), &files).unwrap();
+        let reader = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        assert_eq!(reader.len(), 0, "absolute path should be skipped");
     }
 }
