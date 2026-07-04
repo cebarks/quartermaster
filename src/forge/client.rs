@@ -10,6 +10,11 @@ use super::models::*;
 const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
 const MAX_RETRIES: u32 = 2;
 
+#[cfg(test)]
+const EXTERNAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+#[cfg(not(test))]
+const EXTERNAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 #[derive(serde::Deserialize)]
 struct DataWrapper<T> {
     data: T,
@@ -306,14 +311,20 @@ impl ForgeClient {
     pub async fn download_file(&self, url: &str, dest: &Path) -> Result<()> {
         use futures_util::StreamExt;
 
-        let timeout = std::time::Duration::from_secs(600);
         let resp = if self.is_forge_url(url) {
-            self.client.get(url).timeout(timeout).send().await
+            self.client
+                .get(url)
+                .timeout(std::time::Duration::from_secs(600))
+                .send()
+                .await
         } else {
             // External host (GitLab, GitHub, etc.) — don't send Forge auth token
-            reqwest::Client::new()
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .read_timeout(EXTERNAL_READ_TIMEOUT)
+                .build()
+                .context("failed to build download client")?
                 .get(url)
-                .timeout(timeout)
                 .send()
                 .await
         }
@@ -321,19 +332,48 @@ impl ForgeClient {
         .error_for_status()
         .context("download_file returned error status")?;
 
+        let total_size = resp.content_length();
         let mut stream = resp.bytes_stream();
         let mut file = tokio::fs::File::create(dest)
             .await
             .with_context(|| format!("failed to create file: {}", dest.display()))?;
 
+        let mut downloaded: u64 = 0;
+        let mut last_log = std::time::Instant::now();
+
         while let Some(chunk) = stream.next().await {
-            let bytes = chunk.context("error reading download stream")?;
+            let bytes = chunk
+                .context("error reading download stream (possible stall — no data received)")?;
             file.write_all(&bytes)
                 .await
                 .context("error writing to file")?;
+            downloaded += bytes.len() as u64;
+
+            if last_log.elapsed() >= std::time::Duration::from_secs(10) {
+                last_log = std::time::Instant::now();
+                if let Some(total) = total_size {
+                    tracing::info!(
+                        downloaded_mb = downloaded / (1024 * 1024),
+                        total_mb = total / (1024 * 1024),
+                        pct = downloaded * 100 / total.max(1),
+                        "download progress"
+                    );
+                } else {
+                    tracing::info!(
+                        downloaded_mb = downloaded / (1024 * 1024),
+                        "download progress"
+                    );
+                }
+            }
         }
 
         file.flush().await.context("error flushing file")?;
+
+        tracing::debug!(
+            url,
+            size_mb = downloaded / (1024 * 1024),
+            "download complete"
+        );
         Ok(())
     }
 
@@ -1334,5 +1374,32 @@ mod tests {
         assert_eq!(versions[0].version, "3.11.3");
         assert_eq!(versions[0].mod_count, Some(371));
         assert_eq!(versions[1].version, "3.11.2");
+    }
+
+    #[tokio::test]
+    async fn download_file_stall_times_out() {
+        let forge_server = MockServer::start().await;
+        let external_server = MockServer::start().await;
+
+        // wiremock's set_delay delays the entire response (headers + body).
+        // This tests the header-stall path. read_timeout also covers bytes_stream()
+        // per reqwest docs, but that path isn't directly testable with wiremock.
+        Mock::given(method("GET"))
+            .and(path("/files/huge.7z"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(vec![0u8; 1024])
+                    .set_delay(std::time::Duration::from_secs(10)),
+            )
+            .mount(&external_server)
+            .await;
+
+        let client = ForgeClient::with_base_url(forge_server.uri(), None).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("huge.7z");
+
+        let url = format!("{}/files/huge.7z", external_server.uri());
+        let result = client.download_file(&url, &dest).await;
+        assert!(result.is_err(), "stalled download should time out");
     }
 }
