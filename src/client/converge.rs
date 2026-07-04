@@ -1683,7 +1683,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_numa_auto_skips_clients_with_explicit_node() {
+    fn resolve_numa_per_client_overrides_auto_round_robin() {
         let h = HeadlessConfig {
             numa_auto: true,
             clients: vec![

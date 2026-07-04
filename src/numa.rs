@@ -65,8 +65,6 @@ impl NumaTopology {
         self.nodes.is_empty()
     }
 
-    // ponytail: used by Task 5 web UI, not wired yet
-    #[allow(dead_code)]
     pub fn nodes(&self) -> &[NumaNode] {
         &self.nodes
     }
