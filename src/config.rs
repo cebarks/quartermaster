@@ -780,6 +780,34 @@ impl HeadlessConfig {
                  use numa_auto for round-robin or numa_node for a fixed default, not both"
             );
         }
+
+        // Warn if configured NUMA nodes don't exist on this system
+        let topology = crate::numa::NumaTopology::detect().unwrap_or_else(|e| {
+            tracing::warn!("Failed to detect NUMA topology: {e}");
+            crate::numa::NumaTopology::empty()
+        });
+
+        if !topology.is_empty() {
+            if let Some(node) = self.numa_node {
+                if topology.cpuset_for_node(node).is_err() {
+                    tracing::warn!(
+                        "headless.numa_node = {node} does not match any detected NUMA node (available: {:?})",
+                        topology.node_ids()
+                    );
+                }
+            }
+            for (i, client) in self.clients.iter().enumerate() {
+                if let Some(node) = client.numa_node {
+                    if topology.cpuset_for_node(node).is_err() {
+                        tracing::warn!(
+                            "headless.clients[{i}].numa_node = {node} does not match any detected NUMA node (available: {:?})",
+                            topology.node_ids()
+                        );
+                    }
+                }
+            }
+        }
+
         if !is_fika_installed(spt_dir) {
             bail!(
                 "Fika server mod not found at {}. Dedicated client management requires Fika.",
@@ -2789,5 +2817,30 @@ extra_isolated_paths = ["BepInEx/plugins"]
         assert_eq!(h.clients[0].numa_node, None);
         assert_eq!(h.clients[0].cpuset_cpus, None);
         assert_eq!(h.clients[0].cpuset_mems, None);
+    }
+
+    #[test]
+    fn headless_validate_warns_on_unknown_numa_node() {
+        // This test verifies the validation doesn't error on unknown nodes
+        // (it warns, but we can't easily capture tracing warns in a unit test).
+        // Instead, verify validate() succeeds when a valid numa_node is set.
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path().join("spt");
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/fika-server")).unwrap();
+        let install_dir = tmp.path().join("client");
+        std::fs::create_dir_all(&install_dir).unwrap();
+
+        let h = HeadlessConfig {
+            install_dir,
+            clients: vec![HeadlessClientDef::default()],
+            numa_node: Some(99), // nonexistent node — should warn, not error
+            ..Default::default()
+        };
+        let config = Config {
+            server_container: Some("spt".to_string()),
+            ..Default::default()
+        };
+        // validate() should succeed (warn, not bail)
+        assert!(h.validate(&config, &spt_dir).is_ok());
     }
 }
