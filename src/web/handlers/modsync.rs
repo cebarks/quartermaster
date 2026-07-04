@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Json, Query};
@@ -549,14 +550,15 @@ pub async fn new_group_card(
 }
 
 fn sync_on_group_change(
-    db: &crate::db::Database,
-    old_ms: Option<&crate::config::ModSyncConfig>,
-    new_ms: Option<&crate::config::ModSyncConfig>,
-    spt_dir: &std::path::Path,
-    install_dir: &std::path::Path,
+    db: &Arc<parking_lot::Mutex<crate::db::Database>>,
+    old_ms: Option<crate::config::ModSyncConfig>,
+    new_ms: Option<crate::config::ModSyncConfig>,
+    spt_dir: std::path::PathBuf,
+    install_dir: std::path::PathBuf,
 ) -> Result<(), anyhow::Error> {
     let was_excluded = |forge_id: i64| -> bool {
         old_ms
+            .as_ref()
             .map(|ms| {
                 ms.groups
                     .values()
@@ -566,6 +568,7 @@ fn sync_on_group_change(
     };
     let now_excluded = |forge_id: i64| -> bool {
         new_ms
+            .as_ref()
             .map(|ms| {
                 ms.groups
                     .values()
@@ -574,33 +577,58 @@ fn sync_on_group_change(
             .unwrap_or(false)
     };
 
-    let mods = db.list_mods()?;
-    for m in &mods {
-        if m.disabled {
-            continue;
+    // Lock briefly to read mod + file data, then drop before I/O
+    struct SyncTask {
+        mod_name: String,
+        files: Vec<String>,
+        op: crate::headless_sync::SyncOp,
+    }
+
+    let tasks: Vec<SyncTask> = {
+        let db = db.lock();
+        let mods = db.list_mods()?;
+        let mut result = Vec::new();
+
+        for m in &mods {
+            if m.disabled {
+                continue;
+            }
+            let was = was_excluded(m.forge_mod_id);
+            let now = now_excluded(m.forge_mod_id);
+            if was == now {
+                continue;
+            }
+
+            let files: Vec<String> = db
+                .get_files_for_mod(m.id)?
+                .into_iter()
+                .map(|f| f.file_path)
+                .collect();
+
+            let op = if now {
+                crate::headless_sync::SyncOp::Remove
+            } else {
+                crate::headless_sync::SyncOp::Install
+            };
+
+            result.push(SyncTask {
+                mod_name: m.name.clone(),
+                files,
+                op,
+            });
         }
-        let was = was_excluded(m.forge_mod_id);
-        let now = now_excluded(m.forge_mod_id);
-        if was == now {
-            continue;
-        }
+        result
+    }; // DB lock dropped here
 
-        let files: Vec<String> = db
-            .get_files_for_mod(m.id)?
-            .into_iter()
-            .map(|f| f.file_path)
-            .collect();
-
-        let op = if now {
-            crate::headless_sync::SyncOp::Remove
-        } else {
-            crate::headless_sync::SyncOp::Install
-        };
-
-        if let Err(e) =
-            crate::headless_sync::sync_client_files_to_headless(spt_dir, install_dir, &files, op)
-        {
-            tracing::warn!(mod_name = %m.name, err = %e, "headless sync on group change failed");
+    // Now perform file I/O without holding the lock
+    for task in tasks {
+        if let Err(e) = crate::headless_sync::sync_client_files_to_headless(
+            &spt_dir,
+            &install_dir,
+            &task.files,
+            task.op,
+        ) {
+            tracing::warn!(mod_name = %task.mod_name, err = %e, "headless sync on group change failed");
         }
     }
     Ok(())
@@ -782,14 +810,11 @@ pub async fn save_groups(
         let old_ms = old_modsync;
 
         actix_web::rt::spawn(async move {
-            let db = db.lock();
-            if let Err(e) = sync_on_group_change(
-                &db,
-                old_ms.as_ref(),
-                new_modsync.as_ref(),
-                &spt_dir,
-                &install_dir,
-            ) {
+            if let Err(e) = actix_web::web::block(move || {
+                sync_on_group_change(&db, old_ms, new_modsync, spt_dir, install_dir)
+            })
+            .await
+            {
                 tracing::warn!(err = %e, "failed to sync headless files after group change");
             }
         });

@@ -887,16 +887,18 @@ pub async fn converge(
     // Determine current count
     let current_count = managed.len() as u32;
 
+    // Ensure the Fika client mod is installed (required for all operations)
+    ensure_fika_client(forge, &headless_config.install_dir, spt_version, spt_client).await?;
+    ensure_fika_headless(forge, &headless_config.install_dir).await?;
+
+    // Reconcile headless mod files on every convergence (not just scale-up)
+    // This catches drift from manual changes or group config updates
+    if let Err(e) = reconcile_headless_mods(db, config, spt_dir, &headless_config.install_dir) {
+        warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
+    }
+
     // Scale up or down
     if current_count < desired_count {
-        // Ensure the Fika client mod is installed before creating containers
-        ensure_fika_client(forge, &headless_config.install_dir, spt_version, spt_client).await?;
-        ensure_fika_headless(forge, &headless_config.install_dir).await?;
-
-        if let Err(e) = reconcile_headless_mods(db, config, spt_dir, &headless_config.install_dir) {
-            warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
-        }
-
         ensure_clients(
             container_mgr,
             headless_config,
