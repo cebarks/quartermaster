@@ -27,11 +27,11 @@
 - consolidate all mod management logic from all paths (web handlers bypass `ops.rs` in places)
 - stop using container image for spt-server, just run it natively
 - swap to using fika-installer in the headless client
-- install logic duplicated between mods and requests handlers
-- config save ceremony repeated 8+ times
+- ~~install logic duplicated between mods and requests handlers~~ (done — extracted to `web::install::web_download_extract_and_record`)
+- ~~config save ceremony repeated 8+ times~~ (reduced — `AppState::persist_config` used by settings+modsync; clients.rs 3× remain due to tokio::spawn constraints)
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
-- search handlers duplicated between mods and requests (`mods.rs`, `requests.rs`)
+- ~~search handlers duplicated between mods and requests~~ (done — extracted to `handlers::common::forge_search`)
 
 ## Headless Client
 - convergence restarts SPT server without warning users (`converge.rs`)
@@ -42,7 +42,7 @@
 - non-contiguous index handling after middle deletion (`converge.rs`)
 - duplicate reqwest clients for GitHub (`converge.rs`)
 - `client_port` integer overflow on large index (`converge.rs`)
-- web handler boilerplate in client lifecycle handlers (`client_restart`/`client_stop`/`client_start` near-identical)
+- ~~web handler boilerplate in client lifecycle handlers~~ (done — extracted `client_lifecycle` helper)
 - too-many-arguments on convergence functions (clippy lint suppressed)
 
 ## Robustness
@@ -69,8 +69,8 @@
 - no responsive design
 - no ARIA attributes
 - toast messages auto-fade too fast for errors
-- tab implementation inconsistency — 4 different patterns across pages
-- template duplication: request cards, client status table (3×), raid outcome badges (4×)
+- ~~tab implementation inconsistency — 4 different patterns across pages~~ (done — shared `tabSwitch`/`tabRestore` in base.html)
+- template duplication: ~~request cards~~, ~~client status table (3×)~~ (dead `clients/list.html` deleted), raid outcome badges (4×)
 
 
 ## Features

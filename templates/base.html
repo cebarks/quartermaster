@@ -23,5 +23,30 @@
         {% block content %}{% endblock %}
     </main>
     </div>
+    <script>
+    function tabSwitch(el, opts) {
+        document.querySelectorAll('.tab-bar .tab').forEach(function(t) { t.classList.remove('active'); });
+        el.classList.add('active');
+        if (opts && opts.toggle) {
+            document.querySelectorAll(opts.toggle).forEach(function(t) { t.style.display = 'none'; });
+            var target = document.getElementById('tab-' + (el.dataset.tab || ''));
+            if (target) target.style.display = '';
+        }
+        if (opts && opts.hash) {
+            location.hash = el.dataset.tab;
+        }
+        if (opts && opts.query) {
+            history.replaceState(null, '', location.pathname + '?tab=' + el.dataset.tab);
+        }
+    }
+    function tabRestore(param) {
+        var key = param === 'hash' ? location.hash.slice(1)
+                : new URLSearchParams(location.search).get(param);
+        if (key) {
+            var btn = document.querySelector('.tab-bar .tab[data-tab="' + key + '"]');
+            if (btn) btn.click();
+        }
+    }
+    </script>
 </body>
 </html>

@@ -6,11 +6,11 @@
 <h1>Settings</h1>
 
 <div class="tab-bar">
-    <button class="tab{% if active_tab == "web" %} active{% endif %}" onclick="switchTab('web', this)">Web</button>
-    <button class="tab{% if active_tab == "server" %} active{% endif %}" onclick="switchTab('server', this)">Server</button>
-    <button class="tab{% if active_tab == "queue" %} active{% endif %}" onclick="switchTab('queue', this)">Queue</button>
-    <button class="tab{% if active_tab == "forge" %} active{% endif %}" onclick="switchTab('forge', this)">Forge</button>
-    <button class="tab{% if active_tab == "logging" %} active{% endif %}" onclick="switchTab('logging', this)">Logging</button>
+    <button class="tab{% if active_tab == "web" %} active{% endif %}" data-tab="web" onclick="tabSwitch(this, {toggle: '.settings-tab', query: true})">Web</button>
+    <button class="tab{% if active_tab == "server" %} active{% endif %}" data-tab="server" onclick="tabSwitch(this, {toggle: '.settings-tab', query: true})">Server</button>
+    <button class="tab{% if active_tab == "queue" %} active{% endif %}" data-tab="queue" onclick="tabSwitch(this, {toggle: '.settings-tab', query: true})">Queue</button>
+    <button class="tab{% if active_tab == "forge" %} active{% endif %}" data-tab="forge" onclick="tabSwitch(this, {toggle: '.settings-tab', query: true})">Forge</button>
+    <button class="tab{% if active_tab == "logging" %} active{% endif %}" data-tab="logging" onclick="tabSwitch(this, {toggle: '.settings-tab', query: true})">Logging</button>
 </div>
 
 <div id="settings-content">
@@ -30,15 +30,4 @@
         {% include "settings/logging.html" %}
     </div>
 </div>
-
-<script>
-function switchTab(name, el) {
-    document.querySelectorAll('.settings-tab').forEach(t => t.style.display = 'none');
-    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
-    var tab = document.getElementById('tab-' + name);
-    if (tab) tab.style.display = '';
-    el.classList.add('active');
-    history.replaceState(null, '', '/quma/settings?tab=' + name);
-}
-</script>
 {% endblock %}

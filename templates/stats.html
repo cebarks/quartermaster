@@ -7,8 +7,8 @@
 <h1>Stats</h1>
 
 <div class="tab-bar">
-    <button class="tab active" onclick="switchStatsTab('raids', this)">Raids</button>
-    <button class="tab" onclick="switchStatsTab('leaderboard', this)">Leaderboard</button>
+    <button class="tab active" data-tab="raids" onclick="tabSwitch(this, {toggle: '.stats-tab', query: true})">Raids</button>
+    <button class="tab" data-tab="leaderboard" onclick="tabSwitch(this, {toggle: '.stats-tab', query: true})">Leaderboard</button>
 </div>
 
 <div id="stats-tab-content">
@@ -138,22 +138,5 @@
     </div>
 </div>
 
-<script>
-function switchStatsTab(name, el) {
-    document.querySelectorAll('.stats-tab').forEach(t => t.style.display = 'none');
-    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
-    var tab = document.getElementById('tab-' + name);
-    if (tab) tab.style.display = '';
-    el.classList.add('active');
-    history.replaceState(null, '', '/quma/stats?tab=' + name);
-}
-document.addEventListener('DOMContentLoaded', function() {
-    var params = new URLSearchParams(window.location.search);
-    var tab = params.get('tab');
-    if (tab === 'leaderboard') {
-        var btns = document.querySelectorAll('.tab-bar .tab');
-        if (btns[1]) btns[1].click();
-    }
-});
-</script>
+<script>document.addEventListener('DOMContentLoaded', function() { tabRestore('tab'); });</script>
 {% endblock %}

@@ -56,39 +56,34 @@
             hx-target="#tab-content"
             hx-swap="innerHTML"
             hx-trigger="click"
-            hx-push-url="false">Quests</button>
+            hx-push-url="false"
+            onclick="tabSwitch(this)">Quests</button>
     <button class="tab" data-tab="traders"
             hx-get="/quma/api/profiles/{{ profile_username }}/traders"
             hx-target="#tab-content"
             hx-swap="innerHTML"
             hx-trigger="click"
-            hx-push-url="false">Traders</button>
+            hx-push-url="false"
+            onclick="tabSwitch(this)">Traders</button>
     <button class="tab" data-tab="hideout"
             hx-get="/quma/api/profiles/{{ profile_username }}/hideout"
             hx-target="#tab-content"
             hx-swap="innerHTML"
             hx-trigger="click"
-            hx-push-url="false">Hideout</button>
+            hx-push-url="false"
+            onclick="tabSwitch(this)">Hideout</button>
     <button class="tab" data-tab="stash"
             hx-get="/quma/api/profiles/{{ profile_username }}/stash"
             hx-target="#tab-content"
             hx-swap="innerHTML"
             hx-trigger="click"
-            hx-push-url="false">Stash</button>
+            hx-push-url="false"
+            onclick="tabSwitch(this)">Stash</button>
 </div>
 
 <div id="tab-content">
 {{ quests_html|safe }}
 </div>
-
-<script>
-document.querySelectorAll('.tab-bar .tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('.tab-bar .tab').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-    });
-});
-</script>
 
 {% else if let Some(reason) = empty_reason %}
 <div class="card">

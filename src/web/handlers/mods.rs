@@ -15,7 +15,6 @@ use crate::health::{self, IntegrityHealth};
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
-use crate::web::handlers::requests::{fika_compat_to_string, parse_forge_url};
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
@@ -248,17 +247,10 @@ pub struct ModListQuery {
     pub dir: Option<String>,
 }
 
-pub struct InstallSearchResult {
-    pub id: i64,
-    pub name: String,
-    pub description: Option<String>,
-    pub fika_compatible: String,
-}
-
 #[derive(Template)]
 #[template(path = "mods/partials/install_search_results.html")]
 struct InstallSearchResultsTemplate {
-    results: Vec<InstallSearchResult>,
+    results: Vec<crate::web::handlers::common::ForgeSearchResult>,
     error: Option<String>,
 }
 
@@ -903,65 +895,11 @@ pub async fn search_mods(
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ModsInstall)?;
-    let q = query.q.as_deref().unwrap_or("").trim().to_string();
+    let q = query.q.as_deref().unwrap_or("");
 
-    if let Some(mod_id) = parse_forge_url(&q) {
-        match state.forge.get_mod(mod_id, false).await {
-            Ok(m) => {
-                let tmpl = InstallSearchResultsTemplate {
-                    results: vec![InstallSearchResult {
-                        id: m.id,
-                        name: m.name,
-                        description: m.description,
-                        fika_compatible: fika_compat_to_string(&m.fika_compatibility),
-                    }],
-                    error: None,
-                };
-                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-            }
-            Err(_) => {
-                let tmpl = InstallSearchResultsTemplate {
-                    results: vec![],
-                    error: Some(format!("Mod with ID {mod_id} not found on Forge.")),
-                };
-                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-            }
-        }
-    }
-
-    if q.len() < 2 {
-        let tmpl = InstallSearchResultsTemplate {
-            results: vec![],
-            error: None,
-        };
-        return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-    }
-
-    match state.forge.search_mods(&q).await {
-        Ok(mods) => {
-            let results = mods
-                .into_iter()
-                .map(|m| InstallSearchResult {
-                    id: m.id,
-                    name: m.name,
-                    description: m.description,
-                    fika_compatible: fika_compat_to_string(&m.fika_compatibility),
-                })
-                .collect();
-            let tmpl = InstallSearchResultsTemplate {
-                results,
-                error: None,
-            };
-            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
-        }
-        Err(_) => {
-            let tmpl = InstallSearchResultsTemplate {
-                results: vec![],
-                error: Some("Could not reach SPT Forge. Try again later.".to_string()),
-            };
-            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
-        }
-    }
+    let (results, error) = crate::web::handlers::common::forge_search(&state.forge, q).await;
+    let tmpl = InstallSearchResultsTemplate { results, error };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
 pub async fn compat_check(
@@ -1208,59 +1146,19 @@ pub async fn install_mod(
 
             tasks.update_message(task_id, format!("Downloading {mod_name}…"));
 
-            // TODO(debt): this download/extract/insert block duplicates
-            // download_and_install_with_arc — refactor to reuse it.
-            let link = version
-                .link
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
-            let tmp_dir = tempfile::tempdir()?;
-            let archive_path = tmp_dir.path().join("mod.zip");
-            forge.download_file(link, &archive_path).await?;
-
-            tasks.update_message(task_id, format!("Extracting {mod_name}…"));
-
-            // Extract outside the DB lock — this is the slow part (file I/O)
-            let spt_dir2 = spt_dir.clone();
-            let extracted = actix_web::web::block(move || {
-                crate::spt::mods::extract_mod(&archive_path, &spt_dir2)
-            })
-            .await??;
-
-            // Only hold the lock for DB writes
-            let version_id = version.id;
-            let version_str = version.version.clone();
-            let spt_dir2 = spt_dir.clone();
-            let db2 = db.clone();
-            // TODO(debt): concurrent installs of the same mod can race past the
-            // pre-spawn check — loser hits a UNIQUE constraint on insert_mod,
-            // leaving orphaned dep files. Add constraint-violation handling here.
-            let db_id = actix_web::web::block(move || {
-                let db = db.lock();
-                let tx = db.begin_transaction()?;
-                let db_id = db.insert_mod(
-                    mod_id,
-                    version_id,
-                    &mod_name,
-                    mod_slug.as_deref(),
-                    &version_str,
-                )?;
-                for file in &extracted {
-                    db.insert_file(db_id, &file.path, Some(&file.hash), Some(file.size as i64))?;
-                }
-                tx.commit()?;
-                Ok::<_, anyhow::Error>(db_id)
-            })
-            .await??;
+            let db_id = crate::web::install::web_download_extract_and_record(
+                &forge,
+                &db,
+                &spt_dir,
+                mod_id,
+                &mod_name,
+                mod_slug.as_deref(),
+                &version,
+            )
+            .await?;
 
             // Record dependency edges
             crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
-
-            // Scan for runtime-generated files and track them separately
-            let _ = actix_web::web::block(move || {
-                crate::ops::scan_and_record_runtime_files(&db2, db_id, &spt_dir2)
-            })
-            .await;
 
             // Regenerate NarcoNet config if enabled
             state_clone.regenerate_modsync().await;

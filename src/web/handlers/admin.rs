@@ -99,6 +99,8 @@ struct AdminPageTemplate {
     nav: NavContext,
     roles: Vec<RoleRecord>,
     available_profiles: Vec<SptProfile>,
+    row_message: Option<String>,
+    reset_link: Option<String>,
 }
 
 #[derive(Template)]
@@ -109,6 +111,8 @@ struct UsersPartialTemplate {
     csrf_token: String,
     roles: Vec<RoleRecord>,
     available_profiles: Vec<SptProfile>,
+    row_message: Option<String>,
+    reset_link: Option<String>,
 }
 
 #[derive(Template)]
@@ -270,6 +274,8 @@ pub async fn admin_page(
         nav: NavContext::from_state(&state),
         roles,
         available_profiles,
+        row_message: None,
+        reset_link: None,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -290,6 +296,8 @@ pub async fn admin_users(
         csrf_token,
         roles,
         available_profiles,
+        row_message: None,
+        reset_link: None,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

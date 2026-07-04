@@ -7,18 +7,18 @@
 <div hx-get="/quma/api/tasks/status" hx-trigger="load" hx-swap="outerHTML" id="task-status"></div>
 
 <div class="tab-bar">
-    <button class="tab active" id="tab-installed"
+    <button class="tab active" data-tab="installed"
             onclick="window.location.href='/quma/mods'; return false;">Installed</button>
-    <button class="tab" id="tab-queue"
+    <button class="tab" data-tab="queue"
             hx-get="/quma/api/queue/content"
             hx-target="#mods-tab-content"
             hx-swap="innerHTML"
-            onclick="setModTab(this, 'queue')">Queue</button>
-    <button class="tab" id="tab-requests"
+            onclick="tabSwitch(this, {hash: true})">Queue</button>
+    <button class="tab" data-tab="requests"
             hx-get="/quma/api/mods/requests"
             hx-target="#mods-tab-content"
             hx-swap="innerHTML"
-            onclick="setModTab(this, 'requests')">Requests</button>
+            onclick="tabSwitch(this, {hash: true})">Requests</button>
 </div>
 
 <div id="mods-tab-content">
@@ -151,19 +151,8 @@
 </div>
 
 <script>
-function setModTab(el, tab) {
-    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
-    el.classList.add('active');
-    location.hash = tab;
-}
 document.addEventListener('DOMContentLoaded', function() {
-    if (location.hash === '#queue') {
-        var btn = document.getElementById('tab-queue');
-        if (btn) { btn.click(); }
-    } else if (location.hash === '#requests') {
-        var btn = document.getElementById('tab-requests');
-        if (btn) { btn.click(); }
-    }
+    tabRestore('hash');
 
     var searchInput = document.getElementById('install-search');
     var resultsDiv = document.getElementById('install-search-results');
