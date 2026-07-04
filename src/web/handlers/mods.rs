@@ -273,6 +273,7 @@ pub struct DepTreeQuery {
     #[serde(rename = "mod")]
     mod_id: Option<i64>,
     ver: Option<String>,
+    ver_id: Option<i64>,
 }
 
 // -- Helpers --
@@ -859,14 +860,37 @@ pub async fn dep_tree_partial(
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ModsInstall)?;
-    let deps = match (query.mod_id, &query.ver) {
-        (Some(mod_id), Some(ver)) => state
-            .forge
-            .get_dependencies(&[(&mod_id.to_string(), ver.as_str())])
-            .await
-            .unwrap_or_default(),
-        _ => vec![],
+
+    let empty = || {
+        let tmpl = DependencyTreeTemplate { deps: vec![] };
+        Ok(Html::new(tmpl.render().map_err(WebError::from)?))
     };
+
+    let mod_id = match query.mod_id {
+        Some(id) => id,
+        None => return empty(),
+    };
+
+    let ver = match (&query.ver, query.ver_id) {
+        (Some(v), _) => v.clone(),
+        (None, Some(ver_id)) => {
+            let versions = match state.forge.get_versions(mod_id, None).await {
+                Ok(v) => v,
+                Err(_) => return empty(),
+            };
+            match versions.iter().find(|v| v.id == ver_id) {
+                Some(v) => v.version.clone(),
+                None => return empty(),
+            }
+        }
+        _ => return empty(),
+    };
+
+    let deps = state
+        .forge
+        .get_dependencies(&[(&mod_id.to_string(), &ver)])
+        .await
+        .unwrap_or_default();
 
     let tmpl = DependencyTreeTemplate { deps };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))

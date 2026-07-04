@@ -534,9 +534,10 @@ pub fn configure_app(
             "/svm/preset/export/{name}",
             web::get().to(handlers::svm::export_preset),
         )
-        .route(
-            "/svm/preset/import",
-            web::post().to(handlers::svm::import_preset),
+        .service(
+            web::resource("/svm/preset/import")
+                .app_data(web::FormConfig::default().limit(256 * 1024))
+                .route(web::post().to(handlers::svm::import_preset)),
         )
         .route(
             "/svm/reload",

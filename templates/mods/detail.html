@@ -22,7 +22,7 @@
         <tr><th>Updated</th><td>{{ updated }}</td></tr>
         {% endif %}
         {% if let Some(slug) = &mod_info.slug %}
-        <tr><th>Forge</th><td><a href="https://forge.sp-tarkov.com/mod/{{ mod_info.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener">View on Forge ↗</a></td></tr>
+        <tr><th>Forge</th><td><a href="https://forge.sp-tarkov.com/mods/{{ mod_info.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener">View on Forge ↗</a></td></tr>
         {% endif %}
     </table>
     <div class="flex gap-1" style="margin-top: 1rem;">
