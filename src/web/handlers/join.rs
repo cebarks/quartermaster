@@ -567,8 +567,8 @@ pub async fn bootstrap_bash(
 
     let config = state.config.read();
     let external_url = match &config.external_url {
-        Some(url) => url.clone(),
-        None => {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => {
             return Ok(referrer_policy(
                 HttpResponse::ServiceUnavailable()
                     .content_type("text/plain")
@@ -627,8 +627,8 @@ pub async fn bootstrap_powershell(
 
     let config = state.config.read();
     let external_url = match &config.external_url {
-        Some(url) => url.clone(),
-        None => {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => {
             return Ok(referrer_policy(
                 HttpResponse::ServiceUnavailable()
                     .content_type("text/plain")
@@ -725,17 +725,16 @@ trap cleanup EXIT
 
 # Step 1: Install Fika via official installer (Wine)
 echo "Downloading Fika Installer..."
-curl -sSL -o Fika-Installer.exe "$FIKA_INSTALLER_URL"
+curl -fsSL -o Fika-Installer.exe "$FIKA_INSTALLER_URL"
 
 echo "Installing Fika (via Wine)..."
-echo "NOTE: Fika-Installer is a Windows application — firewall rules will not apply under Wine."
-wine Fika-Installer.exe install fika || echo "WARNING: Fika Installer exited with code $?, continuing..."
+wine Fika-Installer.exe install fika
 
 # Step 2: Download additional mods (NarcoNet, etc.)
 TMPFILE=$(mktemp /tmp/quma-mods-XXXXXX.zip)
 
 echo "Downloading additional mods..."
-curl -sSL -o "$TMPFILE" "$ARCHIVE_URL"
+curl -fsSL -o "$TMPFILE" "$ARCHIVE_URL"
 
 echo "Extracting mods..."
 unzip -o "$TMPFILE" -d .
@@ -746,7 +745,8 @@ if [ -f "$LAUNCHER_CONFIG" ]; then
         python3 -c "
 import json, sys
 with open(sys.argv[1]) as f: cfg = json.load(f)
-cfg.setdefault('Server', {{}})['Url'] = sys.argv[2]
+cfg['Server'] = cfg.get('Server') or {{}}
+cfg['Server']['Url'] = sys.argv[2]
 with open(sys.argv[1], 'w') as f: json.dump(cfg, f, indent=2)
 " "$LAUNCHER_CONFIG" "$SPT_SERVER_URL"
         echo "Launcher configured: server address set to $SPT_SERVER_URL"
@@ -862,6 +862,14 @@ pub(crate) fn build_mod_zip(
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for file in files {
+        if std::path::Path::new(&file.file_path).is_absolute()
+            || file.file_path.split('/').any(|c| c == "..")
+            || file.file_path.split('\\').any(|c| c == "..")
+        {
+            tracing::warn!(path = %file.file_path, "skipping file with unsafe path in mod archive");
+            continue;
+        }
+
         let full_path = spt_dir.join(&file.file_path);
         match std::fs::read(&full_path) {
             Ok(data) => {
@@ -922,6 +930,10 @@ mod tests {
         assert!(script.contains("FIKA_INSTALLER_URL="));
         assert!(script.contains("Fika-Installer.exe"));
         assert!(script.contains("wine Fika-Installer.exe install fika"));
+        assert!(
+            !script.contains("|| echo"),
+            "wine failure should not be swallowed"
+        );
     }
 
     #[test]
@@ -933,6 +945,20 @@ mod tests {
         );
         assert!(script.contains("SPT_SERVER_URL='https://example.com:6969'"));
         assert!(script.contains("server address set to $SPT_SERVER_URL"));
+    }
+
+    #[test]
+    fn bash_script_uses_curl_fail_flag() {
+        let script = generate_bash_script(
+            "Server",
+            "https://example.com/quma/join/mods.zip?code=code1",
+            TEST_SPT_URL,
+        );
+        assert!(script.contains("curl -fsSL"), "curl should use --fail flag");
+        assert!(
+            !script.contains("curl -sSL "),
+            "should not have curl without --fail"
+        );
     }
 
     #[test]
@@ -996,5 +1022,56 @@ mod tests {
             build_spt_server_url("https://tarkov.example.com:443"),
             "https://tarkov.example.com:443"
         );
+    }
+
+    #[test]
+    fn build_spt_server_url_rejects_empty() {
+        let result = build_spt_server_url("");
+        assert_eq!(
+            result, "https://",
+            "empty input produces invalid URL — callers must guard"
+        );
+    }
+
+    #[test]
+    fn build_mod_zip_rejects_path_traversal() {
+        let spt_dir = tempfile::tempdir().unwrap();
+        let secret = spt_dir.path().join("../secret.txt");
+        std::fs::write(&secret, b"sensitive data").unwrap();
+
+        let files = vec![crate::db::mods::InstalledFile {
+            id: 0,
+            mod_id: Some(1),
+            addon_id: None,
+            file_path: "../secret.txt".to_string(),
+            file_hash: None,
+            file_size: None,
+            source: "archive".to_string(),
+        }];
+
+        let zip_bytes = build_mod_zip(spt_dir.path(), &files).unwrap();
+        let reader = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        assert_eq!(reader.len(), 0, "traversal path should be skipped");
+
+        std::fs::remove_file(&secret).ok();
+    }
+
+    #[test]
+    fn build_mod_zip_rejects_absolute_path() {
+        let spt_dir = tempfile::tempdir().unwrap();
+
+        let files = vec![crate::db::mods::InstalledFile {
+            id: 0,
+            mod_id: Some(1),
+            addon_id: None,
+            file_path: "/etc/passwd".to_string(),
+            file_hash: None,
+            file_size: None,
+            source: "archive".to_string(),
+        }];
+
+        let zip_bytes = build_mod_zip(spt_dir.path(), &files).unwrap();
+        let reader = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        assert_eq!(reader.len(), 0, "absolute path should be skipped");
     }
 }

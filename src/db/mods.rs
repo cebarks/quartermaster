@@ -297,13 +297,25 @@ impl Database {
              JOIN installed_mods m ON f.mod_id = m.id
              WHERE m.forge_mod_id IN ({placeholders})
              AND m.disabled = 0
-             ORDER BY f.file_path"
+             UNION ALL
+             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             FROM installed_files f
+             JOIN installed_addons a ON f.addon_id = a.id
+             JOIN installed_mods m ON a.parent_mod_id = m.id
+             WHERE m.forge_mod_id IN ({placeholders})
+             AND a.disabled = 0 AND m.disabled = 0
+             ORDER BY file_path"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::types::ToSql> = forge_ids
+        let mut params: Vec<&dyn rusqlite::types::ToSql> = forge_ids
             .iter()
             .map(|id| id as &dyn rusqlite::types::ToSql)
             .collect();
+        let params_copy: Vec<&dyn rusqlite::types::ToSql> = forge_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        params.extend(params_copy);
         let rows = stmt.query_map(params.as_slice(), row_to_installed_file)?;
         rows.collect()
     }
@@ -314,7 +326,13 @@ impl Database {
              FROM installed_files f
              JOIN installed_mods m ON f.mod_id = m.id
              WHERE m.disabled = 0
-             ORDER BY f.file_path",
+             UNION ALL
+             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             FROM installed_files f
+             JOIN installed_addons a ON f.addon_id = a.id
+             JOIN installed_mods m ON a.parent_mod_id = m.id
+             WHERE a.disabled = 0 AND m.disabled = 0
+             ORDER BY file_path",
         )?;
         let rows = stmt.query_map([], row_to_installed_file)?;
         rows.collect()
@@ -772,5 +790,31 @@ mod tests {
         assert_eq!(updated, 0);
         let files = db.get_files_for_mod(mod_id).unwrap();
         assert_eq!(files[0].file_path, "SPT/user/mods/TestMod/package.json");
+    }
+
+    #[test]
+    fn get_all_enabled_mod_files_includes_addon_files() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(1, 100, "test-mod", Some("test-mod"), "1.0.0")
+            .unwrap();
+        db.insert_file(1, "BepInEx/plugins/test.dll", Some("abc"), Some(100))
+            .unwrap();
+
+        db.insert_addon(200, 1, 300, "test-addon", Some("test-addon"), "1.0.0", None)
+            .unwrap();
+        let addon = db.get_addon_by_forge_id(200).unwrap().unwrap();
+        db.insert_addon_file(addon.id, "BepInEx/plugins/addon.dll", Some("def"), Some(50))
+            .unwrap();
+
+        let files = db.get_all_enabled_mod_files().unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.file_path.as_str()).collect();
+        assert!(
+            paths.contains(&"BepInEx/plugins/test.dll"),
+            "should include mod files"
+        );
+        assert!(
+            paths.contains(&"BepInEx/plugins/addon.dll"),
+            "should include addon files"
+        );
     }
 }

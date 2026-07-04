@@ -111,6 +111,14 @@ pub fn build_mod_zip_to_file(
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for f in files {
+        if std::path::Path::new(&f.file_path).is_absolute()
+            || f.file_path.split('/').any(|c| c == "..")
+            || f.file_path.split('\\').any(|c| c == "..")
+        {
+            tracing::warn!(path = %f.file_path, "skipping file with unsafe path in mod zip cache");
+            continue;
+        }
+
         let full_path = spt_dir.join(&f.file_path);
         match std::fs::read(&full_path) {
             Ok(data) => {

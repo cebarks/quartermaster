@@ -47,7 +47,7 @@ pub async fn setup_page(
     let external_url = config.external_url.clone();
     drop(config);
 
-    let external_url_configured = external_url.is_some();
+    let external_url_configured = external_url.as_ref().is_some_and(|u| !u.is_empty());
     let spt_server_url = match &external_url {
         Some(url) => build_spt_server_url(url),
         None => String::new(),
@@ -80,8 +80,8 @@ pub async fn setup_bootstrap_bash(
 
     let config = state.config.read();
     let external_url = match &config.external_url {
-        Some(url) => url.clone(),
-        None => {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => {
             return Ok(HttpResponse::ServiceUnavailable()
                 .content_type("text/plain")
                 .body("Bootstrap not configured: external_url is required"));
@@ -116,8 +116,8 @@ pub async fn setup_bootstrap_powershell(
 
     let config = state.config.read();
     let external_url = match &config.external_url {
-        Some(url) => url.clone(),
-        None => {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => {
             return Ok(HttpResponse::ServiceUnavailable()
                 .content_type("text/plain")
                 .body("Bootstrap not configured: external_url is required"));
@@ -144,6 +144,8 @@ pub async fn setup_bootstrap_powershell(
         .body(script))
 }
 
+// TODO(debt): This endpoint is intentionally unauthenticated so bootstrap scripts can
+// curl it without session cookies. Add a signed/expiring download token when this matters.
 pub async fn setup_mods_zip(state: web::Data<AppState>) -> actix_web::Result<HttpResponse> {
     // Serve cached file if available
     if let Some(path) = state.mod_zip_cache.get() {
