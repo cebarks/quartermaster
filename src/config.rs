@@ -742,6 +742,21 @@ impl HeadlessConfig {
                 self.install_dir.display()
             );
         }
+        // ponytail: canonicalize to handle symlinks/.. — starts_with on raw paths is unreliable
+        if let (Ok(canon_install), Ok(canon_spt)) =
+            (self.install_dir.canonicalize(), spt_dir.canonicalize())
+        {
+            if canon_install.starts_with(&canon_spt) {
+                bail!(
+                    "headless.install_dir ('{}') must not be inside spt_dir ('{}') — \
+                     the SPT server container mounts spt_dir and its entrypoint chowns the \
+                     entire tree, which fails on wine-prefix dirs relabeled by headless \
+                     containers (SELinux MCS conflict). Move install_dir outside spt_dir.",
+                    self.install_dir.display(),
+                    spt_dir.display()
+                );
+            }
+        }
         let count = self.client_count();
         match (self.base_udp_port as u32).checked_add(count - 1) {
             Some(max_port) if max_port > 65535 => {
@@ -1758,9 +1773,8 @@ install_dir = "/opt/fika"
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path();
         std::fs::create_dir_all(spt_dir.join("SPT/user/mods/fika-server")).unwrap();
-        // Create install_dir so validation reaches the port check
-        let install_dir = tmp.path().join("fika-install");
-        std::fs::create_dir_all(&install_dir).unwrap();
+        let install_tmp = tempfile::tempdir().unwrap();
+        let install_dir = install_tmp.path().to_path_buf();
         let headless = HeadlessConfig {
             install_dir,
             base_udp_port: 65534,
@@ -1795,6 +1809,30 @@ install_dir = "/opt/fika"
         let result = headless.validate(&config, tmp.path());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Fika"));
+    }
+
+    #[test]
+    fn headless_config_validation_install_dir_inside_spt_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods/fika-server")).unwrap();
+        let install_dir = spt_dir.join("headless");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        let headless = HeadlessConfig {
+            install_dir,
+            clients: vec![HeadlessClientDef::default()],
+            ..HeadlessConfig::default()
+        };
+        let config = Config {
+            server_container: Some("spt".to_string()),
+            ..Config::default()
+        };
+        let result = headless.validate(&config, spt_dir);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must not be inside"));
     }
 
     #[test]
