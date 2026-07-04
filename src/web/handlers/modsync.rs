@@ -548,6 +548,64 @@ pub async fn new_group_card(
         .body(tmpl.render().map_err(WebError::from)?))
 }
 
+fn sync_on_group_change(
+    db: &crate::db::Database,
+    old_ms: Option<&crate::config::ModSyncConfig>,
+    new_ms: Option<&crate::config::ModSyncConfig>,
+    spt_dir: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> Result<(), anyhow::Error> {
+    let was_excluded = |forge_id: i64| -> bool {
+        old_ms
+            .map(|ms| {
+                ms.groups
+                    .values()
+                    .any(|g| g.exclude_headless && g.members.contains(&forge_id))
+            })
+            .unwrap_or(false)
+    };
+    let now_excluded = |forge_id: i64| -> bool {
+        new_ms
+            .map(|ms| {
+                ms.groups
+                    .values()
+                    .any(|g| g.exclude_headless && g.members.contains(&forge_id))
+            })
+            .unwrap_or(false)
+    };
+
+    let mods = db.list_mods()?;
+    for m in &mods {
+        if m.disabled {
+            continue;
+        }
+        let was = was_excluded(m.forge_mod_id);
+        let now = now_excluded(m.forge_mod_id);
+        if was == now {
+            continue;
+        }
+
+        let files: Vec<String> = db
+            .get_files_for_mod(m.id)?
+            .into_iter()
+            .map(|f| f.file_path)
+            .collect();
+
+        let op = if now {
+            crate::headless_sync::SyncOp::Remove
+        } else {
+            crate::headless_sync::SyncOp::Install
+        };
+
+        if let Err(e) =
+            crate::headless_sync::sync_client_files_to_headless(spt_dir, install_dir, &files, op)
+        {
+            tracing::warn!(mod_name = %m.name, err = %e, "headless sync on group change failed");
+        }
+    }
+    Ok(())
+}
+
 pub async fn save_groups(
     state: Data<AppState>,
     req: HttpRequest,
@@ -675,6 +733,7 @@ pub async fn save_groups(
     }
 
     // Load-then-mutate: only replace the groups field
+    let old_modsync = state.config().modsync.clone();
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
 
@@ -714,6 +773,27 @@ pub async fn save_groups(
         });
     }
     state.persist_config(&config)?;
+
+    if let Some(ref headless_cfg) = config.headless {
+        let install_dir = headless_cfg.install_dir.clone();
+        let spt_dir = state.spt_dir.clone();
+        let db = state.db.clone();
+        let new_modsync = config.modsync.clone();
+        let old_ms = old_modsync;
+
+        actix_web::rt::spawn(async move {
+            let db = db.lock();
+            if let Err(e) = sync_on_group_change(
+                &db,
+                old_ms.as_ref(),
+                new_modsync.as_ref(),
+                &spt_dir,
+                &install_dir,
+            ) {
+                tracing::warn!(err = %e, "failed to sync headless files after group change");
+            }
+        });
+    }
 
     drop(_guard);
 
