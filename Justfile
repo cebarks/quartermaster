@@ -128,6 +128,10 @@ dev-reset-db:
     rm -f "{{dev_dir}}/quartermaster.db" "{{dev_dir}}/quartermaster.db-journal" "{{dev_dir}}/quartermaster.db-wal"
     echo "Dev database wiped."
 
+# Check SVM metadata coverage against upstream C# models
+sync-svm-metadata svm_repo="$HOME/code/SVM":
+    python3 scripts/sync-svm-metadata.py "{{svm_repo}}"
+
 # Remove the dev directory and container entirely
 dev-clean:
     #!/usr/bin/env bash
