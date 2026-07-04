@@ -34,6 +34,10 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
 
+    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db, &spt_dir) {
+        tracing::error!(err = %e, "failed to migrate disabled mods to stash");
+    }
+
     let forge = ForgeClient::new(config.forge_token.clone())?;
 
     let container_mgr = ContainerManager::new().ok();

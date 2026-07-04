@@ -1354,6 +1354,141 @@ pub fn disabled_stash_dir(spt_dir: &Path) -> PathBuf {
     spt_dir.join("quartermaster/disabled")
 }
 
+/// One-time migration: convert mods disabled under the old `.disabled` suffix
+/// scheme to the new stash-directory scheme. Idempotent — safe to call on
+/// every startup.
+pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
+    let all_mods = db.list_mods()?;
+    let disabled_mods: Vec<_> = all_mods.into_iter().filter(|m| m.disabled).collect();
+    if disabled_mods.is_empty() {
+        return Ok(());
+    }
+
+    let stash = disabled_stash_dir(spt_dir);
+
+    for m in &disabled_mods {
+        let files = db.get_files_for_mod(m.id)?;
+        let has_old_paths = files.iter().any(|f| f.file_path.contains(".disabled"));
+        if !has_old_paths {
+            continue;
+        }
+
+        tracing::info!(mod_id = m.id, mod_name = %m.name, "migrating disabled mod from .disabled scheme to stash");
+
+        let tx = db.begin_transaction()?;
+        for file in &files {
+            if !file.file_path.contains(".disabled") {
+                continue;
+            }
+
+            // Compute canonical path by stripping .disabled from the path
+            let canonical = file
+                .file_path
+                .replace(".disabled/", "/")
+                .replace(".disabled", "");
+
+            // Update DB to canonical path
+            db.rename_file_path(file.id, &canonical)?;
+
+            // Move file on disk: old location → stash
+            let old_on_disk = spt_dir.join(&file.file_path);
+            let new_in_stash = stash.join(&canonical);
+
+            if new_in_stash.exists() {
+                // Already migrated on disk
+                continue;
+            }
+
+            if old_on_disk.exists() {
+                if let Some(parent) = new_in_stash.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&old_on_disk, &new_in_stash)
+                    .with_context(|| format!("failed to migrate {}", old_on_disk.display()))?;
+            } else {
+                tracing::warn!(
+                    path = %file.file_path,
+                    "migration: old-scheme file missing on disk, skipping"
+                );
+            }
+        }
+        tx.commit()?;
+
+        // Clean up empty old .disabled directories
+        let old_dirs: std::collections::HashSet<String> = files
+            .iter()
+            .filter_map(|f| {
+                let path = &f.file_path;
+                if let Some(pos) = path.find(".disabled") {
+                    Some(path[..pos + ".disabled".len()].to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for dir in &old_dirs {
+            let dir_path = spt_dir.join(dir);
+            if dir_path.is_dir() {
+                if let Ok(mut entries) = std::fs::read_dir(&dir_path) {
+                    if entries.next().is_none() {
+                        let _ = std::fs::remove_dir(&dir_path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Also migrate disabled addons
+    let all_addons = db.list_addons()?;
+    let disabled_addons: Vec<_> = all_addons.into_iter().filter(|a| a.disabled).collect();
+    for addon in &disabled_addons {
+        let files = db.get_files_for_addon(addon.id)?;
+        let has_old_paths = files.iter().any(|f| f.file_path.contains(".disabled"));
+        if !has_old_paths {
+            continue;
+        }
+
+        tracing::info!(addon_id = addon.id, addon_name = %addon.name, "migrating disabled addon from .disabled scheme to stash");
+
+        let tx = db.begin_transaction()?;
+        for file in &files {
+            if !file.file_path.contains(".disabled") {
+                continue;
+            }
+
+            let canonical = file
+                .file_path
+                .replace(".disabled/", "/")
+                .replace(".disabled", "");
+
+            db.rename_file_path(file.id, &canonical)?;
+
+            let old_on_disk = spt_dir.join(&file.file_path);
+            let new_in_stash = stash.join(&canonical);
+
+            if new_in_stash.exists() {
+                continue;
+            }
+
+            if old_on_disk.exists() {
+                if let Some(parent) = new_in_stash.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&old_on_disk, &new_in_stash)
+                    .with_context(|| format!("failed to migrate {}", old_on_disk.display()))?;
+            } else {
+                tracing::warn!(
+                    path = %file.file_path,
+                    "migration: old-scheme addon file missing on disk, skipping"
+                );
+            }
+        }
+        tx.commit()?;
+    }
+
+    Ok(())
+}
+
 /// Resolve a DB file path to its on-disk location, accounting for disabled state.
 pub fn resolve_mod_path(spt_dir: &Path, file_path: &str, disabled: bool) -> PathBuf {
     if disabled {
@@ -2816,5 +2951,78 @@ mod tests {
             .exists());
         // DB record gone
         assert!(db.get_mod(db_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn migrate_disabled_to_stash_moves_old_scheme_files() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // Simulate old-scheme disabled mod: .disabled suffix in DB paths and on disk
+        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        db.insert_file(
+            mod_id,
+            "SPT/user/mods/TestMod.disabled/package.json",
+            Some("abc"),
+            Some(2),
+        )
+        .unwrap();
+        db.set_mod_disabled(mod_id, true).unwrap();
+
+        // Create old-scheme files on disk
+        let old_dir = spt_dir.path().join("SPT/user/mods/TestMod.disabled");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::write(old_dir.join("package.json"), b"{}").unwrap();
+
+        migrate_disabled_to_stash(&db, spt_dir.path()).unwrap();
+
+        // DB paths should be canonical (stripped .disabled)
+        let files = db.get_files_for_mod(mod_id).unwrap();
+        assert_eq!(files[0].file_path, "SPT/user/mods/TestMod/package.json");
+
+        // Files should be in the stash
+        assert!(spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod/package.json")
+            .exists());
+        // Old location should be gone
+        assert!(!spt_dir
+            .path()
+            .join("SPT/user/mods/TestMod.disabled")
+            .exists());
+    }
+
+    #[test]
+    fn migrate_disabled_to_stash_noop_when_already_migrated() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+
+        // Already-migrated mod: canonical DB paths, files in stash
+        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        db.insert_file(
+            mod_id,
+            "SPT/user/mods/TestMod/package.json",
+            Some("abc"),
+            Some(2),
+        )
+        .unwrap();
+        db.set_mod_disabled(mod_id, true).unwrap();
+
+        let stash_path = spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod");
+        std::fs::create_dir_all(&stash_path).unwrap();
+        std::fs::write(stash_path.join("package.json"), b"{}").unwrap();
+
+        // Should be a no-op — no .disabled in DB paths
+        migrate_disabled_to_stash(&db, spt_dir.path()).unwrap();
+
+        // Everything still in place
+        assert!(spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod/package.json")
+            .exists());
+        let files = db.get_files_for_mod(mod_id).unwrap();
+        assert_eq!(files[0].file_path, "SPT/user/mods/TestMod/package.json");
     }
 }

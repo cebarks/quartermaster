@@ -745,6 +745,11 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     // db is already Arc<Mutex<Database>> from serve.rs
     let db_arc = db;
 
+    // Migrate disabled mods from old .disabled suffix scheme to stash directory
+    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db_arc.lock(), &spt_dir) {
+        tracing::error!(err = %e, "failed to migrate disabled mods to stash");
+    }
+
     // Recover any interrupted async mod updates from a previous crash
     if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &spt_dir) {
         tracing::error!(err = %e, "failed to recover pending updates on startup");
