@@ -1,4 +1,5 @@
 {% import "clients/partials/badges.html" as badges %}
+{% import "partials/icons.html" as icons %}
 {% if clients.is_empty() %}
 <div class="empty-state">
     <p>No headless clients configured.</p>
@@ -16,6 +17,9 @@
             <th>CPU</th>
             <th>Memory</th>
             <th>Restarts</th>
+            {% if user.can("headless.manage") %}
+            <th>Actions</th>
+            {% endif %}
         </tr>
     </thead>
     <tbody>
@@ -53,6 +57,26 @@
                 <span class="text-muted">0</span>
                 {% endif %}
             </td>
+            {% if user.can("headless.manage") %}
+            <td>
+                <div class="flex gap-1">
+                    <form method="post" action="/quma/headless/{{ client.index }}/start" style="display:inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-success" title="Start"{% if client.container_status == crate::client::ContainerStatus::Running %} disabled{% endif %}>{% call icons::play() %}{% endcall %}</button>
+                    </form>
+                    <form method="post" action="/quma/headless/{{ client.index }}/stop" style="display:inline"
+                          onsubmit="return confirm('Stop client {{ client.index }}?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-danger" title="Stop"{% if client.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::stop() %}{% endcall %}</button>
+                    </form>
+                    <form method="post" action="/quma/headless/{{ client.index }}/restart" style="display:inline"
+                          onsubmit="return confirm('Restart client {{ client.index }}?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-warning" title="Restart"{% if client.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::refresh() %}{% endcall %}</button>
+                    </form>
+                </div>
+            </td>
+            {% endif %}
         </tr>
         {% endfor %}
     </tbody>

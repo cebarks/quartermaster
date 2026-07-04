@@ -49,6 +49,8 @@ struct ClientDetailTemplate {
 #[template(path = "clients/partials/status.html")]
 struct ClientsStatusPartialTemplate {
     clients: Vec<ClientState>,
+    user: SessionUser,
+    csrf_token: String,
 }
 
 #[derive(Template)]
@@ -533,18 +535,97 @@ pub async fn client_scale(
         .finish())
 }
 
+pub async fn client_converge(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let headless_config = match state.config().headless.clone() {
+        Some(h) => h,
+        None => {
+            set_flash(
+                &session,
+                "No headless config in quartermaster.toml",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+    };
+
+    let mgr = match require_container_mgr(&state, &session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
+    };
+
+    let spt_client = match create_spt_client(&state, &session) {
+        Ok(c) => c,
+        Err(resp) => return Ok(resp),
+    };
+
+    let mgr_clone = mgr.clone();
+    let config_clone = state.config_cloned();
+    let spt_dir_clone = state.spt_dir.clone();
+    let converging_clone = state.converging.clone();
+    let forge_clone = state.forge.clone();
+    let spt_version_clone = state.spt_info.spt_version.clone();
+    let db_clone = state.db.clone();
+
+    tokio::spawn(async move {
+        let result = crate::client::converge::converge(
+            &mgr_clone,
+            &headless_config,
+            &config_clone,
+            &spt_dir_clone,
+            &spt_client,
+            &forge_clone,
+            &spt_version_clone,
+            converging_clone,
+            &db_clone,
+        )
+        .await;
+
+        if let Err(e) = result {
+            tracing::error!(err = %e, "Manual convergence failed");
+        } else {
+            tracing::info!("Manual convergence completed");
+        }
+    });
+
+    set_flash(&session, "Convergence started...", FlashType::Success);
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/headless"))
+        .finish())
+}
+
 pub async fn client_status_partial(
     state: Data<AppState>,
     req: HttpRequest,
+    session: Session,
 ) -> actix_web::Result<web::Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
 
     let clients = match &state.client_states {
         Some(states) => states.read().await.clone(),
         None => vec![],
     };
 
-    let tmpl = ClientsStatusPartialTemplate { clients };
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let tmpl = ClientsStatusPartialTemplate {
+        clients,
+        user,
+        csrf_token,
+    };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
 }
 

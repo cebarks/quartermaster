@@ -685,6 +685,10 @@ pub fn configure_app(
             web::post().to(handlers::clients::client_scale),
         )
         .route(
+            "/headless/converge",
+            web::post().to(handlers::clients::client_converge),
+        )
+        .route(
             "/headless/create",
             web::post().to(handlers::clients::client_create),
         )

@@ -9,6 +9,7 @@
     <h1>Client {{ client.index }}</h1>
     {% if user.can("headless.manage") %}
     <div class="flex gap-1">
+        <a href="/quma/logs?tab=headless&container={{ client.container_name }}" class="btn btn-sm">Logs</a>
         <form method="post" action="/quma/headless/{{ client.index }}/start" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
