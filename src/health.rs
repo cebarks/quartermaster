@@ -1010,6 +1010,44 @@ mod tests {
     }
 
     #[test]
+    fn check_integrity_excludes_disabled_mod_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
+
+        let ctx = test_cli_context(tmp.path());
+        let mod_id = ctx
+            .db
+            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .unwrap();
+
+        // Create file at canonical location
+        let file_path = tmp.path().join("SPT/user/mods/TestMod/package.json");
+        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        std::fs::write(&file_path, b"{}").unwrap();
+        let hash = crate::spt::mods::compute_file_hash(&file_path).unwrap();
+        ctx.db
+            .insert_file(
+                mod_id,
+                "SPT/user/mods/TestMod/package.json",
+                Some(&hash),
+                Some(2),
+            )
+            .unwrap();
+
+        // Verify it shows up in enabled file list
+        let enabled = ctx.db.get_all_enabled_mod_files().unwrap();
+        assert_eq!(enabled.len(), 1);
+
+        // Disable the mod
+        ctx.db.set_mod_disabled(mod_id, true).unwrap();
+
+        // Should no longer appear in enabled file list
+        let enabled = ctx.db.get_all_enabled_mod_files().unwrap();
+        assert!(enabled.is_empty());
+    }
+
+    #[test]
     fn names_match_containment() {
         // Exact match
         assert!(names_match("lootingbots", "lootingbots"));

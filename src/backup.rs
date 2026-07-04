@@ -184,22 +184,14 @@ pub fn backup_mod(
     let bid = unique_backup_id(&mod_backup_dir);
     let dest = mod_backup_dir.join(&bid);
 
-    let base_dir = if mod_info.disabled {
-        crate::ops::disabled_stash_dir(spt_dir)
-    } else {
-        spt_dir.to_path_buf()
-    };
+    let base_dir = crate::ops::resolve_mod_root(spt_dir, mod_info.disabled);
     let mut total_size = copy_files_to_backup(&files, &base_dir, &dest)?;
     // For addon files, only use stash if the addon itself is disabled.
     // Disabling a parent mod does NOT move addon files — they stay at
     // canonical paths unless the addon is independently disabled.
     for addon in &addons {
         let addon_files = db.get_files_for_addon(addon.id)?;
-        let addon_base = if addon.disabled {
-            crate::ops::disabled_stash_dir(spt_dir)
-        } else {
-            spt_dir.to_path_buf()
-        };
+        let addon_base = crate::ops::resolve_mod_root(spt_dir, addon.disabled);
         total_size += copy_files_to_backup(&addon_files, &addon_base, &dest)?;
     }
 
@@ -269,11 +261,7 @@ pub fn backup_full(
     let mods = db.list_mods()?;
     for m in &mods {
         let files = db.get_files_for_mod(m.id)?;
-        let base = if m.disabled {
-            crate::ops::disabled_stash_dir(spt_dir)
-        } else {
-            spt_dir.to_path_buf()
-        };
+        let base = crate::ops::resolve_mod_root(spt_dir, m.disabled);
         let (size, file_paths) = copy_files_for_manifest(&files, &base, &mods_dest)?;
         total_size += size;
         manifest_mods.push(ManifestMod {
@@ -295,11 +283,7 @@ pub fn backup_full(
             .ok_or_else(|| anyhow::anyhow!("addon parent mod {} not found", addon.parent_mod_id))?;
 
         let addon_files = db.get_files_for_addon(addon.id)?;
-        let addon_base = if addon.disabled {
-            crate::ops::disabled_stash_dir(spt_dir)
-        } else {
-            spt_dir.to_path_buf()
-        };
+        let addon_base = crate::ops::resolve_mod_root(spt_dir, addon.disabled);
         let (size, file_paths) = copy_files_for_manifest(&addon_files, &addon_base, &mods_dest)?;
         total_size += size;
         manifest_addons.push(ManifestAddon {
@@ -439,11 +423,7 @@ pub fn restore_mod_backup(
             // Delete current files from disk and DB
             let current_files = db.get_files_for_mod(existing.id)?;
             let paths: Vec<String> = current_files.into_iter().map(|f| f.file_path).collect();
-            let delete_root = if existing.disabled {
-                crate::ops::disabled_stash_dir(spt_dir)
-            } else {
-                spt_dir.to_path_buf()
-            };
+            let delete_root = crate::ops::resolve_mod_root(spt_dir, existing.disabled);
             crate::spt::mods::delete_mod_files(&delete_root, &paths)?;
             db.delete_files_for_mod(existing.id)?;
             existing.id
@@ -552,11 +532,7 @@ pub fn restore_full_backup(
         for m in &all_mods {
             let files = db.get_files_for_mod(m.id)?;
             let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
-            let delete_root = if m.disabled {
-                crate::ops::disabled_stash_dir(spt_dir)
-            } else {
-                spt_dir.to_path_buf()
-            };
+            let delete_root = crate::ops::resolve_mod_root(spt_dir, m.disabled);
             crate::spt::mods::delete_mod_files(&delete_root, &paths)?;
             db.delete_files_for_mod(m.id)?;
             db.delete_mod(m.id)?;

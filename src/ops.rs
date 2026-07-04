@@ -305,11 +305,7 @@ pub fn update_mod_from_archive(
     let mod_info = db
         .get_mod(mod_db_id)?
         .ok_or_else(|| anyhow::anyhow!("mod not found for update"))?;
-    let effective_root = if mod_info.disabled {
-        disabled_stash_dir(spt_dir)
-    } else {
-        spt_dir.to_path_buf()
-    };
+    let effective_root = resolve_mod_root(spt_dir, mod_info.disabled);
 
     // Compute stale paths for headless sync before remove_stale_files consumes old_paths
     let new_paths_set: std::collections::HashSet<&str> =
@@ -385,11 +381,7 @@ pub fn update_addon_from_archive(
         "auto_update_addon",
     )?;
 
-    let effective_root = if addon.disabled {
-        disabled_stash_dir(spt_dir)
-    } else {
-        spt_dir.to_path_buf()
-    };
+    let effective_root = resolve_mod_root(spt_dir, addon.disabled);
 
     // Compute stale paths for headless sync before remove_stale_files consumes old_paths
     let new_paths_set: std::collections::HashSet<&str> =
@@ -516,11 +508,7 @@ pub async fn apply_mod_update(
     let spt_dir_fs = spt_dir.clone();
     let old_paths_fs = old_paths.clone();
     let (extracted, stale_paths) = actix_web::web::block(move || {
-        let effective_root = if is_disabled {
-            disabled_stash_dir(&spt_dir_fs)
-        } else {
-            spt_dir_fs.clone()
-        };
+        let effective_root = resolve_mod_root(&spt_dir_fs, is_disabled);
         move_staged_files(&staging_path, &effective_root, &extracted)?;
         // Compute stale paths before remove_stale_files consumes old_paths_fs
         let new_paths_set: std::collections::HashSet<&str> =
@@ -665,11 +653,7 @@ pub async fn apply_addon_update(
     let spt_dir_fs = spt_dir.clone();
     let old_paths_fs = old_paths.clone();
     let (extracted, stale_paths) = actix_web::web::block(move || {
-        let effective_root = if is_disabled {
-            disabled_stash_dir(&spt_dir_fs)
-        } else {
-            spt_dir_fs.clone()
-        };
+        let effective_root = resolve_mod_root(&spt_dir_fs, is_disabled);
         move_staged_files(&staging_path, &effective_root, &extracted)?;
         // Compute stale paths before remove_stale_files consumes old_paths_fs
         let new_paths_set: std::collections::HashSet<&str> =
@@ -900,11 +884,7 @@ fn recover_single_update(
     }
 
     // Determine effective root: stash if disabled, canonical otherwise
-    let effective_root = if mod_info.as_ref().is_some_and(|m| m.disabled) {
-        disabled_stash_dir(spt_dir)
-    } else {
-        spt_dir.to_path_buf()
-    };
+    let effective_root = resolve_mod_root(spt_dir, mod_info.as_ref().is_some_and(|m| m.disabled));
 
     let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
         .context("failed to parse new_file_paths JSON from pending_updates")?;
@@ -977,11 +957,7 @@ fn recover_single_addon_update(
     }
 
     // Determine effective root: stash if disabled, canonical otherwise
-    let effective_root = if addon_info.as_ref().is_some_and(|a| a.disabled) {
-        disabled_stash_dir(spt_dir)
-    } else {
-        spt_dir.to_path_buf()
-    };
+    let effective_root = resolve_mod_root(spt_dir, addon_info.as_ref().is_some_and(|a| a.disabled));
 
     let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
         .context("failed to parse new_file_paths JSON from pending_updates")?;
@@ -1064,11 +1040,7 @@ pub fn remove_mod_by_id(
     let files = db.get_files_for_mod(mod_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = file_paths.len(), "deleting mod files");
-    let delete_root = if is_disabled {
-        disabled_stash_dir(spt_dir)
-    } else {
-        spt_dir.to_path_buf()
-    };
+    let delete_root = resolve_mod_root(spt_dir, is_disabled);
     crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
     // Clean up empty quma-* group directories after mod removal
@@ -1163,11 +1135,7 @@ pub fn remove_addon_by_id(
     let files = db.get_files_for_addon(addon_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = file_paths.len(), "deleting addon files");
-    let delete_root = if addon.disabled {
-        disabled_stash_dir(spt_dir)
-    } else {
-        spt_dir.to_path_buf()
-    };
+    let delete_root = resolve_mod_root(spt_dir, addon.disabled);
     crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
     // Remove client files from headless before DB delete loses the file list
@@ -1368,6 +1336,16 @@ fn find_loose_files<'a>(file_paths: &'a [String], top_dirs: &[String]) -> Vec<&'
 /// Root of the disabled-mod stash: `<spt_dir>/quartermaster/disabled/`.
 pub fn disabled_stash_dir(spt_dir: &Path) -> PathBuf {
     spt_dir.join("quartermaster/disabled")
+}
+
+/// Resolve the filesystem root for a mod/addon based on disabled state.
+/// Enabled: files at `spt_dir/<path>`. Disabled: files at `spt_dir/quartermaster/disabled/<path>`.
+pub fn resolve_mod_root(spt_dir: &Path, disabled: bool) -> PathBuf {
+    if disabled {
+        disabled_stash_dir(spt_dir)
+    } else {
+        spt_dir.to_path_buf()
+    }
 }
 
 /// One-time migration: convert mods disabled under the old `.disabled` suffix
@@ -2969,6 +2947,100 @@ mod tests {
             .path()
             .join("SPT/user/mods/TestMod.disabled")
             .exists());
+    }
+
+    #[test]
+    fn disable_mod_handles_stash_collision() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+        let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
+
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip.path(),
+        })
+        .unwrap();
+
+        // Pre-create stale stash entry
+        let stale = spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("old_file.txt"), b"stale").unwrap();
+
+        // Disable should succeed despite collision
+        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+
+        // Stale file should be gone, current file should be in stash
+        assert!(!spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod/old_file.txt")
+            .exists());
+        assert!(spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod/package.json")
+            .exists());
+    }
+
+    #[test]
+    fn update_disabled_mod_updates_in_stash() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+        let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
+
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: 100,
+            version_id: 200,
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip_v1.path(),
+        })
+        .unwrap();
+
+        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+
+        // Update while disabled
+        let zip_v2 = create_test_zip(&[
+            ("SPT/user/mods/TestMod/package.json", b"{\"v\":\"2\"}"),
+            ("SPT/user/mods/TestMod/new_file.ts", b"new"),
+        ]);
+        update_mod_from_archive(
+            &db,
+            spt_dir.path(),
+            &Config::default(),
+            db_id,
+            201,
+            "2.0.0",
+            zip_v2.path(),
+        )
+        .unwrap();
+
+        // Files should be in stash, not at canonical location
+        assert!(!spt_dir.path().join("SPT/user/mods/TestMod").exists());
+        let stash = spt_dir
+            .path()
+            .join("quartermaster/disabled/SPT/user/mods/TestMod");
+        assert_eq!(
+            std::fs::read_to_string(stash.join("package.json")).unwrap(),
+            "{\"v\":\"2\"}"
+        );
+        assert!(stash.join("new_file.ts").exists());
+
+        // DB should reflect updated version
+        let m = db.get_mod(db_id).unwrap().unwrap();
+        assert_eq!(m.version, "2.0.0");
+        assert!(m.disabled);
     }
 
     #[test]
