@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(mods[0].slug.as_deref(), Some("big-brain"));
         assert_eq!(mods[0].fika_compatibility, Some(FikaCompat::Compatible));
         assert_eq!(mods[1].id, 99);
-        assert_eq!(mods[1].fika_compatibility, Some(FikaCompat::Incompatible));
+        assert_eq!(mods[1].fika_compatibility, Some(FikaCompat::Unknown));
     }
 
     #[tokio::test]

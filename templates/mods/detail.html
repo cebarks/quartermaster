@@ -21,9 +21,7 @@
         {% if let Some(updated) = &mod_info.updated_at %}
         <tr><th>Updated</th><td>{{ updated }}</td></tr>
         {% endif %}
-        {% if let Some(slug) = &mod_info.slug %}
-        <tr><th>Forge</th><td><a href="https://forge.sp-tarkov.com/mod/{{ mod_info.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener">View on Forge ↗</a></td></tr>
-        {% endif %}
+        <tr><th>Forge</th><td><a href="https://forge.sp-tarkov.com/mods/{{ mod_info.forge_mod_id }}" target="_blank" rel="noopener">View on Forge ↗</a></td></tr>
     </table>
     <div class="flex gap-1" style="margin-top: 1rem;">
         {% if user.can("mods.update") %}

@@ -46,6 +46,21 @@
                     {% if op.item_type == "addon" %}
                     <span class="badge badge-info" style="margin-left: 0.5rem;">addon</span>
                     {% endif %}
+                    {% if op.action.as_str() != "remove" %}
+                    {% if let Some(mod_id) = op.forge_mod_id %}
+                    {% if let Some(ver_id) = op.forge_version_id %}
+                    <details style="margin-top: 0.25rem;">
+                        <summary class="text-sm text-muted" style="cursor: pointer;">Dependencies</summary>
+                        <div hx-get="/quma/api/mods/dep-tree?mod={{ mod_id }}&ver_id={{ ver_id }}"
+                             hx-trigger="revealed"
+                             hx-swap="innerHTML"
+                             class="text-sm" style="padding: 0.25rem 0;">
+                            <span class="text-muted">Loading…</span>
+                        </div>
+                    </details>
+                    {% endif %}
+                    {% endif %}
+                    {% endif %}
                 </td>
                 <td class="text-muted text-sm">{{ op.queued_at }}</td>
                 <td class="text-muted text-sm">

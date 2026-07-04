@@ -29,7 +29,8 @@ impl<'de> Deserialize<'de> for FikaCompat {
         let raw = RawFikaCompat::deserialize(deserializer)?;
         match raw {
             RawFikaCompat::Bool(true) => Ok(FikaCompat::Compatible),
-            RawFikaCompat::Bool(false) => Ok(FikaCompat::Incompatible),
+            // ponytail: Forge API `false` means "not assessed", not "confirmed incompatible"
+            RawFikaCompat::Bool(false) => Ok(FikaCompat::Unknown),
             RawFikaCompat::Str(s) => match s.to_lowercase().as_str() {
                 "compatible" => Ok(FikaCompat::Compatible),
                 "incompatible" => Ok(FikaCompat::Incompatible),
@@ -382,7 +383,7 @@ mod tests {
         let m2: ForgeMod = serde_json::from_str(json_false).unwrap();
 
         assert_eq!(m1.fika_compatibility, Some(FikaCompat::Compatible));
-        assert_eq!(m2.fika_compatibility, Some(FikaCompat::Incompatible));
+        assert_eq!(m2.fika_compatibility, Some(FikaCompat::Unknown));
     }
 
     #[test]
