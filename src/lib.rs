@@ -7,6 +7,7 @@ pub mod config;
 pub mod container;
 pub mod db;
 pub mod forge;
+pub mod headless_sync;
 pub mod health;
 pub mod invite;
 pub mod logging;
