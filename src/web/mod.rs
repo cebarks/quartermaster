@@ -534,9 +534,10 @@ pub fn configure_app(
             "/svm/preset/export/{name}",
             web::get().to(handlers::svm::export_preset),
         )
-        .route(
-            "/svm/preset/import",
-            web::post().to(handlers::svm::import_preset),
+        .service(
+            web::resource("/svm/preset/import")
+                .app_data(web::FormConfig::default().limit(256 * 1024))
+                .route(web::post().to(handlers::svm::import_preset)),
         )
         .route(
             "/svm/reload",
@@ -830,7 +831,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         App::new()
             .app_data(app_state.clone())
             .app_data(web::PayloadConfig::new(64 * 1024 * 1024))
-            .app_data(web::FormConfig::default().limit(256 * 1024))
             .wrap(middleware::NormalizePath::new(
                 middleware::TrailingSlash::MergeOnly,
             ))

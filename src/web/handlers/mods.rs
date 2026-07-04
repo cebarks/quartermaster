@@ -861,45 +861,36 @@ pub async fn dep_tree_partial(
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ModsInstall)?;
 
+    let empty = || {
+        let tmpl = DependencyTreeTemplate { deps: vec![] };
+        Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+    };
+
     let mod_id = match query.mod_id {
         Some(id) => id,
-        None => {
-            let tmpl = DependencyTreeTemplate { deps: vec![] };
-            return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-        }
+        None => return empty(),
     };
 
     let ver = match (&query.ver, query.ver_id) {
         (Some(v), _) => v.clone(),
         (None, Some(ver_id)) => {
-            let forge_mod = state
-                .forge
-                .get_mod(mod_id, true)
-                .await
-                .map_err(|e| WebError::Internal(e))?;
-            forge_mod
-                .versions
-                .unwrap_or_default()
-                .iter()
-                .find(|v| v.id == ver_id)
-                .map(|v| v.version.clone())
-                .unwrap_or_default()
+            let versions = match state.forge.get_versions(mod_id, None).await {
+                Ok(v) => v,
+                Err(_) => return empty(),
+            };
+            match versions.iter().find(|v| v.id == ver_id) {
+                Some(v) => v.version.clone(),
+                None => return empty(),
+            }
         }
-        _ => {
-            let tmpl = DependencyTreeTemplate { deps: vec![] };
-            return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-        }
+        _ => return empty(),
     };
 
-    let deps = if ver.is_empty() {
-        vec![]
-    } else {
-        state
-            .forge
-            .get_dependencies(&[(&mod_id.to_string(), &ver)])
-            .await
-            .unwrap_or_default()
-    };
+    let deps = state
+        .forge
+        .get_dependencies(&[(&mod_id.to_string(), &ver)])
+        .await
+        .unwrap_or_default();
 
     let tmpl = DependencyTreeTemplate { deps };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
