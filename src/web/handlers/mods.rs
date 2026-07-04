@@ -621,6 +621,11 @@ pub async fn check_updates_partial(
     let _user = require_auth(&req)?;
     // No capability check — dashboard shows update badges to all users.
     let installed = list_installed_mods(state.db.clone()).await?;
+    let installed: Vec<InstalledMod> = if state.config_cloned().update_disabled_mods {
+        installed
+    } else {
+        installed.into_iter().filter(|m| !m.disabled).collect()
+    };
 
     let updates_available = if !installed.is_empty() {
         let updates_data = match get_or_fetch_updates(&state, &installed).await {
@@ -681,6 +686,11 @@ pub async fn update_status_partial(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let installed = list_installed_mods(state.db.clone()).await?;
+    let installed: Vec<InstalledMod> = if state.config_cloned().update_disabled_mods {
+        installed
+    } else {
+        installed.into_iter().filter(|m| !m.disabled).collect()
+    };
 
     if installed.is_empty() {
         let tmpl = UpdateStatusTemplate { entries: vec![] };
@@ -765,6 +775,11 @@ pub async fn updates_carousel_partial(
     let index = query.index.unwrap_or(0);
 
     let installed = list_installed_mods(state.db.clone()).await?;
+    let installed: Vec<InstalledMod> = if state.config_cloned().update_disabled_mods {
+        installed
+    } else {
+        installed.into_iter().filter(|m| !m.disabled).collect()
+    };
 
     if installed.is_empty() {
         let tmpl = empty_carousel(user, csrf_token);
@@ -1532,6 +1547,11 @@ pub async fn update_all_mods(
         return Err(WebError::Forbidden.into());
     }
     let installed = list_installed_mods(state.db.clone()).await?;
+    let installed: Vec<InstalledMod> = if state.config_cloned().update_disabled_mods {
+        installed
+    } else {
+        installed.into_iter().filter(|m| !m.disabled).collect()
+    };
 
     if installed.is_empty() {
         return Ok(HttpResponse::SeeOther()
