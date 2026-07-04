@@ -319,6 +319,38 @@ fn default_restart_required() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SetupZipConfig {
+    #[serde(default = "default_true")]
+    pub exclude_server_files: bool,
+
+    #[serde(default = "default_true")]
+    pub exclude_non_essential: bool,
+
+    #[serde(default)]
+    pub exclude_patterns: Vec<String>,
+
+    #[serde(default)]
+    pub include_patterns: Vec<String>,
+}
+
+impl Default for SetupZipConfig {
+    fn default() -> Self {
+        Self {
+            exclude_server_files: true,
+            exclude_non_essential: true,
+            exclude_patterns: Vec::new(),
+            include_patterns: Vec::new(),
+        }
+    }
+}
+
+impl SetupZipConfig {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BackupConfig {
     #[serde(default = "default_auto_backup")]
     pub auto_backup: bool,
@@ -1004,6 +1036,10 @@ pub struct Config {
     #[serde(skip_serializing_if = "BackupConfig::is_default")]
     pub backup: BackupConfig,
 
+    #[serde(default)]
+    #[serde(skip_serializing_if = "SetupZipConfig::is_default")]
+    pub setup_zip: SetupZipConfig,
+
     #[serde(default = "default_tls_enabled")]
     pub tls_enabled: bool,
 
@@ -1065,6 +1101,7 @@ impl Default for Config {
             modsync: None,
             logging: LoggingConfig::default(),
             backup: BackupConfig::default(),
+            setup_zip: SetupZipConfig::default(),
             tls_enabled: true,
             tls_cert: None,
             tls_key: None,
@@ -2579,5 +2616,56 @@ format = "text"
         let new_grp = &ms.groups["override-100"];
         assert_eq!(new_grp.members, vec![100]);
         assert_eq!(new_grp.enforced, Some(false)); // override wins
+    }
+
+    #[test]
+    fn setup_zip_config_defaults() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert!(config.setup_zip.exclude_server_files);
+        assert!(config.setup_zip.exclude_non_essential);
+        assert!(config.setup_zip.exclude_patterns.is_empty());
+        assert!(config.setup_zip.include_patterns.is_empty());
+    }
+
+    #[test]
+    fn setup_zip_config_deserialization() {
+        let toml_str = r#"
+[setup_zip]
+exclude_server_files = false
+exclude_non_essential = false
+exclude_patterns = ["**/*.pdb", "BepInEx/plugins/debug/**"]
+include_patterns = ["user/mods/special/**"]
+"#;
+        let config: Config = toml::from_str(toml_str).expect("should parse");
+        assert!(!config.setup_zip.exclude_server_files);
+        assert!(!config.setup_zip.exclude_non_essential);
+        assert_eq!(
+            config.setup_zip.exclude_patterns,
+            vec!["**/*.pdb", "BepInEx/plugins/debug/**"]
+        );
+        assert_eq!(
+            config.setup_zip.include_patterns,
+            vec!["user/mods/special/**"]
+        );
+    }
+
+    #[test]
+    fn setup_zip_config_skip_serializing_when_default() {
+        let config = Config::default();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(
+            !serialized.contains("[setup_zip]"),
+            "default setup_zip should not be serialized"
+        );
+    }
+
+    #[test]
+    fn setup_zip_config_roundtrip() {
+        let mut config = Config::default();
+        config.setup_zip.exclude_server_files = false;
+        config.setup_zip.exclude_patterns = vec!["**/*.pdb".to_string()];
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let reloaded: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(config.setup_zip, reloaded.setup_zip);
     }
 }

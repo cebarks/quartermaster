@@ -156,13 +156,14 @@ impl TestAppBuilder {
 
         // Build AppState
         let db_arc = Arc::new(Mutex::new(db));
+        let config_arc = Arc::new(parking_lot::RwLock::new(config.clone()));
         let log_level_counts = Arc::new(parking_lot::RwLock::new(
             db_arc.lock().log_counts_by_level().unwrap_or_default(),
         ));
         let app_state = web::Data::new(AppState {
             db: db_arc.clone(),
             forge,
-            config: Arc::new(parking_lot::RwLock::new(config.clone())),
+            config: config_arc.clone(),
             config_path,
             config_lock: parking_lot::Mutex::new(()),
             spt_dir: spt_dir.clone(),
@@ -190,6 +191,7 @@ impl TestAppBuilder {
             mod_zip_cache: spt_quartermaster::web::mod_zip_cache::ModZipCache::new(
                 spt_dir.clone(),
                 db_arc.clone(),
+                config_arc.clone(),
             ),
             log_level_counts,
         });
