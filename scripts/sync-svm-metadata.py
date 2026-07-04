@@ -29,27 +29,29 @@ def parse_models(models_dir):
             if not f.endswith(".cs"):
                 continue
             path = os.path.join(root, f)
-            content = open(path).read()
+            with open(path) as fh:
+                content = fh.read()
             lines = content.split("\n")
 
             for cls in re.findall(r"public class (\w+)", content):
                 if cls not in types:
                     types[cls] = []
 
+            current_class = None
             for line in lines:
                 stripped = line.strip()
                 if stripped.startswith("//"):
+                    continue
+                cls_m = re.match(r"public class (\w+)", stripped)
+                if cls_m:
+                    current_class = cls_m.group(1)
                     continue
                 m = re.match(r"public\s+(\w+)\s+(\w+)\s*\{", stripped)
                 if not m:
                     continue
                 ftype, fname = m.group(1), m.group(2)
-                pos = content.find(stripped)
-                class_before = None
-                for cm in re.finditer(r"public class (\w+)", content[:pos]):
-                    class_before = cm.group(1)
-                if class_before and class_before in types:
-                    types[class_before].append((fname, ftype))
+                if current_class and current_class in types:
+                    types[current_class].append((fname, ftype))
     return types
 
 
