@@ -570,7 +570,7 @@ pub fn configure_app(
             "/settings/headless",
             web::post().to(handlers::settings::save_headless_settings),
         )
-        .route("/headless", web::get().to(handlers::clients::client_list))
+        .route("/headless", web::get().to(handlers::clients::headless_page))
         .route(
             "/headless/{n}",
             web::get().to(handlers::clients::client_detail),

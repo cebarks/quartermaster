@@ -1,3 +1,11 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% import "clients/partials/badges.html" as badges %}
+{% block title %}Headless Clients — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("headless", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Headless Clients</h1>
+
 <div class="card">
     <div class="flex-between">
         <h2>Clients</h2>
@@ -89,7 +97,7 @@
 {% if !numa_nodes.is_empty() %}
 <div class="card">
     <h2>NUMA Topology</h2>
-    <p class="text-muted text-sm">Detected NUMA nodes on this system. Configure pinning in <code>quartermaster.toml</code>.</p>
+    <p class="text-muted text-sm">Detected NUMA nodes on this system.</p>
     <table>
         <thead>
             <tr>
@@ -207,6 +215,36 @@
             <textarea id="clients_isolated_paths" name="isolated_paths" rows="3" class="form-control" placeholder="BepInEx/config">{% if let Some(c) = &config.headless %}{{ c.isolated_paths.join("\n") }}{% else %}BepInEx/config{% endif %}</textarea>
         </div>
 
+        {% if !numa_nodes.is_empty() %}
+        <h3 style="margin-top: 1.5rem">NUMA Scheduling</h3>
+        <div class="form-group">
+            <label>NUMA Policy</label>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem">
+                <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
+                    <input type="radio" name="numa_policy" value="none"{% if numa_policy == "none" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display='none'">
+                    Disabled <span class="text-muted text-sm">— no CPU pinning</span>
+                </label>
+                <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
+                    <input type="radio" name="numa_policy" value="auto"{% if numa_policy == "auto" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display='none'">
+                    Round-robin <span class="text-muted text-sm">— distribute clients across NUMA nodes automatically</span>
+                </label>
+                <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
+                    <input type="radio" name="numa_policy" value="node"{% if numa_policy == "node" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display=''">
+                    Pin to node <span class="text-muted text-sm">— all clients on one NUMA node</span>
+                </label>
+            </div>
+        </div>
+        <div class="form-group" id="numa-node-select"{% if numa_policy != "node" %} style="display:none"{% endif %}>
+            <label for="clients_numa_node">NUMA Node</label>
+            <select id="clients_numa_node" name="numa_node">
+                {% for (id, cpulist) in &numa_nodes %}
+                <option value="{{ id }}"{% if let Some(n) = numa_node %}{% if *n == *id %} selected{% endif %}{% endif %}>Node {{ id }} ({{ cpulist }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
         <button type="submit" class="btn">Save Headless Settings</button>
     </div>
 </form>
+{% endblock %}

@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
-{% import "clients/partials/badges.html" as badges %}
 {% block title %}Settings — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("settings", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
@@ -12,9 +11,6 @@
     <button class="tab{% if active_tab == "queue" %} active{% endif %}" onclick="switchTab('queue', this)">Queue</button>
     <button class="tab{% if active_tab == "forge" %} active{% endif %}" onclick="switchTab('forge', this)">Forge</button>
     <button class="tab{% if active_tab == "logging" %} active{% endif %}" onclick="switchTab('logging', this)">Logging</button>
-    {% if nav.fika_installed %}
-    <button class="tab{% if active_tab == "headless" %} active{% endif %}" onclick="switchTab('headless', this)">Headless</button>
-    {% endif %}
 </div>
 
 <div id="settings-content">
@@ -33,11 +29,6 @@
     <div class="settings-tab" id="tab-logging"{% if active_tab != "logging" %} style="display:none"{% endif %}>
         {% include "settings/logging.html" %}
     </div>
-    {% if nav.fika_installed %}
-    <div class="settings-tab" id="tab-headless"{% if active_tab != "headless" %} style="display:none"{% endif %}>
-        {% include "settings/clients.html" %}
-    </div>
-    {% endif %}
 </div>
 
 <script>

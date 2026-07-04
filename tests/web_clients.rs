@@ -21,9 +21,5 @@ async fn headless_list_loads() {
     app.login_as("admin", "pass").await;
 
     let resp = app.get("/quma/headless").await;
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        resp.headers().get("Location").unwrap().to_str().unwrap(),
-        "/quma/settings?tab=headless"
-    );
+    assert_eq!(resp.status(), StatusCode::OK);
 }

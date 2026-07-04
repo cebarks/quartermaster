@@ -8,7 +8,7 @@
     <a href="/quma/setup"{% if active == "setup" %} class="active"{% endif %}>{% call icons::download() %}{% endcall %} Setup</a>
     {% if user.can("server.control") || user.can("server.logs") || user.can("server.metrics") || user.can("users.manage") || user.can("settings.manage") %}
     <div class="nav-dropdown" id="admin-dropdown">
-        <button class="nav-dropdown-toggle{% if active == "logs" || active == "metrics" || active == "settings" || active == "admin" || active == "backups" || active == "modsync" || active == "svm" %} active{% endif %}"
+        <button class="nav-dropdown-toggle{% if active == "logs" || active == "metrics" || active == "settings" || active == "admin" || active == "backups" || active == "modsync" || active == "svm" || active == "headless" %} active{% endif %}"
                 onclick="event.stopPropagation(); document.getElementById('admin-dropdown').classList.toggle('open')">
             {% call icons::shield() %}{% endcall %} Admin ▾
         </button>
@@ -33,6 +33,9 @@
             {% endif %}
             {% if nav.svm_installed && user.can("settings.manage") %}
             <a href="/quma/svm"{% if active == "svm" %} class="active"{% endif %}>Server Config</a>
+            {% endif %}
+            {% if nav.fika_installed && user.can("settings.manage") %}
+            <a href="/quma/headless"{% if active == "headless" %} class="active"{% endif %}>Headless</a>
             {% endif %}
         </div>
     </div>
