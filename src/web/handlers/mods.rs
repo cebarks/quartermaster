@@ -1146,59 +1146,19 @@ pub async fn install_mod(
 
             tasks.update_message(task_id, format!("Downloading {mod_name}…"));
 
-            // TODO(debt): this download/extract/insert block duplicates
-            // download_and_install_with_arc — refactor to reuse it.
-            let link = version
-                .link
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
-            let tmp_dir = tempfile::tempdir()?;
-            let archive_path = tmp_dir.path().join("mod.zip");
-            forge.download_file(link, &archive_path).await?;
-
-            tasks.update_message(task_id, format!("Extracting {mod_name}…"));
-
-            // Extract outside the DB lock — this is the slow part (file I/O)
-            let spt_dir2 = spt_dir.clone();
-            let extracted = actix_web::web::block(move || {
-                crate::spt::mods::extract_mod(&archive_path, &spt_dir2)
-            })
-            .await??;
-
-            // Only hold the lock for DB writes
-            let version_id = version.id;
-            let version_str = version.version.clone();
-            let spt_dir2 = spt_dir.clone();
-            let db2 = db.clone();
-            // TODO(debt): concurrent installs of the same mod can race past the
-            // pre-spawn check — loser hits a UNIQUE constraint on insert_mod,
-            // leaving orphaned dep files. Add constraint-violation handling here.
-            let db_id = actix_web::web::block(move || {
-                let db = db.lock();
-                let tx = db.begin_transaction()?;
-                let db_id = db.insert_mod(
-                    mod_id,
-                    version_id,
-                    &mod_name,
-                    mod_slug.as_deref(),
-                    &version_str,
-                )?;
-                for file in &extracted {
-                    db.insert_file(db_id, &file.path, Some(&file.hash), Some(file.size as i64))?;
-                }
-                tx.commit()?;
-                Ok::<_, anyhow::Error>(db_id)
-            })
-            .await??;
+            let db_id = crate::web::install::web_download_extract_and_record(
+                &forge,
+                &db,
+                &spt_dir,
+                mod_id,
+                &mod_name,
+                mod_slug.as_deref(),
+                &version,
+            )
+            .await?;
 
             // Record dependency edges
             crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
-
-            // Scan for runtime-generated files and track them separately
-            let _ = actix_web::web::block(move || {
-                crate::ops::scan_and_record_runtime_files(&db2, db_id, &spt_dir2)
-            })
-            .await;
 
             // Regenerate NarcoNet config if enabled
             state_clone.regenerate_modsync().await;
