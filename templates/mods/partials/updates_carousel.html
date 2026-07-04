@@ -15,9 +15,9 @@
     <div class="flex-between" style="align-items: flex-start">
         <div>
             {% if let Some(slug) = &e.slug %}
-            <a href="https://forge.sp-tarkov.com/mods/{{ slug }}" target="_blank" rel="noopener" style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</a>
+            <a href="https://forge.sp-tarkov.com/mod/{{ e.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener" style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</a>
             {% else %}
-            <a href="https://forge.sp-tarkov.com/mods/{{ e.forge_mod_id }}" target="_blank" rel="noopener" style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</a>
+            <span style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</span>
             {% endif %}
             <div style="margin-top: 0.25rem">
                 <span>{{ e.current_version }}</span>

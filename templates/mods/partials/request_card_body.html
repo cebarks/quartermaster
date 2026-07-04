@@ -2,7 +2,7 @@
     <div class="flex-between">
         <div>
             {% if let Some(slug) = r.request.mod_slug.as_deref() %}
-            <a href="https://forge.sp-tarkov.com/mods/{{ r.request.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener">
+            <a href="https://forge.sp-tarkov.com/mod/{{ r.request.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener">
                 <strong>{{ r.request.mod_name }}</strong> ↗
             </a>
             {% else %}
