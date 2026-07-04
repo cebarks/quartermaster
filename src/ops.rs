@@ -1044,7 +1044,7 @@ pub fn remove_mod_by_id(
 
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_remove")?;
     let mod_info_for_disable = db.get_mod(mod_db_id)?;
-    let is_disabled = mod_info_for_disable.as_ref().map_or(false, |m| m.disabled);
+    let is_disabled = mod_info_for_disable.is_some_and(|m| m.disabled);
     let files = db.get_files_for_mod(mod_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = file_paths.len(), "deleting mod files");
@@ -1419,11 +1419,8 @@ pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
             .iter()
             .filter_map(|f| {
                 let path = &f.file_path;
-                if let Some(pos) = path.find(".disabled") {
-                    Some(path[..pos + ".disabled".len()].to_string())
-                } else {
-                    None
-                }
+                path.find(".disabled")
+                    .map(|pos| path[..pos + ".disabled".len()].to_string())
             })
             .collect();
         for dir in &old_dirs {
@@ -1484,12 +1481,33 @@ pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
             }
         }
         tx.commit()?;
+
+        // Clean up empty old .disabled directories
+        let old_dirs: std::collections::HashSet<String> = files
+            .iter()
+            .filter_map(|f| {
+                let path = &f.file_path;
+                path.find(".disabled")
+                    .map(|pos| path[..pos + ".disabled".len()].to_string())
+            })
+            .collect();
+        for dir in &old_dirs {
+            let dir_path = spt_dir.join(dir);
+            if dir_path.is_dir() {
+                if let Ok(mut entries) = std::fs::read_dir(&dir_path) {
+                    if entries.next().is_none() {
+                        let _ = std::fs::remove_dir(&dir_path);
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
 }
 
 /// Resolve a DB file path to its on-disk location, accounting for disabled state.
+#[allow(dead_code)] // Used by addon operations (Task 5/7)
 pub fn resolve_mod_path(spt_dir: &Path, file_path: &str, disabled: bool) -> PathBuf {
     if disabled {
         disabled_stash_dir(spt_dir).join(file_path)
