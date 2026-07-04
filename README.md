@@ -32,7 +32,7 @@ Built for Linux hosts running SPT in a Podman container.
 cargo build --release
 
 # Initialize for your SPT server directory
-quma init /path/to/spt-server
+quma setup /path/to/spt-server
 
 # Start the web UI
 quma serve
@@ -92,7 +92,7 @@ Requires Rust (2021 edition).
 ```bash
 just build      # cargo build
 just test       # cargo test
-just lint       # cargo fmt + cargo clippy
+just lint       # fmt + clippy + logging conventions + copy-paste detection
 just serve      # cargo run -- serve
 just run <ARGS> # cargo run -- <ARGS>
 just audit      # cargo audit
@@ -133,6 +133,10 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 | `src/queue.rs` | Change queue for deferred mod operations |
 | `src/modsync.rs` | NarcoNet config.yaml auto-management |
 | `src/container.rs` | Podman container management |
+| `src/headless_sync.rs` | Fika headless file sync to client overlays |
+| `src/numa.rs` | NUMA-aware container CPU pinning |
+| `src/logging/` | Structured logging (console, file, SQLite, SSE broadcast) |
+| `src/config.rs` | Config types, TOML serialization, `QUMA_*` env overrides |
 
 ## License
 

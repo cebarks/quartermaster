@@ -463,7 +463,7 @@ pub fn configure_app(
 
     quma_scope = quma_scope.service(api_scope);
 
-    // Authenticated routes (admin checks are per-handler via require_admin())
+    // Authenticated routes (permission checks are per-handler via require_permission())
     let mut auth_scope = web::scope("").wrap(from_fn(auth::auth_middleware)).route(
         "/change-password",
         web::get().to(handlers::auth::change_password_page),

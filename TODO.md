@@ -1,49 +1,48 @@
 # TODO
 
 ## Top Priority
-- bootstrap script should include all mods at the time of generation
-- SVM preset upload/max size limit
+- SVM preset upload size limit
 - mod forge link in mod info page doesn't always work (i.e. `https://tarkov.grovest.io/quma/mods/48`)
-- download mods on setup page should be async, not blocking while it generates the ZIP. We should also cache the generated ZIP until there are mod changes.
-- headless client log viewer
-- ~~numa-aware scheduling for headless containers~~ (done — server container pinning deferred, see `setup.rs` TODO(debt))
+- unknown mods show as fika incompatible
+- expected dependencies not shown in the queue
 
 ## Bugs
 - canceling an install queue item puts it back in requests (if it was previously requested)
-- NarcoNet tab selection broken on nav
+- multi-tab pages active tab highlighting is broken on nav
 - account creation dropdown missing SPT dev profiles
+- can't rekove already approved mods that haven't been installed
 
 ## Security
-- proxy has no authentication — unauthenticated access to SPT server API (`proxy.rs`)
-- `dismiss_task` has no permission check — any user can dismiss any task (`tasks.rs`)
 - `update_role_permissions` returns ambiguous `Ok(0)` for two different guard conditions (`rbac.rs`)
-- `client_detail` page accessible without `HeadlessManage` permission (`clients.rs`)
 - `mod_backups_partial` readable by any authenticated user (`backup.rs` — mutating actions check `ModsUpdate`, but data is served without permission check)
-- no FK constraint on `users.role` → `roles.name` (`migrations/001`)
-- `role_permissions.permission` column is unconstrained (`migrations/001`)
 - cookie-based sessions can't be individually revoked
 
 ## Core Architecture
 - consolidate all mod management logic from all paths (web handlers bypass `ops.rs` in places)
 - stop using container image for spt-server, just run it natively
 - swap to using fika-installer in the headless client
-- ~~install logic duplicated between mods and requests handlers~~ (done — extracted to `web::install::web_download_extract_and_record`)
 - ~~config save ceremony repeated 8+ times~~ (reduced — `AppState::persist_config` used by settings+modsync; clients.rs 3× remain due to tokio::spawn constraints)
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
-- ~~search handlers duplicated between mods and requests~~ (done — extracted to `handlers::common::forge_search`)
+
+- search handlers duplicated between mods and requests (`mods.rs`, `requests.rs`)
+- refactor mod group implementation to be it's own system outside of narconet. narconet uses app-wide groups
 
 ## Headless Client
 - convergence restarts SPT server without warning users (`converge.rs`)
-- SELinux fully disabled for ntsync (`converge.rs` — `label=disable` is overkill)
-- no overlay cleanup on scale-down (orphan dirs accumulate)
+- ~~SELinux fully disabled for ntsync (`converge.rs` — `label=disable` is overkill)~~ (partially done — #232, volumes use `:z` shared label; `label=disable` still applied when GPU devices are present)
 - shared RW volume mount for base game dir (`converge.rs`)
 - unauthenticated GitHub API requests (`converge.rs`)
 - non-contiguous index handling after middle deletion (`converge.rs`)
 - duplicate reqwest clients for GitHub (`converge.rs`)
 - `client_port` integer overflow on large index (`converge.rs`)
-- ~~web handler boilerplate in client lifecycle handlers~~ (done — extracted `client_lifecycle` helper)
 - too-many-arguments on convergence functions (clippy lint suppressed)
+- name a headless client (changes in-game profile name, also shows name in headless control panel)
+- image name should be per-client configurable
+- ensure headless + spt-server images have been pulled on startup
+- better health client detection
+- show active headless' in raid on dashboard, with player profile names, not ids
+- don't delete headless overlay by default, allow selection of which existing, not already in use overlay to use on new client creation (or when editting a client)
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
@@ -69,12 +68,19 @@
 - no responsive design
 - no ARIA attributes
 - toast messages auto-fade too fast for errors
-- ~~tab implementation inconsistency — 4 different patterns across pages~~ (done — shared `tabSwitch`/`tabRestore` in base.html)
 - template duplication: ~~request cards~~, ~~client status table (3×)~~ (dead `clients/list.html` deleted), raid outcome badges (4×)
-
+- tab implementation inconsistency — 4 different patterns across pages
+- template duplication: client status table (3×), raid outcome badges (4×)
+- clean up mod file list, add collapsable folder tree, file viewer (editor too maybe; need to investigate)
 
 ## Features
-- fika.jsonc: set client force ip
+- automatic mod config backup via git
+- fika.jsonc: set client force ip (needs research first if this is the right approach)
+- better fika integration
+    - pre-load raid on headless from webui
+    - active players list on dashboard
+    - general players list
+- stand up server from predefined server config (storing settings in github without database) 
 - last logged for players (both into webui and into spt)
 - display profile id on profile page
 - SVM presets list should refresh from disk on page load
@@ -86,15 +92,9 @@
 - MOTD
 - NarcoNet: better default sizes for extra/exclusions text areas
 - better formatting for SVM editor: section breakdown with header toggles, field name vs subtext, default value shown, download/upload preset, preset toggle
-- riusep discord member list to define SVM AI PMC Names
-- `quma headless build` CLI command — clone gitlab.com/claudeoris/spt-builds and run podman build to produce localhost/fika-headless:latest
-
-## Status Page
-- no action to remove untracked directories (displayed but not actionable)
-- untracked file list only shows directory-level summary, not individual files
-
-## Profiles
-- spt launcher profiles missing (only game profiles from `SPT/user/profiles/` are read)
+- discord integration:
+    - use discord member list to define SVM AI PMC Names
+- fika config option interface
 
 ## Invites
 - infinite use invite codes (no multi-use support, only single-use)
@@ -113,7 +113,7 @@ Items below are sourced from review/audit documents. See the linked file for ful
 
 **Medium:**
 - convergence restarts SPT server without warning users (`converge.rs:778-798`)
-- SELinux fully disabled for ntsync (`converge.rs:1017` — `label=disable` is overkill)
+- ~~SELinux fully disabled for ntsync (`converge.rs:1017` — `label=disable` is overkill)~~ (partially done — #232)
 - no overlay cleanup on scale-down (`converge.rs:841` — orphan dirs accumulate)
 - supervisor exit watchers cache restart policy/backoff values at spawn time — config changes require supervisor restart (`supervisor.rs`)
 
@@ -131,17 +131,11 @@ Items below are sourced from review/audit documents. See the linked file for ful
 - proxy has no authentication — unauthenticated access to SPT server API (F1, `proxy.rs:20`)
 
 **Medium:**
-- `dismiss_task` has no permission check — any user can dismiss any task (F2, `tasks.rs`)
-- inconsistent admin handler authorization — some rely only on scoped middleware (F3, `admin.rs`)
 - `update_role_permissions` returns ambiguous `Ok(0)` for two different guard conditions (F4, `rbac.rs:297`)
 
 **Low:**
 - `update_status_partial` serves privileged data to all authenticated users (F5, `mods.rs`)
-- no FK constraint on `users.role` → `roles.name` (F6, `migrations/001`)
-- `admin_exists()` uses hardcoded role name instead of checking `users.manage` permission (F7, `users.rs:133`)
-- `client_detail` page accessible without `HeadlessManage` permission (F8, `clients.rs`)
 - `mod_backups_partial` readable by any authenticated user (F9, `backup.rs` — mutating actions check `ModsUpdate`)
-- `role_permissions.permission` column is unconstrained (F11, `migrations/001`)
 
 **Info:**
 - cookie-based sessions can't be individually revoked (F13)
@@ -153,11 +147,6 @@ Items below are sourced from review/audit documents. See the linked file for ful
 **Critical/High:**
 - proxy buffers entire request body with no size limit (1.5, `proxy.rs:41`)
 - ZIP archive for join page built entirely in memory (1.6, `join.rs:441`)
-
-**Security:**
-- path traversal via PHPSESSID cookie in raid tracker (2.2, `raid_tracker.rs:65`)
-- no password complexity requirements (2.7, `auth.rs`)
-- per-worker rate limiting, not global (2.8, `mod.rs:105`)
 
 **Architecture/Performance:**
 - install logic duplicated between mods and requests handlers (3.2)
@@ -183,4 +172,3 @@ Items below are sourced from review/audit documents. See the linked file for ful
 - TOCTOU on duplicate mod install/update check (6.2, `mods.rs` — task-manager dedup mitigates double-click, but different request paths can still race)
 - config file race in headless client background tasks (6.4, `clients.rs:466`)
 - no limit on concurrent SSE connections (6.7, `sse.rs`)
-- invite endpoints missing permission checks (6.12, `admin.rs` — protected by scope middleware but no defense-in-depth)
