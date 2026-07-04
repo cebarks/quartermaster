@@ -1764,7 +1764,7 @@ pub async fn integrity_partial(state: Data<AppState>, req: HttpRequest) -> actix
     let db = state.db.clone();
     let tracked_files = web::block(move || {
         let db = db.lock();
-        db.get_all_tracked_files()
+        db.get_all_enabled_mod_files()
     })
     .await
     .map_err(WebError::from)?
@@ -1802,7 +1802,7 @@ pub async fn file_tracking_page(
     let db = state.db.clone();
     let tracked_files = web::block(move || {
         let db = db.lock();
-        db.get_all_tracked_files()
+        db.get_all_enabled_mod_files()
     })
     .await
     .map_err(WebError::from)?

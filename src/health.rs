@@ -95,7 +95,7 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
     )
     .await;
 
-    let tracked_files = ctx.db.get_all_tracked_files()?;
+    let tracked_files = ctx.db.get_all_enabled_mod_files()?;
     let integrity = check_integrity_from(&tracked_files, &ctx.spt_dir)?;
 
     Ok(HealthReport {
