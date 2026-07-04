@@ -299,6 +299,8 @@ async fn trigger_install_for_request(
                 )
                 .await?;
 
+                tasks.update_message(task_id, format!("Downloading {mod_name}…"));
+
                 // TODO(debt): this download/extract/insert block duplicates
                 // download_and_install_with_arc — refactor to reuse it.
                 let link = version
@@ -308,6 +310,8 @@ async fn trigger_install_for_request(
                 let tmp_dir = tempfile::tempdir()?;
                 let archive_path = tmp_dir.path().join("mod.zip");
                 forge.download_file(link, &archive_path).await?;
+
+                tasks.update_message(task_id, format!("Extracting {mod_name}…"));
 
                 let spt_dir2 = spt_dir.clone();
                 let extracted = actix_web::web::block(move || {

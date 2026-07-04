@@ -1182,6 +1182,8 @@ pub async fn install_mod(
             )
             .await?;
 
+            tasks.update_message(task_id, format!("Downloading {mod_name}…"));
+
             // TODO(debt): this download/extract/insert block duplicates
             // download_and_install_with_arc — refactor to reuse it.
             let link = version
@@ -1191,6 +1193,8 @@ pub async fn install_mod(
             let tmp_dir = tempfile::tempdir()?;
             let archive_path = tmp_dir.path().join("mod.zip");
             forge.download_file(link, &archive_path).await?;
+
+            tasks.update_message(task_id, format!("Extracting {mod_name}…"));
 
             // Extract outside the DB lock — this is the slow part (file I/O)
             let spt_dir2 = spt_dir.clone();
@@ -1375,6 +1379,8 @@ pub async fn update_mod(
             )
             .await?;
 
+            tasks.update_message(task_id, "Downloading update…".to_string());
+
             let link = version
                 .link
                 .as_deref()
@@ -1382,6 +1388,8 @@ pub async fn update_mod(
             let tmp_dir = tempfile::tempdir()?;
             let archive_path = tmp_dir.path().join("mod.zip");
             forge.download_file(link, &archive_path).await?;
+
+            tasks.update_message(task_id, "Extracting update…".to_string());
 
             // Extract to staging outside the DB lock — this is the slow part
             let staging_dir = tempfile::tempdir()?;
@@ -1670,9 +1678,19 @@ pub async fn update_all_mods(
             let mod_db_id = mod_db.id;
 
             let result = async {
+                tasks.update_message(
+                    task_id,
+                    format!("Downloading {} ({}/{})…", mod_db.name, i + 1, total),
+                );
+
                 let tmp_dir = tempfile::tempdir()?;
                 let archive_path = tmp_dir.path().join("mod.zip");
                 forge.download_file(&link, &archive_path).await?;
+
+                tasks.update_message(
+                    task_id,
+                    format!("Extracting {} ({}/{})…", mod_db.name, i + 1, total),
+                );
 
                 // Extract to staging outside the DB lock
                 let staging_dir = tempfile::tempdir()?;
@@ -2144,6 +2162,8 @@ pub async fn install_addon(
 
     tokio::spawn(async move {
         let result = async {
+            tasks.update_message(task_id, format!("Downloading {addon_name}…"));
+
             let link = version
                 .link
                 .as_deref()
@@ -2151,6 +2171,8 @@ pub async fn install_addon(
             let tmp_dir = tempfile::tempdir()?;
             let archive_path = tmp_dir.path().join("addon.zip");
             forge.download_file(link, &archive_path).await?;
+
+            tasks.update_message(task_id, format!("Extracting {addon_name}…"));
 
             let db_ref = &db.lock();
             let req = crate::ops::InstallAddonRequest {
@@ -2314,6 +2336,8 @@ pub async fn update_addon(
 
     tokio::spawn(async move {
         let result = async {
+            tasks.update_message(task_id, format!("Downloading {addon_name} update…"));
+
             let link = version
                 .link
                 .as_deref()
@@ -2321,6 +2345,8 @@ pub async fn update_addon(
             let tmp_dir = tempfile::tempdir()?;
             let archive_path = tmp_dir.path().join("addon.zip");
             forge.download_file(link, &archive_path).await?;
+
+            tasks.update_message(task_id, format!("Extracting {addon_name} update…"));
 
             // Extract to staging outside the DB lock
             let staging_dir = tempfile::tempdir()?;
