@@ -282,8 +282,8 @@ impl Database {
         offset: i64,
     ) -> rusqlite::Result<Vec<Raid>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, user_id, spt_profile_id, server_id, player_side, faction, map, time_variant, started_at, ended_at, play_time_seconds, exit_status, exit_name, killer_id, killer_aid, xp_before, xp_after, level_before, level_after, victim_count_before
-             FROM raids WHERE user_id = ?1 ORDER BY started_at DESC LIMIT ?2 OFFSET ?3",
+            "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before
+             FROM raids r JOIN users u ON r.user_id = u.id WHERE r.user_id = ?1 AND u.is_headless = 0 ORDER BY r.started_at DESC LIMIT ?2 OFFSET ?3",
         )?;
         let rows = stmt.query_map(params![user_id, limit, offset], row_to_raid)?;
         rows.collect()
@@ -296,8 +296,8 @@ impl Database {
         let raid = self
             .conn
             .query_row(
-                "SELECT id, user_id, spt_profile_id, server_id, player_side, faction, map, time_variant, started_at, ended_at, play_time_seconds, exit_status, exit_name, killer_id, killer_aid, xp_before, xp_after, level_before, level_after, victim_count_before
-                 FROM raids WHERE id = ?1",
+                "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before
+                 FROM raids r JOIN users u ON r.user_id = u.id WHERE r.id = ?1 AND u.is_headless = 0",
                 params![raid_id],
                 row_to_raid,
             )
@@ -322,7 +322,7 @@ impl Database {
             "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before, u.username
              FROM raids r
              JOIN users u ON r.user_id = u.id
-             WHERE r.server_id = ?1
+             WHERE r.server_id = ?1 AND u.is_headless = 0
              ORDER BY r.started_at",
         )?;
         let rows = stmt.query_map(params![server_id], |row| {
@@ -338,7 +338,7 @@ impl Database {
             "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before, u.username
              FROM raids r
              JOIN users u ON r.user_id = u.id
-             WHERE r.ended_at IS NULL
+             WHERE r.ended_at IS NULL AND u.is_headless = 0
              ORDER BY r.started_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -472,18 +472,20 @@ impl Database {
     }
 
     pub fn get_server_raid_stats(&self) -> rusqlite::Result<ServerRaidStats> {
-        let total_raids: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM raids", [], |row| row.get(0))?;
+        let total_raids: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0",
+            [],
+            |row| row.get(0),
+        )?;
 
-        let unique_players: i64 =
-            self.conn
-                .query_row("SELECT COUNT(DISTINCT user_id) FROM raids", [], |row| {
-                    row.get(0)
-                })?;
+        let unique_players: i64 = self.conn.query_row(
+            "SELECT COUNT(DISTINCT r.user_id) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0",
+            [],
+            |row| row.get(0),
+        )?;
 
         let survived_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM raids WHERE exit_status = 'Survived'",
+            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE r.exit_status = 'Survived' AND u.is_headless = 0",
             [],
             |row| row.get(0),
         )?;
@@ -494,9 +496,9 @@ impl Database {
             0.0
         };
 
-        let mut map_stmt = self
-            .conn
-            .prepare("SELECT map, COUNT(*) as count FROM raids GROUP BY map ORDER BY count DESC")?;
+        let mut map_stmt = self.conn.prepare(
+            "SELECT r.map, COUNT(*) as count FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 GROUP BY r.map ORDER BY count DESC",
+        )?;
         let map_counts: Vec<(String, i64)> = map_stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -506,6 +508,7 @@ impl Database {
              FROM raid_kills rk
              JOIN raids r ON rk.raid_id = r.id
              JOIN users u ON r.user_id = u.id
+             WHERE u.is_headless = 0
              GROUP BY u.username
              ORDER BY kill_count DESC
              LIMIT 5",
@@ -531,7 +534,7 @@ impl Database {
             "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before, u.username
              FROM raids r
              JOIN users u ON r.user_id = u.id
-             WHERE r.ended_at IS NOT NULL
+             WHERE r.ended_at IS NOT NULL AND u.is_headless = 0
              ORDER BY r.ended_at DESC
              LIMIT ?1",
         )?;
@@ -563,7 +566,7 @@ impl Database {
                     ) AS favorite_extract
                 FROM raids r
                 JOIN users u ON r.user_id = u.id
-                WHERE r.ended_at IS NOT NULL
+                WHERE r.ended_at IS NOT NULL AND u.is_headless = 0
                 GROUP BY r.user_id
                 HAVING COUNT(*) >= ?1
             ),
@@ -743,7 +746,7 @@ mod tests {
     fn insert_and_get_raid() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("alice", Some("profile-123"), Some("hash"), "player")
+            .insert_user("alice", Some("profile-123"), Some("hash"), "player", false)
             .unwrap();
 
         let raid_id = db
@@ -785,7 +788,7 @@ mod tests {
     fn close_orphaned_raids_marks_unknown() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("bob", Some("profile-456"), Some("hash"), "player")
+            .insert_user("bob", Some("profile-456"), Some("hash"), "player", false)
             .unwrap();
 
         db.insert_raid(
@@ -816,7 +819,13 @@ mod tests {
     fn finish_raid_updates_fields() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("charlie", Some("profile-789"), Some("hash"), "player")
+            .insert_user(
+                "charlie",
+                Some("profile-789"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         let raid_id = db
@@ -865,7 +874,7 @@ mod tests {
     fn insert_and_get_kills() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("dave", Some("profile-abc"), Some("hash"), "player")
+            .insert_user("dave", Some("profile-abc"), Some("hash"), "player", false)
             .unwrap();
 
         let raid_id = db
@@ -923,10 +932,10 @@ mod tests {
     fn get_raid_group_returns_squad() {
         let db = Database::open_in_memory().unwrap();
         let user1 = db
-            .insert_user("alice", Some("profile-1"), Some("hash"), "player")
+            .insert_user("alice", Some("profile-1"), Some("hash"), "player", false)
             .unwrap();
         let user2 = db
-            .insert_user("bob", Some("profile-2"), Some("hash"), "player")
+            .insert_user("bob", Some("profile-2"), Some("hash"), "player", false)
             .unwrap();
 
         db.insert_raid(
@@ -969,7 +978,7 @@ mod tests {
     fn get_active_raids_only_open() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("eve", Some("profile-eve"), Some("hash"), "player")
+            .insert_user("eve", Some("profile-eve"), Some("hash"), "player", false)
             .unwrap();
 
         let raid1 = db
@@ -1027,7 +1036,13 @@ mod tests {
     fn find_open_raid_returns_latest() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("frank", Some("profile-frank"), Some("hash"), "player")
+            .insert_user(
+                "frank",
+                Some("profile-frank"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         db.insert_raid(
@@ -1070,7 +1085,13 @@ mod tests {
     fn close_stale_raids_respects_threshold() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("grace", Some("profile-grace"), Some("hash"), "player")
+            .insert_user(
+                "grace",
+                Some("profile-grace"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         // Insert a raid manually with started_at 5 hours ago
@@ -1095,7 +1116,13 @@ mod tests {
     fn user_raid_stats_aggregates() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("hannah", Some("profile-hannah"), Some("hash"), "player")
+            .insert_user(
+                "hannah",
+                Some("profile-hannah"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         // 3 PMC raids: 2 survived, 1 killed
@@ -1258,7 +1285,7 @@ mod tests {
     fn cascade_delete_user_removes_raids() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("ivan", Some("profile-ivan"), Some("hash"), "player")
+            .insert_user("ivan", Some("profile-ivan"), Some("hash"), "player", false)
             .unwrap();
 
         let raid_id = db
@@ -1314,10 +1341,10 @@ mod tests {
     fn leaderboard_respects_min_raids() {
         let db = Database::open_in_memory().unwrap();
         let user1 = db
-            .insert_user("alice", Some("p-alice"), Some("hash"), "player")
+            .insert_user("alice", Some("p-alice"), Some("hash"), "player", false)
             .unwrap();
         let user2 = db
-            .insert_user("bob", Some("p-bob"), Some("hash"), "player")
+            .insert_user("bob", Some("p-bob"), Some("hash"), "player", false)
             .unwrap();
 
         // alice: 3 completed raids
@@ -1394,7 +1421,7 @@ mod tests {
     fn leaderboard_stats_correct() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("carol", Some("p-carol"), Some("hash"), "player")
+            .insert_user("carol", Some("p-carol"), Some("hash"), "player", false)
             .unwrap();
 
         // Raid 1: Survived, 2 kills (1 headshot), extract "Gate 3"
@@ -1543,7 +1570,13 @@ mod tests {
     fn insert_and_get_snapshot() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_user", Some("profile-snap"), Some("hash"), "player")
+            .insert_user(
+                "snap_user",
+                Some("profile-snap"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         let raid_id = db
@@ -1580,7 +1613,13 @@ mod tests {
     fn snapshot_missing_returns_none() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_miss", Some("profile-miss"), Some("hash"), "player")
+            .insert_user(
+                "snap_miss",
+                Some("profile-miss"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         let raid_id = db
@@ -1607,7 +1646,13 @@ mod tests {
     fn snapshot_cascade_deletes_with_raid() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_cascade", Some("profile-casc"), Some("hash"), "player")
+            .insert_user(
+                "snap_cascade",
+                Some("profile-casc"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         let raid_id = db
@@ -1645,7 +1690,13 @@ mod tests {
     fn snapshot_unique_constraint() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_dup", Some("profile-dup"), Some("hash"), "player")
+            .insert_user(
+                "snap_dup",
+                Some("profile-dup"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         let raid_id = db
@@ -1690,7 +1741,13 @@ mod tests {
     fn snapshot_sizes_empty_when_none() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_empty", Some("profile-empty"), Some("hash"), "player")
+            .insert_user(
+                "snap_empty",
+                Some("profile-empty"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         let raid_id = db
@@ -1717,7 +1774,13 @@ mod tests {
     fn raid_start_can_store_before_snapshot() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_start", Some("profile-start"), Some("hash"), "player")
+            .insert_user(
+                "snap_start",
+                Some("profile-start"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         let raid_id = db
@@ -1751,7 +1814,13 @@ mod tests {
     fn raid_end_can_store_after_snapshot() {
         let db = Database::open_in_memory().unwrap();
         let user_id = db
-            .insert_user("snap_end", Some("profile-end"), Some("hash"), "player")
+            .insert_user(
+                "snap_end",
+                Some("profile-end"),
+                Some("hash"),
+                "player",
+                false,
+            )
             .unwrap();
 
         let raid_id = db
@@ -1782,5 +1851,83 @@ mod tests {
         let decompressed = decompress_snapshot(&stored).unwrap();
         let roundtripped: serde_json::Value = serde_json::from_slice(&decompressed).unwrap();
         assert_eq!(roundtripped["Info"]["Level"], 11);
+    }
+
+    #[test]
+    fn headless_users_excluded_from_stats() {
+        let db = Database::open_in_memory().unwrap();
+        let player = db
+            .insert_user("alice", Some("p-alice"), Some("hash"), "player", false)
+            .unwrap();
+        let headless = db
+            .insert_user(
+                "headless_0",
+                Some("p-headless"),
+                Some("hash"),
+                "player",
+                true,
+            )
+            .unwrap();
+
+        // Both do a raid
+        for (uid, pid) in [(player, "p-alice"), (headless, "p-headless")] {
+            let rid = db
+                .insert_raid(
+                    uid,
+                    pid,
+                    None,
+                    "Pmc",
+                    None,
+                    "Factory",
+                    None,
+                    "2024-01-01T10:00:00Z",
+                    Some(100),
+                    Some(1),
+                    None,
+                )
+                .unwrap();
+            db.insert_raid_kills(
+                rid,
+                &[NewRaidKill {
+                    victim_name: Some("Bot".into()),
+                    victim_side: Some("Savage".into()),
+                    victim_role: None,
+                    weapon: Some("AK-74".into()),
+                    distance: Some(25.0),
+                    body_part: None,
+                    kill_time: None,
+                }],
+            )
+            .unwrap();
+            db.finish_raid(
+                rid,
+                "2024-01-01T10:05:00Z",
+                Some(300),
+                "Survived",
+                Some("EXFIL01"),
+                None,
+                None,
+                Some(200),
+                Some(2),
+            )
+            .unwrap();
+        }
+
+        let stats = db.get_server_raid_stats().unwrap();
+        assert_eq!(stats.total_raids, 1, "headless raid should not count");
+        assert_eq!(stats.unique_players, 1);
+        assert_eq!(stats.top_killers.len(), 1);
+        assert_eq!(stats.top_killers[0].0, "alice");
+
+        let recent = db.get_recent_raids(10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].1, "alice");
+
+        let leaderboard = db.get_leaderboard(1).unwrap();
+        assert_eq!(leaderboard.len(), 1);
+        assert_eq!(leaderboard[0].username, "alice");
+
+        let active = db.get_active_raids().unwrap();
+        assert!(active.is_empty(), "both raids are ended");
     }
 }

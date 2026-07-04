@@ -449,7 +449,7 @@ fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database
         println!("Admin user already exists.");
     } else {
         let password_hash = hash_password(admin_password)?;
-        db.insert_user("admin", None, Some(&password_hash), "admin")
+        db.insert_user("admin", None, Some(&password_hash), "admin", false)
             .map_err(|e| anyhow::anyhow!("failed to create admin user: {e}"))?;
         println!("Admin user 'admin' created.");
     }

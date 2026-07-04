@@ -589,7 +589,7 @@ mod tests {
     fn cannot_delete_role_with_assigned_users() {
         let db = Database::open_in_memory().unwrap();
         db.create_role("custom", "Custom", &[]).unwrap();
-        db.insert_user("testuser", None, Some("hash"), "custom")
+        db.insert_user("testuser", None, Some("hash"), "custom", false)
             .unwrap();
         assert_eq!(
             db.delete_role("custom").unwrap(),

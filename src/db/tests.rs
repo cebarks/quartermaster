@@ -213,7 +213,13 @@ fn reverse_dependencies() {
 fn insert_and_get_user() {
     let db = test_db();
     let id = db
-        .insert_user("alice", Some("profile-abc"), Some("hashed_pw"), "admin")
+        .insert_user(
+            "alice",
+            Some("profile-abc"),
+            Some("hashed_pw"),
+            "admin",
+            false,
+        )
         .unwrap();
     assert!(id > 0);
 
@@ -237,7 +243,7 @@ fn insert_and_get_user() {
 fn insert_user_without_password() {
     let db = test_db();
     let id = db
-        .insert_user("trusty", Some("profile-xyz"), None, "player")
+        .insert_user("trusty", Some("profile-xyz"), None, "player", false)
         .unwrap();
     let user = db
         .get_user_by_username("trusty")
@@ -251,7 +257,7 @@ fn insert_user_without_password() {
 fn insert_user_without_profile() {
     let db = test_db();
     let id = db
-        .insert_user("admin", None, Some("hashed_pw"), "admin")
+        .insert_user("admin", None, Some("hashed_pw"), "admin", false)
         .unwrap();
     assert!(id > 0);
 
@@ -269,18 +275,18 @@ fn has_user_manager_check() {
     let db = test_db();
     assert!(!db.has_user_manager().unwrap());
 
-    db.insert_user("player1", Some("p1"), Some("pw"), "player")
+    db.insert_user("player1", Some("p1"), Some("pw"), "player", false)
         .unwrap();
     assert!(!db.has_user_manager().unwrap());
 
-    db.insert_user("admin1", Some("a1"), Some("pw"), "admin")
+    db.insert_user("admin1", Some("a1"), Some("pw"), "admin", false)
         .unwrap();
     assert!(db.has_user_manager().unwrap());
 
     // Custom role with users.manage should also count
     db.create_role("ops", "Ops", &[crate::db::rbac::Permission::UsersManage])
         .unwrap();
-    db.insert_user("ops1", Some("o1"), Some("pw"), "ops")
+    db.insert_user("ops1", Some("o1"), Some("pw"), "ops", false)
         .unwrap();
     assert!(db.has_user_manager().unwrap());
 }
@@ -289,7 +295,7 @@ fn has_user_manager_check() {
 fn create_and_use_invite() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", Some("adm-profile"), Some("pw"), "admin")
+        .insert_user("admin", Some("adm-profile"), Some("pw"), "admin", false)
         .unwrap();
 
     let invite_id = db
@@ -305,7 +311,7 @@ fn create_and_use_invite() {
     assert!(invite.used_by.is_none());
 
     let new_user_id = db
-        .insert_user("newbie", Some("new-profile"), Some("pw"), "player")
+        .insert_user("newbie", Some("new-profile"), Some("pw"), "player", false)
         .unwrap();
     let used = db.use_invite("INVITE-123", new_user_id).unwrap();
     assert_eq!(used, 1);
@@ -318,7 +324,7 @@ fn create_and_use_invite() {
     assert!(invite.used_at.is_some());
 
     let another_user_id = db
-        .insert_user("another", Some("anot-profile"), Some("pw"), "player")
+        .insert_user("another", Some("anot-profile"), Some("pw"), "player", false)
         .unwrap();
     let reused = db.use_invite("INVITE-123", another_user_id).unwrap();
     assert_eq!(reused, 0, "already-used invite should not be reusable");
@@ -340,14 +346,20 @@ fn create_invite_without_creator() {
 fn expired_invite_rejected() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", Some("adm-profile"), Some("pw"), "admin")
+        .insert_user("admin", Some("adm-profile"), Some("pw"), "admin", false)
         .unwrap();
 
     db.create_invite("EXPIRED-1", Some(admin_id), Some("2020-01-01 00:00:00"))
         .unwrap();
 
     let user_id = db
-        .insert_user("latecomer", Some("late-profile"), Some("pw"), "player")
+        .insert_user(
+            "latecomer",
+            Some("late-profile"),
+            Some("pw"),
+            "player",
+            false,
+        )
         .unwrap();
     let used = db.use_invite("EXPIRED-1", user_id).unwrap();
     assert_eq!(used, 0, "expired invite should be rejected");
@@ -443,7 +455,13 @@ fn lookup_mod_by_name_or_slug() {
 fn get_user_by_id() {
     let db = test_db();
     let id = db
-        .insert_user("alice", Some("profile-abc"), Some("hashed_pw"), "admin")
+        .insert_user(
+            "alice",
+            Some("profile-abc"),
+            Some("hashed_pw"),
+            "admin",
+            false,
+        )
         .unwrap();
     let user = db.get_user_by_id(id).unwrap().expect("user should exist");
     assert_eq!(user.username, "alice");
@@ -458,7 +476,13 @@ fn get_user_by_id() {
 fn user_disabled_default() {
     let db = test_db();
     let id = db
-        .insert_user("alice", Some("profile-abc"), Some("hashed_pw"), "player")
+        .insert_user(
+            "alice",
+            Some("profile-abc"),
+            Some("hashed_pw"),
+            "player",
+            false,
+        )
         .unwrap();
     let user = db.get_user_by_id(id).unwrap().expect("user should exist");
     assert!(!user.disabled);
@@ -468,7 +492,7 @@ fn user_disabled_default() {
 fn update_user_role() {
     let db = test_db();
     let id = db
-        .insert_user("alice", Some("p1"), Some("pw"), "player")
+        .insert_user("alice", Some("p1"), Some("pw"), "player", false)
         .unwrap();
     let affected = db.update_user_role(id, "moderator").unwrap();
     assert_eq!(affected, 1);
@@ -480,7 +504,7 @@ fn update_user_role() {
 fn update_user_role_last_admin_guard() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     // Only admin — guard should block demotion
     let affected = db.update_user_role(admin_id, "player").unwrap();
@@ -493,9 +517,9 @@ fn update_user_role_last_admin_guard() {
 fn update_user_role_allows_demotion_with_other_admins() {
     let db = test_db();
     let admin1 = db
-        .insert_user("admin1", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin1", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
-    db.insert_user("admin2", Some("p2"), Some("pw"), "admin")
+    db.insert_user("admin2", Some("p2"), Some("pw"), "admin", false)
         .unwrap();
     let affected = db.update_user_role(admin1, "player").unwrap();
     assert_eq!(affected, 1);
@@ -507,7 +531,7 @@ fn update_user_role_allows_demotion_with_other_admins() {
 fn set_user_disabled() {
     let db = test_db();
     let id = db
-        .insert_user("alice", Some("p1"), Some("pw"), "player")
+        .insert_user("alice", Some("p1"), Some("pw"), "player", false)
         .unwrap();
     let affected = db.set_user_disabled(id, true).unwrap();
     assert_eq!(affected, 1);
@@ -524,7 +548,7 @@ fn set_user_disabled() {
 fn set_user_disabled_last_admin_guard() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     let affected = db.set_user_disabled(admin_id, true).unwrap();
     assert_eq!(affected, 0, "should not disable the last admin");
@@ -536,7 +560,7 @@ fn set_user_disabled_last_admin_guard() {
 fn update_user_password() {
     let db = test_db();
     let id = db
-        .insert_user("alice", Some("p1"), Some("old_hash"), "player")
+        .insert_user("alice", Some("p1"), Some("old_hash"), "player", false)
         .unwrap();
     let affected = db.update_user_password(id, "new_hash").unwrap();
     assert_eq!(affected, 1);
@@ -548,13 +572,13 @@ fn update_user_password() {
 fn count_admins() {
     let db = test_db();
     assert_eq!(db.count_admins().unwrap(), 0);
-    db.insert_user("admin1", Some("p1"), Some("pw"), "admin")
+    db.insert_user("admin1", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     assert_eq!(db.count_admins().unwrap(), 1);
-    db.insert_user("player1", Some("p2"), Some("pw"), "player")
+    db.insert_user("player1", Some("p2"), Some("pw"), "player", false)
         .unwrap();
     assert_eq!(db.count_admins().unwrap(), 1);
-    db.insert_user("admin2", Some("p3"), Some("pw"), "admin")
+    db.insert_user("admin2", Some("p3"), Some("pw"), "admin", false)
         .unwrap();
     assert_eq!(db.count_admins().unwrap(), 2);
 }
@@ -563,7 +587,7 @@ fn count_admins() {
 fn list_invite_codes_with_usernames() {
     let db = test_db();
     let admin_id = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     db.create_invite("CODE-1", Some(admin_id), None).unwrap();
     db.create_invite("CODE-2", None, None).unwrap();
@@ -581,7 +605,7 @@ fn list_invite_codes_with_usernames() {
 fn reset_token_crud() {
     let db = test_db();
     let user_id = db
-        .insert_user("alice", Some("p1"), Some("pw"), "player")
+        .insert_user("alice", Some("p1"), Some("pw"), "player", false)
         .unwrap();
 
     let token_id = db
@@ -605,7 +629,7 @@ fn reset_token_crud() {
 fn reset_token_replaces_existing() {
     let db = test_db();
     let user_id = db
-        .insert_user("alice", Some("p1"), Some("pw"), "player")
+        .insert_user("alice", Some("p1"), Some("pw"), "player", false)
         .unwrap();
 
     db.create_reset_token(user_id, "token-old", "2099-01-01T00:00:00Z")
@@ -637,7 +661,7 @@ fn password_reset_tokens_table_exists() {
 fn update_user_password_sets_changed_at() {
     let db = test_db();
     let id = db
-        .insert_user("alice", Some("p1"), Some("old_hash"), "player")
+        .insert_user("alice", Some("p1"), Some("old_hash"), "player", false)
         .unwrap();
 
     // Before update, password_changed_at should be NULL
@@ -671,9 +695,9 @@ fn update_user_password_sets_changed_at() {
 fn count_admins_excludes_disabled() {
     let db = test_db();
     let admin1 = db
-        .insert_user("admin1", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin1", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
-    db.insert_user("admin2", Some("p2"), Some("pw"), "admin")
+    db.insert_user("admin2", Some("p2"), Some("pw"), "admin", false)
         .unwrap();
     assert_eq!(db.count_admins().unwrap(), 2);
     db.set_user_disabled(admin1, true).unwrap();
@@ -683,12 +707,12 @@ fn count_admins_excludes_disabled() {
 // -- Mod Request tests --
 
 fn setup_user(db: &Database) -> i64 {
-    db.insert_user("testuser", Some("aid1"), Some("hash123"), "player")
+    db.insert_user("testuser", Some("aid1"), Some("hash123"), "player", false)
         .unwrap()
 }
 
 fn setup_admin(db: &Database) -> i64 {
-    db.insert_user("admin", Some("aid2"), Some("hash456"), "admin")
+    db.insert_user("admin", Some("aid2"), Some("hash456"), "admin", false)
         .unwrap()
 }
 
@@ -884,11 +908,11 @@ fn list_mod_requests_all_statuses() {
 #[test]
 fn list_users_alphabetical_order() {
     let db = test_db();
-    db.insert_user("charlie", Some("p3"), Some("pw"), "player")
+    db.insert_user("charlie", Some("p3"), Some("pw"), "player", false)
         .unwrap();
-    db.insert_user("alice", Some("p1"), Some("pw"), "admin")
+    db.insert_user("alice", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
-    db.insert_user("bob", Some("p2"), Some("pw"), "moderator")
+    db.insert_user("bob", Some("p2"), Some("pw"), "moderator", false)
         .unwrap();
 
     let users = db.list_users().unwrap();
@@ -902,9 +926,9 @@ fn list_users_alphabetical_order() {
 fn disable_admin_allowed_with_backup_admin() {
     let db = test_db();
     let admin1 = db
-        .insert_user("admin1", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin1", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
-    db.insert_user("admin2", Some("p2"), Some("pw"), "admin")
+    db.insert_user("admin2", Some("p2"), Some("pw"), "admin", false)
         .unwrap();
 
     let affected = db.set_user_disabled(admin1, true).unwrap();
@@ -919,7 +943,7 @@ fn list_requests_mixed_votes_score() {
     let user1 = setup_user(&db);
     let user2 = setup_admin(&db);
     let user3 = db
-        .insert_user("voter3", Some("aid3"), Some("hash"), "player")
+        .insert_user("voter3", Some("aid3"), Some("hash"), "player", false)
         .unwrap();
 
     let req_id = db
@@ -946,7 +970,7 @@ fn list_requests_current_user_no_vote() {
     let db = test_db();
     let requester = setup_user(&db);
     let viewer = db
-        .insert_user("viewer", Some("aid-v"), Some("hash"), "player")
+        .insert_user("viewer", Some("aid-v"), Some("hash"), "player", false)
         .unwrap();
 
     db.create_mod_request(requester, 100, "Mod", None, None, "unknown", None)
@@ -960,7 +984,7 @@ fn list_requests_current_user_no_vote() {
 #[test]
 fn get_user_by_spt_profile_id_found() {
     let db = test_db();
-    db.insert_user("alice", Some("profile-123"), Some("hash"), "player")
+    db.insert_user("alice", Some("profile-123"), Some("hash"), "player", false)
         .unwrap();
     let user = db.get_user_by_spt_profile_id("profile-123").unwrap();
     assert!(user.is_some());
@@ -970,7 +994,7 @@ fn get_user_by_spt_profile_id_found() {
 #[test]
 fn get_user_by_spt_profile_id_not_found() {
     let db = test_db();
-    db.insert_user("alice", Some("profile-123"), Some("hash"), "player")
+    db.insert_user("alice", Some("profile-123"), Some("hash"), "player", false)
         .unwrap();
     let user = db.get_user_by_spt_profile_id("profile-999").unwrap();
     assert!(user.is_none());
@@ -979,7 +1003,8 @@ fn get_user_by_spt_profile_id_not_found() {
 #[test]
 fn get_user_by_spt_profile_id_null_profile() {
     let db = test_db();
-    db.insert_user("bob", None, Some("hash"), "player").unwrap();
+    db.insert_user("bob", None, Some("hash"), "player", false)
+        .unwrap();
     let user = db.get_user_by_spt_profile_id("anything").unwrap();
     assert!(user.is_none());
 }
@@ -1013,10 +1038,10 @@ fn delete_user_removes_user() {
 
     let db = test_db();
     let _admin = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     let player = db
-        .insert_user("player", Some("p2"), Some("pw"), "player")
+        .insert_user("player", Some("p2"), Some("pw"), "player", false)
         .unwrap();
 
     let result = db.delete_user(player).unwrap();
@@ -1040,7 +1065,7 @@ fn delete_user_last_admin_blocked() {
 
     let db = test_db();
     let admin = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
 
     let result = db.delete_user(admin).unwrap();
@@ -1054,9 +1079,9 @@ fn delete_user_allowed_with_other_admin() {
 
     let db = test_db();
     let admin1 = db
-        .insert_user("admin1", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin1", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
-    db.insert_user("admin2", Some("p2"), Some("pw"), "admin")
+    db.insert_user("admin2", Some("p2"), Some("pw"), "admin", false)
         .unwrap();
 
     let result = db.delete_user(admin1).unwrap();
@@ -1069,10 +1094,10 @@ fn delete_user_cascades_mod_requests() {
 
     let db = test_db();
     let admin = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     let player = db
-        .insert_user("player", Some("p2"), Some("pw"), "player")
+        .insert_user("player", Some("p2"), Some("pw"), "player", false)
         .unwrap();
 
     db.create_mod_request(player, 100, "Mod", None, None, "unknown", None)
@@ -1090,10 +1115,10 @@ fn delete_user_sets_invite_created_by_null() {
     use crate::db::users::DeleteUserResult;
 
     let db = test_db();
-    db.insert_user("admin", Some("p1"), Some("pw"), "admin")
+    db.insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     let player = db
-        .insert_user("player", Some("p2"), Some("pw"), "player")
+        .insert_user("player", Some("p2"), Some("pw"), "player", false)
         .unwrap();
 
     db.create_invite("CODE-BY-PLAYER", Some(player), None)
@@ -1118,7 +1143,7 @@ fn delete_invite_unused() {
 
     let db = test_db();
     let admin = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     let invite_id = db.create_invite("CODE-DEL", Some(admin), None).unwrap();
 
@@ -1133,11 +1158,11 @@ fn delete_invite_already_used() {
 
     let db = test_db();
     let admin = db
-        .insert_user("admin", Some("p1"), Some("pw"), "admin")
+        .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
     let invite_id = db.create_invite("CODE-USED", Some(admin), None).unwrap();
     let player = db
-        .insert_user("player", Some("p2"), Some("pw"), "player")
+        .insert_user("player", Some("p2"), Some("pw"), "player", false)
         .unwrap();
     db.use_invite("CODE-USED", player).unwrap();
 

@@ -229,6 +229,9 @@ pub async fn join_submit(
     if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return render_err("Username can only contain letters, numbers, and underscores");
     }
+    if username.starts_with("headless_") {
+        return render_err("Username cannot start with 'headless_'");
+    }
 
     // Validate password
     if let Err(msg) = validate_password_complexity(&form.password) {
@@ -353,6 +356,7 @@ pub async fn join_submit(
             profile_aid.as_deref(),
             Some(&password_hash),
             "player",
+            false,
         )?;
 
         let used = db.use_invite(&code_for_invite, user_id)?;

@@ -138,6 +138,9 @@ pub async fn player_raids_page(
         let target_user = db
             .get_user_by_username(&lookup_username)?
             .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+        if target_user.is_headless {
+            return Err(anyhow::anyhow!("user not found"));
+        }
         let stats = db.get_user_raid_stats(target_user.id)?;
         let raids = db.get_raids_for_user(target_user.id, 26, offset)?;
         Ok::<_, anyhow::Error>((target_user.id, stats, raids))

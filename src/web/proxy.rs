@@ -420,7 +420,8 @@ fn handle_player_registration(
             }
         }
 
-        match db.insert_user(username, Some(profile_id), None, "player") {
+        let is_headless = username.starts_with("headless_");
+        match db.insert_user(username, Some(profile_id), None, "player", is_headless) {
             Ok(user_id) => {
                 tracing::info!(
                     user_id,
