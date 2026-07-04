@@ -1,3 +1,4 @@
+{% import "clients/partials/badges.html" as badges %}
 {% if total_count == 0 %}
 <div class="stat-value" style="font-size: 1rem;">
     <span class="text-muted">No clients</span>
@@ -12,5 +13,17 @@
     {% if degraded_count > 0 %}<span style="color: var(--warning)">{{ degraded_count }}</span> /{% endif %}
     {% if down_count > 0 %}<span style="color: var(--error)">{{ down_count }}</span>{% endif %}
     {% endif %}
+</div>
+<div style="margin-top: 0.5rem; font-size: 0.85rem;">
+    {% for client in clients %}
+    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0;">
+        <span class="text-muted">{{ client.index }}</span>
+        {% call badges::container_status(client.container_status) %}{% endcall %}
+        {% call badges::fika_status(client.fika_status) %}{% endcall %}
+        {% if !client.players.is_empty() %}
+        <span>{{ client.players.join(", ") }}</span>
+        {% endif %}
+    </div>
+    {% endfor %}
 </div>
 {% endif %}

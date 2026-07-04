@@ -159,6 +159,7 @@ pub struct HeadlessSettingsForm {
     restart_policy: String,
     max_restart_attempts: u32,
     restart_backoff_cap: u64,
+    server_ready_timeout: u64,
     base_udp_port: u16,
     image: String,
     isolated_paths: String,
@@ -460,6 +461,7 @@ pub async fn save_headless_settings(
         save_log_on_exit: existing.map(|h| h.save_log_on_exit).unwrap_or(true),
         enable_log_purge: existing.map(|h| h.enable_log_purge).unwrap_or(false),
         overwrite_fika: existing.map(|h| h.overwrite_fika).unwrap_or(true),
+        server_ready_timeout: form.server_ready_timeout,
     };
 
     config.headless = if form.install_dir.trim().is_empty() {

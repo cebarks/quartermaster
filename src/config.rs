@@ -305,6 +305,9 @@ fn default_save_log_on_exit() -> bool {
 fn default_overwrite_fika() -> bool {
     true
 }
+fn default_server_ready_timeout() -> u64 {
+    120
+}
 
 fn default_enforced() -> bool {
     true
@@ -730,6 +733,8 @@ pub struct HeadlessConfig {
     pub numa_auto: bool,
     #[serde(default)]
     pub numa_node: Option<u32>,
+    #[serde(default = "default_server_ready_timeout")]
+    pub server_ready_timeout: u64,
 }
 
 impl Default for HeadlessConfig {
@@ -753,6 +758,7 @@ impl Default for HeadlessConfig {
             overwrite_fika: default_overwrite_fika(),
             numa_auto: false,
             numa_node: None,
+            server_ready_timeout: 120,
         }
     }
 }
@@ -1359,6 +1365,7 @@ impl Config {
         }
         env_override!(parse: self.headless.get_or_insert_with(HeadlessConfig::default).restart_policy, "QUMA_HEADLESS_RESTART_POLICY", RestartPolicy);
         env_override!(path: self.headless.get_or_insert_with(HeadlessConfig::default).install_dir, "QUMA_HEADLESS_INSTALL_DIR");
+        env_override!(parse: self.headless.get_or_insert_with(HeadlessConfig::default).server_ready_timeout, "QUMA_HEADLESS_SERVER_READY_TIMEOUT", u64);
         env_override!(bool: self.tls_enabled, "QUMA_TLS_ENABLED");
         env_override!(opt_path: self.tls_cert, "QUMA_TLS_CERT");
         env_override!(opt_path: self.tls_key, "QUMA_TLS_KEY");
@@ -1749,6 +1756,7 @@ display_server = "xvfb"
 save_log_on_exit = false
 enable_log_purge = true
 overwrite_fika = false
+server_ready_timeout = 300
 
 [[headless.clients]]
 
@@ -1781,6 +1789,7 @@ extra_isolated_paths = ["BepInEx/plugins/testing"]
         assert!(!headless.save_log_on_exit);
         assert!(headless.enable_log_purge);
         assert!(!headless.overwrite_fika);
+        assert_eq!(headless.server_ready_timeout, 300);
     }
 
     #[test]
@@ -1800,6 +1809,7 @@ install_dir = "/opt/fika"
         assert_eq!(headless.base_udp_port, 25565);
         assert_eq!(headless.image, "localhost/fika-headless:latest");
         assert_eq!(headless.isolated_paths, vec!["BepInEx/config".to_string()]);
+        assert_eq!(headless.server_ready_timeout, 120);
     }
 
     #[test]
@@ -1825,6 +1835,7 @@ install_dir = "/opt/fika"
         assert!(config.save_log_on_exit);
         assert!(!config.enable_log_purge);
         assert!(config.overwrite_fika);
+        assert_eq!(config.server_ready_timeout, 120);
     }
 
     #[test]

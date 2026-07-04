@@ -848,6 +848,7 @@ pub async fn converge(
     } else if current_count > desired_count {
         remove_excess_clients(
             container_mgr,
+            headless_config,
             config,
             spt_dir,
             spt_client,
@@ -1049,11 +1050,16 @@ async fn ensure_clients(
         .await
         .context("failed to start SPT server after headless config update")?;
 
-    info!("Waiting for SPT server to become ready");
-    if !await_server_ready(spt_client, 120).await {
-        warn!(
-            "SPT server did not respond within 120s after restart. \
-             Proceeding with profile discovery — profiles may not be available yet."
+    info!(
+        "Waiting for SPT server to become ready (timeout: {}s)",
+        headless_config.server_ready_timeout
+    );
+    if !await_server_ready(spt_client, headless_config.server_ready_timeout).await {
+        bail!(
+            "SPT server did not become ready within {}s after restart. \
+             Headless clients will not be started against a half-initialized server. \
+             Increase headless.server_ready_timeout if your server needs more time to load.",
+            headless_config.server_ready_timeout
         );
     }
 
@@ -1100,6 +1106,7 @@ async fn ensure_clients(
 /// converge, so this function simply stops and removes excess containers.
 async fn remove_excess_clients(
     container_mgr: &ContainerManager,
+    headless_config: &HeadlessConfig,
     config: &Config,
     spt_dir: &Path,
     spt_client: &SptClient,
@@ -1142,11 +1149,16 @@ async fn remove_excess_clients(
         .context("failed to start SPT server after client deregistration")?;
 
     // 4. Wait for server readiness before restarting remaining clients
-    info!("Waiting for SPT server to become ready");
-    if !await_server_ready(spt_client, 120).await {
-        warn!(
-            "SPT server did not respond within 120s after restart. \
-             Remaining clients may not reconnect immediately."
+    info!(
+        "Waiting for SPT server to become ready (timeout: {}s)",
+        headless_config.server_ready_timeout
+    );
+    if !await_server_ready(spt_client, headless_config.server_ready_timeout).await {
+        bail!(
+            "SPT server did not become ready within {}s after restart. \
+             Remaining clients will not be restarted against a half-initialized server. \
+             Increase headless.server_ready_timeout if your server needs more time to load.",
+            headless_config.server_ready_timeout
         );
     }
 

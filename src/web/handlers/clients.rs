@@ -58,6 +58,7 @@ struct DashboardClientsStatusTemplate {
     degraded_count: usize,
     down_count: usize,
     total_count: usize,
+    clients: Vec<ClientState>,
 }
 
 fn require_container_mgr<'a>(
@@ -859,6 +860,7 @@ pub async fn dashboard_clients_status_partial(
         degraded_count,
         down_count,
         total_count,
+        clients,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
 }
