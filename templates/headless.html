@@ -62,34 +62,34 @@
             <tbody>
                 {% for client in headless_clients %}
                 <tr>
-                    <td><a href="/quma/headless/{{ client.index }}">Client {{ client.index }}</a></td>
-                    <td>{% call badges::container_status(client.container_status) %}{% endcall %}</td>
-                    <td>{% call badges::client_health(client.health) %}{% endcall %}</td>
-                    <td>{% call badges::fika_status(client.fika_status) %}{% endcall %}</td>
+                    <td><a href="/quma/headless/{{ client.state.index }}">Client {{ client.state.index }}</a></td>
+                    <td>{% call badges::container_status(client.state.container_status) %}{% endcall %}</td>
+                    <td>{% call badges::client_health(client.state.health) %}{% endcall %}</td>
+                    <td>{% call badges::fika_status(client.state.fika_status) %}{% endcall %}</td>
                     <td>
                         {% if client.players.is_empty() %}
                         <span class="text-muted">—</span>
                         {% else %}
-                        {% for player in client.players %}{% if !loop.first %}, {% endif %}<a href="/quma/profiles/{{ player }}">{{ player }}</a>{% endfor %}
+                        {% for player in client.players %}{% if !loop.first %}, {% endif %}<a href="/quma/profiles/{{ player.id }}">{{ player.name }}</a>{% endfor %}
                         {% endif %}
                     </td>
                     <td>
-                        {% if let Some(cpu) = client.cpu_percent %}
+                        {% if let Some(cpu) = client.state.cpu_percent %}
                         {{ cpu }}%
                         {% else %}
                         <span class="text-muted">—</span>
                         {% endif %}
                     </td>
                     <td>
-                        {% if let Some(mem) = client.memory_mb %}
+                        {% if let Some(mem) = client.state.memory_mb %}
                         {{ mem as i64 }} MB
                         {% else %}
                         <span class="text-muted">—</span>
                         {% endif %}
                     </td>
                     <td>
-                        {% if client.restart_count > 0 %}
-                        {{ client.restart_count }}
+                        {% if client.state.restart_count > 0 %}
+                        {{ client.state.restart_count }}
                         {% else %}
                         <span class="text-muted">0</span>
                         {% endif %}
@@ -97,19 +97,19 @@
                     {% if user.can("headless.manage") %}
                     <td>
                         <div class="flex gap-1">
-                            <form method="post" action="/quma/headless/{{ client.index }}/start" style="display:inline">
+                            <form method="post" action="/quma/headless/{{ client.state.index }}/start" style="display:inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="btn btn-sm btn-success" title="Start"{% if client.container_status == crate::client::ContainerStatus::Running %} disabled{% endif %}>{% call icons::play() %}{% endcall %}</button>
+                                <button type="submit" class="btn btn-sm btn-success" title="Start"{% if client.state.container_status == crate::client::ContainerStatus::Running %} disabled{% endif %}>{% call icons::play() %}{% endcall %}</button>
                             </form>
-                            <form method="post" action="/quma/headless/{{ client.index }}/stop" style="display:inline"
-                                  onsubmit="return confirm('Stop client {{ client.index }}?')">
+                            <form method="post" action="/quma/headless/{{ client.state.index }}/stop" style="display:inline"
+                                  onsubmit="return confirm('Stop client {{ client.state.index }}?')">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="btn btn-sm btn-danger" title="Stop"{% if client.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::stop() %}{% endcall %}</button>
+                                <button type="submit" class="btn btn-sm btn-danger" title="Stop"{% if client.state.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::stop() %}{% endcall %}</button>
                             </form>
-                            <form method="post" action="/quma/headless/{{ client.index }}/restart" style="display:inline"
-                                  onsubmit="return confirm('Restart client {{ client.index }}?')">
+                            <form method="post" action="/quma/headless/{{ client.state.index }}/restart" style="display:inline"
+                                  onsubmit="return confirm('Restart client {{ client.state.index }}?')">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="btn btn-sm btn-warning" title="Restart"{% if client.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::refresh() %}{% endcall %}</button>
+                                <button type="submit" class="btn btn-sm btn-warning" title="Restart"{% if client.state.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::refresh() %}{% endcall %}</button>
                             </form>
                         </div>
                     </td>

@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_session::Session;
+
 use actix_web::web::{self, Data, Form, Path};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
@@ -17,6 +19,34 @@ use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
+#[derive(Clone)]
+struct PlayerInfo {
+    id: String,
+    name: String,
+}
+
+struct ClientView {
+    state: ClientState,
+    players: Vec<PlayerInfo>,
+}
+
+fn resolve_clients(clients: Vec<ClientState>, names: &HashMap<String, String>) -> Vec<ClientView> {
+    clients
+        .into_iter()
+        .map(|state| {
+            let players = state
+                .players
+                .iter()
+                .map(|id| PlayerInfo {
+                    name: names.get(id).cloned().unwrap_or_else(|| id.clone()),
+                    id: id.clone(),
+                })
+                .collect();
+            ClientView { state, players }
+        })
+        .collect()
+}
+
 #[derive(Template)]
 #[template(path = "headless.html")]
 struct HeadlessPageTemplate {
@@ -27,7 +57,7 @@ struct HeadlessPageTemplate {
     config: Config,
     restart_policy: String,
     display_server: String,
-    headless_clients: Vec<ClientState>,
+    headless_clients: Vec<ClientView>,
     headless_converging: bool,
     headless_target_count: u32,
     numa_nodes: Vec<(u32, String)>,
@@ -42,13 +72,13 @@ struct ClientDetailTemplate {
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
-    client: ClientState,
+    client: ClientView,
 }
 
 #[derive(Template)]
 #[template(path = "clients/partials/status.html")]
 struct ClientsStatusPartialTemplate {
-    clients: Vec<ClientState>,
+    clients: Vec<ClientView>,
     user: SessionUser,
     csrf_token: String,
 }
@@ -61,6 +91,14 @@ struct DashboardClientsStatusTemplate {
     down_count: usize,
     total_count: usize,
     clients: Vec<ClientState>,
+}
+
+fn build_profile_names(spt_dir: &std::path::Path) -> HashMap<String, String> {
+    crate::spt::profiles::list_profiles(spt_dir)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| (p.aid, p.username))
+        .collect()
 }
 
 fn require_container_mgr<'a>(
@@ -246,6 +284,8 @@ pub async fn headless_page(
         })
         .unwrap_or_else(|| ("none".to_string(), None));
 
+    let profile_names = build_profile_names(&state.spt_dir);
+    let headless_clients = resolve_clients(headless_clients, &profile_names);
     let tmpl = HeadlessPageTemplate {
         user,
         flash,
@@ -289,6 +329,11 @@ pub async fn client_detail(
         .find(|c| c.index == index)
         .ok_or(WebError::NotFound)?;
 
+    let profile_names = build_profile_names(&state.spt_dir);
+    let client = resolve_clients(vec![client], &profile_names)
+        .into_iter()
+        .next()
+        .ok_or(WebError::NotFound)?;
     let tmpl = ClientDetailTemplate {
         user,
         flash,
@@ -621,6 +666,8 @@ pub async fn client_status_partial(
     };
 
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
+    let profile_names = build_profile_names(&state.spt_dir);
+    let clients = resolve_clients(clients, &profile_names);
     let tmpl = ClientsStatusPartialTemplate {
         clients,
         user,

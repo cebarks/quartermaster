@@ -93,7 +93,6 @@ pub fn format_roubles_i64(value: &i64, _env: &dyn askama::Values) -> askama::Res
 pub fn format_datetime(s: &str, _env: &dyn askama::Values) -> askama::Result<String> {
     Ok(s.chars().take(19).collect())
 }
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
