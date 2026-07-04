@@ -192,6 +192,12 @@
         </div>
 
         <div class="form-group">
+            <label for="clients_server_ready_timeout">Server Ready Timeout (seconds)</label>
+            <input type="number" id="clients_server_ready_timeout" name="server_ready_timeout" value="{% if let Some(c) = &config.headless %}{{ c.server_ready_timeout }}{% else %}120{% endif %}" min="30">
+            <p class="text-muted text-sm mt-1">How long to wait for the SPT server to finish loading mods before starting headless clients. Increase if your server has many heavy mods.</p>
+        </div>
+
+        <div class="form-group">
             <label for="clients_base_udp_port">Base UDP Port</label>
             <input type="number" id="clients_base_udp_port" name="base_udp_port" value="{% if let Some(c) = &config.headless %}{{ c.base_udp_port }}{% else %}25565{% endif %}" min="1" max="65535">
         </div>
