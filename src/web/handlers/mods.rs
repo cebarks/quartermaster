@@ -15,7 +15,6 @@ use crate::health::{self, IntegrityHealth};
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
-use crate::web::handlers::requests::{fika_compat_to_string, parse_forge_url};
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
@@ -248,17 +247,10 @@ pub struct ModListQuery {
     pub dir: Option<String>,
 }
 
-pub struct InstallSearchResult {
-    pub id: i64,
-    pub name: String,
-    pub description: Option<String>,
-    pub fika_compatible: String,
-}
-
 #[derive(Template)]
 #[template(path = "mods/partials/install_search_results.html")]
 struct InstallSearchResultsTemplate {
-    results: Vec<InstallSearchResult>,
+    results: Vec<crate::web::handlers::common::ForgeSearchResult>,
     error: Option<String>,
 }
 
@@ -903,65 +895,11 @@ pub async fn search_mods(
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ModsInstall)?;
-    let q = query.q.as_deref().unwrap_or("").trim().to_string();
+    let q = query.q.as_deref().unwrap_or("");
 
-    if let Some(mod_id) = parse_forge_url(&q) {
-        match state.forge.get_mod(mod_id, false).await {
-            Ok(m) => {
-                let tmpl = InstallSearchResultsTemplate {
-                    results: vec![InstallSearchResult {
-                        id: m.id,
-                        name: m.name,
-                        description: m.description,
-                        fika_compatible: fika_compat_to_string(&m.fika_compatibility),
-                    }],
-                    error: None,
-                };
-                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-            }
-            Err(_) => {
-                let tmpl = InstallSearchResultsTemplate {
-                    results: vec![],
-                    error: Some(format!("Mod with ID {mod_id} not found on Forge.")),
-                };
-                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-            }
-        }
-    }
-
-    if q.len() < 2 {
-        let tmpl = InstallSearchResultsTemplate {
-            results: vec![],
-            error: None,
-        };
-        return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-    }
-
-    match state.forge.search_mods(&q).await {
-        Ok(mods) => {
-            let results = mods
-                .into_iter()
-                .map(|m| InstallSearchResult {
-                    id: m.id,
-                    name: m.name,
-                    description: m.description,
-                    fika_compatible: fika_compat_to_string(&m.fika_compatibility),
-                })
-                .collect();
-            let tmpl = InstallSearchResultsTemplate {
-                results,
-                error: None,
-            };
-            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
-        }
-        Err(_) => {
-            let tmpl = InstallSearchResultsTemplate {
-                results: vec![],
-                error: Some("Could not reach SPT Forge. Try again later.".to_string()),
-            };
-            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
-        }
-    }
+    let (results, error) = crate::web::handlers::common::forge_search(&state.forge, q).await;
+    let tmpl = InstallSearchResultsTemplate { results, error };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
 pub async fn compat_check(

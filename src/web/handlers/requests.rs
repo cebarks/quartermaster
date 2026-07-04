@@ -10,6 +10,7 @@ use crate::forge::models::FikaCompat;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::csrf;
 use crate::web::error::WebError;
+use crate::web::handlers::common::fika_compat_to_string;
 use crate::web::state::AppState;
 
 /// A user-facing error whose message is safe to render in HTML responses.
@@ -82,15 +83,8 @@ struct RequestsTabTemplate {
 #[derive(Template)]
 #[template(path = "mods/partials/search_results.html")]
 struct SearchResultsTemplate {
-    results: Vec<SearchResult>,
+    results: Vec<crate::web::handlers::common::ForgeSearchResult>,
     error: Option<String>,
-}
-
-pub struct SearchResult {
-    pub id: i64,
-    pub name: String,
-    pub description: Option<String>,
-    pub fika_compatible: String,
 }
 
 #[derive(Template)]
@@ -109,34 +103,6 @@ struct VoteCommentsTemplate {
 }
 
 // -- Helpers --
-
-pub fn parse_forge_url(input: &str) -> Option<i64> {
-    let input = input.trim();
-    if let Ok(id) = input.parse::<i64>() {
-        return Some(id);
-    }
-    if input.contains("forge.sp-tarkov.com") {
-        // Strip query parameters before parsing
-        let url_path = input.split('?').next().unwrap_or(input);
-        let parts: Vec<&str> = url_path.split('/').collect();
-        if let Some(segment) = parts.iter().rev().find(|s| !s.is_empty()) {
-            if let Some(id_str) = segment.split('-').next() {
-                if let Ok(id) = id_str.parse::<i64>() {
-                    return Some(id);
-                }
-            }
-        }
-    }
-    None
-}
-
-pub(crate) fn fika_compat_to_string(fc: &Option<FikaCompat>) -> String {
-    match fc {
-        Some(FikaCompat::Compatible) => "compatible".to_string(),
-        Some(FikaCompat::Incompatible) => "incompatible".to_string(),
-        _ => "unknown".to_string(),
-    }
-}
 
 fn strip_html_tags(html: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> =
@@ -490,67 +456,11 @@ pub async fn search_mods(
     query: Query<SearchQuery>,
 ) -> actix_web::Result<Html> {
     let _user = require_auth(&req)?;
-    let q = query.q.as_deref().unwrap_or("").trim().to_string();
+    let q = query.q.as_deref().unwrap_or("");
 
-    // Check for direct ID or URL first — single-digit mod IDs are valid
-    if let Some(mod_id) = parse_forge_url(&q) {
-        match state.forge.get_mod(mod_id, false).await {
-            Ok(m) => {
-                let tmpl = SearchResultsTemplate {
-                    results: vec![SearchResult {
-                        id: m.id,
-                        name: m.name,
-                        description: m.description,
-                        fika_compatible: fika_compat_to_string(&m.fika_compatibility),
-                    }],
-                    error: None,
-                };
-                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-            }
-            Err(_) => {
-                let tmpl = SearchResultsTemplate {
-                    results: vec![],
-                    error: Some(format!("Mod with ID {mod_id} not found on Forge.")),
-                };
-                return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-            }
-        }
-    }
-
-    // Only apply min-length guard for text searches (not numeric IDs/URLs handled above)
-    if q.len() < 2 {
-        let tmpl = SearchResultsTemplate {
-            results: vec![],
-            error: None,
-        };
-        return Ok(Html::new(tmpl.render().map_err(WebError::from)?));
-    }
-
-    match state.forge.search_mods(&q).await {
-        Ok(mods) => {
-            let results = mods
-                .into_iter()
-                .map(|m| SearchResult {
-                    id: m.id,
-                    name: m.name,
-                    description: m.description,
-                    fika_compatible: fika_compat_to_string(&m.fika_compatibility),
-                })
-                .collect();
-            let tmpl = SearchResultsTemplate {
-                results,
-                error: None,
-            };
-            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
-        }
-        Err(_) => {
-            let tmpl = SearchResultsTemplate {
-                results: vec![],
-                error: Some("Could not reach SPT Forge. Try again later.".to_string()),
-            };
-            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
-        }
-    }
+    let (results, error) = crate::web::handlers::common::forge_search(&state.forge, q).await;
+    let tmpl = SearchResultsTemplate { results, error };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
 pub async fn create_request(
@@ -1049,65 +959,6 @@ pub async fn install_all_approved(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_forge_url_numeric_id() {
-        assert_eq!(parse_forge_url("2326"), Some(2326));
-    }
-
-    #[test]
-    fn parse_forge_url_full_url() {
-        assert_eq!(
-            parse_forge_url("https://forge.sp-tarkov.com/mods/2326-some-mod"),
-            Some(2326)
-        );
-    }
-
-    #[test]
-    fn parse_forge_url_url_with_trailing_slash() {
-        assert_eq!(
-            parse_forge_url("https://forge.sp-tarkov.com/mods/123-test/"),
-            Some(123)
-        );
-    }
-
-    #[test]
-    fn parse_forge_url_plain_text() {
-        assert_eq!(parse_forge_url("SAIN"), None);
-    }
-
-    #[test]
-    fn parse_forge_url_empty() {
-        assert_eq!(parse_forge_url(""), None);
-    }
-
-    #[test]
-    fn parse_forge_url_whitespace() {
-        assert_eq!(parse_forge_url("  2326  "), Some(2326));
-    }
-
-    #[test]
-    fn parse_forge_url_with_query_params() {
-        assert_eq!(
-            parse_forge_url("https://forge.sp-tarkov.com/mods/2326-some-mod?details=true"),
-            Some(2326)
-        );
-    }
-
-    #[test]
-    fn fika_compat_string_values() {
-        use crate::forge::models::FikaCompat;
-        assert_eq!(
-            fika_compat_to_string(&Some(FikaCompat::Compatible)),
-            "compatible"
-        );
-        assert_eq!(
-            fika_compat_to_string(&Some(FikaCompat::Incompatible)),
-            "incompatible"
-        );
-        assert_eq!(fika_compat_to_string(&Some(FikaCompat::Unknown)), "unknown");
-        assert_eq!(fika_compat_to_string(&None), "unknown");
-    }
 
     #[test]
     fn cache_stale_old_datetime() {
