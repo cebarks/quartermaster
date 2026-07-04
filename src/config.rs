@@ -318,20 +318,12 @@ fn default_restart_required() -> bool {
     true
 }
 
-fn default_exclude_server_files() -> bool {
-    true
-}
-
-fn default_exclude_non_essential() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SetupZipConfig {
-    #[serde(default = "default_exclude_server_files")]
+    #[serde(default = "default_true")]
     pub exclude_server_files: bool,
 
-    #[serde(default = "default_exclude_non_essential")]
+    #[serde(default = "default_true")]
     pub exclude_non_essential: bool,
 
     #[serde(default)]

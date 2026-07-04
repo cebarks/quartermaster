@@ -68,6 +68,7 @@ impl AppState {
     pub fn update_config_from_disk(&self) -> anyhow::Result<()> {
         let fresh = Config::load_with_env(&self.config_path)?;
         *self.config.write() = fresh;
+        self.mod_zip_cache.invalidate();
         Ok(())
     }
 

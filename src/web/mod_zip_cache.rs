@@ -237,12 +237,13 @@ impl ModZipCache {
     }
 
     fn build_cache(&self) -> anyhow::Result<()> {
-        let (files, setup_zip_config) = {
+        let files = {
             let db = self.inner.db.lock();
-            let files = db.get_all_enabled_mod_files()?;
+            db.get_all_enabled_mod_files()?
+        };
+        let setup_zip_config = {
             let config = self.inner.config.read();
-            let setup_zip_config = config.setup_zip.clone();
-            (files, setup_zip_config)
+            config.setup_zip.clone()
         };
 
         let files = filter_setup_zip_files(files, &setup_zip_config);
