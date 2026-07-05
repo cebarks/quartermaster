@@ -653,11 +653,12 @@ pub async fn check_updates_partial(
             })
             .collect();
 
-        let version_futures = mods_with_candidates.iter().map(|m| {
-            state.forge.get_versions(
-                m.forge_mod_id.expect("forge mod in update path"),
-                Some(&state.spt_info.spt_version),
-            )
+        let version_futures = mods_with_candidates.iter().filter_map(|m| {
+            m.forge_mod_id.map(|forge_id| {
+                state
+                    .forge
+                    .get_versions(forge_id, Some(&state.spt_info.spt_version))
+            })
         });
         let results = futures_util::future::join_all(version_futures).await;
 
@@ -732,12 +733,13 @@ pub async fn update_status_partial(
         .map(|(i, _)| i)
         .collect();
 
-    let version_futures = needs_check.iter().map(|&i| {
+    let version_futures = needs_check.iter().filter_map(|&i| {
         let m = &installed[i];
-        state.forge.get_versions(
-            m.forge_mod_id.expect("forge mod in update path"),
-            Some(&state.spt_info.spt_version),
-        )
+        m.forge_mod_id.map(|forge_id| {
+            state
+                .forge
+                .get_versions(forge_id, Some(&state.spt_info.spt_version))
+        })
     });
     let version_results = futures_util::future::join_all(version_futures).await;
 
@@ -842,12 +844,13 @@ pub async fn updates_carousel_partial(
             FikaCompat::Unknown => "unknown".to_string(),
         });
 
+    let forge_mod_id = m
+        .forge_mod_id
+        .ok_or(WebError::BadRequest("Mod has no Forge ID".to_string()))?;
+
     let spt_version = match state
         .forge
-        .get_versions(
-            m.forge_mod_id.expect("forge mod in update path"),
-            Some(&state.spt_info.spt_version),
-        )
+        .get_versions(forge_mod_id, Some(&state.spt_info.spt_version))
         .await
     {
         Ok(versions) => versions
@@ -859,7 +862,7 @@ pub async fn updates_carousel_partial(
 
     let entry = UpdatesCarouselEntry {
         db_id: m.id,
-        forge_mod_id: m.forge_mod_id.expect("forge mod in update path"),
+        forge_mod_id,
         name: m.name.clone(),
         slug: m.slug.clone(),
         current_version: m.version.clone(),
@@ -977,7 +980,6 @@ pub async fn compat_check(
 async fn install_mod_from_url(
     url: &str,
     state: &Data<AppState>,
-    _req: &HttpRequest,
     session: &Session,
 ) -> actix_web::Result<HttpResponse> {
     let mod_name = url
@@ -1019,8 +1021,8 @@ async fn install_mod_from_url(
         let _ = std::fs::create_dir_all(&queue_dir);
 
         let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-        let filename = mod_name.clone();
-        let dest = queue_dir.join(format!("{timestamp}-{filename}.zip"));
+        let extension = if url.ends_with(".7z") { "7z" } else { "zip" };
+        let dest = queue_dir.join(format!("{timestamp}-{mod_name}.{extension}"));
 
         // Download eagerly
         if let Err(e) = state.forge.download_file(url, &dest).await {
@@ -1145,7 +1147,7 @@ pub async fn install_mod(
 
     // URL install — skip Forge resolution entirely
     if mod_ref.starts_with("http://") || mod_ref.starts_with("https://") {
-        return install_mod_from_url(mod_ref, &state, &req, &session).await;
+        return install_mod_from_url(mod_ref, &state, &session).await;
     }
 
     let mod_id: i64 = match mod_ref.parse() {

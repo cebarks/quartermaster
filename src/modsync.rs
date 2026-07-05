@@ -171,6 +171,7 @@ fn generate_config(
         if let Some(forge_id) = m.forge_mod_id {
             fc.classify(&files, forge_id, &group_for_mod);
         }
+        // ponytail: URL/file mods skip NarcoNet classification — add modsync support when needed
 
         // Process addon files for this mod (addons inherit parent's group)
         if let Some(mod_addons) = addons_by_parent.get(&m.id) {
@@ -179,6 +180,7 @@ fn generate_config(
                 if let Some(forge_id) = m.forge_mod_id {
                     fc.classify(&addon_files, forge_id, &group_for_mod);
                 }
+                // ponytail: URL/file mods skip NarcoNet classification — add modsync support when needed
             }
         }
     }

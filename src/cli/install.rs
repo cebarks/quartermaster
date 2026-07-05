@@ -962,7 +962,8 @@ async fn queue_url_install(ctx: &CliContext, url: &str, mod_name: &str) -> Resul
 
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
     let filename = derive_name_from_url(url);
-    let dest = queue_dir.join(format!("{timestamp}-{filename}.zip"));
+    let extension = if url.ends_with(".7z") { "7z" } else { "zip" };
+    let dest = queue_dir.join(format!("{timestamp}-{filename}.{extension}"));
 
     println!("Downloading archive for queue...");
     ctx.forge.download_file(url, &dest).await?;
