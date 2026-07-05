@@ -123,6 +123,7 @@ pub struct FikaServerConfig {
     pub webhook: FikaWebhookConfig,
     pub allow_item_sending: bool,
     pub item_sending_storage_time: u32,
+    #[serde(rename = "sentItemsLoseFIR")]
     pub sent_items_lose_fir: bool,
     pub launcher_list_all_profiles: bool,
     pub session_timeout: u32,
@@ -238,7 +239,7 @@ mod tests {
             "webhook": { "enabled": false, "name": "Fika", "avatarUrl": "", "url": "" },
             "allowItemSending": true,
             "itemSendingStorageTime": 7,
-            "sentItemsLoseFir": true,
+            "sentItemsLoseFIR": true,
             "launcherListAllProfiles": true,
             "sessionTimeout": 5,
             "showDevProfile": true,
