@@ -109,6 +109,9 @@ pub struct PendingOperation {
     pub queued_by: Option<String>,
     pub item_type: String,           // "mod" or "addon"
     pub forge_addon_id: Option<i64>, // set for addon ops
+    pub archive_path: Option<String>,
+    pub source: String,
+    pub source_url: Option<String>,
 }
 
 impl Database {
@@ -492,7 +495,7 @@ impl Database {
 
     pub fn list_pending_ops(&self) -> rusqlite::Result<Vec<PendingOperation>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, action, forge_mod_id, forge_version_id, mod_name, metadata, queued_at, queued_by, item_type, forge_addon_id
+            "SELECT id, action, forge_mod_id, forge_version_id, mod_name, metadata, queued_at, queued_by, item_type, forge_addon_id, archive_path, source, source_url
              FROM pending_operations ORDER BY queued_at",
         )?;
         let rows = stmt.query_map([], row_to_pending_op)?;
@@ -556,5 +559,8 @@ fn row_to_pending_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingOperati
         queued_by: row.get(7)?,
         item_type: row.get(8)?,
         forge_addon_id: row.get(9)?,
+        archive_path: row.get(10)?,
+        source: row.get(11)?,
+        source_url: row.get(12)?,
     })
 }

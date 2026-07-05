@@ -38,11 +38,13 @@ pub async fn web_download_extract_and_record(
         let db = db_clone.lock();
         let tx = db.begin_transaction()?;
         let db_id = db.insert_mod(
-            mod_id,
-            version_id,
+            Some(mod_id),
+            Some(version_id),
             &mod_name_owned,
             mod_slug_owned.as_deref(),
             &version_str,
+            "forge",
+            None,
         )?;
         for file in &extracted {
             db.insert_file(db_id, &file.path, Some(&file.hash), Some(file.size as i64))?;

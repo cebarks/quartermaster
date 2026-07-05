@@ -33,13 +33,21 @@ fn create_in_memory_db() {
 fn insert_and_get_mod() {
     let db = test_db();
     let id = db
-        .insert_mod(1001, 2001, "Test Mod", Some("test-mod"), "1.0.0")
+        .insert_mod(
+            Some(1001),
+            Some(2001),
+            "Test Mod",
+            Some("test-mod"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
     assert!(id > 0);
 
     let m = db.get_mod(id).unwrap().expect("mod should exist");
-    assert_eq!(m.forge_mod_id, 1001);
-    assert_eq!(m.forge_version_id, 2001);
+    assert_eq!(m.forge_mod_id, Some(1001));
+    assert_eq!(m.forge_version_id, Some(2001));
     assert_eq!(m.name, "Test Mod");
     assert_eq!(m.slug.as_deref(), Some("test-mod"));
     assert_eq!(m.version, "1.0.0");
@@ -57,7 +65,7 @@ fn insert_and_get_mod() {
     let updated = db.update_mod(id, 2002, "1.1.0").unwrap();
     assert_eq!(updated, 1);
     let m3 = db.get_mod(id).unwrap().expect("mod should exist");
-    assert_eq!(m3.forge_version_id, 2002);
+    assert_eq!(m3.forge_version_id, Some(2002));
     assert_eq!(m3.version, "1.1.0");
     assert!(m3.updated_at.is_some());
 }
@@ -66,7 +74,15 @@ fn insert_and_get_mod() {
 fn insert_mod_with_no_slug() {
     let db = test_db();
     let id = db
-        .insert_mod(1001, 2001, "No Slug Mod", None, "1.0.0")
+        .insert_mod(
+            Some(1001),
+            Some(2001),
+            "No Slug Mod",
+            None,
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
     let m = db.get_mod(id).unwrap().expect("mod should exist");
     assert!(m.slug.is_none());
@@ -75,9 +91,25 @@ fn insert_mod_with_no_slug() {
 #[test]
 fn duplicate_forge_mod_id_rejected() {
     let db = test_db();
-    db.insert_mod(1001, 2001, "Mod A", Some("mod-a"), "1.0.0")
-        .unwrap();
-    let result = db.insert_mod(1001, 2002, "Mod B", Some("mod-b"), "2.0.0");
+    db.insert_mod(
+        Some(1001),
+        Some(2001),
+        "Mod A",
+        Some("mod-a"),
+        "1.0.0",
+        "forge",
+        None,
+    )
+    .unwrap();
+    let result = db.insert_mod(
+        Some(1001),
+        Some(2002),
+        "Mod B",
+        Some("mod-b"),
+        "2.0.0",
+        "forge",
+        None,
+    );
     assert!(result.is_err(), "duplicate forge_mod_id should be rejected");
 }
 
@@ -85,10 +117,26 @@ fn duplicate_forge_mod_id_rejected() {
 fn delete_mod_cascades_to_files_and_deps() {
     let db = test_db();
     let mod_a = db
-        .insert_mod(1, 100, "Mod A", Some("mod-a"), "1.0.0")
+        .insert_mod(
+            Some(1),
+            Some(100),
+            "Mod A",
+            Some("mod-a"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
     let mod_b = db
-        .insert_mod(2, 200, "Mod B", Some("mod-b"), "1.0.0")
+        .insert_mod(
+            Some(2),
+            Some(200),
+            "Mod B",
+            Some("mod-b"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
 
     db.insert_file(mod_a, "plugins/a.dll", Some("abc123"), Some(1024))
@@ -111,7 +159,15 @@ fn delete_mod_cascades_to_files_and_deps() {
 fn insert_and_get_files() {
     let db = test_db();
     let mod_id = db
-        .insert_mod(1, 100, "Mod A", Some("mod-a"), "1.0.0")
+        .insert_mod(
+            Some(1),
+            Some(100),
+            "Mod A",
+            Some("mod-a"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
 
     let f1 = db
@@ -140,7 +196,15 @@ fn insert_and_get_files() {
 fn insert_file_with_no_hash() {
     let db = test_db();
     let mod_id = db
-        .insert_mod(1, 100, "Mod A", Some("mod-a"), "1.0.0")
+        .insert_mod(
+            Some(1),
+            Some(100),
+            "Mod A",
+            Some("mod-a"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
     db.insert_file(mod_id, "plugins/a.dll", None, None).unwrap();
     let files = db.get_files_for_mod(mod_id).unwrap();
@@ -153,7 +217,15 @@ fn insert_file_with_no_hash() {
 fn file_path_unique_constraint() {
     let db = test_db();
     let mod_id = db
-        .insert_mod(1, 100, "Mod A", Some("mod-a"), "1.0.0")
+        .insert_mod(
+            Some(1),
+            Some(100),
+            "Mod A",
+            Some("mod-a"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
 
     db.insert_file(mod_id, "plugins/a.dll", Some("hash1"), Some(1024))
@@ -166,10 +238,26 @@ fn file_path_unique_constraint() {
 fn insert_and_query_dependency() {
     let db = test_db();
     let mod_a = db
-        .insert_mod(1, 100, "Mod A", Some("mod-a"), "1.0.0")
+        .insert_mod(
+            Some(1),
+            Some(100),
+            "Mod A",
+            Some("mod-a"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
     let mod_b = db
-        .insert_mod(2, 200, "Mod B", Some("mod-b"), "1.0.0")
+        .insert_mod(
+            Some(2),
+            Some(200),
+            "Mod B",
+            Some("mod-b"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
 
     let dep_id = db.insert_dependency(mod_a, mod_b, Some(">=1.0.0")).unwrap();
@@ -189,13 +277,37 @@ fn insert_and_query_dependency() {
 fn reverse_dependencies() {
     let db = test_db();
     let mod_a = db
-        .insert_mod(1, 100, "Mod A", Some("mod-a"), "1.0.0")
+        .insert_mod(
+            Some(1),
+            Some(100),
+            "Mod A",
+            Some("mod-a"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
     let mod_b = db
-        .insert_mod(2, 200, "Mod B", Some("mod-b"), "1.0.0")
+        .insert_mod(
+            Some(2),
+            Some(200),
+            "Mod B",
+            Some("mod-b"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
     let mod_c = db
-        .insert_mod(3, 300, "Mod C", Some("mod-c"), "1.0.0")
+        .insert_mod(
+            Some(3),
+            Some(300),
+            "Mod C",
+            Some("mod-c"),
+            "1.0.0",
+            "forge",
+            None,
+        )
         .unwrap();
 
     db.insert_dependency(mod_a, mod_b, None).unwrap();
@@ -431,13 +543,21 @@ fn pending_op_with_no_version() {
 fn lookup_mod_by_name_or_slug() {
     let db = Database::open_in_memory().unwrap();
     // Use a name that differs from the slug to test both paths
-    db.insert_mod(100, 200, "S.A.I.N.", Some("sain"), "3.0.0")
-        .unwrap();
+    db.insert_mod(
+        Some(100),
+        Some(200),
+        "S.A.I.N.",
+        Some("sain"),
+        "3.0.0",
+        "forge",
+        None,
+    )
+    .unwrap();
 
     // Lookup by name (case-insensitive)
     let by_name = db.get_mod_by_name_or_slug("S.A.I.N.").unwrap();
     assert!(by_name.is_some());
-    assert_eq!(by_name.as_ref().unwrap().forge_mod_id, 100);
+    assert_eq!(by_name.as_ref().unwrap().forge_mod_id, Some(100));
 
     // Lookup by slug (distinct from name)
     let by_slug = db.get_mod_by_name_or_slug("sain").unwrap();

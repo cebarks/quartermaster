@@ -706,8 +706,16 @@ mod tests {
     #[test]
     fn collect_deps_skips_already_installed() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(10, 20, "AlreadyInstalled", None, "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(10),
+            Some(20),
+            "AlreadyInstalled",
+            None,
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
 
         let nodes = vec![dep_node(10, "AlreadyInstalled", 20, "1.0.0", false)];
 
@@ -838,8 +846,16 @@ mod tests {
     #[test]
     fn collect_deps_conflict_already_installed() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(10, 20, "InstalledConflict", None, "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(10),
+            Some(20),
+            "InstalledConflict",
+            None,
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
 
         let nodes = vec![dep_node(10, "InstalledConflict", 20, "1.0.0", true)];
 

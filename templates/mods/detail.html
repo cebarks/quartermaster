@@ -12,7 +12,9 @@
 
 <div class="card">
     <table>
-        <tr><th style="width:140px">Forge ID</th><td>{{ mod_info.forge_mod_id }}</td></tr>
+        {% if let Some(forge_id) = mod_info.forge_mod_id %}
+        <tr><th style="width:140px">Forge ID</th><td>{{ forge_id }}</td></tr>
+        {% endif %}
         <tr><th>Version</th><td>{{ mod_info.version }}</td></tr>
         {% if let Some(slug) = &mod_info.slug %}
         <tr><th>Slug</th><td>{{ slug }}</td></tr>
@@ -22,7 +24,9 @@
         <tr><th>Updated</th><td>{{ updated }}</td></tr>
         {% endif %}
         {% if let Some(slug) = &mod_info.slug %}
-        <tr><th>Forge</th><td><a href="https://forge.sp-tarkov.com/mod/{{ mod_info.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener">View on Forge ↗</a></td></tr>
+        {% if let Some(forge_id) = mod_info.forge_mod_id %}
+        <tr><th>Forge</th><td><a href="https://forge.sp-tarkov.com/mod/{{ forge_id }}/{{ slug }}" target="_blank" rel="noopener">View on Forge ↗</a></td></tr>
+        {% endif %}
         {% endif %}
     </table>
     <div class="flex gap-1" style="margin-top: 1rem;">

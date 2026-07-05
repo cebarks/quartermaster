@@ -357,8 +357,16 @@ mod tests {
 
         let db = Database::open_in_memory().unwrap();
         // Insert a mod + file so the query returns something
-        db.insert_mod(1, 1, "test-mod", Some("test-mod"), "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(1),
+            Some(1),
+            "test-mod",
+            Some("test-mod"),
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
         db.insert_file(1, "user/mods/test/package.json", Some("abc123"), Some(2))
             .unwrap();
 
@@ -379,8 +387,16 @@ mod tests {
         make_test_file(spt_dir.path(), "user/mods/a/package.json", b"{\"a\":true}");
 
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(1, 1, "mod-a", Some("mod-a"), "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(1),
+            Some(1),
+            "mod-a",
+            Some("mod-a"),
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
         db.insert_file(1, "user/mods/a/package.json", Some("h1"), Some(10))
             .unwrap();
 
@@ -395,8 +411,16 @@ mod tests {
         make_test_file(spt_dir.path(), "user/mods/b/package.json", b"{\"b\":true}");
         {
             let db = db_arc.lock();
-            db.insert_mod(2, 2, "mod-b", Some("mod-b"), "1.0.0")
-                .unwrap();
+            db.insert_mod(
+                Some(2),
+                Some(2),
+                "mod-b",
+                Some("mod-b"),
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
             db.insert_file(2, "user/mods/b/package.json", Some("h2"), Some(10))
                 .unwrap();
         }
@@ -551,8 +575,16 @@ mod tests {
         make_test_file(spt_dir.path(), "user/mods/server-mod/package.json", b"{}");
 
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(1, 1, "hybrid-mod", Some("hybrid-mod"), "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(1),
+            Some(1),
+            "hybrid-mod",
+            Some("hybrid-mod"),
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
         db.insert_file(1, "BepInEx/plugins/mod/mod.dll", Some("aaa"), Some(11))
             .unwrap();
         db.insert_file(1, "user/mods/server-mod/package.json", Some("bbb"), Some(2))
@@ -582,8 +614,16 @@ mod tests {
         make_test_file(spt_dir.path(), "BepInEx/plugins/mod/README.md", b"# Readme");
 
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(1, 1, "test-mod", Some("test-mod"), "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(1),
+            Some(1),
+            "test-mod",
+            Some("test-mod"),
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
         db.insert_file(1, "BepInEx/plugins/mod/mod.dll", Some("aaa"), Some(7))
             .unwrap();
         db.insert_file(1, "BepInEx/plugins/mod/README.md", Some("bbb"), Some(8))
@@ -612,8 +652,16 @@ mod tests {
         make_test_file(spt_dir.path(), "BepInEx/plugins/mod/README.md", b"# Hi");
 
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(1, 1, "test-mod", Some("test-mod"), "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(1),
+            Some(1),
+            "test-mod",
+            Some("test-mod"),
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
         db.insert_file(1, "user/mods/mod/package.json", Some("aaa"), Some(2))
             .unwrap();
         db.insert_file(1, "BepInEx/plugins/mod/README.md", Some("bbb"), Some(4))

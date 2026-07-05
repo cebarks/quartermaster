@@ -56,7 +56,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
 
     let check_list: Vec<(i64, String)> = mods_to_check
         .iter()
-        .map(|m| (m.forge_mod_id, m.version.clone()))
+        .filter_map(|m| m.forge_mod_id.map(|id| (id, m.version.clone())))
         .collect();
 
     let results = ctx
@@ -83,11 +83,11 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
         for update in &results.updates {
             let installed = mods_to_check
                 .iter()
-                .find(|m| m.forge_mod_id == update.current_version.mod_id);
+                .find(|m| m.forge_mod_id == Some(update.current_version.mod_id));
             if let Some(m) = installed {
                 ctx.db.insert_pending_op(
                     crate::db::users::QueueAction::Update,
-                    m.forge_mod_id,
+                    m.forge_mod_id.expect("forge mod in update path"),
                     Some(update.recommended_version.id),
                     &m.name,
                     None,
@@ -155,7 +155,13 @@ pub async fn apply_update_by_version(
     installed: &InstalledMod,
     target_version_id: i64,
 ) -> Result<bool> {
-    let versions = ctx.forge.get_versions(installed.forge_mod_id, None).await?;
+    let versions = ctx
+        .forge
+        .get_versions(
+            installed.forge_mod_id.expect("forge mod in update path"),
+            None,
+        )
+        .await?;
     let version_info = match versions.iter().find(|v| v.id == target_version_id) {
         Some(v) => v,
         None => {
@@ -332,7 +338,7 @@ async fn apply_single_update(
 ) -> Result<bool> {
     let installed = mods
         .iter()
-        .find(|m| m.forge_mod_id == update.current_version.mod_id)
+        .find(|m| m.forge_mod_id == Some(update.current_version.mod_id))
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "update result references unknown mod ID {}",
@@ -345,7 +351,7 @@ async fn apply_single_update(
 
 fn mod_name_for_id(mods: &[InstalledMod], forge_mod_id: i64) -> &str {
     mods.iter()
-        .find(|m| m.forge_mod_id == forge_mod_id)
+        .find(|m| m.forge_mod_id == Some(forge_mod_id))
         .map(|m| m.name.as_str())
         .unwrap_or("unknown")
 }
@@ -359,14 +365,16 @@ mod tests {
     fn mod_name_for_id_finds_match() {
         let mods = vec![InstalledMod {
             id: 1,
-            forge_mod_id: 100,
-            forge_version_id: 200,
+            forge_mod_id: Some(100),
+            forge_version_id: Some(200),
             name: "TestMod".to_string(),
             slug: None,
             version: "1.0.0".to_string(),
             installed_at: "2025-01-01".to_string(),
             updated_at: None,
             disabled: false,
+            source: "forge".to_string(),
+            source_url: None,
         }];
 
         assert_eq!(mod_name_for_id(&mods, 100), "TestMod");

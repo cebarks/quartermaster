@@ -789,7 +789,9 @@ fn reconcile_headless_mods(
             if m.disabled {
                 continue;
             }
-            if crate::ops::is_excluded_from_headless(config, m.forge_mod_id) {
+            if m.forge_mod_id
+                .is_some_and(|id| crate::ops::is_excluded_from_headless(config, id))
+            {
                 continue;
             }
             let files = db.get_files_for_mod(m.id)?;

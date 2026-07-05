@@ -397,7 +397,15 @@ mod tests {
     fn backup_survives_mod_deletion() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(100, 200, "TestMod", Some("test-mod"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                Some("test-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_backup(
             "mod",

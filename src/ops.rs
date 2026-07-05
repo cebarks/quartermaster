@@ -55,7 +55,12 @@ fn maybe_sync_headless(
         None => return,
     };
 
-    if let Some(forge_mod_id) = db.get_mod(mod_db_id).ok().flatten().map(|m| m.forge_mod_id) {
+    if let Some(forge_mod_id) = db
+        .get_mod(mod_db_id)
+        .ok()
+        .flatten()
+        .and_then(|m| m.forge_mod_id)
+    {
         if is_excluded_from_headless(config, forge_mod_id) {
             tracing::debug!(
                 forge_mod_id,
@@ -203,11 +208,13 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
 
     let tx = req.db.begin_transaction()?;
     let db_id = req.db.insert_mod(
-        req.forge_mod_id,
-        req.version_id,
+        Some(req.forge_mod_id),
+        Some(req.version_id),
         req.name,
         req.slug,
         req.version,
+        "forge",
+        None,
     )?;
     record_extracted_files(req.db, db_id, &extracted)?;
     tx.commit()?;
@@ -276,7 +283,7 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
             .get_mod(req.parent_mod_id)
             .ok()
             .flatten()
-            .map(|m| m.forge_mod_id);
+            .and_then(|m| m.forge_mod_id);
         let excluded = parent_forge_id
             .map(|id| is_excluded_from_headless(req.config, id))
             .unwrap_or(false);
@@ -430,7 +437,7 @@ pub fn update_addon_from_archive(
             .get_mod(addon.parent_mod_id)
             .ok()
             .flatten()
-            .map(|m| m.forge_mod_id);
+            .and_then(|m| m.forge_mod_id);
         let excluded = parent_forge_id
             .map(|id| is_excluded_from_headless(config, id))
             .unwrap_or(false);
@@ -730,7 +737,10 @@ pub async fn apply_addon_update(
                 .ok()
                 .flatten()
                 .and_then(|a| db.get_mod(a.parent_mod_id).ok().flatten())
-                .map(|m| is_excluded_from_headless(&config_sync, m.forge_mod_id))
+                .and_then(|m| {
+                    m.forge_mod_id
+                        .map(|id| is_excluded_from_headless(&config_sync, id))
+                })
                 .unwrap_or(false);
             if !excluded {
                 // Remove stale files, then install new files
@@ -1081,7 +1091,7 @@ pub fn remove_mod_by_id(
     }
 
     // Look up forge_mod_id before deletion for group cleanup and headless sync
-    let forge_mod_id = db.get_mod(mod_db_id)?.map(|m| m.forge_mod_id);
+    let forge_mod_id = db.get_mod(mod_db_id)?.and_then(|m| m.forge_mod_id);
 
     // Remove client files from headless before DB delete loses the file list
     if let Some(forge_id) = forge_mod_id {
@@ -1162,7 +1172,7 @@ pub fn remove_addon_by_id(
             .get_mod(addon.parent_mod_id)
             .ok()
             .flatten()
-            .map(|m| m.forge_mod_id);
+            .and_then(|m| m.forge_mod_id);
         let excluded = parent_forge_id
             .map(|id| is_excluded_from_headless(config, id))
             .unwrap_or(false);
@@ -2295,7 +2305,9 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         // Mod A owns BepInEx/plugins/SharedDir/a.dll
-        let mod_a = db.insert_mod(100, 200, "ModA", None, "1.0.0").unwrap();
+        let mod_a = db
+            .insert_mod(Some(100), Some(200), "ModA", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_file(
             mod_a,
             "BepInEx/plugins/SharedDir/a.dll",
@@ -2305,7 +2317,9 @@ mod tests {
         .unwrap();
 
         // Mod B also has files under BepInEx/plugins/SharedDir/
-        let mod_b = db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        let mod_b = db
+            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_file(
             mod_b,
             "BepInEx/plugins/SharedDir/b.dll",
@@ -2324,7 +2338,9 @@ mod tests {
     fn filter_shared_dirs_exclusive_when_no_overlap() {
         let db = Database::open_in_memory().unwrap();
 
-        let mod_a = db.insert_mod(100, 200, "ModA", None, "1.0.0").unwrap();
+        let mod_a = db
+            .insert_mod(Some(100), Some(200), "ModA", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_file(
             mod_a,
             "SPT/user/mods/ModA/package.json",
@@ -2333,7 +2349,9 @@ mod tests {
         )
         .unwrap();
 
-        let mod_b = db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        let mod_b = db
+            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_file(
             mod_b,
             "SPT/user/mods/ModB/package.json",
@@ -2588,7 +2606,7 @@ mod tests {
         // DB should now reflect v2
         let m = db.get_mod(db_id).unwrap().unwrap();
         assert_eq!(m.version, "2.0.0");
-        assert_eq!(m.forge_version_id, 300);
+        assert_eq!(m.forge_version_id, Some(300));
 
         // Pending marker should be cleared
         assert!(db.list_pending_updates().unwrap().is_empty());
@@ -2745,7 +2763,17 @@ mod tests {
     #[test]
     fn duplicate_pending_update_for_same_mod_is_rejected() {
         let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
 
         // First insert succeeds
         db.insert_pending_update(mod_id, 300, "2.0.0", "[]", "[]")
@@ -2801,7 +2829,17 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         // Simulate old-scheme disabled mod: .disabled suffix in DB paths and on disk
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         db.insert_file(
             mod_id,
             "SPT/user/mods/TestMod.disabled/package.json",
@@ -2934,7 +2972,17 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         // Already-migrated mod: canonical DB paths, files in stash
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         db.insert_file(
             mod_id,
             "SPT/user/mods/TestMod/package.json",

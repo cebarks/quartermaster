@@ -314,9 +314,13 @@ fn mods_with_client_files(
     let mods = db.list_mods()?;
     let mut result = Vec::new();
     for m in &mods {
+        // ponytail: skip non-Forge mods — modsync only applies to Forge mods
+        let Some(forge_mod_id) = m.forge_mod_id else {
+            continue;
+        };
         let files = db.get_files_for_mod(m.id)?;
         let has_client = files.iter().any(|f| f.file_path.starts_with("BepInEx/"));
-        result.push((m.forge_mod_id, m.name.clone(), has_client));
+        result.push((forge_mod_id, m.name.clone(), has_client));
     }
     Ok(result)
 }
@@ -593,8 +597,11 @@ fn sync_on_group_change(
             if m.disabled {
                 continue;
             }
-            let was = was_excluded(m.forge_mod_id);
-            let now = now_excluded(m.forge_mod_id);
+            let Some(forge_mod_id) = m.forge_mod_id else {
+                continue;
+            };
+            let was = was_excluded(forge_mod_id);
+            let now = now_excluded(forge_mod_id);
             if was == now {
                 continue;
             }
@@ -884,7 +891,7 @@ fn validate_shared_directories(
                     parts[2]
                 };
                 let dir_key = format!("{}/{}", parts[1], dir_name);
-                let group = mod_group.get(&m.forge_mod_id).copied();
+                let group = m.forge_mod_id.and_then(|id| mod_group.get(&id).copied());
                 dir_groups.entry(dir_key).or_default().insert(group);
             }
         }

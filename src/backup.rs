@@ -9,8 +9,8 @@ use crate::db::mods::InstalledFile;
 /// Manifest entry for a single mod in a full backup.
 #[derive(Debug, Serialize, Deserialize)]
 struct ManifestMod {
-    forge_mod_id: i64,
-    forge_version_id: i64,
+    forge_mod_id: Option<i64>,
+    forge_version_id: Option<i64>,
     name: String,
     slug: Option<String>,
     version: String,
@@ -21,7 +21,7 @@ struct ManifestMod {
 #[derive(Debug, Serialize, Deserialize)]
 struct ManifestAddon {
     forge_addon_id: i64,
-    parent_forge_mod_id: i64,
+    parent_forge_mod_id: Option<i64>,
     forge_version_id: i64,
     name: String,
     slug: Option<String>,
@@ -175,9 +175,12 @@ pub fn backup_mod(
     let addons = db.list_addons_for_mod(mod_db_id)?;
 
     let backup_dir = resolve_backup_dir(spt_dir, config)?;
-    let mod_backup_dir = backup_dir
-        .join("mods")
-        .join(mod_info.forge_mod_id.to_string());
+    let mod_backup_dir = backup_dir.join("mods").join(
+        mod_info
+            .forge_mod_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| mod_info.id.to_string()),
+    );
     std::fs::create_dir_all(&mod_backup_dir)
         .with_context(|| format!("failed to create backup dir: {}", mod_backup_dir.display()))?;
 
@@ -195,18 +198,19 @@ pub fn backup_mod(
         total_size += copy_files_to_backup(&addon_files, &addon_base, &dest)?;
     }
 
-    let backup_path = format!(
-        "{}/mods/{}/{}",
-        config.backup.backup_dir, mod_info.forge_mod_id, bid
-    );
+    let mod_dir_name = mod_info
+        .forge_mod_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| mod_info.id.to_string());
+    let backup_path = format!("{}/mods/{}/{}", config.backup.backup_dir, mod_dir_name, bid);
 
     let backup_db_id = db.insert_backup(
         "mod",
         trigger,
         &bid,
         Some(mod_db_id),
-        Some(mod_info.forge_mod_id),
-        Some(mod_info.forge_version_id),
+        mod_info.forge_mod_id,
+        mod_info.forge_version_id,
         Some(&mod_info.name),
         mod_info.slug.as_deref(),
         Some(&mod_info.version),
@@ -226,7 +230,9 @@ pub fn backup_mod(
         "mod backed up"
     );
 
-    enforce_retention_mod(db, spt_dir, config, mod_info.forge_mod_id)?;
+    if let Some(forge_mod_id) = mod_info.forge_mod_id {
+        enforce_retention_mod(db, spt_dir, config, forge_mod_id)?;
+    }
 
     Ok(backup_db_id)
 }
@@ -442,11 +448,13 @@ pub fn restore_mod_backup(
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("backup missing mod_version"))?;
             db.insert_mod(
-                forge_mod_id,
-                version_id,
+                Some(forge_mod_id),
+                Some(version_id),
                 name,
                 backup.mod_slug.as_deref(),
                 version,
+                "forge",
+                None,
             )?
         }
     };
@@ -565,6 +573,8 @@ pub fn restore_full_backup(
                 &mm.name,
                 mm.slug.as_deref(),
                 &mm.version,
+                "forge",
+                None,
             )?;
 
             restore_manifest_files(
@@ -581,8 +591,10 @@ pub fn restore_full_backup(
         // Build a map from forge_mod_id to mod_db_id for addon restoration
         let mut mod_id_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
         for mm in &manifest.mods {
-            if let Ok(Some(m)) = db.get_mod_by_forge_id(mm.forge_mod_id) {
-                mod_id_map.insert(mm.forge_mod_id, m.id);
+            if let Some(forge_id) = mm.forge_mod_id {
+                if let Ok(Some(m)) = db.get_mod_by_forge_id(forge_id) {
+                    mod_id_map.insert(forge_id, m.id);
+                }
             }
         }
 
@@ -590,12 +602,12 @@ pub fn restore_full_backup(
         // and record file metadata.
         for ma in &manifest.addons {
             // Look up the parent mod's current DB id using the forge_mod_id
-            let parent_mod_db_id = match mod_id_map.get(&ma.parent_forge_mod_id) {
+            let parent_mod_db_id = match ma.parent_forge_mod_id.and_then(|id| mod_id_map.get(&id)) {
                 Some(&id) => id,
                 None => {
                     tracing::warn!(
                         addon_name = %ma.name,
-                        parent_forge_mod_id = ma.parent_forge_mod_id,
+                        parent_forge_mod_id = ?ma.parent_forge_mod_id,
                         "parent mod not found for addon, skipping"
                     );
                     continue;
@@ -807,7 +819,17 @@ mod tests {
         .unwrap();
 
         let db = crate::db::Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         db.insert_file(
             mod_id,
             "SPT/user/mods/TestMod/package.json",
@@ -891,7 +913,7 @@ mod tests {
         let manifest: BackupManifest =
             serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
         assert_eq!(manifest.mods.len(), 1);
-        assert_eq!(manifest.mods[0].forge_mod_id, 100);
+        assert_eq!(manifest.mods[0].forge_mod_id, Some(100));
         assert_eq!(manifest.mods[0].name, "TestMod");
         assert_eq!(
             manifest.mods[0].file_paths,
@@ -903,7 +925,17 @@ mod tests {
     fn auto_backup_skips_when_disabled() {
         let spt_dir = tempfile::TempDir::new().unwrap();
         let db = crate::db::Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         let mut config = crate::config::Config::default();
         config.backup.auto_backup = false;
 
@@ -1007,7 +1039,17 @@ mod tests {
         let db = crate::db::Database::open_in_memory().unwrap();
         let config = crate::config::Config::default();
 
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
 
         // Create file in stash (as if disabled)
         let stash_path = spt_dir.join("quartermaster/disabled/SPT/user/mods/TestMod/package.json");
@@ -1050,7 +1092,15 @@ mod tests {
 
         let db = crate::db::Database::open_in_memory().unwrap();
         let mod_a = db
-            .insert_mod(100, 200, "ModA", Some("mod-a"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ModA",
+                Some("mod-a"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_a,
@@ -1060,7 +1110,15 @@ mod tests {
         )
         .unwrap();
         let mod_b = db
-            .insert_mod(101, 201, "ModB", Some("mod-b"), "2.0.0")
+            .insert_mod(
+                Some(101),
+                Some(201),
+                "ModB",
+                Some("mod-b"),
+                "2.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_b,

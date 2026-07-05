@@ -34,7 +34,7 @@ pub async fn run(
 
         ctx.db.insert_pending_op(
             crate::db::users::QueueAction::Remove,
-            installed.forge_mod_id,
+            installed.forge_mod_id.unwrap(),
             None,
             &installed.name,
             None,
@@ -247,7 +247,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ctx = make_test_ctx(&tmp);
         ctx.db
-            .insert_mod(100, 200, "TestMod", Some("test-mod"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                Some("test-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
 
         let m = resolve_installed_mod("100", &ctx).unwrap();
@@ -259,11 +267,19 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ctx = make_test_ctx(&tmp);
         ctx.db
-            .insert_mod(100, 200, "TestMod", Some("test-mod"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                Some("test-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
 
         let m = resolve_installed_mod("TestMod", &ctx).unwrap();
-        assert_eq!(m.forge_mod_id, 100);
+        assert_eq!(m.forge_mod_id, Some(100));
     }
 
     #[test]
@@ -271,11 +287,19 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ctx = make_test_ctx(&tmp);
         ctx.db
-            .insert_mod(100, 200, "S.A.I.N.", Some("sain"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "S.A.I.N.",
+                Some("sain"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
 
         let m = resolve_installed_mod("sain", &ctx).unwrap();
-        assert_eq!(m.forge_mod_id, 100);
+        assert_eq!(m.forge_mod_id, Some(100));
         assert_eq!(m.name, "S.A.I.N.");
     }
 
@@ -300,7 +324,15 @@ mod tests {
         // Insert into DB
         let db_id = ctx
             .db
-            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         ctx.db
             .insert_file(
@@ -326,8 +358,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ctx = make_test_ctx(&tmp);
 
-        let mod_c = ctx.db.insert_mod(100, 200, "ModC", None, "1.0.0").unwrap();
-        let mod_b = ctx.db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        let mod_c = ctx
+            .db
+            .insert_mod(Some(100), Some(200), "ModC", None, "1.0.0", "forge", None)
+            .unwrap();
+        let mod_b = ctx
+            .db
+            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .unwrap();
         // B depends on C
         ctx.db.insert_dependency(mod_b, mod_c, None).unwrap();
 
@@ -345,9 +383,18 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ctx = make_test_ctx(&tmp);
 
-        let mod_c = ctx.db.insert_mod(100, 200, "ModC", None, "1.0.0").unwrap();
-        let mod_b = ctx.db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
-        let mod_a = ctx.db.insert_mod(102, 202, "ModA", None, "1.0.0").unwrap();
+        let mod_c = ctx
+            .db
+            .insert_mod(Some(100), Some(200), "ModC", None, "1.0.0", "forge", None)
+            .unwrap();
+        let mod_b = ctx
+            .db
+            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .unwrap();
+        let mod_a = ctx
+            .db
+            .insert_mod(Some(102), Some(202), "ModA", None, "1.0.0", "forge", None)
+            .unwrap();
         // A depends on B, B depends on C
         ctx.db.insert_dependency(mod_a, mod_b, None).unwrap();
         ctx.db.insert_dependency(mod_b, mod_c, None).unwrap();

@@ -12,7 +12,7 @@ const INFRASTRUCTURE_FORGE_IDS: &[i64] = &[FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FOR
 struct ModEntry {
     name: String,
     version: String,
-    forge_mod_id: i64,
+    forge_mod_id: Option<i64>,
     slug: Option<String>,
     file_count: usize,
     installed_at: String,
@@ -97,7 +97,9 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
             updated_at: m.updated_at.clone(),
             addons: addon_entries,
         };
-        if INFRASTRUCTURE_FORGE_IDS.contains(&m.forge_mod_id) {
+        if m.forge_mod_id
+            .is_some_and(|id| INFRASTRUCTURE_FORGE_IDS.contains(&id))
+        {
             infra_entries.push(entry);
         } else {
             mod_entries.push(entry);

@@ -47,7 +47,11 @@ fn list_backups(mod_ref: Option<&str>, ctx: &CliContext) -> Result<()> {
     let backups = match mod_ref {
         Some(r) => {
             let installed = super::common::resolve_installed_mod(r, ctx)?;
-            ctx.db.list_backups_for_mod(installed.forge_mod_id)?
+            ctx.db.list_backups_for_mod(
+                installed
+                    .forge_mod_id
+                    .expect("forge mod for backup listing"),
+            )?
         }
         None => ctx.db.list_all_backups()?,
     };

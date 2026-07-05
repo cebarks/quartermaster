@@ -8,7 +8,7 @@ use super::common::CliContext;
 /// falling back to a `name` field or the raw JSON.
 fn name_from_value(val: &serde_json::Value, installed: &[InstalledMod]) -> String {
     if let Some(mod_id) = val.get("mod_id").and_then(|v| v.as_i64()) {
-        if let Some(m) = installed.iter().find(|m| m.forge_mod_id == mod_id) {
+        if let Some(m) = installed.iter().find(|m| m.forge_mod_id == Some(mod_id)) {
             return m.name.clone();
         }
     }
@@ -30,7 +30,7 @@ pub async fn run(ctx: &CliContext) -> Result<bool> {
 
     let check_list: Vec<(i64, String)> = installed
         .iter()
-        .map(|m| (m.forge_mod_id, m.version.clone()))
+        .filter_map(|m| m.forge_mod_id.map(|id| (id, m.version.clone())))
         .collect();
 
     let results = ctx
@@ -45,7 +45,7 @@ pub async fn run(ctx: &CliContext) -> Result<bool> {
         for update in &results.updates {
             let name = installed
                 .iter()
-                .find(|m| m.forge_mod_id == update.current_version.mod_id)
+                .find(|m| m.forge_mod_id == Some(update.current_version.mod_id))
                 .map(|m| m.name.as_str())
                 .unwrap_or("unknown");
             println!(
@@ -67,7 +67,7 @@ pub async fn run(ctx: &CliContext) -> Result<bool> {
         for incompat in &results.incompatible_with_spt {
             let name = installed
                 .iter()
-                .find(|m| m.forge_mod_id == incompat.mod_id)
+                .find(|m| m.forge_mod_id == Some(incompat.mod_id))
                 .map(|m| m.name.as_str())
                 .unwrap_or(&incompat.name);
             println!("  {}", name);
