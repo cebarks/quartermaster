@@ -494,13 +494,13 @@ async fn apply_addon_update(op: &PendingOperation, state: &AppState) -> anyhow::
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
 
-    // Download and extract
+    // Download archive to system temp, extract to same-fs staging dir
     let tmp_dir = tempfile::tempdir()?;
     let archive_path = tmp_dir.path().join("addon.zip");
     state.forge.download_file(link, &archive_path).await?;
 
-    let staging_path = tmp_dir.path().join("staging");
-    std::fs::create_dir(&staging_path)?;
+    let staging_dir = crate::ops::staging_tempdir(&state.spt_dir)?;
+    let staging_path = staging_dir.path().to_path_buf();
 
     let spt_dir = state.spt_dir.clone();
     let config = state.config_cloned();

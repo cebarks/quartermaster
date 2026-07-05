@@ -258,22 +258,6 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn insert_file_with_source(
-        &self,
-        mod_id: i64,
-        file_path: &str,
-        file_hash: Option<&str>,
-        file_size: Option<i64>,
-        source: &str,
-    ) -> rusqlite::Result<i64> {
-        self.conn.execute(
-            "INSERT OR IGNORE INTO installed_files (mod_id, file_path, file_hash, file_size, source)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![mod_id, file_path, file_hash, file_size, source],
-        )?;
-        Ok(self.conn.last_insert_rowid())
-    }
-
     pub fn get_files_for_mod(&self, mod_id: i64) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source

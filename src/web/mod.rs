@@ -750,6 +750,8 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         tracing::error!(err = %e, "failed to migrate disabled mods to stash");
     }
 
+    crate::ops::cleanup_staging(&spt_dir);
+
     // Recover any interrupted async mod updates from a previous crash
     if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &spt_dir) {
         tracing::error!(err = %e, "failed to recover pending updates on startup");

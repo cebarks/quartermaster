@@ -8,6 +8,26 @@ use crate::db::Database;
 use crate::headless_sync::{sync_client_files_to_headless, SyncOp};
 use crate::spt::mods::ExtractedFile;
 
+/// Create a staging tempdir on the same filesystem as `spt_dir` so that
+/// `rename()` works instead of falling back to a byte-by-byte copy.
+pub fn staging_tempdir(spt_dir: &Path) -> Result<tempfile::TempDir> {
+    let staging_root = spt_dir.join("quartermaster/.staging");
+    std::fs::create_dir_all(&staging_root)
+        .with_context(|| format!("failed to create staging dir: {}", staging_root.display()))?;
+    tempfile::tempdir_in(&staging_root).context("failed to create staging tempdir")
+}
+
+/// Remove leftover staging tempdirs from a previous crash.
+/// Safe to call on startup — nothing should be actively staging yet.
+pub fn cleanup_staging(spt_dir: &Path) {
+    let staging_root = spt_dir.join("quartermaster/.staging");
+    if let Ok(entries) = std::fs::read_dir(&staging_root) {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 /// Check if a mod is in a modsync group with `exclude_headless = true`.
 pub fn is_excluded_from_headless(config: &crate::config::Config, forge_mod_id: i64) -> bool {
     config
@@ -176,9 +196,9 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         "installing mod from archive"
     );
 
-    // Extract to a staging directory so files are not left on disk if the DB
-    // transaction fails (mirrors the update path).
-    let staging_dir = tempfile::tempdir()?;
+    // Extract to a staging directory on the same filesystem as spt_dir so
+    // rename() works instead of cross-device copy.
+    let staging_dir = staging_tempdir(req.spt_dir)?;
     let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
 
     let tx = req.db.begin_transaction()?;
@@ -222,9 +242,7 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
         "installing addon from archive"
     );
 
-    // Extract to a staging directory so files are not left on disk if the DB
-    // transaction fails (mirrors mod install pattern).
-    let staging_dir = tempfile::tempdir()?;
+    let staging_dir = staging_tempdir(req.spt_dir)?;
     let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
 
     let tx = req.db.begin_transaction()?;
@@ -290,7 +308,7 @@ pub fn update_mod_from_archive(
         version = version_str,
         "updating mod from archive"
     );
-    let staging_dir = tempfile::tempdir()?;
+    let staging_dir = staging_tempdir(spt_dir)?;
     let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
 
     let old_files = db.get_files_for_mod(mod_db_id)?;
@@ -358,7 +376,7 @@ pub fn update_addon_from_archive(
         version = version_str,
         "updating addon from archive"
     );
-    let staging_dir = tempfile::tempdir()?;
+    let staging_dir = staging_tempdir(spt_dir)?;
     let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
 
     let old_files = db.get_files_for_addon(addon_db_id)?;
@@ -1160,139 +1178,6 @@ pub fn remove_addon_by_id(
     if !skip_modsync {
         if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
             tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
-        }
-    }
-    Ok(())
-}
-
-/// A runtime-generated file discovered on disk but not in the original mod archive.
-struct RuntimeFile {
-    relative_path: String,
-    hash: String,
-    size: i64,
-}
-
-/// Scan a mod's directories on disk and record any files not already tracked
-/// as runtime-generated files (source = 'runtime').
-///
-/// Splits work into three phases to minimise the time the DB mutex is held:
-/// 1. Brief lock to read currently-tracked file paths.
-/// 2. No lock — recursive filesystem scan + streaming SHA-256 hashing.
-/// 3. Brief lock to batch-insert discovered files inside a transaction.
-pub fn scan_and_record_runtime_files(
-    db: &std::sync::Arc<parking_lot::Mutex<Database>>,
-    mod_db_id: i64,
-    spt_dir: &Path,
-) -> Result<()> {
-    // Phase 1: Read tracked paths (brief DB lock)
-    let tracked_paths: std::collections::HashSet<String> = {
-        let db = db.lock();
-        let tracked = db.get_files_for_mod(mod_db_id)?;
-        tracked.into_iter().map(|f| f.file_path).collect()
-    };
-
-    // Determine which top-level directories this mod occupies
-    let mut mod_dirs: std::collections::HashSet<std::path::PathBuf> =
-        std::collections::HashSet::new();
-    for file_path in &tracked_paths {
-        let p = Path::new(file_path);
-        // For SPT/user/mods/ModName/... take first 4 components
-        // For BepInEx/plugins/ModName/... take first 3 components
-        let parts: Vec<&str> = file_path.split('/').collect();
-        let dir = if file_path.starts_with("SPT/") && parts.len() >= 4 {
-            format!("{}/{}/{}/{}", parts[0], parts[1], parts[2], parts[3])
-        } else if file_path.starts_with("BepInEx/") && parts.len() >= 3 {
-            format!("{}/{}/{}", parts[0], parts[1], parts[2])
-        } else if let Some(parent) = p.parent() {
-            parent.to_string_lossy().to_string()
-        } else {
-            continue;
-        };
-        mod_dirs.insert(spt_dir.join(dir));
-    }
-
-    tracing::debug!(
-        mod_db_id,
-        dir_count = mod_dirs.len(),
-        "scanning for runtime files"
-    );
-
-    // Phase 2: Filesystem scan + streaming hash (NO lock held)
-    let mut runtime_files = Vec::new();
-    for dir in &mod_dirs {
-        if !dir.is_dir() {
-            continue;
-        }
-        scan_runtime_recursive(dir, spt_dir, &tracked_paths, &mut runtime_files)?;
-    }
-
-    // Phase 3: Batch insert (brief DB lock)
-    if !runtime_files.is_empty() {
-        let db = db.lock();
-        let tx = db.begin_transaction()?;
-        for file in &runtime_files {
-            if let Err(e) = db.insert_file_with_source(
-                mod_db_id,
-                &file.relative_path,
-                Some(&file.hash),
-                Some(file.size),
-                "runtime",
-            ) {
-                tracing::warn!(
-                    path = %file.relative_path,
-                    error = %e,
-                    "failed to record runtime file"
-                );
-            }
-        }
-        tx.commit()?;
-    }
-
-    Ok(())
-}
-
-fn scan_runtime_recursive(
-    dir: &Path,
-    spt_root: &Path,
-    tracked: &std::collections::HashSet<String>,
-    results: &mut Vec<RuntimeFile>,
-) -> Result<()> {
-    let entries = std::fs::read_dir(dir)?;
-    for entry in entries {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
-            tracing::debug!(path = %entry.path().display(), "skipping symlink during runtime scan");
-            continue;
-        }
-        let path = entry.path();
-        if file_type.is_dir() {
-            scan_runtime_recursive(&path, spt_root, tracked, results)?;
-        } else if let Ok(relative) = path.strip_prefix(spt_root) {
-            let rel_str = relative.to_string_lossy().to_string();
-            if !tracked.contains(&rel_str) {
-                tracing::trace!(path = %rel_str, "recording runtime file");
-                // Use streaming hash to avoid loading entire files into memory
-                match crate::spt::mods::compute_file_hash(&path) {
-                    Ok(hash) => {
-                        let size = std::fs::metadata(&path)
-                            .map(|m| m.len() as i64)
-                            .unwrap_or(0);
-                        results.push(RuntimeFile {
-                            relative_path: rel_str,
-                            hash,
-                            size,
-                        });
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            path = %path.display(),
-                            err = %e,
-                            "skipping unreadable runtime file"
-                        );
-                    }
-                }
-            }
         }
     }
     Ok(())
