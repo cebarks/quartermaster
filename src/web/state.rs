@@ -53,6 +53,7 @@ pub struct AppState {
     pub fika_client: Option<Arc<crate::fika::client::FikaClient>>,
     #[allow(dead_code)] // ponytail: used in later tasks
     pub fika_config_lock: parking_lot::Mutex<()>,
+    #[allow(clippy::type_complexity)]
     pub fika_items:
         Arc<parking_lot::Mutex<Option<Arc<HashMap<String, crate::fika::client::FikaItemInfo>>>>>,
 }
