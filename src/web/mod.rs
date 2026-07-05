@@ -950,6 +950,17 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     // Pre-warm mod ZIP cache in background
     app_state.mod_zip_cache.invalidate();
 
+    // One-time modsync-to-convoy migration
+    {
+        let config = app_state.config.read();
+        let db = app_state.db.lock();
+        if let Err(e) =
+            crate::convoy::migrate::migrate_modsync_to_convoy(&config, &db, &app_state.spt_dir)
+        {
+            tracing::error!("failed to migrate modsync groups to convoy: {e}");
+        }
+    }
+
     // Invalidate convoy catalog on startup if enabled
     if app_state
         .config
