@@ -72,9 +72,6 @@ impl IntegrityCache {
         spt_dir: std::path::PathBuf,
         events: broadcast::Sender<ServerEvent>,
     ) {
-        self.progress.store(0, Ordering::Relaxed);
-        self.total.store(0, Ordering::Relaxed);
-
         if self
             .running
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -82,6 +79,9 @@ impl IntegrityCache {
         {
             return;
         }
+
+        self.progress.store(0, Ordering::Relaxed);
+        self.total.store(0, Ordering::Relaxed);
 
         let generation_at_start = self.generation.load(Ordering::Relaxed);
         let cache = self.clone();
@@ -113,15 +113,10 @@ impl IntegrityCache {
     }
 
     fn complete_check(&self, result: IntegrityHealth, generation_at_start: u64) {
-        let current_generation = self.generation.load(Ordering::Relaxed);
         *self.cache.write() = Some(CachedIntegrity {
             result,
             checked_at: Instant::now(),
-            generation: if generation_at_start == current_generation {
-                current_generation
-            } else {
-                generation_at_start
-            },
+            generation: generation_at_start,
         });
         self.running.store(false, Ordering::Relaxed);
     }
@@ -180,6 +175,16 @@ mod tests {
         cache.complete_check(empty_result(), gen);
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert!(cache.is_stale());
+    }
+
+    #[test]
+    fn cache_stale_when_invalidated_during_check() {
+        let cache = IntegrityCache::new(600);
+        let gen = cache.generation.load(Ordering::Relaxed);
+        cache.invalidate();
+        cache.complete_check(empty_result(), gen);
+        assert!(cache.is_stale());
+        assert!(cache.get().is_some());
     }
 
     #[test]

@@ -2592,7 +2592,7 @@ pub async fn integrity_json(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
     let peer = req.peer_addr();
-    let is_loopback = peer.map_or(false, |addr| addr.ip().is_loopback());
+    let is_loopback = peer.is_some_and(|addr| addr.ip().is_loopback());
     if !is_loopback {
         return Ok(HttpResponse::Forbidden().finish());
     }
