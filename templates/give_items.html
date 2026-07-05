@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Give Items — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("give_items", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Give Items</h1>
+
+{% if !fika_available %}
+<div class="card">
+    <div class="empty-state">
+        <p>Fika API not configured. Set the API key in <a href="/quma/settings/fika">Fika settings</a>.</p>
+    </div>
+</div>
+{% else %}
+<form method="post" action="/quma/api/give-items/send" id="give-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="item_tpl" id="item-tpl" value="">
+    <input type="hidden" name="item_name" id="item-name" value="">
+
+    <div class="card" style="margin-bottom: 1rem">
+        <h3>Recipient</h3>
+        <select name="profile_id" class="input" id="profile-select" required>
+            <option value="">Select a player...</option>
+            <option value="all">All Players</option>
+            {% for p in profiles %}
+            <option value="{{ p.aid }}">{{ p.username }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="card" style="margin-bottom: 1rem">
+        <div style="display: flex; justify-content: space-between; align-items: center">
+            <h3>Item</h3>
+            <button type="button" class="btn btn-sm btn-outline"
+                    hx-post="/quma/api/give-items/refresh"
+                    hx-vals='{"csrf_token": "{{ csrf_token }}"}'
+                    hx-swap="none">Refresh Items</button>
+        </div>
+        <div id="selected-item" style="display: none; margin-bottom: 0.75rem">
+            <span class="badge">Selected:</span>
+            <strong id="selected-item-name"></strong>
+            <button type="button" class="btn btn-sm btn-outline" id="clear-item-btn" style="margin-left: 0.5rem">Clear</button>
+        </div>
+        <input type="text"
+               id="item-search"
+               name="q"
+               placeholder="Search items (min 2 characters)..."
+               class="input"
+               autocomplete="off"
+               hx-get="/quma/api/give-items/search"
+               hx-trigger="keyup changed delay:300ms"
+               hx-target="#search-results"
+               hx-swap="innerHTML">
+        <div id="search-results" class="search-results-list"></div>
+    </div>
+
+    <div class="card" style="margin-bottom: 1rem">
+        <h3>Options</h3>
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+            <label style="display: flex; flex-direction: column; gap: 0.25rem">
+                Amount
+                <input type="number" name="amount" value="1" min="1" id="item-amount" class="input" style="width: 6rem" required>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1.25rem">
+                <input type="checkbox" name="fir" value="true">
+                Found in Raid
+            </label>
+        </div>
+        <label style="display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.75rem">
+            Message (optional)
+            <input type="text" name="message" class="input" placeholder="Sent by admin via Quartermaster" maxlength="255">
+        </label>
+    </div>
+
+    <button type="submit" class="btn btn-primary" id="send-btn" disabled>Send Item</button>
+</form>
+
+<style>
+.search-results-list {
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 0.25rem;
+}
+.item-result {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: 0.5rem;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    color: inherit;
+    font: inherit;
+}
+.item-result:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.05));
+}
+.item-desc {
+    font-size: 0.85em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+</style>
+
+<script>
+(function() {
+    var tplInput = document.getElementById('item-tpl');
+    var nameInput = document.getElementById('item-name');
+    var selectedDiv = document.getElementById('selected-item');
+    var selectedName = document.getElementById('selected-item-name');
+    var amountInput = document.getElementById('item-amount');
+    var searchResults = document.getElementById('search-results');
+    var searchInput = document.getElementById('item-search');
+    var sendBtn = document.getElementById('send-btn');
+    var profileSelect = document.getElementById('profile-select');
+
+    function updateSendBtn() {
+        sendBtn.disabled = !(tplInput.value && profileSelect.value);
+    }
+
+    document.getElementById('clear-item-btn').addEventListener('click', function() {
+        tplInput.value = '';
+        nameInput.value = '';
+        selectedDiv.style.display = 'none';
+        amountInput.removeAttribute('max');
+        updateSendBtn();
+    });
+
+    profileSelect.addEventListener('change', updateSendBtn);
+
+    searchResults.addEventListener('click', function(e) {
+        var btn = e.target.closest('.item-result');
+        if (!btn) return;
+        tplInput.value = btn.dataset.tpl;
+        nameInput.value = btn.dataset.name;
+        selectedName.textContent = btn.dataset.name;
+        selectedDiv.style.display = '';
+        amountInput.max = btn.dataset.max;
+        searchResults.innerHTML = '';
+        searchInput.value = '';
+        updateSendBtn();
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}
