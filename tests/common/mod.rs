@@ -195,6 +195,7 @@ impl TestAppBuilder {
                 db_arc.clone(),
                 config_arc.clone(),
             ),
+            integrity_cache: spt_quartermaster::web::integrity_cache::IntegrityCache::new(300),
             log_level_counts,
         });
 

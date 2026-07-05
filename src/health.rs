@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::cli::common::CliContext;
@@ -37,7 +37,7 @@ pub struct ModsHealth {
     pub incompatible_mods: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrityHealth {
     pub tracked_files: usize,
     pub missing_files: Vec<String>,
@@ -45,7 +45,7 @@ pub struct IntegrityHealth {
     pub untracked_dirs: Vec<UntrackedDir>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UntrackedDir {
     pub path: String,
     pub file_count: usize,
@@ -97,14 +97,40 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
     )
     .await;
 
-    let tracked_files = ctx.db.get_all_enabled_mod_files()?;
-    let integrity = check_integrity_from(&tracked_files, &ctx.spt_dir)?;
+    let integrity = match try_fetch_cached_integrity(&ctx.config).await {
+        Some(cached) => cached,
+        None => {
+            let tracked_files = ctx.db.get_all_enabled_mod_files()?;
+            let spt_dir = ctx.spt_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                let progress = std::sync::atomic::AtomicUsize::new(0);
+                let total = std::sync::atomic::AtomicUsize::new(0);
+                check_integrity_parallel(&tracked_files, &spt_dir, &progress, &total)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("integrity check task failed: {e}"))??
+        }
+    };
 
     Ok(HealthReport {
         server,
         mods,
         integrity,
     })
+}
+
+async fn try_fetch_cached_integrity(config: &crate::config::Config) -> Option<IntegrityHealth> {
+    let port = config.web_port;
+    let url = format!("http://127.0.0.1:{port}/quma/health/integrity");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<IntegrityHealth>().await.ok()
 }
 
 pub async fn check_server(

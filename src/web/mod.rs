@@ -129,7 +129,11 @@ pub fn configure_app(
         .service(web::scope("/assets").route("/{path:.*}", web::get().to(serve_asset)))
         // Auth routes (public)
         .route("/login", web::get().to(handlers::auth::login_page))
-        .route("/logout", web::post().to(handlers::auth::logout));
+        .route("/logout", web::post().to(handlers::auth::logout))
+        .route(
+            "/health/integrity",
+            web::get().to(handlers::mods::integrity_json),
+        );
 
     // Rate-limited auth routes
     if enable_rate_limiting {

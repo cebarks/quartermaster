@@ -2586,3 +2586,10 @@ pub async fn toggle_addon_disable(
         .insert_header(("Location", format!("/quma/mods/{}", parent_mod_id)))
         .finish())
 }
+
+pub async fn integrity_json(state: Data<AppState>) -> actix_web::Result<HttpResponse> {
+    match state.integrity_cache.get() {
+        Some(report) => Ok(HttpResponse::Ok().json(report)),
+        None => Ok(HttpResponse::ServiceUnavailable().finish()),
+    }
+}
