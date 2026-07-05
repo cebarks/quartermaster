@@ -1,8 +1,16 @@
 # TODO
 
 ## Top Priority
+- !!! mod requests/queue/installed lifecycle
+- !!! Notes page
 - SVM preset upload size limit
-- players don't show up in main menu fika 
+- players don't show up in main menu fika
+- mod config management
+- install mod from a URL
+- fix UX for mod requests/management
+
+## Triage
+- integrity checks should be multi-threaded, async and cached, with a button to force a recheck
 
 ## Bugs
 - canceling an install queue item puts it back in requests (if it was previously requested)
@@ -11,6 +19,7 @@
 - can't rekove already approved mods that haven't been installed
 - headless profiles should not show be included in raid stats
 - numa scheduling webui config is broken
+- mod requests list shouldn't include already installed mods
 
 ## Security
 - cookie-based sessions can't be individually revoked
@@ -22,7 +31,6 @@
 - ~~config save ceremony repeated 8+ times~~ (reduced — `AppState::persist_config` used by settings+modsync; clients.rs 3× remain due to tokio::spawn constraints)
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
-
 - refactor mod group implementation to be it's own system outside of narconet. narconet uses app-wide groups
 
 ## Headless Client
@@ -40,6 +48,8 @@
 - better health client detection
 - show active headless' in raid on dashboard, with player profile names, not ids
 - don't delete headless overlay by default, allow selection of which existing, not already in use overlay to use on new client creation (or when editting a client)
+- be able to `podman rm` and re-init the client without wiping anything else
+- persistent headless stats
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
@@ -68,6 +78,7 @@
 - template duplication: ~~request cards~~, ~~client status table (3×)~~ (dead `clients/list.html` deleted), raid outcome badges (4×)
 - tab implementation inconsistency — 2 different patterns across pages (`.tab-bar`/`tabSwitch` vs `.log-tab-bar`/inline JS)
 - clean up mod file list, add collapsable folder tree, file viewer (editor too maybe; need to investigate)
+- move mod install card above list in /quma/mods
 
 ## Features
 - automatic mod config backup via git
