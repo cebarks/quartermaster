@@ -48,7 +48,7 @@
                         <input type="number" name="{{ field.path }}" data-svm-field
                             {% if let Some(mn) = min %} min="{{ mn }}"{% endif %}
                             {% if let Some(mx) = max %} max="{{ mx }}"{% endif %}
-                            step="{{ step.unwrap_or(0.01) }}">
+                            step="any">
                     {% when InputType::Text %}
                         <input type="text" name="{{ field.path }}" data-svm-field>
                     {% when InputType::Textarea %}
