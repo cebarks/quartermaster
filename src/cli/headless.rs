@@ -399,15 +399,17 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
     config.save(&config_path)?;
 
     // Update fika.jsonc
-    let fika_config_path = ctx
-        .spt_dir
-        .join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
     let new_count = config
         .headless
         .as_ref()
         .map(|h| h.client_count())
         .unwrap_or(0);
-    crate::client::converge::edit_headless_amount(&fika_config_path, new_count)?;
+    let fika_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    if fika_path.exists() {
+        let cst = crate::fika::config::read_fika_cst(&fika_path)?;
+        crate::fika::config::set_headless_amount(&cst, new_count);
+        crate::fika::config::write_fika_cst(&cst, &fika_path)?;
+    }
 
     // Clean up overlay directory
     if let Some(ref headless) = config.headless {

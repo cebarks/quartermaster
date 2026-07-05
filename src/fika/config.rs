@@ -1,3 +1,6 @@
+// ponytail: Many types here unused until later tasks; allow dead_code module-wide
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use jsonc_parser::cst::CstRootNode;
 use serde::Deserialize;
