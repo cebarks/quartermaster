@@ -917,6 +917,7 @@ mod tests {
 
     #[test]
     fn derive_name_from_url_cases() {
+        use crate::ops::derive_name_from_url;
         assert_eq!(
             derive_name_from_url("https://example.com/SAIN-v3.2.zip"),
             "SAIN-v3.2"
@@ -927,6 +928,10 @@ mod tests {
             "mod"
         );
         assert_eq!(derive_name_from_url("https://example.com/"), "unknown-mod");
+        assert_eq!(
+            derive_name_from_url("https://example.com/.zip"),
+            "unknown-mod"
+        );
     }
 }
 
@@ -938,30 +943,12 @@ fn is_file_path(s: &str) -> bool {
     std::path::Path::new(s).exists()
 }
 
-fn derive_name_from_url(url: &str) -> String {
-    url.rsplit('/')
-        .next()
-        .and_then(|s| s.split('?').next())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unknown-mod")
-        .trim_end_matches(".zip")
-        .trim_end_matches(".7z")
-        .to_string()
-}
-
-fn derive_name_from_path(path: &std::path::Path) -> String {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown-mod")
-        .to_string()
-}
-
 async fn queue_url_install(ctx: &CliContext, url: &str, mod_name: &str) -> Result<()> {
     let queue_dir = ctx.spt_dir.join(".quartermaster").join("queued");
     std::fs::create_dir_all(&queue_dir)?;
 
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let filename = derive_name_from_url(url);
+    let filename = crate::ops::derive_name_from_url(url);
     let extension = if url.ends_with(".7z") { "7z" } else { "zip" };
     let dest = queue_dir.join(format!("{timestamp}-{filename}.{extension}"));
 
@@ -1019,7 +1006,7 @@ async fn install_from_url(
 ) -> Result<()> {
     let mod_name = name_override
         .map(|s| s.to_string())
-        .unwrap_or_else(|| derive_name_from_url(url));
+        .unwrap_or_else(|| crate::ops::derive_name_from_url(url));
 
     println!("Installing from URL: {url}");
     println!("Mod name: {mod_name}");
@@ -1075,7 +1062,7 @@ async fn install_from_file(
 
     let mod_name = name_override
         .map(|s| s.to_string())
-        .unwrap_or_else(|| derive_name_from_path(&archive_path));
+        .unwrap_or_else(|| crate::ops::derive_name_from_path(&archive_path));
 
     println!("Installing from file: {}", archive_path.display());
     println!("Mod name: {mod_name}");

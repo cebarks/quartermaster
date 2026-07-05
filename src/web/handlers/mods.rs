@@ -982,14 +982,7 @@ async fn install_mod_from_url(
     state: &Data<AppState>,
     session: &Session,
 ) -> actix_web::Result<HttpResponse> {
-    let mod_name = url
-        .rsplit('/')
-        .next()
-        .and_then(|s| s.split('?').next())
-        .unwrap_or("unknown-mod")
-        .trim_end_matches(".zip")
-        .trim_end_matches(".7z")
-        .to_string();
+    let mod_name = crate::ops::derive_name_from_url(url);
 
     // Check name collision
     {

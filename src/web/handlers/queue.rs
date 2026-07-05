@@ -254,6 +254,46 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
         return apply_addon_install(op, state).await;
     }
 
+    // URL/file install — archive already downloaded
+    if let Some(ref archive_path) = op.archive_path {
+        let archive = std::path::Path::new(archive_path);
+        if !archive.exists() {
+            anyhow::bail!("queued archive not found at {archive_path}");
+        }
+        let source =
+            crate::ops::ModSource::parse(&op.source).unwrap_or(crate::ops::ModSource::Forge);
+
+        let db = state.db.clone();
+        let spt_dir = state.spt_dir.clone();
+        let config = state.config_cloned();
+        let mod_name = op.mod_name.clone();
+        let source_url = op.source_url.clone();
+        let archive_owned = archive.to_path_buf();
+
+        web::block(move || {
+            let db = db.lock();
+            crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+                db: &db,
+                spt_dir: &spt_dir,
+                config: &config,
+                forge_mod_id: None,
+                version_id: None,
+                name: &mod_name,
+                slug: None,
+                version: "unknown",
+                archive_path: &archive_owned,
+                source,
+                source_url: source_url.as_deref(),
+            })
+        })
+        .await??;
+
+        // Clean up cached archive
+        let _ = std::fs::remove_file(archive);
+        return Ok(());
+    }
+
+    // Existing Forge install path
     let forge_mod_id = op
         .forge_mod_id
         .expect("mod operation must have forge_mod_id");

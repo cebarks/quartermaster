@@ -8,6 +8,32 @@ use crate::db::Database;
 use crate::headless_sync::{sync_client_files_to_headless, SyncOp};
 use crate::spt::mods::ExtractedFile;
 
+/// Derive a mod name from a URL by extracting the filename and stripping extensions.
+pub fn derive_name_from_url(url: &str) -> String {
+    let name = url
+        .rsplit('/')
+        .next()
+        .and_then(|s| s.split('?').next())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown-mod")
+        .trim_end_matches(".zip")
+        .trim_end_matches(".7z");
+
+    if name.is_empty() {
+        "unknown-mod".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Derive a mod name from a file path by extracting the file stem.
+pub fn derive_name_from_path(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown-mod")
+        .to_string()
+}
+
 /// Create a staging tempdir on the same filesystem as `spt_dir` so that
 /// `rename()` works instead of falling back to a byte-by-byte copy.
 pub fn staging_tempdir(spt_dir: &Path) -> Result<tempfile::TempDir> {
