@@ -1,3 +1,4 @@
+use actix_files::NamedFile;
 use actix_session::Session;
 use actix_web::{web, HttpRequest, HttpResponse};
 use askama::Template;
@@ -146,21 +147,23 @@ pub async fn setup_bootstrap_powershell(
 
 // TODO(debt): This endpoint is intentionally unauthenticated so bootstrap scripts can
 // curl it without session cookies. Add a signed/expiring download token when this matters.
-pub async fn setup_mods_zip(state: web::Data<AppState>) -> actix_web::Result<HttpResponse> {
-    // Serve cached file if available
+pub async fn setup_mods_zip(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    // Serve cached file if available — streamed with Range/ETag/Last-Modified support
     if let Some(path) = state.mod_zip_cache.get() {
-        let bytes = web::block(move || std::fs::read(path))
+        let mut file = NamedFile::open_async(path)
             .await
             .map_err(WebError::from)?
-            .map_err(WebError::from)?;
-
-        return Ok(HttpResponse::Ok()
-            .content_type("application/zip")
-            .insert_header((
-                "content-disposition",
-                "attachment; filename=\"quma-mods.zip\"",
-            ))
-            .body(bytes));
+            .set_content_disposition(actix_web::http::header::ContentDisposition {
+                disposition: actix_web::http::header::DispositionType::Attachment,
+                parameters: vec![actix_web::http::header::DispositionParam::Filename(
+                    "quma-mods.zip".to_string(),
+                )],
+            });
+        file = file.set_content_type("application/zip".parse().expect("valid mime"));
+        return Ok(file.into_response(&req));
     }
 
     // Fallback: startup warmup hasn't finished yet — build synchronously.
