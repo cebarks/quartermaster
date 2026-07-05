@@ -309,6 +309,10 @@ fn default_server_ready_timeout() -> u64 {
     120
 }
 
+fn default_container_stop_timeout() -> u64 {
+    10
+}
+
 fn default_enforced() -> bool {
     true
 }
@@ -1074,6 +1078,9 @@ pub struct Config {
     #[serde(default)]
     pub server_port: Option<u16>,
 
+    #[serde(default = "default_container_stop_timeout")]
+    pub container_stop_timeout: u64,
+
     #[serde(default = "default_web_bind")]
     pub web_bind: String,
 
@@ -1165,6 +1172,7 @@ impl Default for Config {
             server_container: None,
             server_host: None,
             server_port: None,
+            container_stop_timeout: 10,
             web_bind: "0.0.0.0".to_string(),
             web_port: 9190,
             web_workers: None,
@@ -1357,6 +1365,7 @@ impl Config {
         env_override!(opt_str: self.server_container, "QUMA_SERVER_CONTAINER");
         env_override!(opt_str: self.server_host, "QUMA_SERVER_HOST");
         env_override!(opt_parse: self.server_port, "QUMA_SERVER_PORT", u16);
+        env_override!(parse: self.container_stop_timeout, "QUMA_CONTAINER_STOP_TIMEOUT", u64);
         env_override!(parse: self.update_check_interval, "QUMA_UPDATE_CHECK_INTERVAL", u64);
         env_override!(opt_parse: self.forge_cache_ttl, "QUMA_FORGE_CACHE_TTL", u64);
         env_override!(bool: self.auto_start_server, "QUMA_AUTO_START_SERVER");

@@ -77,7 +77,7 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
     };
 
     // --- Detect path ---
-    let mgr = ContainerManager::new().context(
+    let mgr = ContainerManager::new(10).context(
         "No container runtime found. Install Podman or Docker and ensure the socket is enabled.",
     )?;
 

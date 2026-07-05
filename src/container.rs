@@ -22,6 +22,7 @@ pub const DEFAULT_SPT_PORT: u16 = 6969;
 #[derive(Clone)]
 pub struct ContainerManager {
     docker: Arc<Docker>,
+    stop_timeout: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -127,7 +128,7 @@ pub fn filter_started_at(started_at: Option<String>) -> Option<String> {
 }
 
 impl ContainerManager {
-    pub fn new() -> Result<Self> {
+    pub fn new(stop_timeout: u64) -> Result<Self> {
         let docker = Docker::connect_with_unix_defaults().or_else(|_| {
             // Podman rootless socket lives under XDG_RUNTIME_DIR, not /var/run/docker.sock
             let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok().filter(|d| {
@@ -148,6 +149,7 @@ impl ContainerManager {
         )?;
         Ok(Self {
             docker: Arc::new(docker),
+            stop_timeout: stop_timeout as i32,
         })
     }
 
@@ -168,7 +170,11 @@ impl ContainerManager {
         self.docker
             .stop_container(
                 container,
-                Some(StopContainerOptionsBuilder::default().t(10).build()),
+                Some(
+                    StopContainerOptionsBuilder::default()
+                        .t(self.stop_timeout)
+                        .build(),
+                ),
             )
             .await
             .with_context(|| format!("failed to stop container '{container}'"))

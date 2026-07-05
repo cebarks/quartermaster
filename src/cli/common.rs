@@ -40,7 +40,7 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
 
     let forge = ForgeClient::new(config.forge_token.clone())?;
 
-    let container_mgr = ContainerManager::new().ok();
+    let container_mgr = ContainerManager::new(config.container_stop_timeout).ok();
 
     Ok(CliContext {
         spt_dir,

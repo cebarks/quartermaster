@@ -79,7 +79,8 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     }
 
     // Create ContainerManager if available
-    let container_mgr = match crate::container::ContainerManager::new() {
+    let container_mgr = match crate::container::ContainerManager::new(config.container_stop_timeout)
+    {
         Ok(mgr) => {
             let mgr = Arc::new(mgr);
 
