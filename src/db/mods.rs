@@ -70,6 +70,7 @@ pub struct ModListFilter {
 impl Database {
     // ── Mod CRUD ──────────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_mod(
         &self,
         forge_mod_id: Option<i64>,
