@@ -576,6 +576,14 @@ pub fn configure_app(
             "/settings/headless",
             web::post().to(handlers::settings::save_headless_settings),
         )
+        .route(
+            "/settings/fika",
+            web::get().to(handlers::fika_settings::fika_settings_page),
+        )
+        .route(
+            "/settings/fika",
+            web::post().to(handlers::fika_settings::fika_settings_save),
+        )
         .route("/headless", web::get().to(handlers::clients::headless_page))
         .route(
             "/headless/{n}",
