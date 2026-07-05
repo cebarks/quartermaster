@@ -1062,6 +1062,7 @@ async fn install_mod_from_url(
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
     let db = state.db.clone();
+    let config = state.config_cloned();
     let url_owned = url.to_string();
     let mod_name_task = mod_name.clone();
     let update_cache = state.update_cache.clone();
@@ -1088,6 +1089,7 @@ async fn install_mod_from_url(
             &forge,
             &db,
             &spt_dir,
+            &config,
             &url_owned,
             &mod_name_task,
         )
@@ -1349,6 +1351,7 @@ pub async fn install_mod(
                 &forge,
                 &db,
                 &spt_dir,
+                &config,
                 mod_id,
                 &mod_name,
                 mod_slug.as_deref(),
