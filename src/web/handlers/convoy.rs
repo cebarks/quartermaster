@@ -438,30 +438,38 @@ pub async fn save_groups(
         }
     }
 
-    // Save to DB
+    // Build forge_id → mod_db_id lookup map (O(1) instead of O(n²))
     let db = state.db.clone();
-    let groups_clone = processed_groups.clone();
+    let forge_to_db: HashMap<i64, i64> = web::block(move || {
+        let db = db.lock();
+        let mods = db.list_mods()?;
+        Ok::<_, anyhow::Error>(
+            mods.into_iter()
+                .filter_map(|m| m.forge_mod_id.map(|forge_id| (forge_id, m.id)))
+                .collect(),
+        )
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    // Convert forge_mod_ids to mod_db_ids
+    let groups_with_db_ids: Vec<(String, String, String, bool, Vec<i64>)> = processed_groups
+        .into_iter()
+        .map(|(name, slug, tier, exclude_headless, forge_ids)| {
+            let mod_db_ids: Vec<i64> = forge_ids
+                .into_iter()
+                .filter_map(|forge_id| forge_to_db.get(&forge_id).copied())
+                .collect();
+            (name, slug, tier, exclude_headless, mod_db_ids)
+        })
+        .collect();
+
+    // Save to DB atomically
+    let db = state.db.clone();
     web::block(move || {
         let db = db.lock();
-        // Clear existing groups
-        for existing in db.list_groups()? {
-            db.delete_group(existing.id)?;
-        }
-        // Insert new groups
-        for (name, slug, tier, exclude_headless, members) in groups_clone {
-            let group_id = db.insert_group(&name, &slug, &tier, exclude_headless)?;
-            for forge_id in members {
-                // Find mod by forge_id
-                if let Some(m) = db
-                    .list_mods()?
-                    .into_iter()
-                    .find(|m| m.forge_mod_id == Some(forge_id))
-                {
-                    db.set_mod_group(m.id, Some(group_id))?;
-                }
-            }
-        }
-        Ok::<_, anyhow::Error>(())
+        db.save_groups_atomic(&groups_with_db_ids)
     })
     .await
     .map_err(WebError::from)?

@@ -197,17 +197,17 @@ async fn svm_page_loads() {
     );
 }
 
-// Modsync tests
+// Convoy tests
 #[actix_web::test]
-async fn modsync_page_requires_auth() {
+async fn convoy_page_requires_auth() {
     let mut app = TestAppBuilder::new().build().await;
 
-    let resp = app.get("/quma/modsync").await;
+    let resp = app.get("/quma/convoy").await;
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 }
 
 #[actix_web::test]
-async fn modsync_page_loads() {
+async fn convoy_page_loads() {
     let mut app = TestAppBuilder::new()
         .with_user("admin", "pass", "admin")
         .build()
@@ -215,7 +215,7 @@ async fn modsync_page_loads() {
 
     app.login_as("admin", "pass").await;
 
-    let resp = app.get("/quma/modsync").await;
+    let resp = app.get("/quma/convoy").await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
 

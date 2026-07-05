@@ -2331,6 +2331,7 @@ pub async fn install_addon(
     let addon_slug = addon_info.slug.clone();
     let mod_zip_cache = state.mod_zip_cache.clone();
     let integrity_cache = state.integrity_cache.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -2373,6 +2374,7 @@ pub async fn install_addon(
                 tasks.complete(task_id, "Addon installed successfully".to_string());
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
+                state_clone.regenerate_convoy();
             }
             Err(e) => {
                 tracing::error!(task_id, err = %e, "addon install failed");
@@ -2509,6 +2511,7 @@ pub async fn update_addon(
     let parent_mod_id = addon.parent_mod_id;
     let mod_zip_cache = state.mod_zip_cache.clone();
     let integrity_cache = state.integrity_cache.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -2555,6 +2558,7 @@ pub async fn update_addon(
                 tasks.complete(task_id, "Addon updated successfully".to_string());
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
+                state_clone.regenerate_convoy();
             }
             Err(e) => {
                 tracing::error!(task_id, addon = %addon_name, parent_mod_id, err = %e, "addon update failed");
@@ -2621,6 +2625,7 @@ pub async fn remove_addon(
             set_flash(&session, "Addon removed successfully", FlashType::Success);
             state.mod_zip_cache.invalidate();
             state.integrity_cache.invalidate();
+            state.regenerate_convoy();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon removal failed");
@@ -2704,6 +2709,7 @@ pub async fn toggle_addon_disable(
             set_flash(&session, msg, FlashType::Success);
             state.mod_zip_cache.invalidate();
             state.integrity_cache.invalidate();
+            state.regenerate_convoy();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon toggle failed");

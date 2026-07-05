@@ -53,9 +53,8 @@ fn is_fika_client_present(install_dir: &Path) -> bool {
 ///
 /// Copies Fika.Core.dll (and supporting files) directly from the server's
 /// BepInEx/plugins/Fika/ directory rather than downloading from Forge/GitHub.
-/// This ensures the headless client uses the exact same binary that modsync
-/// serves to players, avoiding CRC mismatches from different builds of the
-/// same version.
+/// This ensures the headless client uses the exact same binary served to
+/// players, avoiding CRC mismatches from different builds of the same version.
 ///
 /// Returns `true` if files were updated on disk (callers should restart containers).
 pub fn ensure_fika_client(install_dir: &Path, spt_dir: &Path) -> Result<bool> {

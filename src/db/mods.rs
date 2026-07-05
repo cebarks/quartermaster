@@ -633,6 +633,37 @@ impl Database {
         let rows = stmt.query_map([], row_to_installed_mod)?;
         rows.collect()
     }
+
+    /// Atomically replace all groups and their memberships.
+    /// groups: Vec<(name, slug, tier, exclude_headless, Vec<mod_db_id>)>
+    pub fn save_groups_atomic(
+        &self,
+        groups: &[(String, String, String, bool, Vec<i64>)],
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        // Clear all groups
+        tx.execute("DELETE FROM mod_groups", [])?;
+
+        // Insert new groups and assign mods
+        for (name, slug, tier, exclude_headless, member_ids) in groups {
+            tx.execute(
+                "INSERT INTO mod_groups (name, slug, tier, exclude_headless) VALUES (?1, ?2, ?3, ?4)",
+                params![name, slug, tier, exclude_headless],
+            )?;
+            let group_id = tx.last_insert_rowid();
+
+            for mod_id in member_ids {
+                tx.execute(
+                    "UPDATE installed_mods SET group_id = ?1 WHERE id = ?2",
+                    params![group_id, mod_id],
+                )?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 /// A record tracking an in-progress async mod/addon update, used for crash recovery.

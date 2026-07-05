@@ -1087,28 +1087,6 @@ pub fn remove_mod_by_id(
     let delete_root = resolve_mod_root(spt_dir, is_disabled);
     crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
-    // Clean up empty quma-* group directories after mod removal
-    for path in &file_paths {
-        let parts: Vec<&str> = path.split('/').collect();
-        if parts.len() >= 4
-            && parts[0] == "BepInEx"
-            && parts[1] == "plugins"
-            && parts[2].starts_with("quma-")
-        {
-            let group_dir = spt_dir.join(format!("{}/{}/{}", parts[0], parts[1], parts[2]));
-            if group_dir.is_dir() {
-                if let Ok(mut entries) = std::fs::read_dir(&group_dir) {
-                    if entries.next().is_none() {
-                        let _ = std::fs::remove_dir(&group_dir);
-                    }
-                }
-            }
-        }
-    }
-
-    // Look up forge_mod_id before deletion for group cleanup
-    let _forge_mod_id = db.get_mod(mod_db_id)?.and_then(|m| m.forge_mod_id);
-
     // Remove client files from headless before DB delete loses the file list
     if !is_excluded_from_headless(db, mod_db_id) {
         maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
