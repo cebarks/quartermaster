@@ -182,6 +182,7 @@ pub async fn restart_server(
                         }
                     };
                     if result.is_ok() {
+                        crate::queue::cleanup_queued_archive(op);
                         let db = state.db.clone();
                         let op_id = op.id;
                         let _ = web::block(move || {

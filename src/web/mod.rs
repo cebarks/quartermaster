@@ -757,6 +757,9 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         tracing::error!(err = %e, "failed to recover pending updates on startup");
     }
 
+    // Remove orphaned queued archives (no matching pending operation)
+    crate::queue::sweep_orphaned_archives(&spt_dir, &db_arc.lock());
+
     // Regenerate NarcoNet config on startup to ensure consistency
     if modsync_installed && config.modsync.is_some() {
         if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {

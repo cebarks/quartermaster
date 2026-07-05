@@ -57,6 +57,21 @@ pub async fn cancel_op(
     let op_id = path.into_inner();
     let db = state.db.clone();
 
+    // Fetch op to clean up its archive before deletion
+    let op = web::block(move || {
+        let db = db.lock();
+        db.list_pending_ops()
+            .map(|ops| ops.into_iter().find(|o| o.id == op_id))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    if let Some(op) = op {
+        crate::queue::cleanup_queued_archive(&op);
+    }
+
+    let db = state.db.clone();
     web::block(move || {
         let db = db.lock();
         db.delete_pending_op(op_id)
@@ -149,6 +164,7 @@ pub async fn apply_queue(
 
             match result {
                 Ok(()) => {
+                    crate::queue::cleanup_queued_archive(op);
                     let db = state_clone.db.clone();
                     let op_id = op.id;
                     if let Err(e) = web::block(move || {
