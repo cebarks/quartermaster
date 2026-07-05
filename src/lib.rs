@@ -5,6 +5,7 @@ pub mod cli;
 pub mod client;
 pub mod config;
 pub mod container;
+pub mod convoy;
 pub mod db;
 pub mod fika;
 pub mod forge;
