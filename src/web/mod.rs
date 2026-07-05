@@ -792,6 +792,40 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         config_handle.clone(),
     );
 
+    // Initialize FikaClient if fika.jsonc exists and has an API key
+    let fika_client = if fika_installed {
+        let fika_config_path = crate::fika::config::fika_config_path(&spt_dir);
+        match crate::fika::config::read_fika_config(&fika_config_path) {
+            Ok(fika_config) if !fika_config.server.api_key.is_empty() => {
+                let base_url = format!(
+                    "https://{}:{}",
+                    fika_config.server.spt.http.backend_ip,
+                    fika_config.server.spt.http.backend_port
+                );
+                match crate::fika::client::FikaClient::new(&base_url, fika_config.server.api_key) {
+                    Ok(client) => {
+                        tracing::info!("FikaClient initialized");
+                        Some(Arc::new(client))
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, "failed to initialize FikaClient");
+                        None
+                    }
+                }
+            }
+            Ok(_) => {
+                tracing::warn!("Fika installed but api_key is empty");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, "failed to read fika.jsonc");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
@@ -818,6 +852,8 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         proxy_client,
         mod_zip_cache,
         log_level_counts,
+        fika_client,
+        fika_config_lock: parking_lot::Mutex::new(()),
     });
 
     // Pre-warm mod ZIP cache in background

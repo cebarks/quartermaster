@@ -238,6 +238,8 @@ impl ClientSupervisor {
             restarting: false,
             consecutive_failures: 0,
             first_seen: Utc::now(),
+            profile_id: None,
+            prev_fika_status: None,
         });
 
         // Check container status
@@ -270,6 +272,12 @@ impl ClientSupervisor {
         } else {
             None
         };
+
+        // Store profile_id on state
+        state.profile_id = profile_id.clone();
+
+        // Save previous fika_status before updating
+        state.prev_fika_status = state.fika_status.clone();
 
         // Match against Fika API
         if let (Some(pid), Some(headless_data)) = (profile_id.as_ref(), headlesses) {
