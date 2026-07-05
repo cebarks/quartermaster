@@ -174,15 +174,14 @@ pub async fn fika_settings_save(
         // Helper to set array from comma-separated or newline-separated string
         let set_array = |parent: &jsonc_parser::cst::CstObject, key: &str, val: &str| {
             if let Some(prop) = parent.get(key) {
-                let items: Vec<String> = val
+                let items: Vec<CstInputValue> = val
                     .lines()
                     .flat_map(|line| line.split(','))
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
+                    .map(CstInputValue::String)
                     .collect();
-                // ponytail: Vec<String> serialization to JSON always succeeds
-                let json_array = serde_json::to_string(&items).expect("Vec<String> serialization");
-                prop.set_value(CstInputValue::String(json_array));
+                prop.set_value(CstInputValue::Array(items));
             }
         };
 

@@ -211,7 +211,7 @@ pub async fn broadcast(
                 .finish());
         }
     };
-    let msg = &form.message[..form.message.len().min(255)];
+    let msg = &form.message[..form.message.floor_char_boundary(255)];
     match fika_client.push_notification(msg, form.icon).await {
         Ok(()) => set_flash(&session, "Broadcast sent", FlashType::Success),
         Err(e) => set_flash(
@@ -257,7 +257,7 @@ pub async fn send_player_message(
                 .finish());
         }
     };
-    let msg = &form.message[..form.message.len().min(255)];
+    let msg = &form.message[..form.message.floor_char_boundary(255)];
     match fika_client.send_message(&profile_id, msg).await {
         Ok(()) => set_flash(&session, "Message sent", FlashType::Success),
         Err(e) => set_flash(
