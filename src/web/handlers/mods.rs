@@ -974,6 +974,155 @@ pub async fn compat_check(
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
+async fn install_mod_from_url(
+    url: &str,
+    state: &Data<AppState>,
+    _req: &HttpRequest,
+    session: &Session,
+) -> actix_web::Result<HttpResponse> {
+    let mod_name = url
+        .rsplit('/')
+        .next()
+        .and_then(|s| s.split('?').next())
+        .unwrap_or("unknown-mod")
+        .trim_end_matches(".zip")
+        .trim_end_matches(".7z")
+        .to_string();
+
+    // Check name collision
+    {
+        let db = state.db.clone();
+        let name_check = mod_name.clone();
+        let exists = web::block(move || {
+            let db = db.lock();
+            db.get_mod_by_name_or_slug(&name_check)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if exists.is_some() {
+            set_flash(
+                session,
+                &format!("A mod named '{mod_name}' is already installed"),
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    }
+
+    // Queue if server running
+    if should_queue_operation(state).await {
+        let queue_dir = state.spt_dir.join(".quartermaster").join("queued");
+        let _ = std::fs::create_dir_all(&queue_dir);
+
+        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let filename = mod_name.clone();
+        let dest = queue_dir.join(format!("{timestamp}-{filename}.zip"));
+
+        // Download eagerly
+        if let Err(e) = state.forge.download_file(url, &dest).await {
+            set_flash(
+                session,
+                &format!("Failed to download: {e}"),
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+
+        let db = state.db.clone();
+        let mod_name_q = mod_name.clone();
+        let dest_str = dest.to_string_lossy().to_string();
+        let url_owned = url.to_string();
+        let _ = web::block(move || {
+            let db = db.lock();
+            db.insert_pending_url_op(
+                crate::db::users::QueueAction::Install,
+                &mod_name_q,
+                &dest_str,
+                "url",
+                Some(&url_owned),
+                None,
+            )
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        set_flash(
+            session,
+            "Mod queued for install from URL",
+            FlashType::Success,
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/mods"))
+            .finish());
+    }
+
+    // Direct install via background task
+    let forge = state.forge.clone();
+    let spt_dir = state.spt_dir.clone();
+    let db = state.db.clone();
+    let url_owned = url.to_string();
+    let mod_name_task = mod_name.clone();
+    let update_cache = state.update_cache.clone();
+    let mod_zip_cache = state.mod_zip_cache.clone();
+    let state_clone = state.clone();
+
+    // ponytail: use 0 as placeholder forge_mod_id for URL installs
+    let task_id = match state
+        .tasks
+        .start_if_not_running("Installing (URL)", &mod_name, 0)
+    {
+        Some(id) => id,
+        None => {
+            set_flash(session, "An install is already running", FlashType::Warning);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
+    let tasks = state.tasks.clone();
+
+    tokio::spawn(async move {
+        let result = crate::web::install::web_install_from_url(
+            &forge,
+            &db,
+            &spt_dir,
+            &url_owned,
+            &mod_name_task,
+        )
+        .await;
+
+        match result {
+            Ok(_) => {
+                tracing::info!(url = url_owned, "mod installed from URL successfully");
+                update_cache.invalidate();
+                mod_zip_cache.invalidate();
+                state_clone.regenerate_modsync().await;
+                tasks.complete(task_id, "Mod installed from URL".to_string());
+            }
+            Err(e) => {
+                tracing::error!(url = url_owned, err = %e, "URL install failed");
+                tasks.fail(task_id, format!("Install failed: {e}"));
+            }
+        }
+    });
+
+    set_flash(
+        session,
+        &format!("Installing {mod_name} from URL..."),
+        FlashType::Success,
+    );
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/mods"))
+        .finish())
+}
+
 pub async fn install_mod(
     form: Form<InstallForm>,
     state: Data<AppState>,
@@ -992,6 +1141,11 @@ pub async fn install_mod(
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods"))
             .finish());
+    }
+
+    // URL install — skip Forge resolution entirely
+    if mod_ref.starts_with("http://") || mod_ref.starts_with("https://") {
+        return install_mod_from_url(mod_ref, &state, &req, &session).await;
     }
 
     let mod_id: i64 = match mod_ref.parse() {

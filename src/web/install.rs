@@ -56,3 +56,45 @@ pub async fn web_download_extract_and_record(
 
     Ok(db_id)
 }
+
+pub async fn web_install_from_url(
+    forge: &ForgeClient,
+    db: &Arc<Mutex<Database>>,
+    spt_dir: &Path,
+    url: &str,
+    mod_name: &str,
+) -> anyhow::Result<i64> {
+    let tmp_dir = tempfile::tempdir()?;
+    let archive_path = tmp_dir.path().join("mod.zip");
+    forge.download_file(url, &archive_path).await?;
+
+    let spt_dir_clone = spt_dir.to_path_buf();
+    let extracted =
+        actix_web::web::block(move || crate::spt::mods::extract_mod(&archive_path, &spt_dir_clone))
+            .await??;
+
+    let mod_name_owned = mod_name.to_string();
+    let url_owned = url.to_string();
+    let db_clone = db.clone();
+    let db_id = actix_web::web::block(move || {
+        let db = db_clone.lock();
+        let tx = db.begin_transaction()?;
+        let db_id = db.insert_mod(
+            None,
+            None,
+            &mod_name_owned,
+            None,
+            "unknown",
+            "url",
+            Some(&url_owned),
+        )?;
+        for file in &extracted {
+            db.insert_file(db_id, &file.path, Some(&file.hash), Some(file.size as i64))?;
+        }
+        tx.commit()?;
+        Ok::<_, anyhow::Error>(db_id)
+    })
+    .await??;
+
+    Ok(db_id)
+}
