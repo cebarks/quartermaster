@@ -397,6 +397,18 @@ pub fn configure_app(
             "/modsync/preview",
             web::get().to(handlers::modsync::preview_partial),
         )
+        .route(
+            "/give-items/search",
+            web::get().to(handlers::give_items::give_items_search),
+        )
+        .route(
+            "/give-items/send",
+            web::post().to(handlers::give_items::give_items_send),
+        )
+        .route(
+            "/give-items/refresh",
+            web::post().to(handlers::give_items::give_items_refresh),
+        )
         // Admin API (requires can_manage_users via scoped middleware)
         .service(
             web::scope("/admin")
@@ -518,6 +530,10 @@ pub fn configure_app(
         .route("/logs", web::get().to(handlers::logs::logs_page))
         .route("/metrics", web::get().to(handlers::metrics::metrics_page))
         .route("/admin", web::get().to(handlers::admin::admin_page))
+        .route(
+            "/give-items",
+            web::get().to(handlers::give_items::give_items_page),
+        )
         .route("/mods", web::get().to(handlers::mods::list_mods))
         .route("/files", web::get().to(handlers::mods::file_tracking_page))
         .route("/modsync", web::get().to(handlers::modsync::modsync_page))
