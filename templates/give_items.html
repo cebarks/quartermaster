@@ -34,7 +34,8 @@
             <button type="button" class="btn btn-sm btn-outline"
                     hx-post="/quma/api/give-items/refresh"
                     hx-vals='{"csrf_token": "{{ csrf_token }}"}'
-                    hx-swap="none">Refresh Items</button>
+                    hx-swap="none"
+                    hx-on::after-request="window.location.reload()">Refresh Items</button>
         </div>
         <div id="selected-item" style="display: none; margin-bottom: 0.75rem">
             <span class="badge">Selected:</span>

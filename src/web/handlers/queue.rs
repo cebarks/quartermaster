@@ -210,6 +210,7 @@ pub async fn apply_queue(
                 format!("Queue applied: {} operation(s) completed", total),
             );
         } else {
+            state_clone.clear_fika_items();
             let msg = format!(
                 "Queue: {} succeeded, {} failed — {}",
                 total - failures.len(),

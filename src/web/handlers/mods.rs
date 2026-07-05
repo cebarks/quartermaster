@@ -1630,6 +1630,7 @@ pub async fn remove_mod(
     state.update_cache.invalidate();
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
+    state.clear_fika_items();
     // Re-check NarcoNet detection (removing NarcoNet itself changes this)
     state.modsync_installed.store(
         crate::config::is_modsync_installed(&state.spt_dir),
@@ -1691,6 +1692,7 @@ pub async fn toggle_disable(
 
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
+    state.clear_fika_items();
 
     if was_disabled {
         set_flash(
@@ -2668,6 +2670,7 @@ pub async fn remove_addon(
             set_flash(&session, "Addon removed successfully", FlashType::Success);
             state.mod_zip_cache.invalidate();
             state.integrity_cache.invalidate();
+            state.clear_fika_items();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon removal failed");
@@ -2751,6 +2754,7 @@ pub async fn toggle_addon_disable(
             set_flash(&session, msg, FlashType::Success);
             state.mod_zip_cache.invalidate();
             state.integrity_cache.invalidate();
+            state.clear_fika_items();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon toggle failed");
