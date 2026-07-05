@@ -898,6 +898,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         log_level_counts,
         fika_client,
         fika_config_lock: parking_lot::Mutex::new(()),
+        fika_items: Arc::new(parking_lot::Mutex::new(None)),
     });
 
     // Pre-warm mod ZIP cache in background
