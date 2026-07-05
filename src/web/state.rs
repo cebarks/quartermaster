@@ -14,6 +14,7 @@ use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::SptInfo;
 use crate::spt::game_data::GameData;
 use crate::svm::SvmManager;
+use crate::web::integrity_cache::IntegrityCache;
 use crate::web::mod_zip_cache::ModZipCache;
 use crate::web::proxy_metrics::ProxyMetrics;
 use crate::web::sse::ServerEvent;
@@ -30,6 +31,7 @@ pub struct AppState {
     pub spt_info: SptInfo,
     pub tasks: TaskTracker,
     pub update_cache: UpdateCache,
+    pub integrity_cache: IntegrityCache,
     pub events: broadcast::Sender<ServerEvent>,
     pub log_broadcast: Arc<LogBroadcast>,
     pub reload_handles: Arc<ReloadHandles>,

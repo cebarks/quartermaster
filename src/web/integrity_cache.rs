@@ -3,8 +3,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
+use tokio::sync::broadcast;
 
-use crate::health::IntegrityHealth;
+use crate::db::Database;
+use crate::health::{check_integrity_parallel, IntegrityHealth};
+use crate::web::sse::ServerEvent;
 
 struct CachedIntegrity {
     result: IntegrityHealth,
@@ -60,6 +63,48 @@ impl IntegrityCache {
             self.progress.load(Ordering::Relaxed),
             self.total.load(Ordering::Relaxed),
         )
+    }
+
+    pub fn start_check(
+        &self,
+        db: Arc<parking_lot::Mutex<Database>>,
+        spt_dir: std::path::PathBuf,
+        events: broadcast::Sender<ServerEvent>,
+    ) {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+
+        let cache = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let tracked_files = {
+                let db = db.lock();
+                match db.get_all_enabled_mod_files() {
+                    Ok(files) => files,
+                    Err(e) => {
+                        tracing::warn!(err = %e, "integrity check: failed to query tracked files");
+                        cache.running.store(false, Ordering::Relaxed);
+                        return;
+                    }
+                }
+            };
+
+            match check_integrity_parallel(&tracked_files, &spt_dir, &cache.progress, &cache.total)
+            {
+                Ok(result) => {
+                    cache.set(result);
+                    let _ = events.send(ServerEvent::IntegrityChanged);
+                }
+                Err(e) => {
+                    tracing::warn!(err = %e, "integrity check failed");
+                    cache.running.store(false, Ordering::Relaxed);
+                }
+            }
+        });
     }
 
     fn set(&self, result: IntegrityHealth) {

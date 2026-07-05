@@ -864,6 +864,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(events_tx.clone()),
         update_cache: crate::web::update_cache::UpdateCache::new(config.update_check_interval),
+        integrity_cache: crate::web::integrity_cache::IntegrityCache::new(600),
         events: events_tx,
         log_broadcast,
         reload_handles,
