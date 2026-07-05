@@ -201,6 +201,7 @@ pub async fn apply_queue(
         // Regenerate NarcoNet config after all operations
         state_clone.regenerate_modsync().await;
         state_clone.mod_zip_cache.invalidate();
+        state_clone.integrity_cache.invalidate();
 
         if failures.is_empty() {
             tasks.complete(

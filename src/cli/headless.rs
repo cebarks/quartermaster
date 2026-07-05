@@ -78,6 +78,11 @@ pub enum HeadlessAction {
         /// Client number
         client: u32,
     },
+    /// Gracefully restart a headless client via Fika ShutdownClient API
+    GracefulRestart {
+        /// Client number
+        client: u32,
+    },
     /// Set the desired number of headless clients
     Scale {
         /// Desired number of clients
@@ -104,6 +109,7 @@ pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
         HeadlessAction::Stop { client } => stop(ctx, *client).await,
         HeadlessAction::Start { client } => start(ctx, *client).await,
         HeadlessAction::Restart { client } => restart(ctx, *client).await,
+        HeadlessAction::GracefulRestart { client } => graceful_restart(ctx, *client).await,
         HeadlessAction::Scale { count } => scale(ctx, *count).await,
     }
 }
@@ -399,15 +405,18 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
     config.save(&config_path)?;
 
     // Update fika.jsonc
-    let fika_config_path = ctx
-        .spt_dir
-        .join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
     let new_count = config
         .headless
         .as_ref()
         .map(|h| h.client_count())
         .unwrap_or(0);
-    crate::client::converge::edit_headless_amount(&fika_config_path, new_count)?;
+    let fika_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    if fika_path.exists() {
+        // ponytail: no fika_config_lock here — CLI runs single-threaded, no lock needed
+        let cst = crate::fika::config::read_fika_cst(&fika_path)?;
+        crate::fika::config::set_headless_amount(&cst, new_count);
+        crate::fika::config::write_fika_cst(&cst, &fika_path)?;
+    }
 
     // Clean up overlay directory
     if let Some(ref headless) = config.headless {
@@ -500,6 +509,97 @@ async fn restart(ctx: &CliContext, client: u32) -> Result<()> {
     println!("Restarting {}...", name);
     container_mgr.restart(&name).await?;
     println!("Client {} restarted successfully.", client);
+
+    Ok(())
+}
+
+async fn graceful_restart(ctx: &CliContext, client: u32) -> Result<()> {
+    let container_mgr = require_container_manager(ctx)?;
+    let name = client_container_name(client);
+
+    // Verify container exists and get profile ID
+    let inspect = container_mgr
+        .inspect(&name)
+        .await
+        .with_context(|| format!("container '{}' not found", name))?;
+
+    let running = inspect
+        .state
+        .as_ref()
+        .and_then(|s| s.running)
+        .unwrap_or(false);
+
+    if !running {
+        bail!("Client {} is not running", client);
+    }
+
+    let profile_id = inspect
+        .config
+        .and_then(|c| c.env)
+        .and_then(|env| {
+            env.iter()
+                .find(|e| e.starts_with("PROFILE_ID="))
+                .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                .map(String::from)
+        })
+        .ok_or_else(|| anyhow!("Client {} has no profile ID", client))?;
+
+    // Check Fika status
+    let (server_host, server_port) =
+        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+    let spt_client = SptClient::new(&server_host, server_port)?;
+
+    if let Ok(resp) = spt_client.headless_clients().await {
+        if let Some(client_info) = resp.headlesses.get(&profile_id) {
+            if client_info.state == EHeadlessStatus::InRaid {
+                bail!(
+                    "Client {} is in a raid. Use force restart (`quma headless restart {}`)",
+                    client,
+                    client
+                );
+            }
+        }
+    }
+
+    // Create Fika client
+    let fika_config_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    let fika_config = crate::fika::config::read_fika_config(&fika_config_path)
+        .context("failed to read fika.jsonc")?;
+
+    if fika_config.server.api_key.is_empty() {
+        bail!("Fika API key not configured in fika.jsonc");
+    }
+
+    let base_url = format!(
+        "https://{}:{}",
+        fika_config.server.spt.http.backend_ip, fika_config.server.spt.http.backend_port
+    );
+    let fika_client = crate::fika::client::FikaClient::new(&base_url, fika_config.server.api_key)?;
+
+    // Send shutdown
+    println!("Sending graceful shutdown to client {}...", client);
+    fika_client.shutdown_headless(&profile_id).await?;
+
+    // Poll for exit (30s timeout)
+    println!("Waiting for container to exit (30s timeout)...");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut exited = false;
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        if !container_mgr.is_running(&name).await.unwrap_or(true) {
+            exited = true;
+            break;
+        }
+    }
+
+    if exited {
+        println!("Client {} shut down gracefully.", client);
+    } else {
+        bail!(
+            "Client {} did not shut down within 30s. Use force restart if needed.",
+            client
+        );
+    }
 
     Ok(())
 }

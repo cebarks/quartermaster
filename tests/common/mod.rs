@@ -181,6 +181,8 @@ impl TestAppBuilder {
             client_states: None,
             converging: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             fika_installed: false,
+            fika_client: None,
+            fika_config_lock: parking_lot::Mutex::new(()),
             modsync_installed: std::sync::atomic::AtomicBool::new(false),
             svm: None,
             svm_installed: std::sync::atomic::AtomicBool::new(false),
@@ -193,6 +195,7 @@ impl TestAppBuilder {
                 db_arc.clone(),
                 config_arc.clone(),
             ),
+            integrity_cache: spt_quartermaster::web::integrity_cache::IntegrityCache::new(300),
             log_level_counts,
         });
 

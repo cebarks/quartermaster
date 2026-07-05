@@ -338,7 +338,10 @@ fn create_container_opts(data_dir: &Path, container_name: &str) -> CreateContain
     CreateContainerOpts {
         name: container_name.to_string(),
         image: SPT_SERVER_IMAGE.to_string(),
-        env: vec![("LISTEN_ALL_NETWORKS".to_string(), "true".to_string())],
+        env: vec![
+            ("LISTEN_ALL_NETWORKS".to_string(), "true".to_string()),
+            ("OVERWRITE_FIKA".to_string(), "false".to_string()),
+        ],
         volumes: vec![VolumeMount {
             host_path: data_dir.to_path_buf(),
             container_path: "/opt/server".to_string(),

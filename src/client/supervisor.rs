@@ -38,6 +38,7 @@ pub struct ClientSupervisor {
     container_mgr: ContainerManager,
     spt_client: SptClient,
     config: Arc<parking_lot::RwLock<Config>>,
+    db: Arc<parking_lot::Mutex<crate::db::Database>>,
     converging: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     state: Arc<RwLock<Vec<ClientState>>>,
@@ -50,6 +51,7 @@ impl ClientSupervisor {
         container_mgr: ContainerManager,
         spt_client: SptClient,
         config: Arc<parking_lot::RwLock<Config>>,
+        db: Arc<parking_lot::Mutex<crate::db::Database>>,
         converging: Arc<AtomicBool>,
         cancel_token: CancellationToken,
     ) -> Self {
@@ -58,6 +60,7 @@ impl ClientSupervisor {
             container_mgr,
             spt_client,
             config,
+            db,
             converging,
             cancel_token,
             state,
@@ -238,6 +241,8 @@ impl ClientSupervisor {
             restarting: false,
             consecutive_failures: 0,
             first_seen: Utc::now(),
+            profile_id: None,
+            prev_fika_status: None,
         });
 
         // Check container status
@@ -271,6 +276,12 @@ impl ClientSupervisor {
             None
         };
 
+        // Store profile_id on state
+        state.profile_id = profile_id.clone();
+
+        // Save previous fika_status before updating
+        state.prev_fika_status = state.fika_status.clone();
+
         // Match against Fika API
         if let (Some(pid), Some(headless_data)) = (profile_id.as_ref(), headlesses) {
             if let Some(client_info) = headless_data.headlesses.get(pid) {
@@ -283,6 +294,33 @@ impl ClientSupervisor {
         } else {
             state.fika_status = None;
             state.players.clear();
+        }
+
+        // Detect IN_RAID → READY transition and capture session stats
+        if state.prev_fika_status == Some(EHeadlessStatus::InRaid)
+            && state.fika_status == Some(EHeadlessStatus::Ready)
+        {
+            let container_name = state.container_name.clone();
+            let db = self.db.clone();
+            let index = state.index;
+            let pid = state.profile_id.clone().unwrap_or_default();
+            let mgr = self.container_mgr.clone();
+            tokio::spawn(async move {
+                if let Ok(log_text) = tail_container_logs(&mgr, &container_name, 100).await {
+                    if let Some(stats) = crate::fika::stats::parse_session_stats(&log_text) {
+                        let db = db.lock();
+                        if let Err(e) = db.insert_session_stats(&stats, index, &pid) {
+                            tracing::warn!(err = %e, client_index = index, "failed to store session stats");
+                        } else {
+                            tracing::info!(
+                                client_index = index,
+                                raid_time_seconds = stats.time_in_raid_seconds,
+                                "captured session stats"
+                            );
+                        }
+                    }
+                }
+            });
         }
 
         // Compute health
@@ -539,6 +577,29 @@ async fn exit_watcher_loop(
             }
         }
     }
+}
+
+async fn tail_container_logs(
+    mgr: &ContainerManager,
+    container: &str,
+    lines: usize,
+) -> anyhow::Result<String> {
+    let mut stream = mgr.log_stream(container, lines, false);
+    let mut output = Vec::new();
+
+    while let Some(log) = stream.next().await {
+        match log? {
+            bollard::container::LogOutput::StdOut { message } => {
+                output.extend_from_slice(&message);
+            }
+            bollard::container::LogOutput::StdErr { message } => {
+                output.extend_from_slice(&message);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&output).to_string())
 }
 
 pub fn compute_health(

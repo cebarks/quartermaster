@@ -6,6 +6,7 @@ mod client;
 mod config;
 mod container;
 mod db;
+mod fika;
 mod forge;
 mod headless_sync;
 mod health;

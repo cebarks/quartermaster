@@ -4,6 +4,7 @@ pub mod error;
 pub mod flash;
 pub mod handlers;
 pub mod install;
+pub mod integrity_cache;
 pub mod invite;
 pub mod mod_zip_cache;
 pub mod nav;
@@ -128,7 +129,11 @@ pub fn configure_app(
         .service(web::scope("/assets").route("/{path:.*}", web::get().to(serve_asset)))
         // Auth routes (public)
         .route("/login", web::get().to(handlers::auth::login_page))
-        .route("/logout", web::post().to(handlers::auth::logout));
+        .route("/logout", web::post().to(handlers::auth::logout))
+        .route(
+            "/health/integrity",
+            web::get().to(handlers::mods::integrity_json),
+        );
 
     // Rate-limited auth routes
     if enable_rate_limiting {
@@ -239,6 +244,10 @@ pub fn configure_app(
             "/dashboard/headless-status",
             web::get().to(handlers::clients::dashboard_clients_status_partial),
         )
+        .route(
+            "/dashboard/players",
+            web::get().to(handlers::dashboard::players_partial),
+        )
         // Metrics partials
         .route(
             "/metrics/proxy",
@@ -248,6 +257,14 @@ pub fn configure_app(
         .route(
             "/mods/integrity",
             web::get().to(handlers::mods::integrity_partial),
+        )
+        .route(
+            "/mods/integrity/recheck",
+            web::post().to(handlers::mods::integrity_recheck),
+        )
+        .route(
+            "/mods/integrity/progress",
+            web::get().to(handlers::mods::integrity_progress),
         )
         .route(
             "/headless/status",
@@ -572,6 +589,14 @@ pub fn configure_app(
             "/settings/headless",
             web::post().to(handlers::settings::save_headless_settings),
         )
+        .route(
+            "/settings/fika",
+            web::get().to(handlers::fika_settings::fika_settings_page),
+        )
+        .route(
+            "/settings/fika",
+            web::post().to(handlers::fika_settings::fika_settings_save),
+        )
         .route("/headless", web::get().to(handlers::clients::headless_page))
         .route(
             "/headless/{n}",
@@ -673,6 +698,10 @@ pub fn configure_app(
             web::post().to(handlers::clients::client_restart),
         )
         .route(
+            "/headless/{n}/graceful-restart",
+            web::post().to(handlers::clients::client_graceful_restart),
+        )
+        .route(
             "/headless/{n}/stop",
             web::post().to(handlers::clients::client_stop),
         )
@@ -695,6 +724,15 @@ pub fn configure_app(
         .route(
             "/headless/{n}/delete",
             web::post().to(handlers::clients::client_delete),
+        )
+        .route(
+            "/headless/{n}/start-raid",
+            web::post().to(handlers::clients::client_start_raid),
+        )
+        .route("/broadcast", web::post().to(handlers::dashboard::broadcast))
+        .route(
+            "/players/{profile_id}/message",
+            web::post().to(handlers::dashboard::send_player_message),
         );
 
     quma_scope = quma_scope.service(auth_scope);
@@ -797,6 +835,40 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         config_handle.clone(),
     );
 
+    // Initialize FikaClient if fika.jsonc exists and has an API key
+    let fika_client = if fika_installed {
+        let fika_config_path = crate::fika::config::fika_config_path(&spt_dir);
+        match crate::fika::config::read_fika_config(&fika_config_path) {
+            Ok(fika_config) if !fika_config.server.api_key.is_empty() => {
+                let base_url = format!(
+                    "https://{}:{}",
+                    fika_config.server.spt.http.backend_ip,
+                    fika_config.server.spt.http.backend_port
+                );
+                match crate::fika::client::FikaClient::new(&base_url, fika_config.server.api_key) {
+                    Ok(client) => {
+                        tracing::info!("FikaClient initialized");
+                        Some(Arc::new(client))
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, "failed to initialize FikaClient");
+                        None
+                    }
+                }
+            }
+            Ok(_) => {
+                tracing::warn!("Fika installed but api_key is empty");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, "failed to read fika.jsonc");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
@@ -807,6 +879,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(events_tx.clone()),
         update_cache: crate::web::update_cache::UpdateCache::new(config.update_check_interval),
+        integrity_cache: crate::web::integrity_cache::IntegrityCache::new(600),
         events: events_tx,
         log_broadcast,
         reload_handles,
@@ -823,6 +896,8 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         proxy_client,
         mod_zip_cache,
         log_level_counts,
+        fika_client,
+        fika_config_lock: parking_lot::Mutex::new(()),
     });
 
     // Pre-warm mod ZIP cache in background

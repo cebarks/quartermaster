@@ -1,0 +1,53 @@
+<div id="players-section">
+{% if !available %}
+    <p class="text-muted">Fika integration not available</p>
+{% elif players.is_empty() %}
+    <p class="text-muted">No players online</p>
+{% else %}
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Level</th>
+                <th>Status</th>
+                <th>Location</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for p in players %}
+            <tr>
+                <td>{{ p.nickname }}</td>
+                <td>{{ p.level }}</td>
+                <td>
+                    {% match p.activity %}
+                        {% when 0 %}<span class="badge badge-secondary">In Menu</span>
+                        {% when 1 %}<span class="badge badge-success">In Raid</span>
+                        {% when 2 %}<span class="badge badge-info">In Stash</span>
+                        {% when 3 %}<span class="badge badge-info">In Hideout</span>
+                        {% when 4 %}<span class="badge badge-info">In Flea</span>
+                        {% when _ %}<span class="badge badge-secondary">Unknown</span>
+                    {% endmatch %}
+                </td>
+                <td>
+                    {% if let Some(raid) = p.raid_information %}
+                        {{ raid.location }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+                <td>
+                    {% if user.can("server.control") %}
+                    <form method="post" action="/quma/players/{{ p.profile_id }}/message" style="display:inline-flex;gap:0.25rem;align-items:center">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="text" name="message" class="form-control form-control-sm" maxlength="255" placeholder="Send message" required style="width:200px;margin:0">
+                        <button type="submit" class="btn btn-sm btn-primary" style="margin:0">Send</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+{% endif %}
+</div>

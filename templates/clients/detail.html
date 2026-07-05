@@ -14,10 +14,16 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
         </form>
-        <form method="post" action="/quma/headless/{{ client.state.index }}/restart" style="display:inline"
-              onsubmit="return confirm('Restart client {{ client.state.index }}?')">
+        <form method="post" action="/quma/headless/{{ client.state.index }}/graceful-restart" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Restart</button>
+            <button type="submit" class="btn btn-sm btn-warning"
+                {% if client.state.fika_status == Some(crate::spt::headless::EHeadlessStatus::InRaid) %}disabled{% endif %}
+                title="Send graceful shutdown via Fika API">{% call icons::refresh() %}{% endcall %} Graceful Restart</button>
+        </form>
+        <form method="post" action="/quma/headless/{{ client.state.index }}/restart" style="display:inline"
+              onsubmit="return confirm('Force restart client {{ client.state.index }}?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Force Restart</button>
         </form>
         <form method="post" action="/quma/headless/{{ client.state.index }}/stop" style="display:inline"
               onsubmit="return confirm('Stop client {{ client.state.index }}?')">
@@ -136,6 +142,46 @@
         </tbody>
     </table>
 </div>
+
+{% if client.state.fika_status == Some(crate::spt::headless::EHeadlessStatus::Ready) && user.can("headless.manage") %}
+<div class="card">
+    <h2>Start Raid</h2>
+    <form method="post" action="/quma/headless/{{ client.state.index }}/start-raid">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-group">
+            <label for="location_id">Map</label>
+            <select id="location_id" name="location_id" class="form-control" required>
+                <option value="factory4_day">Factory (Day)</option>
+                <option value="factory4_night">Factory (Night)</option>
+                <option value="bigmap">Customs</option>
+                <option value="Woods">Woods</option>
+                <option value="Shoreline">Shoreline</option>
+                <option value="Interchange">Interchange</option>
+                <option value="RezervBase">Reserve</option>
+                <option value="TarkovStreets">Streets of Tarkov</option>
+                <option value="Lighthouse">Lighthouse</option>
+                <option value="Sandbox">Ground Zero</option>
+                <option value="laboratory">Labs</option>
+                <option value="Labyrinth">The Lab</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="time">Time of Day</label>
+            <select id="time" name="time" class="form-control" required>
+                <option value="0">Day</option>
+                <option value="1">Night</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="use_event" value="1">
+                Use Event Settings
+            </label>
+        </div>
+        <button type="submit" class="btn btn-primary">Start Raid</button>
+    </form>
+</div>
+{% endif %}
 
 <p class="text-muted text-sm mt-2"><a href="/quma/headless">← Back to headless clients</a></p>
 {% endblock %}

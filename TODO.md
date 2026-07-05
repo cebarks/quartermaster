@@ -1,20 +1,27 @@
 # TODO
 
 ## Top Priority
+- !!! mod requests/queue/installed lifecycle
+- !!! Notes page
 - SVM preset upload size limit
-- mod forge link in mod info page doesn't always work (i.e. `https://tarkov.grovest.io/quma/mods/48`)
-- unknown mods show as fika incompatible
-- expected dependencies not shown in the queue
+- players don't show up in main menu fika
+- mod config management
+- install mod from a URL
+- fix UX for mod requests/management
+
+## Triage
+- integrity checks should be multi-threaded, async and cached, with a button to force a recheck
 
 ## Bugs
 - canceling an install queue item puts it back in requests (if it was previously requested)
 - multi-tab pages active tab highlighting is broken on nav
 - account creation dropdown missing SPT dev profiles
 - can't rekove already approved mods that haven't been installed
+- headless profiles should not show be included in raid stats
+- numa scheduling webui config is broken
+- mod requests list shouldn't include already installed mods
 
 ## Security
-- `update_role_permissions` returns ambiguous `Ok(0)` for two different guard conditions (`rbac.rs`)
-- `mod_backups_partial` readable by any authenticated user (`backup.rs` — mutating actions check `ModsUpdate`, but data is served without permission check)
 - cookie-based sessions can't be individually revoked
 
 ## Core Architecture
@@ -24,8 +31,6 @@
 - ~~config save ceremony repeated 8+ times~~ (reduced — `AppState::persist_config` used by settings+modsync; clients.rs 3× remain due to tokio::spawn constraints)
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
-
-- search handlers duplicated between mods and requests (`mods.rs`, `requests.rs`)
 - refactor mod group implementation to be it's own system outside of narconet. narconet uses app-wide groups
 
 ## Headless Client
@@ -43,6 +48,8 @@
 - better health client detection
 - show active headless' in raid on dashboard, with player profile names, not ids
 - don't delete headless overlay by default, allow selection of which existing, not already in use overlay to use on new client creation (or when editting a client)
+- be able to `podman rm` and re-init the client without wiping anything else
+- persistent headless stats
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
@@ -69,17 +76,17 @@
 - no ARIA attributes
 - toast messages auto-fade too fast for errors
 - template duplication: ~~request cards~~, ~~client status table (3×)~~ (dead `clients/list.html` deleted), raid outcome badges (4×)
-- tab implementation inconsistency — 4 different patterns across pages
-- template duplication: client status table (3×), raid outcome badges (4×)
+- tab implementation inconsistency — 2 different patterns across pages (`.tab-bar`/`tabSwitch` vs `.log-tab-bar`/inline JS)
 - clean up mod file list, add collapsable folder tree, file viewer (editor too maybe; need to investigate)
+- move mod install card above list in /quma/mods
 
 ## Features
 - automatic mod config backup via git
+- Quartermaster client app (tauri)
 - fika.jsonc: set client force ip (needs research first if this is the right approach)
 - better fika integration
-    - pre-load raid on headless from webui
-    - active players list on dashboard
     - general players list
+    - expose config ui for `SPT/user/mods/fika-server/assets/configs/fika.jsonc`
 - stand up server from predefined server config (storing settings in github without database) 
 - last logged for players (both into webui and into spt)
 - display profile id on profile page
@@ -88,7 +95,6 @@
 - user sorting
 - better metrics: dynamic `by prefix` sorting, graphs
 - profile editor
-- broadcast message via server to all clients (https://github.com/cebarks/fika-scripts)
 - MOTD
 - NarcoNet: better default sizes for extra/exclusions text areas
 - better formatting for SVM editor: section breakdown with header toggles, field name vs subtext, default value shown, download/upload preset, preset toggle
@@ -130,15 +136,10 @@ Items below are sourced from review/audit documents. See the linked file for ful
 **High:**
 - proxy has no authentication — unauthenticated access to SPT server API (F1, `proxy.rs:20`)
 
-**Medium:**
-- `update_role_permissions` returns ambiguous `Ok(0)` for two different guard conditions (F4, `rbac.rs:297`)
-
 **Low:**
 - `update_status_partial` serves privileged data to all authenticated users (F5, `mods.rs`)
-- `mod_backups_partial` readable by any authenticated user (F9, `backup.rs` — mutating actions check `ModsUpdate`)
 
 **Info:**
-- cookie-based sessions can't be individually revoked (F13)
 - profile/raid data visible to all authenticated users (F14)
 - no mechanism to sync role permissions on upgrade (F15)
 
@@ -146,11 +147,9 @@ Items below are sourced from review/audit documents. See the linked file for ful
 
 **Critical/High:**
 - proxy buffers entire request body with no size limit (1.5, `proxy.rs:41`)
-- ZIP archive for join page built entirely in memory (1.6, `join.rs:441`)
 
 **Architecture/Performance:**
 - install logic duplicated between mods and requests handlers (3.2)
-- config save ceremony repeated 8+ times (3.3)
 - `render_user_row` reloads ALL profile stats for one row (3.4, `admin.rs:780`)
 - `WebError` always returns HTML even for API endpoints (3.5, `error.rs`)
 - blocking filesystem reads on async runtime (3.6, `settings.rs`, `svm.rs`)

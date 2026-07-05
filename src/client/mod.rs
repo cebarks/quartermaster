@@ -34,4 +34,8 @@ pub struct ClientState {
     pub restarting: bool,
     pub consecutive_failures: u32,
     pub first_seen: DateTime<Utc>,
+    #[allow(dead_code)] // ponytail: used in later tasks
+    pub profile_id: Option<String>,
+    #[allow(dead_code)] // ponytail: used in later tasks
+    pub prev_fika_status: Option<EHeadlessStatus>,
 }

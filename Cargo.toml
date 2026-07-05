@@ -87,8 +87,14 @@ rpassword = "7"
 # Non-poisoning Mutex for web DB access
 parking_lot = "0.12"
 
+# Parallel iteration
+rayon = "1"
+
 # Regex for targeted text replacement
 regex = "1"
+
+# JSONC parsing for Fika config
+jsonc-parser = { version = "0.26", features = ["cst", "serde"] }
 
 # Structured logging
 tracing = "0.1"
@@ -97,6 +103,7 @@ tracing-actix-web = "0.7"
 tracing-appender = "0.2"
 rolling-file = "0.2"
 actix-web-lab = "0.26"
+actix-files = "0.6"
 tokio-stream = "0.1"
 mini-moka = "0.10.3"
 local-ip-address = "0.6.13"
