@@ -1352,8 +1352,8 @@ pub async fn update_mod(
 
             tasks.update_message(task_id, "Extracting update…".to_string());
 
-            // Extract to staging outside the DB lock — this is the slow part
-            let staging_dir = tempfile::tempdir()?;
+            // Extract to staging on the same filesystem so rename() works
+            let staging_dir = crate::ops::staging_tempdir(&spt_dir)?;
             let staging_path = staging_dir.path().to_path_buf();
             let archive = archive_path.clone();
             let extracted = actix_web::web::block(move || {
@@ -1658,8 +1658,7 @@ pub async fn update_all_mods(
                     format!("Extracting {} ({}/{})…", mod_db.name, i + 1, total),
                 );
 
-                // Extract to staging outside the DB lock
-                let staging_dir = tempfile::tempdir()?;
+                let staging_dir = crate::ops::staging_tempdir(&spt_dir)?;
                 let staging_path = staging_dir.path().to_path_buf();
                 let archive = archive_path.clone();
                 let extracted = actix_web::web::block(move || {
@@ -2329,8 +2328,7 @@ pub async fn update_addon(
 
             tasks.update_message(task_id, format!("Extracting {addon_name} update…"));
 
-            // Extract to staging outside the DB lock
-            let staging_dir = tempfile::tempdir()?;
+            let staging_dir = crate::ops::staging_tempdir(&spt_dir)?;
             let staging_path = staging_dir.path().to_path_buf();
             let archive = archive_path.clone();
             let staging_path_clone = staging_path.clone();

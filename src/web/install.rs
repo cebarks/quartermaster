@@ -33,9 +33,7 @@ pub async fn web_download_extract_and_record(
     let version_str = version.version.clone();
     let mod_name_owned = mod_name.to_string();
     let mod_slug_owned = mod_slug.map(|s| s.to_string());
-    let spt_dir_owned = spt_dir.to_path_buf();
     let db_clone = db.clone();
-    let db_for_scan = db.clone();
     let db_id = actix_web::web::block(move || {
         let db = db_clone.lock();
         let tx = db.begin_transaction()?;
@@ -53,11 +51,6 @@ pub async fn web_download_extract_and_record(
         Ok::<_, anyhow::Error>(db_id)
     })
     .await??;
-
-    let _ = actix_web::web::block(move || {
-        crate::ops::scan_and_record_runtime_files(&db_for_scan, db_id, &spt_dir_owned)
-    })
-    .await;
 
     Ok(db_id)
 }

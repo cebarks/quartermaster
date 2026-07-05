@@ -34,6 +34,8 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
 
+    crate::ops::cleanup_staging(&spt_dir);
+
     if let Err(e) = crate::ops::migrate_disabled_to_stash(&db, &spt_dir) {
         tracing::error!(err = %e, "failed to migrate disabled mods to stash");
     }
