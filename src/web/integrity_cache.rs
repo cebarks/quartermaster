@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,12 +12,13 @@ use crate::web::sse::ServerEvent;
 struct CachedIntegrity {
     result: IntegrityHealth,
     checked_at: Instant,
+    generation: u64,
 }
 
 #[derive(Clone)]
 pub struct IntegrityCache {
     cache: Arc<RwLock<Option<CachedIntegrity>>>,
-    dirty: Arc<AtomicBool>,
+    generation: Arc<AtomicU64>,
     running: Arc<AtomicBool>,
     progress: Arc<AtomicUsize>,
     total: Arc<AtomicUsize>,
@@ -28,7 +29,7 @@ impl IntegrityCache {
     pub fn new(ttl_secs: u64) -> Self {
         Self {
             cache: Arc::new(RwLock::new(None)),
-            dirty: Arc::new(AtomicBool::new(true)),
+            generation: Arc::new(AtomicU64::new(0)),
             running: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicUsize::new(0)),
             total: Arc::new(AtomicUsize::new(0)),
@@ -41,17 +42,17 @@ impl IntegrityCache {
     }
 
     pub fn is_stale(&self) -> bool {
-        if self.dirty.load(Ordering::Relaxed) {
-            return true;
-        }
         match self.cache.read().as_ref() {
-            Some(c) => c.checked_at.elapsed() >= self.ttl,
+            Some(c) => {
+                c.generation != self.generation.load(Ordering::Relaxed)
+                    || c.checked_at.elapsed() >= self.ttl
+            }
             None => true,
         }
     }
 
     pub fn invalidate(&self) {
-        self.dirty.store(true, Ordering::Relaxed);
+        self.generation.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn is_running(&self) -> bool {
@@ -71,6 +72,9 @@ impl IntegrityCache {
         spt_dir: std::path::PathBuf,
         events: broadcast::Sender<ServerEvent>,
     ) {
+        self.progress.store(0, Ordering::Relaxed);
+        self.total.store(0, Ordering::Relaxed);
+
         if self
             .running
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -79,6 +83,7 @@ impl IntegrityCache {
             return;
         }
 
+        let generation_at_start = self.generation.load(Ordering::Relaxed);
         let cache = self.clone();
         tokio::task::spawn_blocking(move || {
             let tracked_files = {
@@ -96,7 +101,7 @@ impl IntegrityCache {
             match check_integrity_parallel(&tracked_files, &spt_dir, &cache.progress, &cache.total)
             {
                 Ok(result) => {
-                    cache.set(result);
+                    cache.complete_check(result, generation_at_start);
                     let _ = events.send(ServerEvent::IntegrityChanged);
                 }
                 Err(e) => {
@@ -107,12 +112,17 @@ impl IntegrityCache {
         });
     }
 
-    fn set(&self, result: IntegrityHealth) {
+    fn complete_check(&self, result: IntegrityHealth, generation_at_start: u64) {
+        let current_generation = self.generation.load(Ordering::Relaxed);
         *self.cache.write() = Some(CachedIntegrity {
             result,
             checked_at: Instant::now(),
+            generation: if generation_at_start == current_generation {
+                current_generation
+            } else {
+                generation_at_start
+            },
         });
-        self.dirty.store(false, Ordering::Relaxed);
         self.running.store(false, Ordering::Relaxed);
     }
 }
@@ -141,9 +151,10 @@ mod tests {
     }
 
     #[test]
-    fn cache_hit_after_set() {
+    fn cache_hit_after_complete_check() {
         let cache = IntegrityCache::new(600);
-        cache.set(empty_result());
+        let gen = cache.generation.load(Ordering::Relaxed);
+        cache.complete_check(empty_result(), gen);
         let result = cache.get();
         assert!(result.is_some());
         assert_eq!(result.unwrap().tracked_files, 10);
@@ -153,7 +164,8 @@ mod tests {
     #[test]
     fn cache_stale_after_invalidate() {
         let cache = IntegrityCache::new(600);
-        cache.set(empty_result());
+        let gen = cache.generation.load(Ordering::Relaxed);
+        cache.complete_check(empty_result(), gen);
         assert!(!cache.is_stale());
         cache.invalidate();
         assert!(cache.is_stale());
@@ -164,7 +176,8 @@ mod tests {
     #[test]
     fn cache_stale_after_ttl() {
         let cache = IntegrityCache::new(0); // 0s TTL = immediately stale
-        cache.set(empty_result());
+        let gen = cache.generation.load(Ordering::Relaxed);
+        cache.complete_check(empty_result(), gen);
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert!(cache.is_stale());
     }

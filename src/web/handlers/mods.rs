@@ -2587,7 +2587,15 @@ pub async fn toggle_addon_disable(
         .finish())
 }
 
-pub async fn integrity_json(state: Data<AppState>) -> actix_web::Result<HttpResponse> {
+pub async fn integrity_json(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    let peer = req.peer_addr();
+    let is_loopback = peer.map_or(false, |addr| addr.ip().is_loopback());
+    if !is_loopback {
+        return Ok(HttpResponse::Forbidden().finish());
+    }
     match state.integrity_cache.get() {
         Some(report) => Ok(HttpResponse::Ok().json(report)),
         None => Ok(HttpResponse::ServiceUnavailable().finish()),
