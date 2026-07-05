@@ -68,7 +68,7 @@ pub fn filter_setup_zip_files(
             }
 
             // 3. Server-only files
-            if config.exclude_server_files && path.starts_with("user/mods/") {
+            if config.exclude_server_files && path.starts_with("SPT/user/mods/") {
                 return false;
             }
 
@@ -313,11 +313,11 @@ mod tests {
         let spt_dir = tempfile::tempdir().unwrap();
         make_test_file(
             spt_dir.path(),
-            "user/mods/test/package.json",
+            "SPT/user/mods/test/package.json",
             b"{\"name\":\"test\"}",
         );
 
-        let files = vec![test_file(1, "user/mods/test/package.json")];
+        let files = vec![test_file(1, "SPT/user/mods/test/package.json")];
 
         let out = spt_dir.path().join("out.zip");
         build_mod_zip_to_file(spt_dir.path(), &files, &out).unwrap();
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn build_zip_to_file_skips_missing_files() {
         let spt_dir = tempfile::tempdir().unwrap();
-        let files = vec![test_file(1, "user/mods/ghost/package.json")];
+        let files = vec![test_file(1, "SPT/user/mods/ghost/package.json")];
 
         let out = spt_dir.path().join("out.zip");
         build_mod_zip_to_file(spt_dir.path(), &files, &out).unwrap();
@@ -353,14 +353,19 @@ mod tests {
     #[test]
     fn cache_get_returns_path_after_rebuild() {
         let spt_dir = tempfile::tempdir().unwrap();
-        make_test_file(spt_dir.path(), "user/mods/test/package.json", b"{}");
+        make_test_file(spt_dir.path(), "SPT/user/mods/test/package.json", b"{}");
 
         let db = Database::open_in_memory().unwrap();
         // Insert a mod + file so the query returns something
         db.insert_mod(1, 1, "test-mod", Some("test-mod"), "1.0.0")
             .unwrap();
-        db.insert_file(1, "user/mods/test/package.json", Some("abc123"), Some(2))
-            .unwrap();
+        db.insert_file(
+            1,
+            "SPT/user/mods/test/package.json",
+            Some("abc123"),
+            Some(2),
+        )
+        .unwrap();
 
         let db_arc = Arc::new(Mutex::new(db));
         let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, test_config());
@@ -376,12 +381,16 @@ mod tests {
     #[test]
     fn rebuild_replaces_cache_with_updated_content() {
         let spt_dir = tempfile::tempdir().unwrap();
-        make_test_file(spt_dir.path(), "user/mods/a/package.json", b"{\"a\":true}");
+        make_test_file(
+            spt_dir.path(),
+            "SPT/user/mods/a/package.json",
+            b"{\"a\":true}",
+        );
 
         let db = Database::open_in_memory().unwrap();
         db.insert_mod(1, 1, "mod-a", Some("mod-a"), "1.0.0")
             .unwrap();
-        db.insert_file(1, "user/mods/a/package.json", Some("h1"), Some(10))
+        db.insert_file(1, "SPT/user/mods/a/package.json", Some("h1"), Some(10))
             .unwrap();
 
         let db_arc = Arc::new(Mutex::new(db));
@@ -392,12 +401,16 @@ mod tests {
         let size_before = std::fs::metadata(&path).unwrap().len();
 
         // Add a second mod file
-        make_test_file(spt_dir.path(), "user/mods/b/package.json", b"{\"b\":true}");
+        make_test_file(
+            spt_dir.path(),
+            "SPT/user/mods/b/package.json",
+            b"{\"b\":true}",
+        );
         {
             let db = db_arc.lock();
             db.insert_mod(2, 2, "mod-b", Some("mod-b"), "1.0.0")
                 .unwrap();
-            db.insert_file(2, "user/mods/b/package.json", Some("h2"), Some(10))
+            db.insert_file(2, "SPT/user/mods/b/package.json", Some("h2"), Some(10))
                 .unwrap();
         }
 
@@ -430,7 +443,7 @@ mod tests {
     fn filter_excludes_server_files_by_default() {
         let config = SetupZipConfig::default();
         let files = vec![
-            test_file(1, "user/mods/test-mod/package.json"),
+            test_file(1, "SPT/user/mods/test-mod/package.json"),
             test_file(1, "BepInEx/plugins/test-mod/test.dll"),
         ];
         let filtered = filter_setup_zip_files(files, &config);
@@ -445,7 +458,7 @@ mod tests {
             ..SetupZipConfig::default()
         };
         let files = vec![
-            test_file(1, "user/mods/test-mod/package.json"),
+            test_file(1, "SPT/user/mods/test-mod/package.json"),
             test_file(1, "BepInEx/plugins/test-mod/test.dll"),
         ];
         let filtered = filter_setup_zip_files(files, &config);
@@ -501,15 +514,15 @@ mod tests {
             exclude_server_files: true,
             exclude_non_essential: true,
             exclude_patterns: vec!["**/*.json".to_string()],
-            include_patterns: vec!["user/mods/special/**".to_string()],
+            include_patterns: vec!["SPT/user/mods/special/**".to_string()],
         };
         let files = vec![
-            test_file(1, "user/mods/special/package.json"),
-            test_file(1, "user/mods/other/package.json"),
+            test_file(1, "SPT/user/mods/special/package.json"),
+            test_file(1, "SPT/user/mods/other/package.json"),
         ];
         let filtered = filter_setup_zip_files(files, &config);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].file_path, "user/mods/special/package.json");
+        assert_eq!(filtered[0].file_path, "SPT/user/mods/special/package.json");
     }
 
     #[test]
@@ -521,7 +534,7 @@ mod tests {
             include_patterns: vec![],
         };
         let files = vec![
-            test_file(1, "user/mods/mod/package.json"),
+            test_file(1, "SPT/user/mods/mod/package.json"),
             test_file(1, "BepInEx/plugins/mod/README.md"),
             test_file(1, "BepInEx/plugins/mod/mod.dll"),
         ];
@@ -548,15 +561,24 @@ mod tests {
             "BepInEx/plugins/mod/mod.dll",
             b"dll-content",
         );
-        make_test_file(spt_dir.path(), "user/mods/server-mod/package.json", b"{}");
+        make_test_file(
+            spt_dir.path(),
+            "SPT/user/mods/server-mod/package.json",
+            b"{}",
+        );
 
         let db = Database::open_in_memory().unwrap();
         db.insert_mod(1, 1, "hybrid-mod", Some("hybrid-mod"), "1.0.0")
             .unwrap();
         db.insert_file(1, "BepInEx/plugins/mod/mod.dll", Some("aaa"), Some(11))
             .unwrap();
-        db.insert_file(1, "user/mods/server-mod/package.json", Some("bbb"), Some(2))
-            .unwrap();
+        db.insert_file(
+            1,
+            "SPT/user/mods/server-mod/package.json",
+            Some("bbb"),
+            Some(2),
+        )
+        .unwrap();
 
         let db_arc = Arc::new(Mutex::new(db));
         // Default config has exclude_server_files=true
@@ -572,7 +594,7 @@ mod tests {
         assert_eq!(reader.len(), 1);
         let names: Vec<_> = reader.file_names().collect();
         assert!(names.contains(&"BepInEx/plugins/mod/mod.dll"));
-        assert!(!names.contains(&"user/mods/server-mod/package.json"));
+        assert!(!names.contains(&"SPT/user/mods/server-mod/package.json"));
     }
 
     #[test]
@@ -608,13 +630,13 @@ mod tests {
     #[test]
     fn cache_rebuild_with_all_filters_disabled() {
         let spt_dir = tempfile::tempdir().unwrap();
-        make_test_file(spt_dir.path(), "user/mods/mod/package.json", b"{}");
+        make_test_file(spt_dir.path(), "SPT/user/mods/mod/package.json", b"{}");
         make_test_file(spt_dir.path(), "BepInEx/plugins/mod/README.md", b"# Hi");
 
         let db = Database::open_in_memory().unwrap();
         db.insert_mod(1, 1, "test-mod", Some("test-mod"), "1.0.0")
             .unwrap();
-        db.insert_file(1, "user/mods/mod/package.json", Some("aaa"), Some(2))
+        db.insert_file(1, "SPT/user/mods/mod/package.json", Some("aaa"), Some(2))
             .unwrap();
         db.insert_file(1, "BepInEx/plugins/mod/README.md", Some("bbb"), Some(4))
             .unwrap();
