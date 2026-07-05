@@ -1190,6 +1190,7 @@ pub async fn install_mod(
                 &forge,
                 &db,
                 &spt_dir,
+                &config,
                 mod_id,
                 &mod_name,
                 mod_slug.as_deref(),

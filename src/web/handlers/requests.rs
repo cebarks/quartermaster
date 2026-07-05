@@ -270,6 +270,7 @@ async fn trigger_install_for_request(
                     &forge,
                     &db,
                     &spt_dir,
+                    &config,
                     forge_mod_id,
                     &mod_name,
                     mod_slug.as_deref(),
