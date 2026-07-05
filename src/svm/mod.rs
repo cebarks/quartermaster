@@ -166,7 +166,7 @@ impl SvmManager {
             .with_context(|| format!("Failed to parse preset '{}' as JSON", name))?;
 
         // Parse as typed config
-        let config: SvmConfig = serde_json::from_str(&content)
+        let config: SvmConfig = serde_json::from_str(content)
             .with_context(|| format!("Failed to deserialize preset '{}'", name))?;
 
         // Serialize typed config back to JSON to compare keys
