@@ -60,12 +60,13 @@ pub fn is_fika_client_present(install_dir: &Path) -> bool {
 /// If Fika.Core is already present, this is a no-op. Otherwise, it queries the Forge API
 /// for the latest compatible version, downloads the archive to a temp file, and extracts
 /// it into the install directory.
+/// Returns `true` if Fika files were updated on disk (callers should restart containers).
 pub async fn ensure_fika_client(
     forge: &ForgeClient,
     install_dir: &Path,
     spt_version: &str,
     spt_client: &SptClient,
-) -> Result<()> {
+) -> Result<bool> {
     // Detect the server's Fika version so we can match the client to it.
     // The container image may auto-update the server mod independently of
     // what Forge reports as "latest compatible".
@@ -79,7 +80,7 @@ pub async fn ensure_fika_client(
 
     if fika_present && server_fika_version.is_none() {
         debug!("Fika client already present in {}", install_dir.display());
-        return Ok(());
+        return Ok(false);
     }
 
     // If the server is running a known Fika version and we already have the
@@ -91,7 +92,7 @@ pub async fn ensure_fika_client(
             let installed = std::fs::read_to_string(&marker).unwrap_or_default();
             if installed.trim() == target.as_str() {
                 debug!("Fika client v{target} already matches server");
-                return Ok(());
+                return Ok(false);
             }
             info!(
                 "Fika client version mismatch (installed: {}, server: {target}) — updating",
@@ -137,7 +138,7 @@ pub async fn ensure_fika_client(
         "Fika client v{resolved_version} installed to {}",
         install_dir.display()
     );
-    Ok(())
+    Ok(true)
 }
 
 const FIKA_CLIENT_GITHUB_REPO: &str = "project-fika/Fika-Plugin";
@@ -224,10 +225,23 @@ fn is_fika_headless_present(install_dir: &Path) -> bool {
 /// Unlike Fika.Core (which is on Forge), Fika.Headless is distributed via GitHub
 /// releases at project-fika/Fika-Headless. This function fetches the latest release,
 /// downloads the zip, and extracts it.
-async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result<()> {
-    if is_fika_headless_present(install_dir) {
+async fn ensure_fika_headless(
+    forge: &ForgeClient,
+    install_dir: &Path,
+    fika_core_updated: bool,
+) -> Result<()> {
+    if is_fika_headless_present(install_dir) && !fika_core_updated {
         debug!("Fika.Headless already present in {}", install_dir.display());
         return Ok(());
+    }
+
+    // Fika.Core and Fika.Headless are released in tandem — refresh both
+    if fika_core_updated {
+        let dll = install_dir.join("BepInEx/plugins/Fika/Fika.Headless.dll");
+        if dll.is_file() {
+            info!("Fika.Core was updated — refreshing Fika.Headless to match");
+            let _ = std::fs::remove_file(&dll);
+        }
     }
 
     info!(
@@ -898,8 +912,9 @@ pub async fn converge(
     let current_count = managed.len() as u32;
 
     // Ensure the Fika client mod is installed (required for all operations)
-    ensure_fika_client(forge, &headless_config.install_dir, spt_version, spt_client).await?;
-    ensure_fika_headless(forge, &headless_config.install_dir).await?;
+    let fika_updated =
+        ensure_fika_client(forge, &headless_config.install_dir, spt_version, spt_client).await?;
+    ensure_fika_headless(forge, &headless_config.install_dir, fika_updated).await?;
 
     // Reconcile headless mod files on every convergence (not just scale-up)
     // This catches drift from manual changes or group config updates
@@ -1019,6 +1034,14 @@ pub async fn converge(
             headless_config.base_udp_port,
             headless_config.use_upnp,
         )?;
+    }
+
+    // Restart running containers if Fika was updated on disk — BepInEx loads
+    // plugins once at boot, so a restart is required to pick up new DLLs.
+    if fika_updated && current_count > 0 {
+        let live_count = current_count.min(desired_count);
+        info!("Fika was updated — restarting {live_count} headless client(s) to load new plugins");
+        restart_running_clients(container_mgr, live_count).await?;
     }
 
     info!("Convergence complete");
