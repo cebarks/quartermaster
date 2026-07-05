@@ -673,6 +673,10 @@ pub fn configure_app(
             web::post().to(handlers::clients::client_restart),
         )
         .route(
+            "/headless/{n}/graceful-restart",
+            web::post().to(handlers::clients::client_graceful_restart),
+        )
+        .route(
             "/headless/{n}/stop",
             web::post().to(handlers::clients::client_stop),
         )

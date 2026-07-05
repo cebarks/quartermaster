@@ -101,15 +101,16 @@
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <button type="submit" class="btn btn-sm btn-success" title="Start"{% if client.state.container_status == crate::client::ContainerStatus::Running %} disabled{% endif %}>{% call icons::play() %}{% endcall %}</button>
                             </form>
+                            <form method="post" action="/quma/headless/{{ client.state.index }}/graceful-restart" style="display:inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button type="submit" class="btn btn-sm btn-warning" title="Graceful restart via Fika API"
+                                    {% if client.state.container_status == crate::client::ContainerStatus::Stopped %}disabled{% endif %}
+                                    {% if client.state.fika_status == Some(crate::spt::headless::EHeadlessStatus::InRaid) %}disabled{% endif %}>{% call icons::refresh() %}{% endcall %}</button>
+                            </form>
                             <form method="post" action="/quma/headless/{{ client.state.index }}/stop" style="display:inline"
                                   onsubmit="return confirm('Stop client {{ client.state.index }}?')">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <button type="submit" class="btn btn-sm btn-danger" title="Stop"{% if client.state.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::stop() %}{% endcall %}</button>
-                            </form>
-                            <form method="post" action="/quma/headless/{{ client.state.index }}/restart" style="display:inline"
-                                  onsubmit="return confirm('Restart client {{ client.state.index }}?')">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="btn btn-sm btn-warning" title="Restart"{% if client.state.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::refresh() %}{% endcall %}</button>
                             </form>
                         </div>
                     </td>

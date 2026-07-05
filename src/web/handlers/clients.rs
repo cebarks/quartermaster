@@ -362,6 +362,138 @@ pub async fn client_restart(
     .await
 }
 
+pub async fn client_graceful_restart(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<u32>,
+    form: Form<crate::web::csrf::CsrfForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let index = path.into_inner();
+
+    let fika_client = match state.fika_client.as_ref() {
+        Some(c) => c.clone(),
+        None => {
+            set_flash(&session, "Fika integration not available", FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+    };
+
+    // Read client state
+    let (profile_id, fika_status) = {
+        let states = match state.client_states.as_ref() {
+            Some(s) => s.read().await,
+            None => {
+                set_flash(
+                    &session,
+                    "Headless clients not configured",
+                    FlashType::Error,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish());
+            }
+        };
+        let client = states.iter().find(|c| c.index == index);
+        match client {
+            Some(c) => (c.profile_id.clone(), c.fika_status.clone()),
+            None => {
+                set_flash(
+                    &session,
+                    &format!("Client {index} not found"),
+                    FlashType::Error,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish());
+            }
+        }
+    };
+
+    // Block if IN_RAID
+    if fika_status == Some(EHeadlessStatus::InRaid) {
+        set_flash(
+            &session,
+            &format!("Client {index} is in a raid — use force restart or wait for raid to end"),
+            FlashType::Error,
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/headless"))
+            .finish());
+    }
+
+    let profile_id = match profile_id {
+        Some(pid) if !pid.is_empty() => pid,
+        _ => {
+            set_flash(
+                &session,
+                &format!("Client {index} has no profile ID"),
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+    };
+
+    // Send shutdown
+    match fika_client.shutdown_headless(&profile_id).await {
+        Ok(()) => {
+            // Wait for container exit (poll every 2s, 30s timeout)
+            let mgr = match require_container_mgr(&state, &session) {
+                Ok(m) => m,
+                Err(resp) => return Ok(resp),
+            };
+            let container_name = match resolve_client_container(&state, &session, index).await {
+                Ok(n) => n,
+                Err(resp) => return Ok(resp),
+            };
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+            let mut exited = false;
+            while tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if !mgr.is_running(&container_name).await.unwrap_or(true) {
+                    exited = true;
+                    break;
+                }
+            }
+            if exited {
+                set_flash(
+                    &session,
+                    &format!("Client {index} shut down gracefully"),
+                    FlashType::Success,
+                );
+            } else {
+                set_flash(
+                    &session,
+                    &format!("Client {index} did not shut down within 30s — use force restart"),
+                    FlashType::Warning,
+                );
+            }
+        }
+        Err(e) => {
+            set_flash(
+                &session,
+                &format!("Graceful restart failed: {e}"),
+                FlashType::Error,
+            );
+        }
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/headless"))
+        .finish())
+}
+
 pub async fn client_stop(
     state: Data<AppState>,
     req: HttpRequest,

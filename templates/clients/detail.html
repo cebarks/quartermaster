@@ -14,10 +14,16 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-success">{% call icons::play() %}{% endcall %} Start</button>
         </form>
-        <form method="post" action="/quma/headless/{{ client.state.index }}/restart" style="display:inline"
-              onsubmit="return confirm('Restart client {{ client.state.index }}?')">
+        <form method="post" action="/quma/headless/{{ client.state.index }}/graceful-restart" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Restart</button>
+            <button type="submit" class="btn btn-sm btn-warning"
+                {% if client.state.fika_status == Some(crate::spt::headless::EHeadlessStatus::InRaid) %}disabled{% endif %}
+                title="Send graceful shutdown via Fika API">{% call icons::refresh() %}{% endcall %} Graceful Restart</button>
+        </form>
+        <form method="post" action="/quma/headless/{{ client.state.index }}/restart" style="display:inline"
+              onsubmit="return confirm('Force restart client {{ client.state.index }}?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-warning">{% call icons::refresh() %}{% endcall %} Force Restart</button>
         </form>
         <form method="post" action="/quma/headless/{{ client.state.index }}/stop" style="display:inline"
               onsubmit="return confirm('Stop client {{ client.state.index }}?')">
