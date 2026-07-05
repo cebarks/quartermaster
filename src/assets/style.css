@@ -172,6 +172,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .badge-muted { background: rgba(42,42,74,0.4); color: var(--text-muted); border: 1px solid rgba(42,42,74,0.6); }
 .badge-error { background: rgba(233,69,96,0.15); color: var(--danger); border: 1px solid rgba(233,69,96,0.3); }
 .badge-primary { background: rgba(233,69,96,0.15); color: var(--accent); border: 1px solid rgba(233,69,96,0.3); }
+.badge-lg .badge { font-size: 0.9rem; padding: 0.3rem 0.75rem; }
 
 /* Alerts */
 .alert {

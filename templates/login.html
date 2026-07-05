@@ -15,7 +15,10 @@
         <label for="username">Username</label>
         <input type="text" id="username" name="username" required autofocus>
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required>
+        <div style="display: flex; gap: 0.5rem;">
+            <input type="password" id="password" name="password" required style="flex: 1;">
+            <button type="button" class="btn" onclick="var i=document.getElementById('password');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+        </div>
         <button type="submit" class="btn">Login</button>
     </form>
 </div>

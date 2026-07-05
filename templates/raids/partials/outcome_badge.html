@@ -1,0 +1,9 @@
+{% if status == "Survived" %}
+    <span class="badge badge-success">{{ status }}</span>
+{% else if status == "Killed" %}
+    <span class="badge badge-danger">{{ status }}</span>
+{% else if status == "Runner" || status == "MissingInAction" %}
+    <span class="badge badge-warning">{{ status }}</span>
+{% else %}
+    <span class="badge badge-muted">{{ status }}</span>
+{% endif %}
