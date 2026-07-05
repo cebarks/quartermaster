@@ -55,16 +55,17 @@ pub fn cleanup_staging(spt_dir: &Path) {
 }
 
 /// Check if a mod is in a modsync group with `exclude_headless = true`.
-pub fn is_excluded_from_headless(config: &crate::config::Config, forge_mod_id: i64) -> bool {
-    config
-        .modsync
-        .as_ref()
-        .map(|ms| {
-            ms.groups
-                .values()
-                .any(|g| g.exclude_headless && g.members.contains(&forge_mod_id))
-        })
-        .unwrap_or(false)
+pub fn is_excluded_from_headless(db: &Database, mod_id: i64) -> bool {
+    let Ok(Some(m)) = db.get_mod(mod_id) else {
+        return false;
+    };
+    let Some(group_id) = m.group_id else {
+        return false;
+    };
+    let Ok(Some(group)) = db.get_group(group_id) else {
+        return false;
+    };
+    group.exclude_headless
 }
 
 /// Best-effort sync of client-side files to the headless install directory.
@@ -81,19 +82,12 @@ fn maybe_sync_headless(
         None => return,
     };
 
-    if let Some(forge_mod_id) = db
-        .get_mod(mod_db_id)
-        .ok()
-        .flatten()
-        .and_then(|m| m.forge_mod_id)
-    {
-        if is_excluded_from_headless(config, forge_mod_id) {
-            tracing::debug!(
-                forge_mod_id,
-                "headless sync: mod in exclude_headless group, skipping"
-            );
-            return;
-        }
+    if is_excluded_from_headless(db, mod_db_id) {
+        tracing::debug!(
+            mod_db_id,
+            "headless sync: mod in exclude_headless group, skipping"
+        );
+        return;
     }
 
     let files: Vec<String> = match db.get_files_for_mod(mod_db_id) {
@@ -344,26 +338,15 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
         tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
     // Addons inherit parent mod's exclude_headless status
-    {
-        let parent_forge_id = req
+    if !is_excluded_from_headless(req.db, req.parent_mod_id) {
+        let files: Vec<String> = req
             .db
-            .get_mod(req.parent_mod_id)
-            .ok()
-            .flatten()
-            .and_then(|m| m.forge_mod_id);
-        let excluded = parent_forge_id
-            .map(|id| is_excluded_from_headless(req.config, id))
-            .unwrap_or(false);
-        if !excluded {
-            let files: Vec<String> = req
-                .db
-                .get_files_for_addon(db_id)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|f| f.file_path)
-                .collect();
-            maybe_sync_headless_with_files(req.config, req.spt_dir, &files, SyncOp::Install);
-        }
+            .get_files_for_addon(db_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| f.file_path)
+            .collect();
+        maybe_sync_headless_with_files(req.config, req.spt_dir, &files, SyncOp::Install);
     }
     Ok(db_id)
 }
@@ -499,25 +482,15 @@ pub fn update_addon_from_archive(
         tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
     // Addons inherit parent mod's exclude_headless status
-    {
-        let parent_forge_id = db
-            .get_mod(addon.parent_mod_id)
-            .ok()
-            .flatten()
-            .and_then(|m| m.forge_mod_id);
-        let excluded = parent_forge_id
-            .map(|id| is_excluded_from_headless(config, id))
-            .unwrap_or(false);
-        if !excluded {
-            maybe_sync_headless_with_files(config, spt_dir, &stale_addon_paths, SyncOp::Remove);
-            let new_files: Vec<String> = db
-                .get_files_for_addon(addon_db_id)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|f| f.file_path)
-                .collect();
-            maybe_sync_headless_with_files(config, spt_dir, &new_files, SyncOp::Install);
-        }
+    if !is_excluded_from_headless(db, addon.parent_mod_id) {
+        maybe_sync_headless_with_files(config, spt_dir, &stale_addon_paths, SyncOp::Remove);
+        let new_files: Vec<String> = db
+            .get_files_for_addon(addon_db_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| f.file_path)
+            .collect();
+        maybe_sync_headless_with_files(config, spt_dir, &new_files, SyncOp::Install);
     }
     Ok(())
 }
@@ -799,15 +772,13 @@ pub async fn apply_addon_update(
         let _ = actix_web::web::block(move || {
             let db = db_sync.lock();
             // Look up parent mod to check exclude_headless
-            let excluded = db
+            let parent_mod_id = db
                 .get_addon(addon_db_id)
                 .ok()
                 .flatten()
-                .and_then(|a| db.get_mod(a.parent_mod_id).ok().flatten())
-                .and_then(|m| {
-                    m.forge_mod_id
-                        .map(|id| is_excluded_from_headless(&config_sync, id))
-                })
+                .map(|a| a.parent_mod_id);
+            let excluded = parent_mod_id
+                .map(|id| is_excluded_from_headless(&db, id))
                 .unwrap_or(false);
             if !excluded {
                 // Remove stale files, then install new files
@@ -1157,14 +1128,12 @@ pub fn remove_mod_by_id(
         }
     }
 
-    // Look up forge_mod_id before deletion for group cleanup and headless sync
+    // Look up forge_mod_id before deletion for group cleanup
     let forge_mod_id = db.get_mod(mod_db_id)?.and_then(|m| m.forge_mod_id);
 
     // Remove client files from headless before DB delete loses the file list
-    if let Some(forge_id) = forge_mod_id {
-        if !is_excluded_from_headless(config, forge_id) {
-            maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
-        }
+    if !is_excluded_from_headless(db, mod_db_id) {
+        maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
     }
 
     let tx = db.begin_transaction()?;
@@ -1234,18 +1203,8 @@ pub fn remove_addon_by_id(
     crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
     // Remove client files from headless before DB delete loses the file list
-    {
-        let parent_forge_id = db
-            .get_mod(addon.parent_mod_id)
-            .ok()
-            .flatten()
-            .and_then(|m| m.forge_mod_id);
-        let excluded = parent_forge_id
-            .map(|id| is_excluded_from_headless(config, id))
-            .unwrap_or(false);
-        if !excluded {
-            maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
-        }
+    if !is_excluded_from_headless(db, addon.parent_mod_id) {
+        maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
     }
 
     let tx = db.begin_transaction()?;
@@ -1811,19 +1770,9 @@ pub fn disable_addon(
     }
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon disabled");
-    {
-        let parent_forge_id = db
-            .get_mod(addon_info.parent_mod_id)
-            .ok()
-            .flatten()
-            .and_then(|m| m.forge_mod_id);
-        let excluded = parent_forge_id
-            .map(|id| is_excluded_from_headless(config, id))
-            .unwrap_or(false);
-        if !excluded {
-            let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
-            maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
-        }
+    if !is_excluded_from_headless(db, addon_info.parent_mod_id) {
+        let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
+        maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
     }
     Ok(())
 }
@@ -1882,18 +1831,8 @@ pub fn enable_addon(
     cleanup_empty_stash_dirs(spt_dir, &file_paths);
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon enabled");
-    {
-        let parent_forge_id = db
-            .get_mod(addon_info.parent_mod_id)
-            .ok()
-            .flatten()
-            .and_then(|m| m.forge_mod_id);
-        let excluded = parent_forge_id
-            .map(|id| is_excluded_from_headless(config, id))
-            .unwrap_or(false);
-        if !excluded {
-            maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Install);
-        }
+    if !is_excluded_from_headless(db, addon_info.parent_mod_id) {
+        maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Install);
     }
     Ok(())
 }

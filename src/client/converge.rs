@@ -661,7 +661,7 @@ pub fn find_name_conflicts(
 /// Skips disabled mods, excluded mods, and Fika-managed directories.
 fn reconcile_headless_mods(
     db: &Arc<Mutex<crate::db::Database>>,
-    config: &crate::config::Config,
+    _config: &crate::config::Config,
     spt_dir: &Path,
     install_dir: &Path,
 ) -> anyhow::Result<()> {
@@ -674,9 +674,7 @@ fn reconcile_headless_mods(
             if m.disabled {
                 continue;
             }
-            if m.forge_mod_id
-                .is_some_and(|id| crate::ops::is_excluded_from_headless(config, id))
-            {
+            if crate::ops::is_excluded_from_headless(&db, m.id) {
                 continue;
             }
             let files = db.get_files_for_mod(m.id)?;
