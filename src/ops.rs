@@ -1574,6 +1574,7 @@ pub fn disable_mod(
     }
 
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod disabled");
+    maybe_sync_headless(config, spt_dir, db, mod_db_id, SyncOp::Remove);
     Ok(())
 }
 
@@ -1663,6 +1664,7 @@ pub fn enable_mod(
             tracing::warn!(err = %e, "failed to ensure mod layout after enable");
         }
     }
+    maybe_sync_headless(config, spt_dir, db, mod_db_id, SyncOp::Install);
     Ok(())
 }
 
