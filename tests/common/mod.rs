@@ -183,6 +183,7 @@ impl TestAppBuilder {
             fika_installed: false,
             fika_client: None,
             fika_config_lock: parking_lot::Mutex::new(()),
+            fika_items: Arc::new(parking_lot::Mutex::new(None)),
             modsync_installed: std::sync::atomic::AtomicBool::new(false),
             svm: None,
             svm_installed: std::sync::atomic::AtomicBool::new(false),

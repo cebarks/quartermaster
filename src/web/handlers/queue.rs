@@ -204,11 +204,13 @@ pub async fn apply_queue(
         state_clone.integrity_cache.invalidate();
 
         if failures.is_empty() {
+            state_clone.clear_fika_items();
             tasks.complete(
                 task_id,
                 format!("Queue applied: {} operation(s) completed", total),
             );
         } else {
+            state_clone.clear_fika_items();
             let msg = format!(
                 "Queue: {} succeeded, {} failed — {}",
                 total - failures.len(),

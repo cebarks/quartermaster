@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -52,6 +53,9 @@ pub struct AppState {
     pub fika_client: Option<Arc<crate::fika::client::FikaClient>>,
     #[allow(dead_code)] // ponytail: used in later tasks
     pub fika_config_lock: parking_lot::Mutex<()>,
+    #[allow(clippy::type_complexity)]
+    pub fika_items:
+        Arc<parking_lot::Mutex<Option<Arc<HashMap<String, crate::fika::client::FikaItemInfo>>>>>,
 }
 
 impl AppState {
@@ -156,5 +160,9 @@ impl AppState {
         if let Err(e) = result {
             tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
         }
+    }
+
+    pub fn clear_fika_items(&self) {
+        *self.fika_items.lock() = None;
     }
 }

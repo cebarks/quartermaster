@@ -17,6 +17,7 @@ pub enum Permission {
     QueueManage,
     UsersManage,
     SettingsManage,
+    ItemsGive,
 }
 
 impl Permission {
@@ -35,6 +36,7 @@ impl Permission {
         Permission::QueueManage,
         Permission::UsersManage,
         Permission::SettingsManage,
+        Permission::ItemsGive,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -53,6 +55,7 @@ impl Permission {
             Permission::QueueManage => "queue.manage",
             Permission::UsersManage => "users.manage",
             Permission::SettingsManage => "settings.manage",
+            Permission::ItemsGive => "items.give",
         }
     }
 
@@ -72,6 +75,7 @@ impl Permission {
             "queue.manage" => Some(Permission::QueueManage),
             "users.manage" => Some(Permission::UsersManage),
             "settings.manage" => Some(Permission::SettingsManage),
+            "items.give" => Some(Permission::ItemsGive),
             _ => None,
         }
     }
@@ -92,6 +96,7 @@ impl Permission {
             Permission::QueueManage => "Manage Queue",
             Permission::UsersManage => "Manage Users",
             Permission::SettingsManage => "Manage Settings",
+            Permission::ItemsGive => "Give Items",
         }
     }
 
@@ -109,7 +114,9 @@ impl Permission {
             | Permission::ServerMetrics
             | Permission::HeadlessManage => "Server",
             Permission::QueueManage => "Operations",
-            Permission::UsersManage | Permission::SettingsManage => "Administration",
+            Permission::UsersManage | Permission::SettingsManage | Permission::ItemsGive => {
+                "Administration"
+            }
         }
     }
 }

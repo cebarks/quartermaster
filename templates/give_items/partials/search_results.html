@@ -1,0 +1,13 @@
+{% if results.is_empty() %}
+<p class="text-muted" style="padding: 0.5rem">No items found</p>
+{% else %}
+{% for item in results %}
+<button type="button" class="item-result"
+        data-tpl="{{ item.tpl }}"
+        data-name="{{ item.name }}"
+        data-max="{{ item.max_amount }}">
+    <span class="item-name">{{ item.name }}</span>
+    <span class="item-desc text-muted">{{ item.description }}</span>
+</button>
+{% endfor %}
+{% endif %}
