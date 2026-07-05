@@ -11,6 +11,7 @@ pub async fn web_download_extract_and_record(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
     spt_dir: &Path,
+    config: &crate::config::Config,
     mod_id: i64,
     mod_name: &str,
     mod_slug: Option<&str>,
@@ -24,31 +25,26 @@ pub async fn web_download_extract_and_record(
     let archive_path = tmp_dir.path().join("mod.zip");
     forge.download_file(link, &archive_path).await?;
 
-    let spt_dir_clone = spt_dir.to_path_buf();
-    let extracted =
-        actix_web::web::block(move || crate::spt::mods::extract_mod(&archive_path, &spt_dir_clone))
-            .await??;
-
     let version_id = version.id;
     let version_str = version.version.clone();
     let mod_name_owned = mod_name.to_string();
     let mod_slug_owned = mod_slug.map(|s| s.to_string());
     let db_clone = db.clone();
+    let spt_dir = spt_dir.to_path_buf();
+    let config = config.clone();
     let db_id = actix_web::web::block(move || {
         let db = db_clone.lock();
-        let tx = db.begin_transaction()?;
-        let db_id = db.insert_mod(
-            mod_id,
+        crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+            db: &db,
+            spt_dir: &spt_dir,
+            config: &config,
+            forge_mod_id: mod_id,
             version_id,
-            &mod_name_owned,
-            mod_slug_owned.as_deref(),
-            &version_str,
-        )?;
-        for file in &extracted {
-            db.insert_file(db_id, &file.path, Some(&file.hash), Some(file.size as i64))?;
-        }
-        tx.commit()?;
-        Ok::<_, anyhow::Error>(db_id)
+            name: &mod_name_owned,
+            slug: mod_slug_owned.as_deref(),
+            version: &version_str,
+            archive_path: &archive_path,
+        })
     })
     .await??;
 
