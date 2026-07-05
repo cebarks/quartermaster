@@ -17,7 +17,7 @@
         <label for="password">Password</label>
         <div style="display: flex; gap: 0.5rem;">
             <input type="password" id="password" name="password" required style="flex: 1;">
-            <button type="button" class="btn" onclick="var i=document.getElementById('password');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+            <button type="button" class="btn" onclick="togglePassword('password', this)">Show</button>
         </div>
         <button type="submit" class="btn">Login</button>
     </form>

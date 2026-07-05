@@ -170,8 +170,8 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .badge-warning { background: rgba(240,192,64,0.15); color: var(--warning); border: 1px solid rgba(240,192,64,0.3); }
 .badge-danger { background: rgba(233,69,96,0.15); color: var(--danger); border: 1px solid rgba(233,69,96,0.3); }
 .badge-muted { background: rgba(42,42,74,0.4); color: var(--text-muted); border: 1px solid rgba(42,42,74,0.6); }
+/* alias: .badge-error is identical to .badge-danger */
 .badge-error { background: rgba(233,69,96,0.15); color: var(--danger); border: 1px solid rgba(233,69,96,0.3); }
-.badge-primary { background: rgba(233,69,96,0.15); color: var(--accent); border: 1px solid rgba(233,69,96,0.3); }
 .badge-lg .badge { font-size: 0.9rem; padding: 0.3rem 0.75rem; }
 
 /* Alerts */
@@ -184,6 +184,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .alert-error { background: rgba(233,69,96,0.15); border: 1px solid var(--danger); color: var(--danger); }
 .alert-success { background: rgba(78,204,163,0.15); border: 1px solid var(--success); color: var(--success); }
 .alert-warning { background: rgba(240,192,64,0.15); border: 1px solid var(--warning); color: var(--warning); }
+/* alias: .alert-danger is identical to .alert-error */
 .alert-danger { background: rgba(233,69,96,0.15); border: 1px solid var(--danger); color: var(--danger); }
 .alert-info { background: rgba(100,149,237,0.15); border: 1px solid var(--accent); color: var(--accent); }
 
@@ -308,9 +309,6 @@ main > h1 { border-bottom: 1px solid var(--border); }
 .loading-pulse { animation: pulse 1.5s ease-in-out infinite; }
 
 /* Log viewer */
-.log-tab-bar { display: flex; gap: 0.25rem; margin-bottom: 1rem; }
-.tab-btn { padding: 0.5rem 1rem; border: 1px solid var(--border); background: transparent; cursor: pointer; border-radius: 4px 4px 0 0; color: var(--text-muted); }
-.tab-btn.active { background: var(--bg-card); border-bottom-color: var(--bg-card); color: var(--text); }
 
 .log-controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem; }
 .log-controls-left, .log-controls-right { display: flex; align-items: center; gap: 0.25rem; }

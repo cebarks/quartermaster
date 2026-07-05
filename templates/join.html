@@ -27,12 +27,12 @@
         <label for="password">Password</label>
         <div style="display: flex; gap: 0.5rem;">
             <input type="password" id="password" name="password" required minlength="8" style="flex: 1;">
-            <button type="button" class="btn" onclick="var i=document.getElementById('password');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+            <button type="button" class="btn" onclick="togglePassword('password', this)">Show</button>
         </div>
         <label for="password_confirm">Confirm Password</label>
         <div style="display: flex; gap: 0.5rem;">
             <input type="password" id="password_confirm" name="password_confirm" required minlength="8" style="flex: 1;">
-            <button type="button" class="btn" onclick="var i=document.getElementById('password_confirm');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+            <button type="button" class="btn" onclick="togglePassword('password_confirm', this)">Show</button>
         </div>
         <button type="submit" class="btn">Create Account</button>
     </form>
