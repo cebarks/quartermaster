@@ -11,7 +11,7 @@ use crate::db::mods::{
 use crate::db::rbac::Permission;
 use crate::db::users::QueueAction;
 use crate::forge::models::{DependencyNode, FikaCompat};
-use crate::health::{self, IntegrityHealth};
+use crate::health::IntegrityHealth;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
@@ -1173,6 +1173,7 @@ pub async fn install_mod(
     let mod_slug = mod_info.slug.clone();
     let update_cache = state.update_cache.clone();
     let mod_zip_cache = state.mod_zip_cache.clone();
+    let integrity_cache = state.integrity_cache.clone();
     let state_clone = state.clone();
 
     tokio::spawn(async move {
@@ -1211,6 +1212,7 @@ pub async fn install_mod(
                 tracing::info!(mod_id, "mod installed successfully");
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
+                integrity_cache.invalidate();
                 // Re-check NarcoNet detection (installing NarcoNet itself changes this)
                 state_clone.modsync_installed.store(
                     crate::config::is_modsync_installed(&spt_dir),
@@ -1325,6 +1327,7 @@ pub async fn update_mod(
     let version = version.clone();
     let update_cache = state.update_cache.clone();
     let mod_zip_cache = state.mod_zip_cache.clone();
+    let integrity_cache = state.integrity_cache.clone();
     let forge_mod_id = installed.forge_mod_id;
     let state_clone = state.clone();
 
@@ -1387,6 +1390,7 @@ pub async fn update_mod(
                 tracing::info!(mod_db_id, "mod updated successfully");
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
+                integrity_cache.invalidate();
                 tasks.complete(task_id, "Mod updated successfully".to_string());
             }
             Err(e) => {
@@ -1456,6 +1460,7 @@ pub async fn remove_mod(
 
     state.update_cache.invalidate();
     state.mod_zip_cache.invalidate();
+    state.integrity_cache.invalidate();
     // Re-check NarcoNet detection (removing NarcoNet itself changes this)
     state.modsync_installed.store(
         crate::config::is_modsync_installed(&state.spt_dir),
@@ -1516,6 +1521,7 @@ pub async fn toggle_disable(
     .map_err(WebError::from)?;
 
     state.mod_zip_cache.invalidate();
+    state.integrity_cache.invalidate();
 
     if was_disabled {
         set_flash(
@@ -1620,6 +1626,7 @@ pub async fn update_all_mods(
     let installed = installed.clone();
     let update_cache = state.update_cache.clone();
     let mod_zip_cache = state.mod_zip_cache.clone();
+    let integrity_cache = state.integrity_cache.clone();
     let state_clone = state.clone();
 
     tokio::spawn(async move {
@@ -1692,6 +1699,7 @@ pub async fn update_all_mods(
 
         update_cache.invalidate();
         mod_zip_cache.invalidate();
+        integrity_cache.invalidate();
         // Re-check NarcoNet detection (updating mods might affect NarcoNet state)
         state_clone.modsync_installed.store(
             crate::config::is_modsync_installed(&spt_dir),
@@ -1776,26 +1784,36 @@ pub async fn list_body_partial(
 #[template(path = "partials/status_integrity.html")]
 struct IntegrityTemplate {
     report: IntegrityHealth,
+    csrf_token: String,
 }
 
-pub async fn integrity_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+pub async fn integrity_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
     require_auth(&req)?;
-    let db = state.db.clone();
-    let tracked_files = web::block(move || {
-        let db = db.lock();
-        db.get_all_enabled_mod_files()
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let spt_dir = state.spt_dir.clone();
-    let report = web::block(move || health::check_integrity_from(&tracked_files, &spt_dir))
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-    let tmpl = IntegrityTemplate { report };
-    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+    if state.integrity_cache.is_stale() {
+        state.integrity_cache.start_check(
+            state.db.clone(),
+            state.spt_dir.clone(),
+            state.events.clone(),
+        );
+    }
+
+    match state.integrity_cache.get() {
+        Some(report) => {
+            let tmpl = IntegrityTemplate { report, csrf_token };
+            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+        }
+        None => {
+            Ok(Html::new(
+                r#"<div class="card"><h2>Integrity</h2><p class="text-muted loading-pulse">Checking...</p></div>"#.to_string()
+            ))
+        }
+    }
 }
 
 #[derive(Template)]
@@ -1818,20 +1836,20 @@ pub async fn file_tracking_page(
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let db = state.db.clone();
-    let tracked_files = web::block(move || {
-        let db = db.lock();
-        db.get_all_enabled_mod_files()
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    if state.integrity_cache.is_stale() {
+        state.integrity_cache.start_check(
+            state.db.clone(),
+            state.spt_dir.clone(),
+            state.events.clone(),
+        );
+    }
 
-    let spt_dir = state.spt_dir.clone();
-    let report = web::block(move || health::check_integrity_from(&tracked_files, &spt_dir))
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
+    let report = state.integrity_cache.get().unwrap_or(IntegrityHealth {
+        tracked_files: 0,
+        missing_files: vec![],
+        modified_files: vec![],
+        untracked_dirs: vec![],
+    });
 
     let tmpl = FileTrackingTemplate {
         user,
@@ -1839,6 +1857,48 @@ pub async fn file_tracking_page(
         flash,
         csrf_token,
         report,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn integrity_recheck(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
+) -> actix_web::Result<HttpResponse> {
+    require_auth(&req)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+    state.integrity_cache.invalidate();
+    state.integrity_cache.start_check(
+        state.db.clone(),
+        state.spt_dir.clone(),
+        state.events.clone(),
+    );
+    Ok(HttpResponse::NoContent().finish())
+}
+
+#[derive(Template)]
+#[template(path = "partials/integrity_progress.html")]
+struct IntegrityProgressTemplate {
+    checked: usize,
+    total: usize,
+    running: bool,
+}
+
+pub async fn integrity_progress(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<Html> {
+    require_auth(&req)?;
+    let (checked, total) = state.integrity_cache.progress();
+    let running = state.integrity_cache.is_running();
+    let tmpl = IntegrityProgressTemplate {
+        checked,
+        total,
+        running,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -2139,6 +2199,7 @@ pub async fn install_addon(
     let addon_name = addon_info.name.clone();
     let addon_slug = addon_info.slug.clone();
     let mod_zip_cache = state.mod_zip_cache.clone();
+    let integrity_cache = state.integrity_cache.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -2178,6 +2239,7 @@ pub async fn install_addon(
             Ok(_) => {
                 tasks.complete(task_id, "Addon installed successfully".to_string());
                 mod_zip_cache.invalidate();
+                integrity_cache.invalidate();
             }
             Err(e) => {
                 tracing::error!(task_id, err = %e, "addon install failed");
@@ -2313,6 +2375,7 @@ pub async fn update_addon(
     let addon_name = addon.name.clone();
     let parent_mod_id = addon.parent_mod_id;
     let mod_zip_cache = state.mod_zip_cache.clone();
+    let integrity_cache = state.integrity_cache.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -2358,6 +2421,7 @@ pub async fn update_addon(
             Ok(_) => {
                 tasks.complete(task_id, "Addon updated successfully".to_string());
                 mod_zip_cache.invalidate();
+                integrity_cache.invalidate();
             }
             Err(e) => {
                 tracing::error!(task_id, addon = %addon_name, parent_mod_id, err = %e, "addon update failed");
@@ -2423,6 +2487,7 @@ pub async fn remove_addon(
         Ok(_) => {
             set_flash(&session, "Addon removed successfully", FlashType::Success);
             state.mod_zip_cache.invalidate();
+            state.integrity_cache.invalidate();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon removal failed");
@@ -2505,6 +2570,7 @@ pub async fn toggle_addon_disable(
             };
             set_flash(&session, msg, FlashType::Success);
             state.mod_zip_cache.invalidate();
+            state.integrity_cache.invalidate();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon toggle failed");
@@ -2519,4 +2585,19 @@ pub async fn toggle_addon_disable(
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", format!("/quma/mods/{}", parent_mod_id)))
         .finish())
+}
+
+pub async fn integrity_json(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    let peer = req.peer_addr();
+    let is_loopback = peer.is_some_and(|addr| addr.ip().is_loopback());
+    if !is_loopback {
+        return Ok(HttpResponse::Forbidden().finish());
+    }
+    match state.integrity_cache.get() {
+        Some(report) => Ok(HttpResponse::Ok().json(report)),
+        None => Ok(HttpResponse::ServiceUnavailable().finish()),
+    }
 }

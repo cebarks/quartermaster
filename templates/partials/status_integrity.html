@@ -1,5 +1,14 @@
 <div class="card" style="border-left: 3px solid {% if report.missing_files.is_empty() && report.modified_files.is_empty() %}var(--success){% else %}var(--danger){% endif %}">
-    <h2>Integrity</h2>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+        <h2>Integrity</h2>
+        <form method="post" action="/quma/api/mods/integrity/recheck" style="display:inline"
+              hx-post="/quma/api/mods/integrity/recheck" hx-swap="none">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm" title="Force recheck">↻ Recheck</button>
+        </form>
+    </div>
+    <div hx-get="/quma/api/mods/integrity/progress" hx-trigger="load" hx-swap="innerHTML">
+    </div>
     {% if report.missing_files.is_empty() && report.modified_files.is_empty() && report.untracked_dirs.is_empty() %}
     <p class="text-muted">{{ report.tracked_files }} tracked files — all present, hashes match.</p>
     <p class="text-sm mt-1"><a href="/quma/files">View details →</a></p>

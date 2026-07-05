@@ -4,6 +4,7 @@ pub mod error;
 pub mod flash;
 pub mod handlers;
 pub mod install;
+pub mod integrity_cache;
 pub mod invite;
 pub mod mod_zip_cache;
 pub mod nav;
@@ -128,7 +129,11 @@ pub fn configure_app(
         .service(web::scope("/assets").route("/{path:.*}", web::get().to(serve_asset)))
         // Auth routes (public)
         .route("/login", web::get().to(handlers::auth::login_page))
-        .route("/logout", web::post().to(handlers::auth::logout));
+        .route("/logout", web::post().to(handlers::auth::logout))
+        .route(
+            "/health/integrity",
+            web::get().to(handlers::mods::integrity_json),
+        );
 
     // Rate-limited auth routes
     if enable_rate_limiting {
@@ -252,6 +257,14 @@ pub fn configure_app(
         .route(
             "/mods/integrity",
             web::get().to(handlers::mods::integrity_partial),
+        )
+        .route(
+            "/mods/integrity/recheck",
+            web::post().to(handlers::mods::integrity_recheck),
+        )
+        .route(
+            "/mods/integrity/progress",
+            web::get().to(handlers::mods::integrity_progress),
         )
         .route(
             "/headless/status",
@@ -863,6 +876,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(events_tx.clone()),
         update_cache: crate::web::update_cache::UpdateCache::new(config.update_check_interval),
+        integrity_cache: crate::web::integrity_cache::IntegrityCache::new(600),
         events: events_tx,
         log_broadcast,
         reload_handles,

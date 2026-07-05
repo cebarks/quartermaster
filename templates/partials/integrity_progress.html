@@ -1,0 +1,5 @@
+{% if running %}
+<span class="text-muted loading-pulse" hx-get="/quma/api/mods/integrity/progress" hx-trigger="every 1s" hx-swap="outerHTML">Checking... ({{ checked }}/{{ total }} files)</span>
+{% else %}
+<span></span>
+{% endif %}

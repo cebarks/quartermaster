@@ -3,7 +3,19 @@
 {% block title %}File Tracking — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
-<h1>File Tracking</h1>
+<div hx-trigger="sse:integrityChanged" hx-get="/quma/files" hx-select="#file-tracking-content" hx-target="#file-tracking-content" hx-swap="outerHTML">
+<div id="file-tracking-content">
+<h1 style="display:flex;justify-content:space-between;align-items:center">
+    File Tracking
+    <form method="post" action="/quma/api/mods/integrity/recheck" style="display:inline"
+          hx-post="/quma/api/mods/integrity/recheck" hx-swap="none">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-sm" title="Force recheck">↻ Recheck</button>
+    </form>
+</h1>
+
+<div hx-get="/quma/api/mods/integrity/progress" hx-trigger="load" hx-swap="innerHTML">
+</div>
 
 <div class="card">
     <h2>Summary</h2>
@@ -62,4 +74,6 @@
     </table>
 </div>
 {% endif %}
+</div>
+</div>
 {% endblock %}

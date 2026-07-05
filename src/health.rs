@@ -1,5 +1,7 @@
 use anyhow::Result;
-use serde::Serialize;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::cli::common::CliContext;
 use crate::server_detect::resolve_server_addr;
@@ -35,7 +37,7 @@ pub struct ModsHealth {
     pub incompatible_mods: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrityHealth {
     pub tracked_files: usize,
     pub missing_files: Vec<String>,
@@ -43,7 +45,7 @@ pub struct IntegrityHealth {
     pub untracked_dirs: Vec<UntrackedDir>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UntrackedDir {
     pub path: String,
     pub file_count: usize,
@@ -95,14 +97,40 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
     )
     .await;
 
-    let tracked_files = ctx.db.get_all_enabled_mod_files()?;
-    let integrity = check_integrity_from(&tracked_files, &ctx.spt_dir)?;
+    let integrity = match try_fetch_cached_integrity(&ctx.config).await {
+        Some(cached) => cached,
+        None => {
+            let tracked_files = ctx.db.get_all_enabled_mod_files()?;
+            let spt_dir = ctx.spt_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                let progress = std::sync::atomic::AtomicUsize::new(0);
+                let total = std::sync::atomic::AtomicUsize::new(0);
+                check_integrity_parallel(&tracked_files, &spt_dir, &progress, &total)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("integrity check task failed: {e}"))??
+        }
+    };
 
     Ok(HealthReport {
         server,
         mods,
         integrity,
     })
+}
+
+async fn try_fetch_cached_integrity(config: &crate::config::Config) -> Option<IntegrityHealth> {
+    let port = config.web_port;
+    let url = format!("http://127.0.0.1:{port}/quma/health/integrity");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<IntegrityHealth>().await.ok()
 }
 
 pub async fn check_server(
@@ -219,31 +247,48 @@ pub async fn check_mods_health(
     }
 }
 
-pub fn check_integrity_from(
+/// Parallel integrity check using rayon for concurrent file hashing.
+/// Updates `progress` and `total` atomics for progress reporting.
+// ponytail: rayon parallel hash + TTL cache; upgrade to inotify (notify crate) per-file watching when file counts justify it
+pub fn check_integrity_parallel(
     tracked_files: &[crate::db::mods::InstalledFile],
     spt_dir: &std::path::Path,
+    progress: &AtomicUsize,
+    total: &AtomicUsize,
 ) -> Result<IntegrityHealth> {
+    total.store(tracked_files.len(), Ordering::Relaxed);
+    progress.store(0, Ordering::Relaxed);
+
+    let results: Vec<(Option<String>, Option<String>)> = tracked_files
+        .par_iter()
+        .map(|file| {
+            let full_path = spt_dir.join(&file.file_path);
+            let result = if !full_path.exists() {
+                (Some(file.file_path.clone()), None)
+            } else if let Some(ref expected_hash) = file.file_hash {
+                match compute_file_hash(&full_path) {
+                    Ok(actual_hash) if actual_hash != *expected_hash => {
+                        (None, Some(file.file_path.clone()))
+                    }
+                    Err(_) => (None, Some(file.file_path.clone())),
+                    _ => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+            progress.fetch_add(1, Ordering::Relaxed);
+            result
+        })
+        .collect();
+
     let mut missing_files = Vec::new();
     let mut modified_files = Vec::new();
-
-    for file in tracked_files {
-        let full_path = spt_dir.join(&file.file_path);
-        if !full_path.exists() {
-            missing_files.push(file.file_path.clone());
-            continue;
+    for (missing, modified) in results {
+        if let Some(path) = missing {
+            missing_files.push(path);
         }
-
-        if let Some(ref expected_hash) = file.file_hash {
-            match compute_file_hash(&full_path) {
-                Ok(actual_hash) => {
-                    if actual_hash != *expected_hash {
-                        modified_files.push(file.file_path.clone());
-                    }
-                }
-                Err(_) => {
-                    modified_files.push(file.file_path.clone());
-                }
-            }
+        if let Some(path) = modified {
+            modified_files.push(path);
         }
     }
 
@@ -704,7 +749,9 @@ mod tests {
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
-            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+            let progress = AtomicUsize::new(0);
+            let total = AtomicUsize::new(0);
+            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
         };
         assert_eq!(result.tracked_files, 1);
         assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
@@ -742,7 +789,9 @@ mod tests {
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
-            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+            let progress = AtomicUsize::new(0);
+            let total = AtomicUsize::new(0);
+            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
         };
         assert!(result.missing_files.is_empty());
         assert_eq!(
@@ -762,7 +811,9 @@ mod tests {
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
-            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+            let progress = AtomicUsize::new(0);
+            let total = AtomicUsize::new(0);
+            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
         };
         assert_eq!(result.tracked_files, 0);
         assert_eq!(result.untracked_dirs.len(), 1);
@@ -1085,5 +1136,77 @@ mod tests {
 
         // Should use directory name "fika-server", NOT package.json name "server"
         assert_eq!(names.get(&mod_id).map(|s| s.as_str()), Some("fika-server"));
+    }
+
+    #[test]
+    fn check_integrity_parallel_detects_missing_file() {
+        use std::sync::atomic::AtomicUsize;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
+
+        let ctx = test_cli_context(tmp.path());
+        let mod_id = ctx
+            .db
+            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .unwrap();
+        ctx.db
+            .insert_file(
+                mod_id,
+                "SPT/user/mods/TestMod/test.dll",
+                Some("abc123"),
+                Some(100),
+            )
+            .unwrap();
+
+        let tracked = ctx.db.get_all_tracked_files().unwrap();
+        let progress = AtomicUsize::new(0);
+        let total = AtomicUsize::new(0);
+        let result = check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap();
+        assert_eq!(result.tracked_files, 1);
+        assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
+        assert!(result.modified_files.is_empty());
+        assert_eq!(total.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn check_integrity_parallel_detects_modified_file() {
+        use std::sync::atomic::AtomicUsize;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/TestMod")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
+
+        let file_path = tmp.path().join("SPT/user/mods/TestMod/test.dll");
+        std::fs::write(&file_path, b"original content").unwrap();
+        let original_hash = crate::spt::mods::compute_file_hash(&file_path).unwrap();
+
+        let ctx = test_cli_context(tmp.path());
+        let mod_id = ctx
+            .db
+            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .unwrap();
+        ctx.db
+            .insert_file(
+                mod_id,
+                "SPT/user/mods/TestMod/test.dll",
+                Some(&original_hash),
+                Some(16),
+            )
+            .unwrap();
+
+        std::fs::write(&file_path, b"tampered content").unwrap();
+
+        let tracked = ctx.db.get_all_tracked_files().unwrap();
+        let progress = AtomicUsize::new(0);
+        let total = AtomicUsize::new(0);
+        let result = check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap();
+        assert!(result.missing_files.is_empty());
+        assert_eq!(
+            result.modified_files,
+            vec!["SPT/user/mods/TestMod/test.dll"]
+        );
     }
 }

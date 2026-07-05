@@ -87,6 +87,9 @@ rpassword = "7"
 # Non-poisoning Mutex for web DB access
 parking_lot = "0.12"
 
+# Parallel iteration
+rayon = "1"
+
 # Regex for targeted text replacement
 regex = "1"
 
