@@ -316,7 +316,7 @@ impl CatalogCacheInner {
         let _guard = ResetOnDrop(&self.rebuilding);
 
         if let Err(e) = self.build_cache() {
-            tracing::error!("failed to rebuild convoy catalog cache: {e}");
+            tracing::error!(err = %e, "failed to rebuild convoy catalog cache");
         }
 
         if self.dirty.swap(false, Ordering::AcqRel) {
