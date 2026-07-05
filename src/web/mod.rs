@@ -66,7 +66,7 @@ async fn serve_asset(path: web::Path<String>) -> HttpResponse {
     match Assets::get(&path) {
         Some(file) => HttpResponse::Ok()
             .content_type(content_type_for(&path))
-            .insert_header(("Cache-Control", "no-cache"))
+            .insert_header(("Cache-Control", "public, max-age=3600"))
             .body(file.data.into_owned()),
         None => HttpResponse::NotFound().body("asset not found"),
     }

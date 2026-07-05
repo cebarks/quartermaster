@@ -9,6 +9,7 @@ use super::models::*;
 
 const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
 const MAX_RETRIES: u32 = 2;
+const MAX_DOWNLOAD_SIZE: u64 = 500 * 1024 * 1024; // 500 MB
 
 #[cfg(test)]
 const EXTERNAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
@@ -333,6 +334,14 @@ impl ForgeClient {
         .context("download_file returned error status")?;
 
         let total_size = resp.content_length();
+        if let Some(size) = total_size {
+            anyhow::ensure!(
+                size <= MAX_DOWNLOAD_SIZE,
+                "download too large ({:.0} MB, limit {:.0} MB)",
+                size as f64 / (1024.0 * 1024.0),
+                MAX_DOWNLOAD_SIZE as f64 / (1024.0 * 1024.0)
+            );
+        }
         let mut stream = resp.bytes_stream();
         let mut file = tokio::fs::File::create(dest)
             .await
@@ -348,6 +357,11 @@ impl ForgeClient {
                 .await
                 .context("error writing to file")?;
             downloaded += bytes.len() as u64;
+            anyhow::ensure!(
+                downloaded <= MAX_DOWNLOAD_SIZE,
+                "download exceeded size limit ({:.0} MB)",
+                MAX_DOWNLOAD_SIZE as f64 / (1024.0 * 1024.0)
+            );
 
             if last_log.elapsed() >= std::time::Duration::from_secs(10) {
                 last_log = std::time::Instant::now();
