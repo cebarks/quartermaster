@@ -52,6 +52,7 @@ impl FikaClient {
         let resp = self
             .http
             .post(self.api_url("/fika/presence/get"))
+            .header("requestcompressed", "0")
             .header("responsecompressed", "0")
             .json(&serde_json::json!({}))
             .send()
@@ -72,6 +73,7 @@ impl FikaClient {
         let resp = self
             .http
             .post(self.api_url("/fika/raid/headless/start"))
+            .header("requestcompressed", "0")
             .header("responsecompressed", "0")
             .json(req)
             .send()
@@ -87,6 +89,7 @@ impl FikaClient {
         let resp = self
             .http
             .post(self.api_url("/fika/notification/push"))
+            .header("requestcompressed", "0")
             .header("responsecompressed", "0")
             .json(&serde_json::json!({
                 "notification": message,
