@@ -31,7 +31,6 @@
 - ~~config save ceremony repeated 8+ times~~ (reduced — `AppState::persist_config` used by settings+modsync; clients.rs 3× remain due to tokio::spawn constraints)
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
-- refactor mod group implementation to be it's own system outside of narconet. narconet uses app-wide groups
 
 ## Headless Client
 - convergence restarts SPT server without warning users (`converge.rs`)
@@ -96,7 +95,8 @@
 - better metrics: dynamic `by prefix` sorting, graphs
 - profile editor
 - MOTD
-- NarcoNet: better default sizes for extra/exclusions text areas
+- Convoy: build C# BepInEx client plugin (see docs/superpowers/specs/2026-07-05-convoy-design.md)
+- Convoy: embed client DLL in join flow bootstrap ZIP
 - better formatting for SVM editor: section breakdown with header toggles, field name vs subtext, default value shown, download/upload preset, preset toggle
 - discord integration:
     - use discord member list to define SVM AI PMC Names
