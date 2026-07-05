@@ -247,61 +247,7 @@ pub async fn check_mods_health(
     }
 }
 
-pub fn check_integrity_from(
-    tracked_files: &[crate::db::mods::InstalledFile],
-    spt_dir: &std::path::Path,
-) -> Result<IntegrityHealth> {
-    let mut missing_files = Vec::new();
-    let mut modified_files = Vec::new();
-
-    for file in tracked_files {
-        let full_path = spt_dir.join(&file.file_path);
-        if !full_path.exists() {
-            missing_files.push(file.file_path.clone());
-            continue;
-        }
-
-        if let Some(ref expected_hash) = file.file_hash {
-            match compute_file_hash(&full_path) {
-                Ok(actual_hash) => {
-                    if actual_hash != *expected_hash {
-                        modified_files.push(file.file_path.clone());
-                    }
-                }
-                Err(_) => {
-                    modified_files.push(file.file_path.clone());
-                }
-            }
-        }
-    }
-
-    let all_disk_files = scan_mod_directories(spt_dir)?;
-    let tracked_paths: std::collections::HashSet<&str> =
-        tracked_files.iter().map(|f| f.file_path.as_str()).collect();
-
-    let untracked: Vec<&str> = all_disk_files
-        .iter()
-        .filter(|f| !tracked_paths.contains(f.as_str()))
-        .map(|f| f.as_str())
-        .collect();
-
-    let mut dir_counts = crate::cli::common::group_untracked_by_mod_dir(&untracked);
-    dir_counts.remove("BepInEx/plugins/spt");
-
-    let untracked_dirs: Vec<UntrackedDir> = dir_counts
-        .into_iter()
-        .map(|(path, file_count)| UntrackedDir { path, file_count })
-        .collect();
-
-    Ok(IntegrityHealth {
-        tracked_files: tracked_files.len(),
-        missing_files,
-        modified_files,
-        untracked_dirs,
-    })
-}
-
-/// Parallel version of `check_integrity_from()` using rayon for concurrent file hashing.
+/// Parallel integrity check using rayon for concurrent file hashing.
 /// Updates `progress` and `total` atomics for progress reporting.
 // ponytail: rayon parallel hash + TTL cache; upgrade to inotify (notify crate) per-file watching when file counts justify it
 pub fn check_integrity_parallel(
@@ -803,7 +749,9 @@ mod tests {
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
-            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+            let progress = AtomicUsize::new(0);
+            let total = AtomicUsize::new(0);
+            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
         };
         assert_eq!(result.tracked_files, 1);
         assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
@@ -841,7 +789,9 @@ mod tests {
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
-            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+            let progress = AtomicUsize::new(0);
+            let total = AtomicUsize::new(0);
+            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
         };
         assert!(result.missing_files.is_empty());
         assert_eq!(
@@ -861,7 +811,9 @@ mod tests {
 
         let result = {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
-            check_integrity_from(&tracked, &ctx.spt_dir).unwrap()
+            let progress = AtomicUsize::new(0);
+            let total = AtomicUsize::new(0);
+            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
         };
         assert_eq!(result.tracked_files, 0);
         assert_eq!(result.untracked_dirs.len(), 1);
