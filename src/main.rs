@@ -5,6 +5,7 @@ mod cli;
 mod client;
 mod config;
 mod container;
+mod convoy;
 mod db;
 mod fika;
 mod forge;

@@ -177,6 +177,15 @@ pub fn configure_app(
                 web::resource("/setup/mods.zip")
                     .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::setup::setup_mods_zip)),
+            )
+            .route("/convoy/catalog", web::get().to(handlers::convoy::catalog))
+            .route(
+                "/convoy/download",
+                web::post().to(handlers::convoy::download),
+            )
+            .route(
+                "/convoy/mod/{forge_id}/archive",
+                web::get().to(handlers::convoy::single_mod_archive),
             );
     } else {
         // Same routes without rate limiting (for tests)
@@ -204,6 +213,15 @@ pub fn configure_app(
             .route(
                 "/setup/mods.zip",
                 web::get().to(handlers::setup::setup_mods_zip),
+            )
+            .route("/convoy/catalog", web::get().to(handlers::convoy::catalog))
+            .route(
+                "/convoy/download",
+                web::post().to(handlers::convoy::download),
+            )
+            .route(
+                "/convoy/mod/{forge_id}/archive",
+                web::get().to(handlers::convoy::single_mod_archive),
             );
     }
 
@@ -869,6 +887,12 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         None
     };
 
+    let catalog_cache = crate::convoy::catalog::CatalogCache::new(
+        spt_dir.clone(),
+        db_arc.clone(),
+        config_handle.clone(),
+    );
+
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
@@ -898,10 +922,22 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         log_level_counts,
         fika_client,
         fika_config_lock: parking_lot::Mutex::new(()),
+        catalog_cache,
     });
 
     // Pre-warm mod ZIP cache in background
     app_state.mod_zip_cache.invalidate();
+
+    // Invalidate convoy catalog on startup if enabled
+    if app_state
+        .config
+        .read()
+        .convoy
+        .as_ref()
+        .map_or(false, |c| c.enabled)
+    {
+        app_state.catalog_cache.invalidate();
+    }
 
     let governor_conf = GovernorConfigBuilder::default()
         .seconds_per_request(12)

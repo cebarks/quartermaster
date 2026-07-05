@@ -52,6 +52,7 @@ pub struct AppState {
     pub fika_client: Option<Arc<crate::fika::client::FikaClient>>,
     #[allow(dead_code)] // ponytail: used in later tasks
     pub fika_config_lock: parking_lot::Mutex<()>,
+    pub catalog_cache: crate::convoy::catalog::CatalogCache,
 }
 
 impl AppState {

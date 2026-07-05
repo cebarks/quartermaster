@@ -197,6 +197,11 @@ impl TestAppBuilder {
             ),
             integrity_cache: spt_quartermaster::web::integrity_cache::IntegrityCache::new(300),
             log_level_counts,
+            catalog_cache: spt_quartermaster::convoy::catalog::CatalogCache::new(
+                spt_dir.clone(),
+                db_arc.clone(),
+                config_arc.clone(),
+            ),
         });
 
         TestApp {
