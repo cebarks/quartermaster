@@ -375,6 +375,7 @@ mod tests {
             disabled: false,
             source: "forge".to_string(),
             source_url: None,
+            group_id: None,
         }];
 
         assert_eq!(mod_name_for_id(&mods, 100), "TestMod");

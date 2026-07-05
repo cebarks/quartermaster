@@ -428,6 +428,7 @@ mod tests {
             disabled: false,
             source: "forge".to_string(),
             source_url: None,
+            group_id: None,
         }
     }
 

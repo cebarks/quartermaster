@@ -16,6 +16,16 @@ pub struct InstalledMod {
     pub disabled: bool,
     pub source: String,
     pub source_url: Option<String>,
+    pub group_id: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModGroup {
+    pub id: i64,
+    pub name: String,
+    pub slug: String,
+    pub tier: String,
+    pub exclude_headless: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -92,7 +102,7 @@ impl Database {
     pub fn get_mod(&self, id: i64) -> rusqlite::Result<Option<InstalledMod>> {
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
                  FROM installed_mods WHERE id = ?1",
                 params![id],
                 row_to_installed_mod,
@@ -103,7 +113,7 @@ impl Database {
     pub fn get_mod_by_forge_id(&self, forge_mod_id: i64) -> rusqlite::Result<Option<InstalledMod>> {
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
                  FROM installed_mods WHERE forge_mod_id = ?1",
                 params![forge_mod_id],
                 row_to_installed_mod,
@@ -116,7 +126,7 @@ impl Database {
         let by_name = self
             .conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
                  FROM installed_mods WHERE LOWER(name) = LOWER(?1)",
                 params![query],
                 row_to_installed_mod,
@@ -127,7 +137,7 @@ impl Database {
         }
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
                  FROM installed_mods WHERE LOWER(slug) = LOWER(?1)",
                 params![query],
                 row_to_installed_mod,
@@ -137,7 +147,7 @@ impl Database {
 
     pub fn list_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
              FROM installed_mods ORDER BY name",
         )?;
         let rows = stmt.query_map([], row_to_installed_mod)?;
@@ -147,7 +157,7 @@ impl Database {
     pub fn list_mods_with_file_counts(&self) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
-                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url,
+                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url, m.group_id,
                     COUNT(f.id) as file_count,
                     COALESCE(SUM(f.file_size), 0) as total_size
              FROM installed_mods m
@@ -157,8 +167,8 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| {
             let m = row_to_installed_mod(row)?;
-            let count: i64 = row.get(11)?;
-            let size: i64 = row.get(12)?;
+            let count: i64 = row.get(12)?;
+            let size: i64 = row.get(13)?;
             Ok((m, count as usize, size))
         })?;
         rows.collect()
@@ -170,7 +180,7 @@ impl Database {
     ) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
         let mut sql = String::from(
             "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
-                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url,
+                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url, m.group_id,
                     COUNT(f.id) as file_count,
                     COALESCE(SUM(f.file_size), 0) as total_size
              FROM installed_mods m
@@ -223,8 +233,8 @@ impl Database {
             param_values.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_ref.as_slice(), |row| {
             let m = row_to_installed_mod(row)?;
-            let count: i64 = row.get(11)?;
-            let size: i64 = row.get(12)?;
+            let count: i64 = row.get(12)?;
+            let size: i64 = row.get(13)?;
             Ok((m, count as usize, size))
         })?;
         rows.collect()
@@ -514,6 +524,124 @@ impl Database {
         self.conn
             .execute("DELETE FROM pending_updates WHERE id = ?1", params![id])
     }
+
+    // ── Convoy Groups ─────────────────────────────────────────────────
+
+    pub fn list_groups(&self) -> rusqlite::Result<Vec<ModGroup>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, slug, tier, exclude_headless FROM mod_groups ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ModGroup {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                slug: row.get(2)?,
+                tier: row.get(3)?,
+                exclude_headless: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn get_group(&self, id: i64) -> rusqlite::Result<Option<ModGroup>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, slug, tier, exclude_headless FROM mod_groups WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(ModGroup {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        slug: row.get(2)?,
+                        tier: row.get(3)?,
+                        exclude_headless: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn get_group_by_slug(&self, slug: &str) -> rusqlite::Result<Option<ModGroup>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, slug, tier, exclude_headless FROM mod_groups WHERE slug = ?1",
+                params![slug],
+                |row| {
+                    Ok(ModGroup {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        slug: row.get(2)?,
+                        tier: row.get(3)?,
+                        exclude_headless: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn insert_group(
+        &self,
+        name: &str,
+        slug: &str,
+        tier: &str,
+        exclude_headless: bool,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO mod_groups (name, slug, tier, exclude_headless) VALUES (?1, ?2, ?3, ?4)",
+            params![name, slug, tier, exclude_headless as i64],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn update_group(
+        &self,
+        id: i64,
+        name: &str,
+        slug: &str,
+        tier: &str,
+        exclude_headless: bool,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE mod_groups SET name = ?1, slug = ?2, tier = ?3, exclude_headless = ?4 WHERE id = ?5",
+            params![name, slug, tier, exclude_headless as i64, id],
+        )
+    }
+
+    /// Deletes a group. Explicitly NULLs group_id on all member mods first
+    /// because ALTER TABLE ADD COLUMN doesn't enforce FK constraints in SQLite.
+    pub fn delete_group(&self, id: i64) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE installed_mods SET group_id = NULL WHERE group_id = ?1",
+            params![id],
+        )?;
+        self.conn
+            .execute("DELETE FROM mod_groups WHERE id = ?1", params![id])
+    }
+
+    pub fn set_mod_group(&self, mod_id: i64, group_id: Option<i64>) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE installed_mods SET group_id = ?1 WHERE id = ?2",
+            params![group_id, mod_id],
+        )
+    }
+
+    pub fn get_mods_in_group(&self, group_id: i64) -> rusqlite::Result<Vec<InstalledMod>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+             FROM installed_mods WHERE group_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt.query_map(params![group_id], row_to_installed_mod)?;
+        rows.collect()
+    }
+
+    pub fn get_ungrouped_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+             FROM installed_mods WHERE group_id IS NULL ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], row_to_installed_mod)?;
+        rows.collect()
+    }
 }
 
 /// A record tracking an in-progress async mod/addon update, used for crash recovery.
@@ -545,6 +673,7 @@ fn row_to_installed_mod(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledMo
         disabled: disabled_int != 0,
         source: row.get(9)?,
         source_url: row.get(10)?,
+        group_id: row.get(11)?,
     })
 }
 
