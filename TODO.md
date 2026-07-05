@@ -1,37 +1,35 @@
 # TODO
 
 ## Top Priority
-- !!! mod requests/queue/installed lifecycle
+- !!! mod requests/queue/installed lifecycle review
+    - canceling an install queue item puts it back in requests (if it was previously requested)
 - !!! Notes page
 - SVM preset upload size limit
-- players don't show up in main menu fika
 - mod config management
-- install mod from a URL
-- fix UX for mod requests/management
+- move groups config to tab on mods page
 
 ## Triage
-- integrity checks should be multi-threaded, async and cached, with a button to force a recheck
+- fika settings
+    - headless client settings should be merged with existing headless page, no need to expose headless profile amount or force ip.
+
 
 ## Bugs
-- canceling an install queue item puts it back in requests (if it was previously requested)
-- multi-tab pages active tab highlighting is broken on nav
 - account creation dropdown missing SPT dev profiles
 - can't rekove already approved mods that haven't been installed
 - headless profiles should not show be included in raid stats
 - numa scheduling webui config is broken
 - mod requests list shouldn't include already installed mods
-
-## Security
-- cookie-based sessions can't be individually revoked
+- numbers on the stats board (particularly map popularity and total raids) seem wrong
+- /quma/raids returns 500 when no raid data exists (handler doesn't handle empty state)
 
 ## Core Architecture
 - consolidate all mod management logic from all paths (web handlers bypass `ops.rs` in places)
-- stop using container image for spt-server, just run it natively
-- swap to using fika-installer in the headless client
+- stop using container image for spt-server, just run it natively?
 - ~~config save ceremony repeated 8+ times~~ (reduced — `AppState::persist_config` used by settings+modsync; clients.rs 3× remain due to tokio::spawn constraints)
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
 - refactor mod group implementation to be it's own system outside of narconet. narconet uses app-wide groups
+- build simpler, lighterweight container
 
 ## Headless Client
 - convergence restarts SPT server without warning users (`converge.rs`)
@@ -63,22 +61,15 @@
 - SSE has no keepalive/heartbeat — proxies may close idle connections (`sse.rs`)
 
 ## Web UI / Frontend
-- password boxes should have eye to toggle visibility
-- `render_user_row` reloads ALL profile stats for one row (`admin.rs`)
-- static assets served with no caching
-- no download size limit on Forge downloads (`forge/client.rs`)
-- metrics page polls every 1 second
-- missing CSS class definitions: `.badge-error`, `.status-dot.degraded`, `.badge-primary`, `.form-control`, `.alert-danger`
-- undefined CSS variables: `--primary`, `--error` (no fallbacks); `--warning-bg` has inline fallback but is never defined in `:root`
-- clipboard API fails silently on HTTP
-- no global HTMX error handling
-- no responsive design
-- no ARIA attributes
-- toast messages auto-fade too fast for errors
-- template duplication: ~~request cards~~, ~~client status table (3×)~~ (dead `clients/list.html` deleted), raid outcome badges (4×)
-- tab implementation inconsistency — 2 different patterns across pages (`.tab-bar`/`tabSwitch` vs `.log-tab-bar`/inline JS)
+
+### UX Improvements
 - clean up mod file list, add collapsable folder tree, file viewer (editor too maybe; need to investigate)
-- move mod install card above list in /quma/mods
+- 404 page
+
+### Accessibility / Responsive
+- no responsive design (zero `@media` queries)
+- no ARIA attributes (zero `aria-` in templates)
+- no global HTMX error handling
 
 ## Features
 - automatic mod config backup via git
@@ -150,21 +141,21 @@ Items below are sourced from review/audit documents. See the linked file for ful
 
 **Architecture/Performance:**
 - install logic duplicated between mods and requests handlers (3.2)
-- `render_user_row` reloads ALL profile stats for one row (3.4, `admin.rs:780`)
+- ~~`render_user_row` reloads ALL profile stats for one row (3.4, `admin.rs:780`)~~
 - `WebError` always returns HTML even for API endpoints (3.5, `error.rs`)
 - blocking filesystem reads on async runtime (3.6, `settings.rs`, `svm.rs`)
-- static assets served with no caching (4.1)
-- no download size limit on Forge downloads (4.4, `forge/client.rs:191`)
-- metrics page polls every 1 second (4.5)
+- ~~static assets served with no caching (4.1)~~
+- ~~no download size limit on Forge downloads (4.4, `forge/client.rs:191`)~~
+- ~~metrics page polls every 1 second (4.5)~~
 
 **Frontend/UX:**
-- missing CSS class definitions: `.badge-error`, `.status-dot.degraded`, `.badge-primary`, `.form-control`, `.alert-danger` (5.1)
-- undefined CSS variables: `--primary`, `--error` (no fallbacks); `--warning-bg` has inline fallback (5.2)
-- clipboard API fails silently on HTTP (5.5)
+- ~~missing CSS class definitions: `.badge-error`, `.status-dot.degraded`, `.badge-primary`, `.form-control`, `.alert-danger` (5.1)~~
+- ~~undefined CSS variables: `--primary`, `--error` (no fallbacks); `--warning-bg` has inline fallback (5.2)~~
+- ~~clipboard API fails silently on HTTP (5.5)~~
 - no global HTMX error handling (5.6)
 - no responsive design (5.7)
 - no ARIA attributes (5.8)
-- toast messages auto-fade too fast for errors (5.10)
+- ~~toast messages auto-fade too fast for errors (5.10)~~
 
 **Robustness:**
 - no mutual exclusion on server start/stop/restart (6.1, `server.rs`)

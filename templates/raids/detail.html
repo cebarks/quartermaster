@@ -5,19 +5,13 @@
 {% block content %}
 <div class="flex-between">
     <h1>{{ raid.map }} Raid</h1>
+    <span class="badge-lg">
     {% if let Some(status) = raid.exit_status %}
-        {% if status == "Survived" %}
-            <span class="badge badge-success" style="font-size:0.9rem;padding:0.3rem 0.75rem">{{ status }}</span>
-        {% else if status == "Killed" %}
-            <span class="badge badge-danger" style="font-size:0.9rem;padding:0.3rem 0.75rem">{{ status }}</span>
-        {% else if status == "Runner" || status == "MissingInAction" %}
-            <span class="badge badge-warning" style="font-size:0.9rem;padding:0.3rem 0.75rem">{{ status }}</span>
-        {% else %}
-            <span class="badge badge-muted" style="font-size:0.9rem;padding:0.3rem 0.75rem">{{ status }}</span>
-        {% endif %}
+        {% include "raids/partials/outcome_badge.html" %}
     {% else %}
-        <span class="badge badge-muted" style="font-size:0.9rem;padding:0.3rem 0.75rem">In Progress</span>
+        <span class="badge badge-muted">In Progress</span>
     {% endif %}
+    </span>
 </div>
 
 <div style="display:grid;grid-template-columns:2fr 1fr;gap:1.5rem">
@@ -66,13 +60,7 @@
                         <td>{{ member_raid.player_side }}</td>
                         <td>
                             {% if let Some(status) = member_raid.exit_status %}
-                                {% if status == "Survived" %}
-                                    <span class="badge badge-success">{{ status }}</span>
-                                {% else if status == "Killed" %}
-                                    <span class="badge badge-danger">{{ status }}</span>
-                                {% else %}
-                                    <span class="badge badge-muted">{{ status }}</span>
-                                {% endif %}
+                                {% include "raids/partials/outcome_badge.html" %}
                             {% else %}
                                 <span class="badge badge-muted">In Progress</span>
                             {% endif %}

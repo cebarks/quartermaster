@@ -33,7 +33,7 @@
     <p>Open the SPT Launcher, go to settings, and set the server address to:</p>
     <div style="display: flex; align-items: center; gap: 0.5rem; margin: 0.75rem 0">
         <code id="server-url" style="padding: 0.5rem 0.75rem; background: var(--bg-tertiary); border-radius: 4px; font-size: 1rem; user-select: all">{{ spt_server_url }}</code>
-        <button class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText(document.getElementById('server-url').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy'},1500)})">Copy</button>
+        <button class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText(document.getElementById('server-url').textContent).then(function(){var b=event.target.closest('button');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy'},1500)}).catch(function(){var b=event.target.closest('button');b.textContent='Copy failed';setTimeout(function(){b.textContent='Copy'},1500)})">Copy</button>
     </div>
 </div>
 

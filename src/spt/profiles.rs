@@ -384,6 +384,27 @@ pub fn list_profiles(spt_dir: &Path) -> Result<Vec<SptProfile>> {
     Ok(profiles)
 }
 
+/// Load profile stats for a single AID, returning the appropriate `ProfileStatus`.
+/// Avoids reading every profile file on disk when only one user row is needed.
+pub fn load_single_profile_status(spt_dir: &Path, aid: &str) -> ProfileStatus {
+    let path = spt_dir
+        .join("SPT/user/profiles")
+        .join(format!("{aid}.json"));
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return ProfileStatus::NotFound,
+    };
+    let parsed: FullProfileJson = match serde_json::from_str(&contents) {
+        Ok(p) => p,
+        Err(_) => return ProfileStatus::ParseError,
+    };
+    let stats = match parsed.characters.and_then(|c| c.pmc) {
+        Some(pmc) => extract_stats_from_pmc(pmc),
+        None => SptProfileStats::default(),
+    };
+    ProfileStatus::Found(stats)
+}
+
 pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats> {
     let profiles_dir = spt_dir.join("SPT/user/profiles");
     let mut map = HashMap::new();
