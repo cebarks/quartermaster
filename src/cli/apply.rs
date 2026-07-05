@@ -229,7 +229,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                         ctx.db.delete_pending_op(op.id)?;
                         continue;
                     }
-                    let source = crate::ops::ModSource::from_str(&op.source)
+                    let source = crate::ops::ModSource::parse(&op.source)
                         .unwrap_or(crate::ops::ModSource::Forge);
                     if let Err(e) =
                         crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {

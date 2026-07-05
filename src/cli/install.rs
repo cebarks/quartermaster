@@ -914,6 +914,20 @@ mod tests {
         );
         assert_eq!(skipped, vec!["ConflictMod"]);
     }
+
+    #[test]
+    fn derive_name_from_url_cases() {
+        assert_eq!(
+            derive_name_from_url("https://example.com/SAIN-v3.2.zip"),
+            "SAIN-v3.2"
+        );
+        assert_eq!(derive_name_from_url("https://example.com/mod.7z"), "mod");
+        assert_eq!(
+            derive_name_from_url("https://example.com/mod.zip?token=abc"),
+            "mod"
+        );
+        assert_eq!(derive_name_from_url("https://example.com/"), "unknown-mod");
+    }
 }
 
 fn is_url(s: &str) -> bool {
@@ -928,6 +942,7 @@ fn derive_name_from_url(url: &str) -> String {
     url.rsplit('/')
         .next()
         .and_then(|s| s.split('?').next())
+        .filter(|s| !s.is_empty())
         .unwrap_or("unknown-mod")
         .trim_end_matches(".zip")
         .trim_end_matches(".7z")
@@ -980,8 +995,7 @@ async fn queue_file_install(
         .unwrap_or("mod.zip");
     let dest = queue_dir.join(format!("{timestamp}-{filename}"));
 
-    std::fs::copy(archive_path, &dest)
-        .with_context(|| format!("failed to copy archive to queue dir"))?;
+    std::fs::copy(archive_path, &dest).context("failed to copy archive to queue dir")?;
 
     ctx.db.insert_pending_url_op(
         crate::db::users::QueueAction::Install,

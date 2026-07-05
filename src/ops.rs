@@ -181,7 +181,7 @@ impl ModSource {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "forge" => Some(ModSource::Forge),
             "url" => Some(ModSource::Url),
@@ -3086,6 +3086,44 @@ mod tests {
     }
 
     #[test]
+    fn install_from_file_no_forge_id() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+        let zip = create_test_zip(&[("BepInEx/plugins/TestMod/test.dll", b"fake dll content")]);
+
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: None,
+            version_id: None,
+            name: "TestFileMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip.path(),
+            source: ModSource::File,
+            source_url: None,
+        })
+        .unwrap();
+
+        let installed = db.get_mod(db_id).unwrap().unwrap();
+        assert_eq!(installed.name, "TestFileMod");
+        assert_eq!(installed.version, "1.0.0");
+        assert_eq!(installed.source, "file");
+        assert!(installed.forge_mod_id.is_none());
+        assert!(installed.forge_version_id.is_none());
+
+        let files = db.get_files_for_mod(db_id).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_path, "BepInEx/plugins/TestMod/test.dll");
+
+        assert!(spt_dir
+            .path()
+            .join("BepInEx/plugins/TestMod/test.dll")
+            .exists());
+    }
+
+    #[test]
     fn mod_source_as_str() {
         assert_eq!(ModSource::Forge.as_str(), "forge");
         assert_eq!(ModSource::Url.as_str(), "url");
@@ -3093,10 +3131,10 @@ mod tests {
     }
 
     #[test]
-    fn mod_source_from_str() {
-        assert_eq!(ModSource::from_str("forge"), Some(ModSource::Forge));
-        assert_eq!(ModSource::from_str("url"), Some(ModSource::Url));
-        assert_eq!(ModSource::from_str("file"), Some(ModSource::File));
-        assert_eq!(ModSource::from_str("unknown"), None);
+    fn mod_source_parse() {
+        assert_eq!(ModSource::parse("forge"), Some(ModSource::Forge));
+        assert_eq!(ModSource::parse("url"), Some(ModSource::Url));
+        assert_eq!(ModSource::parse("file"), Some(ModSource::File));
+        assert_eq!(ModSource::parse("unknown"), None);
     }
 }
