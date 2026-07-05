@@ -3,7 +3,6 @@ use actix_web::web::Form;
 use actix_web::{web, HttpResponse};
 use askama::Template;
 
-use crate::config::NARCONET_FORGE_MOD_ID;
 use crate::web::auth::{hash_password, validate_password_complexity};
 use crate::web::error::WebError;
 use crate::web::invite::validate_invite_code;
@@ -14,9 +13,8 @@ pub(crate) const DEFAULT_SERVER_NAME: &str = "SPT Server";
 pub(crate) const FIKA_INSTALLER_URL: &str =
     "https://github.com/project-fika/Fika-Installer/releases/latest/download/Fika-Installer.exe";
 
-pub(crate) const BOOTSTRAP_FORGE_IDS: &[i64] = &[
-    NARCONET_FORGE_MOD_ID, // 2441
-];
+// ponytail: Convoy client plugin will be embedded here once the C# project is built.
+pub(crate) const BOOTSTRAP_FORGE_IDS: &[i64] = &[];
 
 const SPT_EDITIONS: &[&str] = &[
     "Standard",
@@ -524,7 +522,7 @@ pub async fn mod_archive(
         return Ok(referrer_policy(
             HttpResponse::ServiceUnavailable()
                 .content_type("text/plain")
-                .body("No bootstrap mods (NarcoNet) are installed on this server"),
+                .body("No bootstrap mods (Convoy) are installed on this server"),
         ));
     }
 
@@ -734,7 +732,7 @@ curl -fsSL -o Fika-Installer.exe "$FIKA_INSTALLER_URL"
 echo "Installing Fika (via Wine)..."
 wine Fika-Installer.exe install fika
 
-# Step 2: Download additional mods (NarcoNet, etc.)
+# Step 2: Download additional mods (Convoy, etc.)
 TMPFILE=$(mktemp /tmp/quma-mods-XXXXXX.zip)
 
 echo "Downloading additional mods..."
@@ -817,7 +815,7 @@ try {{
         Write-Host "WARNING: Fika Installer returned exit code $LASTEXITCODE" -ForegroundColor Yellow
     }}
 
-    # Step 2: Download additional mods (NarcoNet, etc.)
+    # Step 2: Download additional mods (Convoy, etc.)
     Write-Host "Downloading additional mods..."
     Invoke-WebRequest -Uri $ArchiveUrl -OutFile $TmpFile -UseBasicParsing
 
