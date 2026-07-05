@@ -162,7 +162,7 @@ pub async fn setup_mods_zip(
                     "quma-mods.zip".to_string(),
                 )],
             });
-        file = file.set_content_type("application/zip".parse().unwrap());
+        file = file.set_content_type("application/zip".parse().expect("valid mime"));
         return Ok(file.into_response(&req));
     }
 
