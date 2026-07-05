@@ -28,8 +28,6 @@ impl Drop for ConvergingGuard {
 pub const MANAGED_BY_LABEL: &str = "quma.managed-by";
 pub const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 
-use crate::config::FIKA_CLIENT_FORGE_ID;
-
 /// Regex for editing UDP port in Fika client config
 static PORT_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex"));
@@ -38,12 +36,8 @@ static PORT_RE: LazyLock<regex::Regex> =
 static UPNP_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(Use UPnP\s*=\s*)\S+").expect("valid regex"));
 
-/// Check if the Fika client mod is present in the headless install directory.
-///
-/// Looks for a `Fika.Core.dll`, `Fika.Core/`, or `Fika/` entry in
-/// `install_dir/BepInEx/plugins/`. The archive layout has changed across
-/// Fika versions (older: `Fika.Core/`, newer: `Fika/`), so we check both.
-pub fn is_fika_client_present(install_dir: &Path) -> bool {
+#[cfg(test)]
+fn is_fika_client_present(install_dir: &Path) -> bool {
     let plugins_dir = install_dir.join("BepInEx/plugins");
     let Ok(entries) = std::fs::read_dir(&plugins_dir) else {
         return false;
@@ -55,160 +49,67 @@ pub fn is_fika_client_present(install_dir: &Path) -> bool {
     })
 }
 
-/// Ensure the Fika client mod is installed in the headless install directory.
+/// Sync the Fika client plugin from the SPT server directory to the headless install.
 ///
-/// If Fika.Core is already present, this is a no-op. Otherwise, it queries the Forge API
-/// for the latest compatible version, downloads the archive to a temp file, and extracts
-/// it into the install directory.
-/// Returns `true` if Fika files were updated on disk (callers should restart containers).
-pub async fn ensure_fika_client(
-    forge: &ForgeClient,
-    install_dir: &Path,
-    spt_version: &str,
-    spt_client: &SptClient,
-) -> Result<bool> {
-    // Detect the server's Fika version so we can match the client to it.
-    // The container image may auto-update the server mod independently of
-    // what Forge reports as "latest compatible".
-    let server_fika_version = spt_client.loaded_server_mods().await.ok().and_then(|mods| {
-        mods.get("server")
-            .and_then(|m| m.get("Version"))
-            .and_then(|v| v.as_str().map(String::from))
-    });
+/// Copies Fika.Core.dll (and supporting files) directly from the server's
+/// BepInEx/plugins/Fika/ directory rather than downloading from Forge/GitHub.
+/// This ensures the headless client uses the exact same binary that modsync
+/// serves to players, avoiding CRC mismatches from different builds of the
+/// same version.
+///
+/// Returns `true` if files were updated on disk (callers should restart containers).
+pub fn ensure_fika_client(install_dir: &Path, spt_dir: &Path) -> Result<bool> {
+    let server_fika_dir = spt_dir.join("BepInEx/plugins/Fika");
+    let server_dll = server_fika_dir.join("Fika.Core.dll");
 
-    let fika_present = is_fika_client_present(install_dir);
-
-    if fika_present && server_fika_version.is_none() {
-        debug!("Fika client already present in {}", install_dir.display());
-        return Ok(false);
+    if !server_dll.is_file() {
+        bail!(
+            "Fika.Core.dll not found in server directory at {}",
+            server_dll.display()
+        );
     }
 
-    // If the server is running a known Fika version and we already have the
-    // client installed, check whether the installed version matches.  We
-    // store the installed version in a marker file next to the DLL.
-    if fika_present {
-        if let Some(ref target) = server_fika_version {
-            let marker = install_dir.join("BepInEx/plugins/Fika/.fika-client-version");
-            let installed = std::fs::read_to_string(&marker).unwrap_or_default();
-            if installed.trim() == target.as_str() {
-                debug!("Fika client v{target} already matches server");
-                return Ok(false);
-            }
-            info!(
-                "Fika client version mismatch (installed: {}, server: {target}) — updating",
-                if installed.trim().is_empty() {
-                    "unknown"
-                } else {
-                    installed.trim()
-                }
-            );
-            // Remove the old client so we can install the matching version
-            let fika_dir = install_dir.join("BepInEx/plugins/Fika");
-            if let Err(e) = std::fs::remove_dir_all(&fika_dir) {
-                warn!("Failed to remove old Fika client: {e}");
-            }
+    let headless_fika_dir = install_dir.join("BepInEx/plugins/Fika");
+    let headless_dll = headless_fika_dir.join("Fika.Core.dll");
+
+    // Hash comparison — version strings can't detect different builds of the same version
+    if headless_dll.is_file() {
+        let server_hash = crate::spt::mods::compute_file_hash(&server_dll)?;
+        let headless_hash = crate::spt::mods::compute_file_hash(&headless_dll)?;
+        if server_hash == headless_hash {
+            debug!("Fika.Core.dll already matches server");
+            return Ok(false);
         }
+        info!("Fika.Core.dll hash differs from server — updating headless copy");
     }
 
-    info!(
-        "Fika client not found or outdated in {}. Resolving version...",
-        install_dir.display()
-    );
+    std::fs::create_dir_all(&headless_fika_dir)
+        .context("failed to create headless Fika directory")?;
 
-    // Try Forge first, fall back to GitHub releases if the server's version
-    // isn't on Forge (common when the container image auto-updates Fika).
-    let (download_url, resolved_version) =
-        resolve_fika_client_download(forge, spt_version, server_fika_version.as_deref()).await?;
+    let mut copied = 0;
+    for entry in std::fs::read_dir(&server_fika_dir)
+        .with_context(|| format!("failed to read {}", server_fika_dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        // Skip headless-specific files (managed by ensure_fika_headless)
+        if name_str.contains("Headless") {
+            continue;
+        }
+        std::fs::copy(entry.path(), headless_fika_dir.join(&name))
+            .with_context(|| format!("failed to copy {name_str} to headless"))?;
+        copied += 1;
+    }
 
-    info!("Downloading Fika client v{resolved_version}");
-
-    let tmp_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
-    forge
-        .download_file(&download_url, tmp_file.path())
-        .await
-        .context("failed to download Fika client archive")?;
-
-    crate::spt::mods::extract_mod(tmp_file.path(), install_dir)
-        .context("failed to extract Fika client archive")?;
-
-    let marker = install_dir.join("BepInEx/plugins/Fika/.fika-client-version");
-    let _ = std::fs::write(&marker, &resolved_version);
-
-    info!(
-        "Fika client v{resolved_version} installed to {}",
-        install_dir.display()
-    );
+    info!("Fika client synced from server directory ({copied} files)");
     Ok(true)
 }
 
-const FIKA_CLIENT_GITHUB_REPO: &str = "project-fika/Fika-Plugin";
 const FIKA_HEADLESS_GITHUB_REPO: &str = "project-fika/Fika-Headless";
-
-async fn resolve_fika_client_download(
-    forge: &ForgeClient,
-    spt_version: &str,
-    server_fika_version: Option<&str>,
-) -> Result<(String, String)> {
-    // Try Forge first
-    if let Ok(versions) = forge
-        .get_versions(FIKA_CLIENT_FORGE_ID, Some(spt_version))
-        .await
-    {
-        let matched = if let Some(target) = server_fika_version {
-            versions
-                .iter()
-                .find(|v| v.version == target)
-                .or_else(|| versions.iter().max_by_key(|v| v.id))
-        } else {
-            versions.iter().max_by_key(|v| v.id)
-        };
-
-        if let Some(v) = matched {
-            let version_matches_server =
-                server_fika_version.map(|t| v.version == t).unwrap_or(true);
-            if version_matches_server {
-                if let Some(ref url) = v.link {
-                    return Ok((url.clone(), v.version.clone()));
-                }
-            }
-        }
-    }
-
-    // Fall back to GitHub releases if Forge doesn't have the server's version
-    if let Some(target) = server_fika_version {
-        info!("Forge doesn't have Fika v{target}, trying GitHub releases...");
-        let client = reqwest::Client::builder()
-            .user_agent("quartermaster")
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .context("failed to build HTTP client")?;
-
-        let release: serde_json::Value = client
-            .get(format!(
-                "https://api.github.com/repos/{FIKA_CLIENT_GITHUB_REPO}/releases/tags/v{target}"
-            ))
-            .send()
-            .await
-            .context("failed to query GitHub for Fika client release")?
-            .error_for_status()
-            .context("GitHub API returned error for Fika v{target}")?
-            .json()
-            .await
-            .context("failed to parse GitHub release response")?;
-
-        let asset = release["assets"]
-            .as_array()
-            .and_then(|a| a.first())
-            .ok_or_else(|| anyhow::anyhow!("Fika v{target} GitHub release has no assets"))?;
-        let url = asset["browser_download_url"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Fika v{target} asset has no download URL"))?;
-
-        return Ok((url.to_string(), target.to_string()));
-    }
-
-    bail!("no Fika client version found on Forge or GitHub for SPT {spt_version}")
-}
 
 /// Check if the Fika.Headless plugin is present in the install directory.
 ///
@@ -831,7 +732,7 @@ pub async fn converge(
     spt_dir: &Path,
     spt_client: &SptClient,
     forge: &ForgeClient,
-    spt_version: &str,
+    _spt_version: &str,
     converging: Arc<AtomicBool>,
     db: &Arc<Mutex<crate::db::Database>>,
 ) -> Result<()> {
@@ -912,8 +813,7 @@ pub async fn converge(
     let current_count = managed.len() as u32;
 
     // Ensure the Fika client mod is installed (required for all operations)
-    let fika_updated =
-        ensure_fika_client(forge, &headless_config.install_dir, spt_version, spt_client).await?;
+    let fika_updated = ensure_fika_client(&headless_config.install_dir, spt_dir)?;
     ensure_fika_headless(forge, &headless_config.install_dir, fika_updated).await?;
 
     // Reconcile headless mod files on every convergence (not just scale-up)
