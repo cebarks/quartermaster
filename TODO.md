@@ -20,6 +20,7 @@
 - numa scheduling webui config is broken
 - mod requests list shouldn't include already installed mods
 - numbers on the stats board (particularly map popularity and total raids) seem wrong
+- /quma/raids returns 500 when no raid data exists (handler doesn't handle empty state)
 
 ## Core Architecture
 - consolidate all mod management logic from all paths (web handlers bypass `ops.rs` in places)
@@ -63,6 +64,7 @@
 
 ### UX Improvements
 - clean up mod file list, add collapsable folder tree, file viewer (editor too maybe; need to investigate)
+- 404 page
 
 ### Accessibility / Responsive
 - no responsive design (zero `@media` queries)
