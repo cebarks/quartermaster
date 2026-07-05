@@ -114,10 +114,10 @@
     <form id="install-form" method="post" action="/quma/mods/install">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="mod_ref" id="install-mod-ref" value="">
-        <label for="install-search">Search Forge or enter a Mod ID</label>
+        <label for="install-search">Search Forge, enter a Mod ID, or paste a URL</label>
         <div style="position:relative">
             <input type="text" id="install-search"
-                   placeholder="e.g. SAIN, Big Brain, or 2326"
+                   placeholder="e.g. SAIN, Big Brain, 2326, or https://..."
                    autocomplete="off"
                    hx-get="/quma/api/mods/search"
                    hx-trigger="input changed delay:300ms"

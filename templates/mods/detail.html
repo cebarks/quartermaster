@@ -16,6 +16,10 @@
         <tr><th style="width:140px">Forge ID</th><td>{{ forge_id }}</td></tr>
         {% endif %}
         <tr><th>Version</th><td>{{ mod_info.version }}</td></tr>
+        <tr><th>Source</th><td>{{ mod_info.source }}</td></tr>
+        {% if let Some(url) = &mod_info.source_url %}
+        <tr><th>Source URL</th><td><a href="{{ url }}" target="_blank" rel="noopener">{{ url }} ↗</a></td></tr>
+        {% endif %}
         {% if let Some(slug) = &mod_info.slug %}
         <tr><th>Slug</th><td>{{ slug }}</td></tr>
         {% endif %}
@@ -23,14 +27,14 @@
         {% if let Some(updated) = &mod_info.updated_at %}
         <tr><th>Updated</th><td>{{ updated }}</td></tr>
         {% endif %}
-        {% if let Some(slug) = &mod_info.slug %}
         {% if let Some(forge_id) = mod_info.forge_mod_id %}
+        {% if let Some(slug) = &mod_info.slug %}
         <tr><th>Forge</th><td><a href="https://forge.sp-tarkov.com/mod/{{ forge_id }}/{{ slug }}" target="_blank" rel="noopener">View on Forge ↗</a></td></tr>
         {% endif %}
         {% endif %}
     </table>
     <div class="flex gap-1" style="margin-top: 1rem;">
-        {% if user.can("mods.update") %}
+        {% if user.can("mods.update") && mod_info.forge_mod_id.is_some() %}
         <form method="post" action="/quma/mods/{{ mod_info.id }}/update">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn">{% call icons::refresh() %}{% endcall %} Update</button>

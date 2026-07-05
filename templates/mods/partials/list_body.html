@@ -44,6 +44,9 @@
 <tr>
     <td>
         <a href="/quma/mods/{{ m.mod_info.id }}">{{ m.mod_info.name }}{% if m.mod_info.disabled %} <span class="text-muted">(disabled)</span>{% endif %}</a>
+        {% if m.mod_info.source != "forge" %}
+        <span class="badge" style="margin-left: 0.5rem;" title="Installed from {{ m.mod_info.source }}">{{ m.mod_info.source }}</span>
+        {% endif %}
         {% if m.addon_count > 0 %}
         <span class="badge badge-info" style="margin-left: 0.5rem;" title="{{ m.addon_count }} addon{% if m.addon_count != 1 %}s{% endif %}">{{ m.addon_count }}</span>
         {% endif %}
@@ -61,7 +64,7 @@
     <td class="text-muted text-sm">{{ m.mod_info.installed_at }}</td>
     {% if user.can("mods.update") || user.can("mods.remove") %}
     <td>
-        {% if user.can("mods.update") %}
+        {% if user.can("mods.update") && m.mod_info.forge_mod_id.is_some() %}
         <span id="mod-update-{{ m.mod_info.id }}">
             <form method="post" action="/quma/mods/{{ m.mod_info.id }}/update" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
