@@ -934,7 +934,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         .read()
         .convoy
         .as_ref()
-        .map_or(false, |c| c.enabled)
+        .is_some_and(|c| c.enabled)
     {
         app_state.catalog_cache.invalidate();
     }

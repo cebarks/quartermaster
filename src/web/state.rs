@@ -158,4 +158,17 @@ impl AppState {
             tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
         }
     }
+
+    pub fn regenerate_convoy(&self) {
+        if self
+            .config
+            .read()
+            .convoy
+            .as_ref()
+            .is_some_and(|c| c.enabled)
+        {
+            self.catalog_cache.invalidate();
+            self.mod_zip_cache.invalidate();
+        }
+    }
 }

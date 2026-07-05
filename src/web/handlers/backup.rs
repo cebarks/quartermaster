@@ -162,6 +162,9 @@ pub async fn restore_backup(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    state.regenerate_convoy();
+    state.regenerate_modsync().await;
+
     let msg = if is_full {
         "Full backup restored — restart the web server to reload config"
     } else {

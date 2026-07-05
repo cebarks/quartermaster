@@ -281,6 +281,7 @@ async fn trigger_install_for_request(
                 // Record dependency edges
                 crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
 
+                state_clone.regenerate_convoy();
                 state_clone.regenerate_modsync().await;
 
                 Ok::<_, anyhow::Error>(())

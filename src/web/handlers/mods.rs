@@ -1100,6 +1100,7 @@ async fn install_mod_from_url(
                 tracing::info!(url = url_owned, "mod installed from URL successfully");
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
+                state_clone.regenerate_convoy();
                 state_clone.regenerate_modsync().await;
                 tasks.complete(task_id, "Mod installed from URL".to_string());
             }
@@ -1363,6 +1364,7 @@ pub async fn install_mod(
             crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
 
             // Regenerate NarcoNet config if enabled
+            state_clone.regenerate_convoy();
             state_clone.regenerate_modsync().await;
 
             Ok::<_, anyhow::Error>(())
@@ -1543,6 +1545,7 @@ pub async fn update_mod(
             crate::ops::record_dep_edges(&db, mod_db_id, &dep_db_ids);
 
             // Regenerate NarcoNet config if enabled
+            state_clone.regenerate_convoy();
             state_clone.regenerate_modsync().await;
 
             Ok::<_, anyhow::Error>(())
@@ -1627,6 +1630,8 @@ pub async fn remove_mod(
     state.update_cache.invalidate();
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
+    state.regenerate_convoy();
+    state.regenerate_modsync().await;
     // Re-check NarcoNet detection (removing NarcoNet itself changes this)
     state.modsync_installed.store(
         crate::config::is_modsync_installed(&state.spt_dir),
@@ -1688,6 +1693,7 @@ pub async fn toggle_disable(
 
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
+    state.regenerate_convoy();
 
     if was_disabled {
         set_flash(
@@ -1861,6 +1867,7 @@ pub async fn update_all_mods(
         }
 
         // Regenerate NarcoNet config after all updates
+        state_clone.regenerate_convoy();
         state_clone.regenerate_modsync().await;
 
         update_cache.invalidate();
