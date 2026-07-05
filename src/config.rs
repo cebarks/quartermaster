@@ -303,7 +303,7 @@ fn default_save_log_on_exit() -> bool {
     true
 }
 fn default_overwrite_fika() -> bool {
-    true
+    false
 }
 fn default_server_ready_timeout() -> u64 {
     120
@@ -1850,7 +1850,7 @@ install_dir = "/opt/fika"
         assert_eq!(config.display_server, HeadlessDisplayServer::Gamescope);
         assert!(config.save_log_on_exit);
         assert!(!config.enable_log_purge);
-        assert!(config.overwrite_fika);
+        assert!(!config.overwrite_fika);
         assert_eq!(config.server_ready_timeout, 120);
     }
 
