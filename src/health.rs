@@ -1,5 +1,7 @@
 use anyhow::Result;
+use rayon::prelude::*;
 use serde::Serialize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::cli::common::CliContext;
 use crate::server_detect::resolve_server_addr;
@@ -244,6 +246,77 @@ pub fn check_integrity_from(
                     modified_files.push(file.file_path.clone());
                 }
             }
+        }
+    }
+
+    let all_disk_files = scan_mod_directories(spt_dir)?;
+    let tracked_paths: std::collections::HashSet<&str> =
+        tracked_files.iter().map(|f| f.file_path.as_str()).collect();
+
+    let untracked: Vec<&str> = all_disk_files
+        .iter()
+        .filter(|f| !tracked_paths.contains(f.as_str()))
+        .map(|f| f.as_str())
+        .collect();
+
+    let mut dir_counts = crate::cli::common::group_untracked_by_mod_dir(&untracked);
+    dir_counts.remove("BepInEx/plugins/spt");
+
+    let untracked_dirs: Vec<UntrackedDir> = dir_counts
+        .into_iter()
+        .map(|(path, file_count)| UntrackedDir { path, file_count })
+        .collect();
+
+    Ok(IntegrityHealth {
+        tracked_files: tracked_files.len(),
+        missing_files,
+        modified_files,
+        untracked_dirs,
+    })
+}
+
+/// Parallel version of `check_integrity_from()` using rayon for concurrent file hashing.
+/// Updates `progress` and `total` atomics for progress reporting.
+// ponytail: rayon parallel hash + TTL cache; upgrade to inotify (notify crate) per-file watching when file counts justify it
+pub fn check_integrity_parallel(
+    tracked_files: &[crate::db::mods::InstalledFile],
+    spt_dir: &std::path::Path,
+    progress: &AtomicUsize,
+    total: &AtomicUsize,
+) -> Result<IntegrityHealth> {
+    total.store(tracked_files.len(), Ordering::Relaxed);
+    progress.store(0, Ordering::Relaxed);
+
+    let results: Vec<(Option<String>, Option<String>)> = tracked_files
+        .par_iter()
+        .map(|file| {
+            let full_path = spt_dir.join(&file.file_path);
+            let result = if !full_path.exists() {
+                (Some(file.file_path.clone()), None)
+            } else if let Some(ref expected_hash) = file.file_hash {
+                match compute_file_hash(&full_path) {
+                    Ok(actual_hash) if actual_hash != *expected_hash => {
+                        (None, Some(file.file_path.clone()))
+                    }
+                    Err(_) => (None, Some(file.file_path.clone())),
+                    _ => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+            progress.fetch_add(1, Ordering::Relaxed);
+            result
+        })
+        .collect();
+
+    let mut missing_files = Vec::new();
+    let mut modified_files = Vec::new();
+    for (missing, modified) in results {
+        if let Some(path) = missing {
+            missing_files.push(path);
+        }
+        if let Some(path) = modified {
+            modified_files.push(path);
         }
     }
 
@@ -1085,5 +1158,77 @@ mod tests {
 
         // Should use directory name "fika-server", NOT package.json name "server"
         assert_eq!(names.get(&mod_id).map(|s| s.as_str()), Some("fika-server"));
+    }
+
+    #[test]
+    fn check_integrity_parallel_detects_missing_file() {
+        use std::sync::atomic::AtomicUsize;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
+
+        let ctx = test_cli_context(tmp.path());
+        let mod_id = ctx
+            .db
+            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .unwrap();
+        ctx.db
+            .insert_file(
+                mod_id,
+                "SPT/user/mods/TestMod/test.dll",
+                Some("abc123"),
+                Some(100),
+            )
+            .unwrap();
+
+        let tracked = ctx.db.get_all_tracked_files().unwrap();
+        let progress = AtomicUsize::new(0);
+        let total = AtomicUsize::new(0);
+        let result = check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap();
+        assert_eq!(result.tracked_files, 1);
+        assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
+        assert!(result.modified_files.is_empty());
+        assert_eq!(total.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn check_integrity_parallel_detects_modified_file() {
+        use std::sync::atomic::AtomicUsize;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/TestMod")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
+
+        let file_path = tmp.path().join("SPT/user/mods/TestMod/test.dll");
+        std::fs::write(&file_path, b"original content").unwrap();
+        let original_hash = crate::spt::mods::compute_file_hash(&file_path).unwrap();
+
+        let ctx = test_cli_context(tmp.path());
+        let mod_id = ctx
+            .db
+            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .unwrap();
+        ctx.db
+            .insert_file(
+                mod_id,
+                "SPT/user/mods/TestMod/test.dll",
+                Some(&original_hash),
+                Some(16),
+            )
+            .unwrap();
+
+        std::fs::write(&file_path, b"tampered content").unwrap();
+
+        let tracked = ctx.db.get_all_tracked_files().unwrap();
+        let progress = AtomicUsize::new(0);
+        let total = AtomicUsize::new(0);
+        let result = check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap();
+        assert!(result.missing_files.is_empty());
+        assert_eq!(
+            result.modified_files,
+            vec!["SPT/user/mods/TestMod/test.dll"]
+        );
     }
 }
