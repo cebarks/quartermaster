@@ -90,6 +90,9 @@ parking_lot = "0.12"
 # Regex for targeted text replacement
 regex = "1"
 
+# JSONC parsing for Fika config
+jsonc-parser = { version = "0.26", features = ["cst", "serde"] }
+
 # Structured logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry"] }
