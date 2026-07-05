@@ -239,6 +239,10 @@ pub fn configure_app(
             "/dashboard/headless-status",
             web::get().to(handlers::clients::dashboard_clients_status_partial),
         )
+        .route(
+            "/dashboard/players",
+            web::get().to(handlers::dashboard::players_partial),
+        )
         // Metrics partials
         .route(
             "/metrics/proxy",

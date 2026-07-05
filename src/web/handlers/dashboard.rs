@@ -133,6 +133,28 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
+#[derive(Template)]
+#[template(path = "partials/dashboard_players.html")]
+struct DashboardPlayersTemplate {
+    players: Vec<crate::fika::client::FikaPlayerPresence>,
+    available: bool,
+}
+
+pub async fn players_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+    require_auth(&req)?;
+
+    let (players, available) = match state.fika_client.as_ref() {
+        Some(client) => match client.presence().await {
+            Ok(p) => (p, true),
+            Err(_) => (vec![], false),
+        },
+        None => (vec![], false),
+    };
+
+    let tmpl = DashboardPlayersTemplate { players, available };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
 pub(crate) async fn fetch_server_context(state: &AppState) -> (Option<String>, Option<String>) {
     let container_name = state.config().server_container.clone();
     let started_at = if let (Some(container), Some(mgr)) =

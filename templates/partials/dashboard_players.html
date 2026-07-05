@@ -1,0 +1,43 @@
+<div id="players-section">
+{% if !available %}
+    <p class="text-muted">Fika integration not available</p>
+{% elif players.is_empty() %}
+    <p class="text-muted">No players online</p>
+{% else %}
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Level</th>
+                <th>Status</th>
+                <th>Location</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for p in players %}
+            <tr>
+                <td>{{ p.nickname }}</td>
+                <td>{{ p.level }}</td>
+                <td>
+                    {% match p.activity %}
+                        {% when 0 %}<span class="badge badge-secondary">In Menu</span>
+                        {% when 1 %}<span class="badge badge-success">In Raid</span>
+                        {% when 2 %}<span class="badge badge-info">In Stash</span>
+                        {% when 3 %}<span class="badge badge-info">In Hideout</span>
+                        {% when 4 %}<span class="badge badge-info">In Flea</span>
+                        {% when _ %}<span class="badge badge-secondary">Unknown</span>
+                    {% endmatch %}
+                </td>
+                <td>
+                    {% if let Some(raid) = p.raid_information %}
+                        {{ raid.location }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+{% endif %}
+</div>
