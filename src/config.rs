@@ -390,6 +390,24 @@ impl BackupConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConvoyConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    #[serde(default)]
+    pub exclusions: Vec<String>,
+}
+
+impl Default for ConvoyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            exclusions: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModSyncConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -1109,6 +1127,10 @@ pub struct Config {
     pub modsync: Option<ModSyncConfig>,
 
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub convoy: Option<ConvoyConfig>,
+
+    #[serde(default)]
     #[serde(skip_serializing_if = "LoggingConfig::is_default")]
     pub logging: LoggingConfig,
 
@@ -1181,6 +1203,7 @@ impl Default for Config {
             forge_cache_ttl: Some(86400),
             headless: None,
             modsync: None,
+            convoy: None,
             logging: LoggingConfig::default(),
             backup: BackupConfig::default(),
             setup_zip: SetupZipConfig::default(),
@@ -1299,6 +1322,24 @@ impl Config {
                     if ms.ensure_predefined_groups() {
                         tracing::info!("seeded predefined modsync groups");
                         save_needed = true;
+                    }
+                }
+                // Migrate [modsync] -> [convoy]
+                if config.modsync.is_some() && config.convoy.is_none() {
+                    if let Some(ref ms) = config.modsync {
+                        if !ms.extra_sync_paths.is_empty() {
+                            tracing::warn!(
+                                "modsync extra_sync_paths ({}) not migrated to convoy — \
+                                 convoy syncs at the mod level, not arbitrary paths",
+                                ms.extra_sync_paths.join(", ")
+                            );
+                        }
+                        config.convoy = Some(ConvoyConfig {
+                            enabled: ms.enabled,
+                            exclusions: ms.exclusions.clone(),
+                        });
+                        save_needed = true;
+                        tracing::info!("migrated [modsync] config section to [convoy]");
                     }
                 }
                 if save_needed {
@@ -2554,6 +2595,9 @@ extra_sync_paths = ["BepInEx/config"]
 display_name = "No Headless"
 members = []
 exclude_headless = true
+
+[convoy]
+enabled = true
 "#;
         std::fs::write(&config_path, toml_content).expect("write");
         let mtime_before = std::fs::metadata(&config_path).unwrap().modified().unwrap();
@@ -2565,6 +2609,93 @@ exclude_headless = true
         let mtime_after = std::fs::metadata(&config_path).unwrap().modified().unwrap();
 
         assert_eq!(mtime_before, mtime_after);
+    }
+
+    #[test]
+    fn config_load_migrates_modsync_to_convoy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("quartermaster.toml");
+
+        let toml_content = r#"
+[modsync]
+enabled = false
+exclusions = ["**/*.nosync", "BepInEx/plugins/spt"]
+extra_sync_paths = ["BepInEx/config"]
+"#;
+        std::fs::write(&config_path, toml_content).expect("write");
+
+        let config = Config::load(&config_path).expect("should load and migrate");
+
+        // modsync should still exist
+        assert!(config.modsync.is_some());
+        let ms = config.modsync.unwrap();
+        assert!(!ms.enabled);
+        assert_eq!(ms.exclusions, vec!["**/*.nosync", "BepInEx/plugins/spt"]);
+
+        // convoy should be created with migrated values
+        assert!(config.convoy.is_some());
+        let cv = config.convoy.unwrap();
+        assert!(!cv.enabled);
+        assert_eq!(cv.exclusions, vec!["**/*.nosync", "BepInEx/plugins/spt"]);
+
+        // Verify the file was updated on disk
+        let reloaded: Config =
+            toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert!(reloaded.convoy.is_some());
+        assert_eq!(reloaded.convoy.unwrap().enabled, false);
+    }
+
+    #[test]
+    fn config_load_migrates_modsync_warns_on_extra_sync_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("quartermaster.toml");
+
+        let toml_content = r#"
+[modsync]
+enabled = true
+extra_sync_paths = ["BepInEx/config", "BepInEx/patchers"]
+exclusions = ["**/*.nosync"]
+"#;
+        std::fs::write(&config_path, toml_content).expect("write");
+
+        let config = Config::load(&config_path).expect("should load and migrate");
+
+        // Both should be present
+        assert!(config.modsync.is_some());
+        assert!(config.convoy.is_some());
+
+        let cv = config.convoy.unwrap();
+        assert!(cv.enabled);
+        assert_eq!(cv.exclusions, vec!["**/*.nosync"]);
+    }
+
+    #[test]
+    fn config_load_skips_migration_when_convoy_exists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("quartermaster.toml");
+
+        let toml_content = r#"
+[modsync]
+enabled = true
+exclusions = ["old"]
+
+[convoy]
+enabled = false
+exclusions = ["new"]
+"#;
+        std::fs::write(&config_path, toml_content).expect("write");
+
+        let config = Config::load(&config_path).expect("should load");
+
+        // modsync unchanged
+        let ms = config.modsync.unwrap();
+        assert!(ms.enabled);
+        assert_eq!(ms.exclusions, vec!["old"]);
+
+        // convoy unchanged (not migrated from modsync)
+        let cv = config.convoy.unwrap();
+        assert!(!cv.enabled);
+        assert_eq!(cv.exclusions, vec!["new"]);
     }
 }
 
