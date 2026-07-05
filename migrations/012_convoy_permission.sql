@@ -1,11 +1,11 @@
 -- Migrate modsync.manage permission to convoy.manage and update triggers
 
--- Update existing permission assignments
-UPDATE role_permissions SET permission = 'convoy.manage' WHERE permission = 'modsync.manage';
-
--- Drop old triggers
+-- Drop old triggers first, before updating the permission
 DROP TRIGGER IF EXISTS trg_role_permissions_permission_insert;
 DROP TRIGGER IF EXISTS trg_role_permissions_permission_update;
+
+-- Update existing permission assignments (now that old triggers are gone)
+UPDATE role_permissions SET permission = 'convoy.manage' WHERE permission = 'modsync.manage';
 
 -- Recreate triggers with convoy.manage instead of modsync.manage
 CREATE TRIGGER trg_role_permissions_permission_insert
