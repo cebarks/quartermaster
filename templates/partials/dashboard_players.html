@@ -11,6 +11,7 @@
                 <th>Level</th>
                 <th>Status</th>
                 <th>Location</th>
+                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -34,6 +35,13 @@
                     {% else %}
                         —
                     {% endif %}
+                </td>
+                <td>
+                    <form method="post" action="/quma/players/{{ p.profile_id }}/message" style="display:inline-flex;gap:0.25rem;align-items:center">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="text" name="message" class="form-control form-control-sm" maxlength="255" placeholder="Send message" required style="width:200px;margin:0">
+                        <button type="submit" class="btn btn-sm btn-primary" style="margin:0">Send</button>
+                    </form>
                 </td>
             </tr>
         {% endfor %}

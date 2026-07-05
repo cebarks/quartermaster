@@ -1069,6 +1069,112 @@ pub async fn client_delete(
         .finish())
 }
 
+#[derive(serde::Deserialize)]
+pub struct StartRaidForm {
+    pub csrf_token: String,
+    pub location_id: String,
+    pub time: i32,
+    pub use_event: Option<String>,
+}
+
+pub async fn client_start_raid(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<u32>,
+    form: Form<StartRaidForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let index = path.into_inner();
+    let fika_client = match state.fika_client.as_ref() {
+        Some(c) => c.clone(),
+        None => {
+            set_flash(&session, "Fika integration not available", FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+    };
+
+    // Get profile_id and check READY status
+    let profile_id = {
+        let states = state
+            .client_states
+            .as_ref()
+            .ok_or(WebError::Internal(anyhow::anyhow!(
+                "Headless not configured"
+            )))?
+            .read()
+            .await;
+        let client = states
+            .iter()
+            .find(|c| c.index == index)
+            .ok_or(WebError::NotFound)?;
+        if client.fika_status != Some(EHeadlessStatus::Ready) {
+            set_flash(
+                &session,
+                &format!("Client {index} is not READY"),
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+        client
+            .profile_id
+            .clone()
+            .ok_or(WebError::Internal(anyhow::anyhow!("No profile ID")))?
+    };
+
+    let req_body = crate::fika::client::StartHeadlessRaidRequest {
+        headless_session_id: profile_id,
+        location_id: form.location_id.clone(),
+        time: form.time,
+        time_and_weather_settings: None,
+        use_event: form.use_event.is_some(),
+        side: 0,
+        spawn_place: 0,
+        metabolism_disabled: false,
+        bot_settings: None,
+        waves_settings: None,
+        custom_raid_settings: None,
+    };
+
+    match fika_client.start_headless_raid(&req_body).await {
+        Ok(resp) => {
+            if let Some(err) = resp.error {
+                set_flash(
+                    &session,
+                    &format!("Start raid failed: {err}"),
+                    FlashType::Error,
+                );
+            } else {
+                set_flash(
+                    &session,
+                    &format!("Raid started on client {index}"),
+                    FlashType::Success,
+                );
+            }
+        }
+        Err(e) => {
+            set_flash(
+                &session,
+                &format!("Start raid failed: {e}"),
+                FlashType::Error,
+            );
+        }
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .finish())
+}
+
 pub async fn dashboard_clients_status_partial(
     state: Data<AppState>,
     req: HttpRequest,

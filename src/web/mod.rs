@@ -703,6 +703,15 @@ pub fn configure_app(
         .route(
             "/headless/{n}/delete",
             web::post().to(handlers::clients::client_delete),
+        )
+        .route(
+            "/headless/{n}/start-raid",
+            web::post().to(handlers::clients::client_start_raid),
+        )
+        .route("/broadcast", web::post().to(handlers::dashboard::broadcast))
+        .route(
+            "/players/{profile_id}/message",
+            web::post().to(handlers::dashboard::send_player_message),
         );
 
     quma_scope = quma_scope.service(auth_scope);

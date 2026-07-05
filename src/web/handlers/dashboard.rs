@@ -138,10 +138,16 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
 struct DashboardPlayersTemplate {
     players: Vec<crate::fika::client::FikaPlayerPresence>,
     available: bool,
+    csrf_token: String,
 }
 
-pub async fn players_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+pub async fn players_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
     require_auth(&req)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let (players, available) = match state.fika_client.as_ref() {
         Some(client) => match client.presence().await {
@@ -151,7 +157,11 @@ pub async fn players_partial(state: Data<AppState>, req: HttpRequest) -> actix_w
         None => (vec![], false),
     };
 
-    let tmpl = DashboardPlayersTemplate { players, available };
+    let tmpl = DashboardPlayersTemplate {
+        players,
+        available,
+        csrf_token,
+    };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
@@ -166,4 +176,97 @@ pub(crate) async fn fetch_server_context(state: &AppState) -> (Option<String>, O
     };
     let transition = state.get_server_transition();
     (started_at, transition)
+}
+
+// -- Broadcast handlers --
+
+#[derive(serde::Deserialize)]
+pub struct BroadcastForm {
+    pub csrf_token: String,
+    pub message: String,
+    pub icon: u8,
+}
+
+pub async fn broadcast(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: web::Form<BroadcastForm>,
+) -> actix_web::Result<actix_web::HttpResponse> {
+    use crate::db::rbac::Permission;
+    use crate::web::auth::require_permission;
+    use crate::web::flash::{set_flash, FlashType};
+
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ServerControl)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+    let fika_client = match state.fika_client.as_ref() {
+        Some(c) => c,
+        None => {
+            set_flash(&session, "Fika integration not available", FlashType::Error);
+            return Ok(actix_web::HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/"))
+                .finish());
+        }
+    };
+    let msg = &form.message[..form.message.len().min(255)];
+    match fika_client.push_notification(msg, form.icon).await {
+        Ok(()) => set_flash(&session, "Broadcast sent", FlashType::Success),
+        Err(e) => set_flash(
+            &session,
+            &format!("Broadcast failed: {e}"),
+            FlashType::Error,
+        ),
+    }
+    Ok(actix_web::HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/"))
+        .finish())
+}
+
+#[derive(serde::Deserialize)]
+pub struct SendMessageForm {
+    pub csrf_token: String,
+    pub message: String,
+}
+
+pub async fn send_player_message(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: web::Path<String>,
+    form: web::Form<SendMessageForm>,
+) -> actix_web::Result<actix_web::HttpResponse> {
+    use crate::db::rbac::Permission;
+    use crate::web::auth::require_permission;
+    use crate::web::flash::{set_flash, FlashType};
+
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ServerControl)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+    let profile_id = path.into_inner();
+    let fika_client = match state.fika_client.as_ref() {
+        Some(c) => c,
+        None => {
+            set_flash(&session, "Fika integration not available", FlashType::Error);
+            return Ok(actix_web::HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/"))
+                .finish());
+        }
+    };
+    let msg = &form.message[..form.message.len().min(255)];
+    match fika_client.send_message(&profile_id, msg).await {
+        Ok(()) => set_flash(&session, "Message sent", FlashType::Success),
+        Err(e) => set_flash(
+            &session,
+            &format!("Send message failed: {e}"),
+            FlashType::Error,
+        ),
+    }
+    Ok(actix_web::HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/"))
+        .finish())
 }

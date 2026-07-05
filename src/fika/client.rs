@@ -150,6 +150,7 @@ impl std::fmt::Debug for FikaClient {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FikaPlayerPresence {
+    pub profile_id: String,
     pub nickname: String,
     pub level: i32,
     pub activity: u8,
