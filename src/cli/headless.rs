@@ -412,6 +412,7 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
         .unwrap_or(0);
     let fika_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
     if fika_path.exists() {
+        // ponytail: no fika_config_lock here — CLI runs single-threaded, no lock needed
         let cst = crate::fika::config::read_fika_cst(&fika_path)?;
         crate::fika::config::set_headless_amount(&cst, new_count);
         crate::fika::config::write_fika_cst(&cst, &fika_path)?;
@@ -571,7 +572,7 @@ async fn graceful_restart(ctx: &CliContext, client: u32) -> Result<()> {
 
     let base_url = format!(
         "https://{}:{}",
-        fika_config.server.spt.http.ip, fika_config.server.spt.http.port
+        fika_config.server.spt.http.backend_ip, fika_config.server.spt.http.backend_port
     );
     let fika_client = crate::fika::client::FikaClient::new(&base_url, fika_config.server.api_key)?;
 

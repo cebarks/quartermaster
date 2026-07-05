@@ -138,6 +138,7 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
 struct DashboardPlayersTemplate {
     players: Vec<crate::fika::client::FikaPlayerPresence>,
     available: bool,
+    user: SessionUser,
     csrf_token: String,
 }
 
@@ -146,7 +147,7 @@ pub async fn players_partial(
     req: HttpRequest,
     session: Session,
 ) -> actix_web::Result<Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let (players, available) = match state.fika_client.as_ref() {
@@ -160,6 +161,7 @@ pub async fn players_partial(
     let tmpl = DashboardPlayersTemplate {
         players,
         available,
+        user,
         csrf_token,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))

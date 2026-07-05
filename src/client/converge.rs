@@ -1105,6 +1105,8 @@ async fn ensure_clients(
 
     // 1. Edit fika.jsonc to set amount
     {
+        // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
+        // and the config UI save handler is the only other writer. Race window is narrow.
         let fika_path = crate::fika::config::fika_config_path(spt_dir);
         let cst = crate::fika::config::read_fika_cst(&fika_path)?;
         crate::fika::config::set_headless_amount(&cst, desired_count);
@@ -1209,6 +1211,8 @@ async fn remove_excess_clients(
 
     // 2. Edit fika.jsonc to set amount
     {
+        // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
+        // and the config UI save handler is the only other writer. Race window is narrow.
         let fika_path = crate::fika::config::fika_config_path(spt_dir);
         let cst = crate::fika::config::read_fika_cst(&fika_path)?;
         crate::fika::config::set_headless_amount(&cst, desired_count);

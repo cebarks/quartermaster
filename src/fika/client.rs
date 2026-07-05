@@ -84,7 +84,8 @@ impl FikaClient {
 
     /// POST /fika/notification/push — broadcast notification (SPT static route)
     pub async fn push_notification(&self, message: &str, icon: u8) -> Result<()> {
-        self.http
+        let resp = self
+            .http
             .post(self.api_url("/fika/notification/push"))
             .header("responsecompressed", "0")
             .json(&serde_json::json!({
@@ -95,6 +96,11 @@ impl FikaClient {
             .send()
             .await
             .context("failed to push Fika notification")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Fika push notification returned {status}: {body}");
+        }
         Ok(())
     }
 
