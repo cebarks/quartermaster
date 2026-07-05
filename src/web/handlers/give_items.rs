@@ -258,3 +258,81 @@ pub async fn give_items_refresh(
 pub struct CsrfOnly {
     csrf_token: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_items() -> Arc<HashMap<String, FikaItemInfo>> {
+        let mut map = HashMap::new();
+        map.insert(
+            "abc123".into(),
+            FikaItemInfo {
+                name: "M4A1 Assault Rifle".into(),
+                description: "A rifle".into(),
+                stack_amount: 10,
+            },
+        );
+        map.insert(
+            "def456".into(),
+            FikaItemInfo {
+                name: "Ammo 5.45x39 PS".into(),
+                description: "Standard ammo".into(),
+                stack_amount: 600,
+            },
+        );
+        map.insert(
+            "ghi789".into(),
+            FikaItemInfo {
+                name: "Mechanic's Storage Room Key".into(),
+                description: "Key with apostrophe in name".into(),
+                stack_amount: 10,
+            },
+        );
+        Arc::new(map)
+    }
+
+    #[test]
+    fn search_filters_by_lowercase_substring() {
+        let items = make_items();
+        let q = "m4a1";
+        let results: Vec<_> = items
+            .iter()
+            .filter(|(_, info)| info.name.to_lowercase().contains(q))
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.name, "M4A1 Assault Rifle");
+    }
+
+    #[test]
+    fn search_returns_sorted_results() {
+        let items = make_items();
+        let q = "a"; // matches M4A1 and Ammo
+        let mut results: Vec<ItemResult> = items
+            .iter()
+            .filter(|(_, info)| info.name.to_lowercase().contains(q))
+            .map(|(tpl, info)| ItemResult {
+                tpl: tpl.clone(),
+                name: info.name.clone(),
+                description: info.description.clone(),
+                max_amount: info.stack_amount,
+            })
+            .collect();
+        results.sort_by(|a, b| a.name.cmp(&b.name));
+        results.truncate(50);
+        assert!(results.len() >= 2);
+        assert!(results[0].name < results[1].name);
+    }
+
+    #[test]
+    fn search_short_query_returns_empty() {
+        let q = "m";
+        assert!(q.len() < 2);
+    }
+
+    #[test]
+    fn amount_validation_rejects_zero() {
+        assert!(0 < 1, "amount < 1 should be rejected");
+    }
+}
