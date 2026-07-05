@@ -62,11 +62,11 @@
 {% endif %}
 
 <div class="stat-card-grid">
-    {% if nav.modsync_installed %}
-    <div class="stat-card" style="border-left-color: {% if modsync_managed %}var(--success){% else %}var(--warning){% endif %}">
-        <div class="stat-label">NarcoNet</div>
-        <div class="stat-value text-sm">{% if modsync_managed %}Active{% else %}Not Managed{% endif %}</div>
-        <div class="stat-detail">{% if modsync_managed %}config auto-generated{% else %}enable in config{% endif %}</div>
+    {% if nav.convoy_enabled %}
+    <div class="stat-card" style="border-left-color: var(--success)">
+        <div class="stat-label">Convoy</div>
+        <div class="stat-value text-sm">Active</div>
+        <div class="stat-detail">mod delivery enabled</div>
     </div>
     {% endif %}
     {% if nav.fika_installed %}

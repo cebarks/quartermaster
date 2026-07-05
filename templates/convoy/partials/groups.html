@@ -1,0 +1,227 @@
+<div id="groups-form">
+    <input type="hidden" id="groups-csrf" value="{{ csrf_token }}">
+
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">
+        <h2 style="margin: 0">Mod Groups</h2>
+        <div style="display: flex; gap: 0.5rem">
+            <button type="button" id="add-group-btn" class="btn btn-sm btn-outline"
+                    hx-get="/quma/api/convoy/groups/new?index={{ next_index }}"
+                    hx-target="#groups-container"
+                    hx-swap="beforeend">
+                + Add Group
+            </button>
+            <button type="button" id="save-groups-btn" class="btn btn-sm btn-primary">Save Groups</button>
+        </div>
+    </div>
+
+    <p class="text-muted text-sm" style="margin-bottom: 1rem">
+        Groups organize mods by tier and headless exclusion. Required groups are always downloaded; optional groups let clients choose.
+    </p>
+
+    <div id="groups-container">
+        {% for group in groups %}
+            {{ group.render().unwrap_or_default()|safe }}
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+(function() {
+    var form = document.getElementById('groups-form');
+    if (!form) return;
+
+    function serializeGroups() {
+        var cards = form.querySelectorAll('fieldset[data-group-index]:not([data-predefined="default"])');
+        var groups = [];
+        cards.forEach(function(card) {
+            var nameInput = card.querySelector('[data-field="name"]');
+            var slugSpan = card.querySelector('[data-field="slug"]');
+            var group = {
+                name: nameInput ? nameInput.value.trim() : '',
+                slug: slugSpan ? slugSpan.textContent.trim() : '',
+                tier: card.querySelector('[data-field="tier"]').value,
+                exclude_headless: card.querySelector('[data-field="exclude_headless"]').checked,
+                members: []
+            };
+            card.querySelectorAll('[data-members] [data-mod-id]').forEach(function(badge) {
+                group.members.push(parseInt(badge.getAttribute('data-mod-id'), 10));
+            });
+            groups.push(group);
+        });
+        return groups;
+    }
+
+    function slugify(name) {
+        return name.toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+/, '')
+            .substring(0, 64)
+            .replace(/-+$/, '');
+    }
+
+    var saveBtn = document.getElementById('save-groups-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', function() {
+            var groups = serializeGroups();
+            var csrf = document.getElementById('groups-csrf').value;
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+
+            fetch('/quma/convoy/groups', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ csrf_token: csrf, groups: groups })
+            })
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                if (data.ok && data.redirect) {
+                    window.location.href = data.redirect;
+                } else {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Save Groups';
+                    alert(data.error || 'Save failed');
+                }
+            })
+            .catch(function(err) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Groups';
+                alert('Network error: ' + err.message);
+            });
+        });
+    }
+
+    form.addEventListener('click', function(e) {
+        var removeBtn = e.target.closest('[data-remove-member]');
+        if (removeBtn) {
+            var badge = removeBtn.closest('[data-mod-id]');
+            if (badge) {
+                var modId = badge.getAttribute('data-mod-id');
+                badge.remove();
+                form.querySelectorAll('[data-add-mod] option[value="' + modId + '"]').forEach(function(opt) {
+                    opt.disabled = false;
+                    opt.style.display = '';
+                });
+            }
+            return;
+        }
+
+        var removeGroup = e.target.closest('[data-remove-group]');
+        if (removeGroup) {
+            var card = removeGroup.closest('fieldset[data-group-index]');
+            if (card && !card.hasAttribute('data-predefined')) {
+                card.querySelectorAll('[data-members] [data-mod-id]').forEach(function(badge) {
+                    var modId = badge.getAttribute('data-mod-id');
+                    form.querySelectorAll('[data-add-mod] option[value="' + modId + '"]').forEach(function(opt) {
+                        opt.disabled = false;
+                        opt.style.display = '';
+                    });
+                });
+                card.remove();
+            }
+            return;
+        }
+    });
+
+    form.addEventListener('change', function(e) {
+        var dropdown = e.target.closest('[data-add-mod]');
+        if (!dropdown) return;
+        var val = dropdown.value;
+        if (!val) return;
+
+        var opt = dropdown.querySelector('option[value="' + val + '"]');
+        var modName = opt ? opt.getAttribute('data-mod-name') : ('Mod #' + val);
+
+        var card = dropdown.closest('fieldset[data-group-index]');
+        var members = card.querySelector('[data-members]');
+        var badge = document.createElement('span');
+        badge.className = 'badge badge-success';
+        badge.setAttribute('data-mod-id', val);
+        badge.style.cssText = 'display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.5rem; font-size: 0.8rem';
+        badge.appendChild(document.createTextNode(modName + ' '));
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.setAttribute('data-remove-member', '');
+        removeBtn.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;padding:0;font-size:1rem;line-height:1';
+        removeBtn.title = 'Remove';
+        removeBtn.textContent = '×';
+        badge.appendChild(removeBtn);
+        members.appendChild(badge);
+
+        form.querySelectorAll('[data-add-mod] option[value="' + val + '"]').forEach(function(opt) {
+            opt.disabled = true;
+            opt.style.display = 'none';
+        });
+
+        var defaultCard = form.querySelector('[data-predefined="default"]');
+        if (defaultCard) {
+            var staleBadge = defaultCard.querySelector('[data-mod-id="' + val + '"]');
+            if (staleBadge) staleBadge.remove();
+        }
+
+        dropdown.value = '';
+
+        var nameInput = card.querySelector('[data-field="name"]');
+        if (nameInput) {
+            nameInput.dispatchEvent(new Event('input'));
+        }
+    });
+
+    form.addEventListener('input', function(e) {
+        if (e.target.getAttribute('data-field') !== 'name') return;
+        var card = e.target.closest('fieldset[data-group-index]');
+        if (!card) return;
+        var slugEl = card.querySelector('[data-field="slug"]');
+        if (slugEl) {
+            slugEl.textContent = slugify(e.target.value);
+        }
+    });
+
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        if (e.target.id !== 'groups-container') return;
+        updateNextIndex();
+        hideAssignedMods();
+    });
+
+    function updateNextIndex() {
+        var cards = form.querySelectorAll('fieldset[data-group-index]');
+        var maxIdx = -1;
+        cards.forEach(function(c) {
+            var idx = parseInt(c.getAttribute('data-group-index'), 10);
+            if (idx > maxIdx) maxIdx = idx;
+        });
+        var addBtn = document.getElementById('add-group-btn');
+        if (addBtn) {
+            var url = '/quma/api/convoy/groups/new?index=' + (maxIdx + 1);
+            addBtn.setAttribute('hx-get', url);
+            if (typeof htmx !== 'undefined') htmx.process(addBtn);
+        }
+    }
+
+    function hideAssignedMods() {
+        var assigned = {};
+        form.querySelectorAll('fieldset:not([data-predefined="default"]) [data-members] [data-mod-id]').forEach(function(badge) {
+            assigned[badge.getAttribute('data-mod-id')] = true;
+        });
+        form.querySelectorAll('[data-add-mod] option').forEach(function(opt) {
+            if (opt.value && assigned[opt.value]) {
+                opt.disabled = true;
+                opt.style.display = 'none';
+            }
+        });
+    }
+
+    hideAssignedMods();
+
+    var initialSnapshot = JSON.stringify(serializeGroups());
+
+    document.querySelector('.tabs').addEventListener('htmx:beforeRequest', function(evt) {
+        if (!evt.target.closest('.tabs')) return;
+        var currentSnapshot = JSON.stringify(serializeGroups());
+        if (currentSnapshot !== initialSnapshot) {
+            if (!confirm('You have unsaved changes that will be lost. Continue?')) {
+                evt.preventDefault();
+            }
+        }
+    });
+})();
+</script>

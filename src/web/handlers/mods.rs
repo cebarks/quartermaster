@@ -594,7 +594,7 @@ pub async fn mod_detail(
         .any(|f| f.file_path.starts_with("BepInEx/"));
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
+    let modsync_managed = false; // ponytail: modsync replaced by convoy
     let can_disable = user.can("mods.disable");
     let can_remove = user.can("mods.remove");
     let tmpl = ModDetailTemplate {

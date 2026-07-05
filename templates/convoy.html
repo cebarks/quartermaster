@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Convoy — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("convoy", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Convoy</h1>
+
+{% if !convoy_enabled %}
+<div class="card" style="border-left: 3px solid var(--warning)">
+    <p><strong>Convoy is not enabled.</strong> Enable it in settings to activate client mod delivery.</p>
+</div>
+{% else %}
+
+<div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
+    <a href="/quma/convoy?tab=groups"
+       class="btn btn-sm {% if active_tab == "groups" %}btn-primary{% else %}btn-outline{% endif %}"
+       hx-get="/quma/api/convoy/groups"
+       hx-target="#tab-content"
+       hx-swap="innerHTML"
+       hx-push-url="/quma/convoy?tab=groups">
+        Groups
+    </a>
+    <a href="/quma/convoy?tab=mods"
+       class="btn btn-sm {% if active_tab == "mods" %}btn-primary{% else %}btn-outline{% endif %}"
+       hx-get="/quma/api/convoy/mods"
+       hx-target="#tab-content"
+       hx-swap="innerHTML"
+       hx-push-url="/quma/convoy?tab=mods">
+        Mods
+    </a>
+    <a href="/quma/convoy?tab=preview"
+       class="btn btn-sm {% if active_tab == "preview" %}btn-primary{% else %}btn-outline{% endif %}"
+       hx-get="/quma/api/convoy/preview"
+       hx-target="#tab-content"
+       hx-swap="innerHTML"
+       hx-push-url="/quma/convoy?tab=preview">
+        Preview
+    </a>
+</div>
+
+<div id="tab-content">
+    {{ tab_content|safe }}
+</div>
+
+{% endif %}
+{% endblock %}

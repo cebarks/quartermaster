@@ -415,6 +415,23 @@ pub fn configure_app(
             "/modsync/preview",
             web::get().to(handlers::modsync::preview_partial),
         )
+        // Convoy API routes
+        .route(
+            "/convoy/groups",
+            web::get().to(handlers::convoy::groups_partial),
+        )
+        .route(
+            "/convoy/groups/new",
+            web::get().to(handlers::convoy::new_group_card),
+        )
+        .route(
+            "/convoy/mods",
+            web::get().to(handlers::convoy::mods_partial),
+        )
+        .route(
+            "/convoy/preview",
+            web::get().to(handlers::convoy::preview_partial),
+        )
         // Admin API (requires can_manage_users via scoped middleware)
         .service(
             web::scope("/admin")
@@ -546,6 +563,11 @@ pub fn configure_app(
         .route(
             "/modsync/groups",
             web::post().to(handlers::modsync::save_groups),
+        )
+        .route("/convoy", web::get().to(handlers::convoy::convoy_page))
+        .route(
+            "/convoy/groups",
+            web::post().to(handlers::convoy::save_groups),
         )
         .route("/svm", web::get().to(handlers::svm::manager_page))
         .route("/svm/view", web::get().to(handlers::svm::player_view))

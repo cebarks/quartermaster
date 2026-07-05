@@ -26,7 +26,6 @@ struct DashboardTemplate {
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
-    modsync_managed: bool,
 }
 
 pub async fn dashboard(
@@ -39,7 +38,6 @@ pub async fn dashboard(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
     let tmpl = DashboardTemplate {
         user,
         spt_version: state.spt_info.spt_version.clone(),
@@ -47,7 +45,6 @@ pub async fn dashboard(
         flash,
         csrf_token,
         nav,
-        modsync_managed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

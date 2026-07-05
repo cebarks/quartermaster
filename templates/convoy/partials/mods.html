@@ -1,0 +1,39 @@
+<h2>Mods Overview</h2>
+<p class="text-muted text-sm" style="margin-bottom: 1rem">
+    Read-only view of all client mods and their group assignments.
+</p>
+
+{% if mods.is_empty() %}
+<div class="card">
+    <p class="text-muted">No client mods installed</p>
+</div>
+{% else %}
+<table class="table">
+    <thead>
+        <tr>
+            <th>Mod Name</th>
+            <th>Group</th>
+            <th>Tier</th>
+            <th>Exclude Headless</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for m in mods %}
+        <tr>
+            <td>{{ m.name }}</td>
+            <td>{% if let Some(group) = m.group %}{{ group }}{% else %}<span class="text-muted">Default</span>{% endif %}</td>
+            <td>
+                {% if let Some(tier) = m.tier %}
+                    <span class="badge {% if tier == "required" %}badge-primary{% else %}badge-secondary{% endif %}">
+                        {{ tier }}
+                    </span>
+                {% else %}
+                    <span class="text-muted">required</span>
+                {% endif %}
+            </td>
+            <td>{% if m.exclude_headless %}<span class="badge badge-warning">Yes</span>{% else %}<span class="text-muted">No</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}

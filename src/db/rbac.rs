@@ -7,7 +7,7 @@ pub enum Permission {
     ModsUpdate,
     ModsRemove,
     ModsDisable,
-    ModsyncManage,
+    ConvoyManage,
     SvmEdit,
     RequestsResolve,
     ServerControl,
@@ -25,7 +25,7 @@ impl Permission {
         Permission::ModsUpdate,
         Permission::ModsRemove,
         Permission::ModsDisable,
-        Permission::ModsyncManage,
+        Permission::ConvoyManage,
         Permission::SvmEdit,
         Permission::RequestsResolve,
         Permission::ServerControl,
@@ -43,7 +43,7 @@ impl Permission {
             Permission::ModsUpdate => "mods.update",
             Permission::ModsRemove => "mods.remove",
             Permission::ModsDisable => "mods.disable",
-            Permission::ModsyncManage => "modsync.manage",
+            Permission::ConvoyManage => "convoy.manage",
             Permission::SvmEdit => "svm.edit",
             Permission::RequestsResolve => "requests.resolve",
             Permission::ServerControl => "server.control",
@@ -62,7 +62,7 @@ impl Permission {
             "mods.update" => Some(Permission::ModsUpdate),
             "mods.remove" => Some(Permission::ModsRemove),
             "mods.disable" => Some(Permission::ModsDisable),
-            "modsync.manage" => Some(Permission::ModsyncManage),
+            "convoy.manage" | "modsync.manage" => Some(Permission::ConvoyManage),
             "svm.edit" => Some(Permission::SvmEdit),
             "requests.resolve" => Some(Permission::RequestsResolve),
             "server.control" => Some(Permission::ServerControl),
@@ -82,7 +82,7 @@ impl Permission {
             Permission::ModsUpdate => "Update Mods",
             Permission::ModsRemove => "Remove Mods",
             Permission::ModsDisable => "Disable Mods",
-            Permission::ModsyncManage => "Manage NarcoNet",
+            Permission::ConvoyManage => "Manage Convoy",
             Permission::SvmEdit => "Edit Server Config",
             Permission::RequestsResolve => "Resolve Mod Requests",
             Permission::ServerControl => "Control Server",
@@ -101,7 +101,7 @@ impl Permission {
             | Permission::ModsUpdate
             | Permission::ModsRemove
             | Permission::ModsDisable => "Mods",
-            Permission::ModsyncManage | Permission::SvmEdit | Permission::RequestsResolve => {
+            Permission::ConvoyManage | Permission::SvmEdit | Permission::RequestsResolve => {
                 "Configuration"
             }
             Permission::ServerControl

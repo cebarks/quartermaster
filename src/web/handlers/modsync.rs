@@ -36,6 +36,7 @@ struct ModSyncTemplate {
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
+    modsync_installed: bool,
     modsync_managed: bool,
     active_tab: String,
     tab_content: String,
@@ -60,14 +61,17 @@ pub async fn modsync_page(
     query: Query<ModsyncQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
+    require_permission(&user, Permission::ConvoyManage)?;
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let ms_config = state.config().modsync.clone();
 
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
+    // ponytail: compute modsync_managed locally since nav fields changed for convoy
+    let modsync_installed = state.is_modsync_installed();
+    let modsync_enabled = state.config().modsync.as_ref().is_some_and(|ms| ms.enabled);
+    let modsync_managed = modsync_installed && modsync_enabled;
 
     // Determine active tab (validate and constrain based on state)
     let mut active_tab = query.tab.as_str();
@@ -118,6 +122,7 @@ pub async fn modsync_page(
         flash,
         csrf_token,
         nav,
+        modsync_installed,
         modsync_managed,
         active_tab: active_tab.to_string(),
         tab_content,
@@ -133,7 +138,7 @@ pub async fn settings_partial(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
+    require_permission(&user, Permission::ConvoyManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let ms_config = state.config().modsync.clone();
@@ -184,7 +189,7 @@ pub async fn save_settings(
     form: Form<ModSyncSettingsForm>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
+    require_permission(&user, Permission::ConvoyManage)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -488,7 +493,7 @@ pub async fn groups_partial(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
+    require_permission(&user, Permission::ConvoyManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let html = render_groups_tab(&state, &csrf_token).await?;
@@ -510,7 +515,7 @@ pub async fn new_group_card(
     query: Query<NewGroupQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
+    require_permission(&user, Permission::ConvoyManage)?;
     let _csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let all_mods = fetch_mods_with_client_files(&state).await?;
@@ -648,7 +653,7 @@ pub async fn save_groups(
     body: Json<serde_json::Value>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
+    require_permission(&user, Permission::ConvoyManage)?;
 
     let csrf = body
         .get("csrf_token")
@@ -982,7 +987,7 @@ pub async fn mods_partial(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
+    require_permission(&user, Permission::ConvoyManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let html = render_mods_tab(&state, &csrf_token).await?;
@@ -1025,7 +1030,7 @@ pub async fn preview_partial(
     _session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsyncManage)?;
+    require_permission(&user, Permission::ConvoyManage)?;
 
     let ms_config = state.config().modsync.clone().ok_or(WebError::NotFound)?;
 
