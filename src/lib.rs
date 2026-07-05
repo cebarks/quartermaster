@@ -6,6 +6,7 @@ pub mod client;
 pub mod config;
 pub mod container;
 pub mod db;
+pub mod fika;
 pub mod forge;
 pub mod headless_sync;
 pub mod health;

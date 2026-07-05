@@ -162,6 +162,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         container_mgr_arc.as_ref().clone(),
                         spt_client,
                         Arc::clone(&config_arc),
+                        Arc::clone(&db_arc),
                         Arc::clone(&converging),
                         cancel_token,
                     );

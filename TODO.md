@@ -77,8 +77,6 @@
 - automatic mod config backup via git
 - fika.jsonc: set client force ip (needs research first if this is the right approach)
 - better fika integration
-    - pre-load raid on headless from webui
-    - active players list on dashboard
     - general players list
 - stand up server from predefined server config (storing settings in github without database) 
 - last logged for players (both into webui and into spt)
@@ -88,7 +86,6 @@
 - user sorting
 - better metrics: dynamic `by prefix` sorting, graphs
 - profile editor
-- broadcast message via server to all clients (https://github.com/cebarks/fika-scripts)
 - MOTD
 - NarcoNet: better default sizes for extra/exclusions text areas
 - better formatting for SVM editor: section breakdown with header toggles, field name vs subtext, default value shown, download/upload preset, preset toggle

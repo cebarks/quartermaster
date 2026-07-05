@@ -46,6 +46,10 @@ pub struct AppState {
     pub proxy_client: reqwest::Client,
     pub mod_zip_cache: ModZipCache,
     pub log_level_counts: LogLevelCounts,
+    #[allow(dead_code)] // ponytail: used in later tasks
+    pub fika_client: Option<Arc<crate::fika::client::FikaClient>>,
+    #[allow(dead_code)] // ponytail: used in later tasks
+    pub fika_config_lock: parking_lot::Mutex<()>,
 }
 
 impl AppState {

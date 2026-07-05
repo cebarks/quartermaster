@@ -24,6 +24,43 @@
     <div class="card"><h3>Mods</h3><span class="loading-pulse">Loading...</span></div>
 </div>
 
+<div class="card">
+    <div class="card-header"><h3>Online Players</h3></div>
+    <div class="card-body"
+         hx-get="/quma/api/dashboard/players"
+         hx-trigger="load, every 15s"
+         hx-swap="innerHTML">
+        <p class="text-muted">Loading...</p>
+    </div>
+</div>
+
+{% if nav.fika_installed && user.can("server.control") %}
+<div class="card">
+    <h2>Broadcast Message</h2>
+    <form method="post" action="/quma/broadcast">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-group">
+            <label for="broadcast_message">Message</label>
+            <input type="text" id="broadcast_message" name="message" class="form-control" maxlength="255" required placeholder="Enter broadcast message">
+        </div>
+        <div class="form-group">
+            <label for="broadcast_icon">Icon</label>
+            <select id="broadcast_icon" name="icon" class="form-control">
+                <option value="0">Default</option>
+                <option value="1">Note</option>
+                <option value="2">Alert</option>
+                <option value="3">Mail</option>
+                <option value="4">Notification</option>
+                <option value="5">Traders</option>
+                <option value="6">Ragman</option>
+                <option value="7">Skier</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Send Broadcast</button>
+    </form>
+</div>
+{% endif %}
+
 <div class="stat-card-grid">
     {% if nav.modsync_installed %}
     <div class="stat-card" style="border-left-color: {% if modsync_managed %}var(--success){% else %}var(--warning){% endif %}">

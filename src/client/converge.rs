@@ -30,10 +30,6 @@ pub const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 
 use crate::config::FIKA_CLIENT_FORGE_ID;
 
-/// Regex for editing headless amount in fika.jsonc
-static AMOUNT_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r#"("amount"\s*:\s*)\d+"#).expect("valid regex"));
-
 /// Regex for editing UDP port in Fika client config
 static PORT_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex"));
@@ -41,32 +37,6 @@ static PORT_RE: LazyLock<regex::Regex> =
 /// Regex for editing Use UPnP in Fika client config
 static UPNP_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(Use UPnP\s*=\s*)\S+").expect("valid regex"));
-
-/// Edit the headless amount in fika.jsonc using targeted text replacement to preserve comments.
-///
-/// This function does NOT parse the full JSON - it uses a regex to find and replace only the
-/// numeric value of the "amount" key, leaving all comments and formatting intact.
-pub fn edit_headless_amount(path: &Path, amount: u32) -> Result<()> {
-    if !path.exists() {
-        bail!(
-            "Fika server mod not configured. Start the SPT server at least once to generate fika.jsonc, then retry."
-        );
-    }
-
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-
-    if !AMOUNT_RE.is_match(&content) {
-        bail!("could not find headless.amount in {}", path.display());
-    }
-
-    let updated = AMOUNT_RE.replace(&content, format!("${{1}}{amount}"));
-    std::fs::write(path, updated.as_ref())
-        .with_context(|| format!("failed to write {}", path.display()))?;
-
-    debug!("Updated headless amount to {amount} in {}", path.display());
-    Ok(())
-}
 
 /// Check if the Fika client mod is present in the headless install directory.
 ///
@@ -1134,8 +1104,14 @@ async fn ensure_clients(
     info!("Ensuring clients: {current_count} → {desired_count}");
 
     // 1. Edit fika.jsonc to set amount
-    let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
-    edit_headless_amount(&fika_config_path, desired_count)?;
+    {
+        // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
+        // and the config UI save handler is the only other writer. Race window is narrow.
+        let fika_path = crate::fika::config::fika_config_path(spt_dir);
+        let cst = crate::fika::config::read_fika_cst(&fika_path)?;
+        crate::fika::config::set_headless_amount(&cst, desired_count);
+        crate::fika::config::write_fika_cst(&cst, &fika_path)?;
+    }
 
     // 2. Restart SPT server to pick up new headless count and generate profiles
     let container = config
@@ -1234,8 +1210,14 @@ async fn remove_excess_clients(
     }
 
     // 2. Edit fika.jsonc to set amount
-    let fika_config_path = spt_dir.join("SPT/user/mods/fika-server/assets/configs/fika.jsonc");
-    edit_headless_amount(&fika_config_path, desired_count)?;
+    {
+        // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
+        // and the config UI save handler is the only other writer. Race window is narrow.
+        let fika_path = crate::fika::config::fika_config_path(spt_dir);
+        let cst = crate::fika::config::read_fika_cst(&fika_path)?;
+        crate::fika::config::set_headless_amount(&cst, desired_count);
+        crate::fika::config::write_fika_cst(&cst, &fika_path)?;
+    }
 
     // 3. Restart SPT server to deregister removed clients
     let container = config
@@ -1552,39 +1534,6 @@ mod tests {
     use super::*;
     use crate::config::HeadlessClientDef;
     use std::collections::HashSet;
-
-    #[test]
-    fn edit_headless_amount_preserves_comments() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("fika.jsonc");
-        std::fs::write(
-            &path,
-            r#"{
-    // This is a comment about headless settings
-    "headless": {
-        "amount": 1, // number of headless clients
-        "profiles": {}
-    }
-}"#,
-        )
-        .unwrap();
-
-        edit_headless_amount(&path, 3).unwrap();
-
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains(r#""amount": 3"#));
-        assert!(content.contains("// This is a comment"));
-        assert!(content.contains("// number of headless"));
-    }
-
-    #[test]
-    fn edit_headless_amount_no_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("fika.jsonc");
-        let result = edit_headless_amount(&path, 3);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not configured"));
-    }
 
     #[test]
     fn discover_new_profiles_finds_diff() {

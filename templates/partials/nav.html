@@ -37,6 +37,9 @@
             {% if nav.fika_installed && user.can("settings.manage") %}
             <a href="/quma/headless"{% if active == "headless" %} class="active"{% endif %}>Headless</a>
             {% endif %}
+            {% if nav.fika_installed && user.can("settings.manage") %}
+            <a href="/quma/settings/fika"{% if active == "fika_settings" %} class="active"{% endif %}>Fika Config</a>
+            {% endif %}
         </div>
     </div>
     {% endif %}

@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Fika Settings — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("fika_settings", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Fika Settings</h1>
+
+<p class="text-muted mb-1">Configure Fika server and client behavior. Changes require an SPT server restart.</p>
+
+<form method="post" action="/quma/settings/fika">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <details class="card" open>
+        <summary style="cursor: pointer; font-weight: bold; font-size: 1.2em; margin-bottom: 1rem;">Client Settings</summary>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="use_btr" {% if config.client.use_btr %}checked{% endif %}> Use BTR</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="friendly_fire" {% if config.client.friendly_fire %}checked{% endif %}> Friendly Fire</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="dynamic_v_exfils" {% if config.client.dynamic_v_exfils %}checked{% endif %}> Dynamic Vehicle Exfils</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="allow_free_cam" {% if config.client.allow_free_cam %}checked{% endif %}> Allow Free Camera</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="allow_spectate_free_cam" {% if config.client.allow_spectate_free_cam %}checked{% endif %}> Allow Spectate Free Camera</label>
+        </div>
+
+        <div class="form-group">
+            <label for="blacklisted_items">Blacklisted Items (one per line)</label>
+            <textarea id="blacklisted_items" name="blacklisted_items" rows="3" class="form-control">{{ config.client.blacklisted_items.join("\n") }}</textarea>
+            <p class="text-muted text-sm">Item IDs that cannot be brought into raids.</p>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="force_save_on_death" {% if config.client.force_save_on_death %}checked{% endif %}> Force Save On Death</label>
+        </div>
+
+        <div class="form-group">
+            <label for="mods_required">Required Mods (one per line)</label>
+            <textarea id="mods_required" name="mods_required" rows="2" class="form-control">{{ config.client.mods.required.join("\n") }}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="mods_optional">Optional Mods (one per line)</label>
+            <textarea id="mods_optional" name="mods_optional" rows="2" class="form-control">{{ config.client.mods.optional.join("\n") }}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="use_inertia" {% if config.client.use_inertia %}checked{% endif %}> Use Inertia</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="shared_quest_progression" {% if config.client.shared_quest_progression %}checked{% endif %}> Shared Quest Progression</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="can_edit_raid_settings" {% if config.client.can_edit_raid_settings %}checked{% endif %}> Can Edit Raid Settings</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="enable_transits" {% if config.client.enable_transits %}checked{% endif %}> Enable Transits</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="anyone_can_start_raid" {% if config.client.anyone_can_start_raid %}checked{% endif %}> Anyone Can Start Raid</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="allow_name_plates" {% if config.client.allow_name_plates %}checked{% endif %}> Allow Name Plates</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="random_labyrinth_spawns" {% if config.client.random_labyrinth_spawns %}checked{% endif %}> Random Labyrinth Spawns</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="pmc_found_in_raid" {% if config.client.pmc_found_in_raid %}checked{% endif %}> PMC Found In Raid</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="allow_spectate_bots" {% if config.client.allow_spectate_bots %}checked{% endif %}> Allow Spectate Bots</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="instant_load" {% if config.client.instant_load %}checked{% endif %}> Instant Load</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="fast_load" {% if config.client.fast_load %}checked{% endif %}> Fast Load</label>
+        </div>
+
+        <h3>Revive Settings</h3>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="revive_enabled" {% if config.client.revive_config.enabled %}checked{% endif %}> Revive Enabled</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="revive_headshot_kills" {% if config.client.revive_config.headshot_kills %}checked{% endif %}> Headshot Kills (cannot revive)</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="revive_grenades_kills" {% if config.client.revive_config.grenades_kills %}checked{% endif %}> Grenade Kills (cannot revive)</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="revive_allow_looting" {% if config.client.revive_config.allow_looting %}checked{% endif %}> Allow Looting While Downed</label>
+        </div>
+
+        <div class="form-group">
+            <label for="revive_max_revives">Max Revives</label>
+            <input type="number" id="revive_max_revives" name="revive_max_revives" value="{{ config.client.revive_config.max_revives }}" min="0" max="10">
+            <p class="text-muted text-sm">Maximum number of times a player can be revived (0-10).</p>
+        </div>
+
+        <div class="form-group">
+            <label for="revive_bleedout_time">Bleedout Time (seconds)</label>
+            <input type="number" id="revive_bleedout_time" name="revive_bleedout_time" value="{{ config.client.revive_config.bleedout_time }}" min="10" max="600" step="1">
+            <p class="text-muted text-sm">Time before death while downed (10-600 seconds).</p>
+        </div>
+
+        <div class="form-group">
+            <label for="revive_revive_time">Revive Time (seconds)</label>
+            <input type="number" id="revive_revive_time" name="revive_revive_time" value="{{ config.client.revive_config.revive_time }}" min="3" max="30" step="0.1">
+            <p class="text-muted text-sm">Time to perform a revive (3-30 seconds).</p>
+        </div>
+    </details>
+
+    <details class="card">
+        <summary style="cursor: pointer; font-weight: bold; font-size: 1.2em; margin-bottom: 1rem;">Server Settings</summary>
+
+        <h3>SPT HTTP</h3>
+
+        <div class="form-group">
+            <label for="spt_http_ip">HTTP IP</label>
+            <input type="text" id="spt_http_ip" name="spt_http_ip" value="{{ config.server.spt.http.ip }}">
+        </div>
+
+        <div class="form-group">
+            <label for="spt_http_port">HTTP Port</label>
+            <input type="number" id="spt_http_port" name="spt_http_port" value="{{ config.server.spt.http.port }}" min="1" max="65535">
+        </div>
+
+        <div class="form-group">
+            <label for="spt_http_backend_ip">Backend IP</label>
+            <input type="text" id="spt_http_backend_ip" name="spt_http_backend_ip" value="{{ config.server.spt.http.backend_ip }}">
+        </div>
+
+        <div class="form-group">
+            <label for="spt_http_backend_port">Backend Port</label>
+            <input type="number" id="spt_http_backend_port" name="spt_http_backend_port" value="{{ config.server.spt.http.backend_port }}" min="1" max="65535">
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="spt_disable_chat_bots" {% if config.server.spt.disable_spt_chat_bots %}checked{% endif %}> Disable SPT Chat Bots</label>
+        </div>
+
+        <h3>Webhook</h3>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="webhook_enabled" {% if config.server.webhook.enabled %}checked{% endif %}> Webhook Enabled</label>
+        </div>
+
+        <div class="form-group">
+            <label for="webhook_name">Webhook Name</label>
+            <input type="text" id="webhook_name" name="webhook_name" value="{{ config.server.webhook.name }}">
+        </div>
+
+        <div class="form-group">
+            <label for="webhook_avatar_url">Webhook Avatar URL</label>
+            <input type="text" id="webhook_avatar_url" name="webhook_avatar_url" value="{{ config.server.webhook.avatar_url }}">
+        </div>
+
+        <div class="form-group">
+            <label for="webhook_url">Webhook URL</label>
+            <input type="text" id="webhook_url" name="webhook_url" value="{{ config.server.webhook.url }}">
+        </div>
+
+        <h3>Item Sending</h3>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="allow_item_sending" {% if config.server.allow_item_sending %}checked{% endif %}> Allow Item Sending</label>
+        </div>
+
+        <div class="form-group">
+            <label for="item_sending_storage_time">Item Sending Storage Time (days)</label>
+            <input type="number" id="item_sending_storage_time" name="item_sending_storage_time" value="{{ config.server.item_sending_storage_time }}" min="1">
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="sent_items_lose_fir" {% if config.server.sent_items_lose_fir %}checked{% endif %}> Sent Items Lose Found In Raid Status</label>
+        </div>
+
+        <h3>Profile & Session</h3>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="launcher_list_all_profiles" {% if config.server.launcher_list_all_profiles %}checked{% endif %}> Launcher List All Profiles</label>
+        </div>
+
+        <div class="form-group">
+            <label for="session_timeout">Session Timeout (minutes)</label>
+            <input type="number" id="session_timeout" name="session_timeout" value="{{ config.server.session_timeout }}" min="1">
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="show_dev_profile" {% if config.server.show_dev_profile %}checked{% endif %}> Show Dev Profile</label>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="show_non_standard_profile" {% if config.server.show_non_standard_profile %}checked{% endif %}> Show Non-Standard Profile</label>
+        </div>
+
+        <div class="form-group">
+            <label for="admin_ids">Admin IDs (one per line)</label>
+            <textarea id="admin_ids" name="admin_ids" rows="2" class="form-control">{{ config.server.admin_ids.join("\n") }}</textarea>
+            <p class="text-muted text-sm">Player profile IDs with admin privileges.</p>
+        </div>
+
+        <div class="form-group">
+            <label for="api_key_display">API Key (read-only)</label>
+            <div style="display: flex; gap: 0.5rem;">
+                <input type="password" id="api_key_display" value="{{ config.server.api_key }}" readonly style="flex: 1; background: #f5f5f5;" disabled>
+                <button type="button" class="btn" onclick="var i=document.getElementById('api_key_display');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+            </div>
+            <p class="text-muted text-sm">The Fika API key is read-only. Edit fika.jsonc directly to change it.</p>
+        </div>
+    </details>
+
+    <details class="card">
+        <summary style="cursor: pointer; font-weight: bold; font-size: 1.2em; margin-bottom: 1rem;">NAT Punch Server</summary>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="nat_punch_enable" {% if config.nat_punch_server.enable %}checked{% endif %}> Enable NAT Punch Server</label>
+        </div>
+
+        <div class="form-group">
+            <label for="nat_punch_port">NAT Punch Port</label>
+            <input type="number" id="nat_punch_port" name="nat_punch_port" value="{{ config.nat_punch_server.port }}" min="1" max="65535">
+        </div>
+    </details>
+
+    <details class="card">
+        <summary style="cursor: pointer; font-weight: bold; font-size: 1.2em; margin-bottom: 1rem;">Headless Client Settings</summary>
+
+        <div class="form-group">
+            <label for="headless_profiles_amount">Headless Profile Amount</label>
+            <input type="number" id="headless_profiles_amount" name="headless_profiles_amount" value="{{ config.headless.profiles.amount }}" min="0">
+            <p class="text-muted text-sm">Number of headless client profiles to generate.</p>
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="headless_scripts_generate" {% if config.headless.scripts.generate %}checked{% endif %}> Generate Headless Scripts</label>
+        </div>
+
+        <div class="form-group">
+            <label for="headless_scripts_force_ip">Force IP</label>
+            <input type="text" id="headless_scripts_force_ip" name="headless_scripts_force_ip" value="{{ config.headless.scripts.force_ip }}">
+        </div>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="headless_set_level_to_average" {% if config.headless.set_level_to_average_of_lobby %}checked{% endif %}> Set Level to Average of Lobby</label>
+        </div>
+
+        <div class="form-group">
+            <label for="headless_restart_after_raids">Restart After Amount of Raids</label>
+            <input type="number" id="headless_restart_after_raids" name="headless_restart_after_raids" value="{{ config.headless.restart_after_amount_of_raids }}" min="0">
+        </div>
+    </details>
+
+    <details class="card">
+        <summary style="cursor: pointer; font-weight: bold; font-size: 1.2em; margin-bottom: 1rem;">Background Mode</summary>
+
+        <div class="form-group">
+            <label><input type="checkbox" name="background_enable" {% if config.background.enable %}checked{% endif %}> Enable Background Mode</label>
+            <p class="text-muted text-sm">Allow running the game in the background.</p>
+        </div>
+    </details>
+
+    <button type="submit" class="btn">Save Fika Settings</button>
+</form>
+{% endblock %}
