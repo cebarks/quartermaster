@@ -18,7 +18,11 @@
         <tr><th>Version</th><td>{{ mod_info.version }}</td></tr>
         <tr><th>Source</th><td>{{ mod_info.source }}</td></tr>
         {% if let Some(url) = &mod_info.source_url %}
+        {% if url.starts_with("https://") || url.starts_with("http://") %}
         <tr><th>Source URL</th><td><a href="{{ url }}" target="_blank" rel="noopener">{{ url }} ↗</a></td></tr>
+        {% else %}
+        <tr><th>Source URL</th><td>{{ url }}</td></tr>
+        {% endif %}
         {% endif %}
         {% if let Some(slug) = &mod_info.slug %}
         <tr><th>Slug</th><td>{{ slug }}</td></tr>
