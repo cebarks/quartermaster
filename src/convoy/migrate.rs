@@ -82,7 +82,7 @@ fn un_layout_group_directories(db: &Database, spt_dir: &Path) -> anyhow::Result<
         .filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            name.starts_with("quma-") && e.file_type().map_or(false, |t| t.is_dir())
+            name.starts_with("quma-") && e.file_type().is_ok_and(|t| t.is_dir())
         })
         .collect();
 

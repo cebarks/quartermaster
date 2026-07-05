@@ -400,7 +400,7 @@ pub fn auto_backup_mod(
 pub fn restore_mod_backup(
     db: &crate::db::Database,
     spt_dir: &Path,
-    config: &crate::config::Config,
+    _config: &crate::config::Config,
     backup_db_id: i64,
 ) -> Result<()> {
     let backup = db
@@ -490,16 +490,6 @@ pub fn restore_mod_backup(
         "mod restored from backup"
     );
 
-    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(err = %e, "failed to regenerate NarcoNet config after restore");
-    }
-
-    if let Some(ref ms_config) = config.modsync {
-        if let Err(e) = crate::modsync::ensure_mod_layout(spt_dir, ms_config, db, mod_db_id) {
-            tracing::warn!(err = %e, "failed to ensure mod layout after restore");
-        }
-    }
-
     Ok(())
 }
 
@@ -513,7 +503,7 @@ pub fn restore_mod_backup(
 pub fn restore_full_backup(
     db: &crate::db::Database,
     spt_dir: &Path,
-    config: &crate::config::Config,
+    _config: &crate::config::Config,
     backup_db_id: i64,
 ) -> Result<()> {
     let backup = db
@@ -660,16 +650,6 @@ pub fn restore_full_backup(
     tx.commit()?;
 
     tracing::info!(backup_db_id, "full backup restored");
-
-    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(err = %e, "failed to regenerate NarcoNet config after full restore");
-    }
-
-    if let Some(ref ms_config) = config.modsync {
-        if let Err(e) = crate::modsync::ensure_all_mod_layouts(spt_dir, ms_config, db) {
-            tracing::warn!(err = %e, "failed to ensure mod layouts after full restore");
-        }
-    }
 
     Ok(())
 }

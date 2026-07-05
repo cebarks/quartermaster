@@ -26,7 +26,6 @@ struct SetupTemplate {
     spt_server_url: String,
     fika_installer_url: &'static str,
     fika_installed: bool,
-    modsync_installed: bool,
     external_url_configured: bool,
 }
 
@@ -64,7 +63,6 @@ pub async fn setup_page(
         spt_server_url,
         fika_installer_url: FIKA_INSTALLER_URL,
         fika_installed: state.fika_installed,
-        modsync_installed: state.is_modsync_installed(),
         external_url_configured,
     };
 

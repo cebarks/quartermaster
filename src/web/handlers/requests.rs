@@ -282,7 +282,6 @@ async fn trigger_install_for_request(
                 crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
 
                 state_clone.regenerate_convoy();
-                state_clone.regenerate_modsync().await;
 
                 Ok::<_, anyhow::Error>(())
             }
@@ -293,10 +292,6 @@ async fn trigger_install_for_request(
                     tracing::info!(forge_mod_id, "mod installed from request");
                     update_cache.invalidate();
                     mod_zip_cache.invalidate();
-                    state_clone.modsync_installed.store(
-                        crate::config::is_modsync_installed(&spt_dir),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
                     if forge_mod_id == crate::svm::SVM_FORGE_ID {
                         state_clone
                             .svm_installed

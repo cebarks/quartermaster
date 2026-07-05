@@ -54,7 +54,7 @@ pub fn cleanup_staging(spt_dir: &Path) {
     }
 }
 
-/// Check if a mod is in a modsync group with `exclude_headless = true`.
+/// Check if a mod is in a convoy group with `exclude_headless = true`.
 pub fn is_excluded_from_headless(db: &Database, mod_id: i64) -> bool {
     let Ok(Some(m)) = db.get_mod(mod_id) else {
         return false;
@@ -279,14 +279,6 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         file_count = extracted.len(),
         "mod installed, files recorded"
     );
-    if let Err(e) = crate::modsync::regenerate_if_enabled(req.spt_dir, req.config, req.db) {
-        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
-    }
-    if let Some(ref ms_config) = req.config.modsync {
-        if let Err(e) = crate::modsync::ensure_mod_layout(req.spt_dir, ms_config, req.db, db_id) {
-            tracing::warn!(err = %e, "failed to ensure mod layout after install");
-        }
-    }
     maybe_sync_headless(req.config, req.spt_dir, req.db, db_id, SyncOp::Install);
     Ok(db_id)
 }
@@ -334,9 +326,6 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
         file_count = extracted.len(),
         "addon installed, files recorded"
     );
-    if let Err(e) = crate::modsync::regenerate_if_enabled(req.spt_dir, req.config, req.db) {
-        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
-    }
     // Addons inherit parent mod's exclude_headless status
     if !is_excluded_from_headless(req.db, req.parent_mod_id) {
         let files: Vec<String> = req
@@ -402,14 +391,6 @@ pub fn update_mod_from_archive(
     record_extracted_files(db, mod_db_id, &extracted)?;
     db.update_mod(mod_db_id, version_id, version_str)?;
     tx.commit()?;
-    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
-    }
-    if let Some(ref ms_config) = config.modsync {
-        if let Err(e) = crate::modsync::ensure_mod_layout(spt_dir, ms_config, db, mod_db_id) {
-            tracing::warn!(err = %e, "failed to ensure mod layout after update");
-        }
-    }
     // Remove stale files from headless, then copy new files
     maybe_sync_headless_with_files(config, spt_dir, &stale_paths_for_headless, SyncOp::Remove);
     maybe_sync_headless(config, spt_dir, db, mod_db_id, SyncOp::Install);
@@ -478,9 +459,6 @@ pub fn update_addon_from_archive(
     record_extracted_addon_files(db, addon_db_id, &extracted)?;
     db.update_addon(addon_db_id, version_id, version_str, mod_version_constraint)?;
     tx.commit()?;
-    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
-    }
     // Addons inherit parent mod's exclude_headless status
     if !is_excluded_from_headless(db, addon.parent_mod_id) {
         maybe_sync_headless_with_files(config, spt_dir, &stale_addon_paths, SyncOp::Remove);
@@ -1093,11 +1071,11 @@ pub fn remove_mod_by_id(
 ) -> Result<()> {
     tracing::info!(mod_db_id, "removing mod");
 
-    // Remove child addons first, suppressing per-addon modsync regen
+    // Remove child addons first
     let child_addons = db.list_addons_for_mod(mod_db_id)?;
     for addon in &child_addons {
         tracing::info!(addon_name = %addon.name, "removing child addon before parent mod removal");
-        remove_addon_by_id(db, spt_dir, config, addon.id, true /* skip_modsync */)?;
+        remove_addon_by_id(db, spt_dir, config, addon.id)?;
     }
 
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_remove")?;
@@ -1129,7 +1107,7 @@ pub fn remove_mod_by_id(
     }
 
     // Look up forge_mod_id before deletion for group cleanup
-    let forge_mod_id = db.get_mod(mod_db_id)?.and_then(|m| m.forge_mod_id);
+    let _forge_mod_id = db.get_mod(mod_db_id)?.and_then(|m| m.forge_mod_id);
 
     // Remove client files from headless before DB delete loses the file list
     if !is_excluded_from_headless(db, mod_db_id) {
@@ -1140,47 +1118,18 @@ pub fn remove_mod_by_id(
     db.delete_mod(mod_db_id)?;
     tx.commit()?;
 
-    // Eager cleanup: strip uninstalled mod from any group
-    if let Some(forge_id) = forge_mod_id {
-        let config_path = crate::config::Config::resolve_path(None, Some(spt_dir));
-        if config_path.exists() {
-            if let Ok(mut cfg) = crate::config::Config::load(&config_path) {
-                let mut changed = false;
-                if let Some(ref mut ms) = cfg.modsync {
-                    for group in ms.groups.values_mut() {
-                        if let Some(pos) = group.members.iter().position(|&id| id == forge_id) {
-                            group.members.remove(pos);
-                            changed = true;
-                        }
-                    }
-                }
-                if changed {
-                    if let Err(e) = cfg.save(&config_path) {
-                        tracing::warn!(err = %e, "failed to clean up group membership after mod removal");
-                    }
-                }
-            }
-        }
-    }
-
-    if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-        tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
-    }
     Ok(())
 }
 
 /// Remove an addon by its database ID.
 ///
 /// This function backs up the addon files, deletes them from disk, and removes
-/// the database record. When `skip_modsync` is true, the modsync regeneration
-/// is suppressed — used during parent mod cascade removal to avoid redundant
-/// regenerations.
+/// the database record.
 pub fn remove_addon_by_id(
     db: &Database,
     spt_dir: &Path,
     config: &crate::config::Config,
     addon_db_id: i64,
-    skip_modsync: bool,
 ) -> Result<()> {
     let addon = db
         .get_addon(addon_db_id)?
@@ -1211,11 +1160,6 @@ pub fn remove_addon_by_id(
     db.delete_addon(addon_db_id)?; // CASCADE deletes file records
     tx.commit()?;
 
-    if !skip_modsync {
-        if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
-            tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
-        }
-    }
     Ok(())
 }
 
@@ -1695,11 +1639,6 @@ pub fn enable_mod(
 
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod enabled");
 
-    if let Some(ref ms_config) = config.modsync {
-        if let Err(e) = crate::modsync::ensure_mod_layout(spt_dir, ms_config, db, mod_db_id) {
-            tracing::warn!(err = %e, "failed to ensure mod layout after enable");
-        }
-    }
     maybe_sync_headless(config, spt_dir, db, mod_db_id, SyncOp::Install);
     Ok(())
 }

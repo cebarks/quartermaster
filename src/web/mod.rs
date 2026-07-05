@@ -87,7 +87,6 @@ pub struct ServerContext {
     pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<std::sync::atomic::AtomicBool>,
     pub fika_installed: bool,
-    pub modsync_installed: bool,
     pub log_level_counts: crate::logging::writer::LogLevelCounts,
 }
 
@@ -394,27 +393,6 @@ pub fn configure_app(
             "/svm/edit/{section}",
             web::post().to(handlers::svm::save_section),
         )
-        // ModSync API routes
-        .route(
-            "/modsync/settings",
-            web::get().to(handlers::modsync::settings_partial),
-        )
-        .route(
-            "/modsync/groups",
-            web::get().to(handlers::modsync::groups_partial),
-        )
-        .route(
-            "/modsync/groups/new",
-            web::get().to(handlers::modsync::new_group_card),
-        )
-        .route(
-            "/modsync/mods",
-            web::get().to(handlers::modsync::mods_partial),
-        )
-        .route(
-            "/modsync/preview",
-            web::get().to(handlers::modsync::preview_partial),
-        )
         // Convoy API routes
         .route(
             "/convoy/groups",
@@ -555,15 +533,6 @@ pub fn configure_app(
         .route("/admin", web::get().to(handlers::admin::admin_page))
         .route("/mods", web::get().to(handlers::mods::list_mods))
         .route("/files", web::get().to(handlers::mods::file_tracking_page))
-        .route("/modsync", web::get().to(handlers::modsync::modsync_page))
-        .route(
-            "/modsync/settings",
-            web::post().to(handlers::modsync::save_settings),
-        )
-        .route(
-            "/modsync/groups",
-            web::post().to(handlers::modsync::save_groups),
-        )
         .route("/convoy", web::get().to(handlers::convoy::convoy_page))
         .route(
             "/convoy/groups",
@@ -806,7 +775,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         client_states,
         converging,
         fika_installed,
-        modsync_installed,
         log_level_counts,
     } = ctx;
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
@@ -837,20 +805,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
 
     // Remove orphaned queued archives (no matching pending operation)
     crate::queue::sweep_orphaned_archives(&spt_dir, &db_arc.lock());
-
-    // Regenerate NarcoNet config on startup to ensure consistency
-    if modsync_installed && config.modsync.is_some() {
-        if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
-            tracing::warn!(err = %e, "failed to regenerate NarcoNet config on startup");
-        }
-        if let Some(ref ms_config) = config.modsync {
-            if let Err(e) =
-                crate::modsync::ensure_all_mod_layouts(&spt_dir, ms_config, &db_arc.lock())
-            {
-                tracing::warn!(err = %e, "failed to reconcile mod layouts on startup");
-            }
-        }
-    }
 
     let svm =
         crate::svm::SvmManager::detect(&spt_dir).map(|mgr| Arc::new(parking_lot::RwLock::new(mgr)));
@@ -933,7 +887,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         client_states,
         converging,
         fika_installed,
-        modsync_installed: std::sync::atomic::AtomicBool::new(modsync_installed),
         svm,
         svm_installed: std::sync::atomic::AtomicBool::new(svm_installed_flag),
         server_transition: Arc::new(parking_lot::Mutex::new(None)),

@@ -22,7 +22,6 @@ const DEV_CONTAINER_NAME: &str = "spt-server-dev";
 pub struct SetupArgs {
     pub path: Option<PathBuf>,
     pub no_fika: bool,
-    pub no_modsync: bool,
     pub admin_password: Option<String>,
     pub forge_token: Option<String>,
     pub no_forge_token: bool,
@@ -36,11 +35,6 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
     // --- Collect input ---
     let data_dir = resolve_data_dir(args.path)?;
     let install_fika = if args.no_fika { false } else { prompt_fika()? };
-    let install_modsync = if args.no_modsync {
-        false
-    } else {
-        prompt_modsync()?
-    };
     let admin_password = match args.admin_password {
         Some(pw) => {
             if pw.len() < 8 {
@@ -70,7 +64,6 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
     let params = ResolvedSetup {
         data_dir,
         install_fika,
-        install_modsync,
         admin_password,
         forge_token,
         container_name,
@@ -92,7 +85,6 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
 struct ResolvedSetup {
     data_dir: PathBuf,
     install_fika: bool,
-    install_modsync: bool,
     admin_password: String,
     forge_token: Option<String>,
     container_name: String,
@@ -170,18 +162,6 @@ fn prompt_fika() -> Result<bool> {
         || trimmed.eq_ignore_ascii_case("yes"))
 }
 
-fn prompt_modsync() -> Result<bool> {
-    print!("Install NarcoNet for client mod syncing? [Y/n]: ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim();
-
-    Ok(trimmed.is_empty()
-        || trimmed.eq_ignore_ascii_case("y")
-        || trimmed.eq_ignore_ascii_case("yes"))
-}
-
 // TODO(debt): duplicates install_single_mod logic from install.rs — extract a context-free helper
 async fn install_from_forge(
     forge: &crate::forge::client::ForgeClient,
@@ -243,53 +223,36 @@ async fn install_infrastructure_from_forge(
     config: &Config,
     forge_token: Option<String>,
     install_fika: bool,
-    install_modsync: bool,
 ) -> Result<()> {
-    use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID, NARCONET_FORGE_MOD_ID};
+    use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID};
     use crate::forge::client::ForgeClient;
 
-    if !install_fika && !install_modsync {
+    if !install_fika {
         return Ok(());
     }
 
     let forge = ForgeClient::new(forge_token)?;
 
-    if install_fika {
-        println!("\nInstalling Fika...");
-        install_from_forge(
-            &forge,
-            spt_dir,
-            db,
-            config,
-            FIKA_SERVER_FORGE_ID,
-            "Fika Server",
-        )
-        .await?;
-        install_from_forge(
-            &forge,
-            spt_dir,
-            db,
-            config,
-            FIKA_CLIENT_FORGE_ID,
-            "Fika Client",
-        )
-        .await?;
-        println!("Fika installed.");
-    }
-
-    if install_modsync {
-        println!("\nInstalling NarcoNet...");
-        install_from_forge(
-            &forge,
-            spt_dir,
-            db,
-            config,
-            NARCONET_FORGE_MOD_ID,
-            "NarcoNet",
-        )
-        .await?;
-        println!("NarcoNet installed.");
-    }
+    println!("\nInstalling Fika...");
+    install_from_forge(
+        &forge,
+        spt_dir,
+        db,
+        config,
+        FIKA_SERVER_FORGE_ID,
+        "Fika Server",
+    )
+    .await?;
+    install_from_forge(
+        &forge,
+        spt_dir,
+        db,
+        config,
+        FIKA_CLIENT_FORGE_ID,
+        "Fika Client",
+    )
+    .await?;
+    println!("Fika installed.");
 
     Ok(())
 }
@@ -460,13 +423,7 @@ fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database
     Ok(db)
 }
 
-fn print_summary(
-    config: &Config,
-    data_dir: &Path,
-    install_fika: bool,
-    install_modsync: bool,
-    forge_token_set: bool,
-) {
+fn print_summary(config: &Config, data_dir: &Path, install_fika: bool, forge_token_set: bool) {
     println!("\n=== Setup Complete ===\n");
     println!("SPT directory: {}", data_dir.display());
     if let Some(ref container) = config.server_container {
@@ -478,14 +435,6 @@ fn print_summary(
             "installed"
         } else {
             "disabled"
-        }
-    );
-    println!(
-        "NarcoNet: {}",
-        if install_modsync {
-            "installed"
-        } else {
-            "skipped"
         }
     );
     println!(
@@ -557,18 +506,11 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
         &config,
         config.forge_token.clone(),
         p.install_fika,
-        p.install_modsync,
     )
     .await?;
 
     // 11. Summary
-    print_summary(
-        &config,
-        &p.data_dir,
-        p.install_fika,
-        p.install_modsync,
-        forge_token_set,
-    );
+    print_summary(&config, &p.data_dir, p.install_fika, forge_token_set);
 
     Ok(())
 }
@@ -624,18 +566,11 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
         &config,
         config.forge_token.clone(),
         p.install_fika,
-        p.install_modsync,
     )
     .await?;
 
     // 6. Summary
-    print_summary(
-        &config,
-        &p.data_dir,
-        p.install_fika,
-        p.install_modsync,
-        forge_token_set,
-    );
+    print_summary(&config, &p.data_dir, p.install_fika, forge_token_set);
 
     Ok(())
 }

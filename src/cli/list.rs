@@ -2,7 +2,6 @@ use anyhow::Result;
 use serde::Serialize;
 
 use super::common::{find_unmanaged_mod_dirs, truncate_str, CliContext};
-use crate::config::is_modsync_installed;
 
 use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID};
 
@@ -38,7 +37,6 @@ struct UnmanagedEntry {
 #[derive(Serialize)]
 struct ListOutput {
     infrastructure: Vec<ModEntry>,
-    modsync_installed: bool,
     mods: Vec<ModEntry>,
     unmanaged: Vec<UnmanagedEntry>,
 }
@@ -106,8 +104,6 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
         }
     }
 
-    let modsync_installed = is_modsync_installed(&ctx.spt_dir);
-
     let (unmanaged_dirs, _) = find_unmanaged_mod_dirs(&ctx.spt_dir, &ctx.db)?;
     let unmanaged_entries: Vec<UnmanagedEntry> = unmanaged_dirs
         .into_iter()
@@ -120,7 +116,6 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
     if json {
         let output = ListOutput {
             infrastructure: infra_entries,
-            modsync_installed,
             mods: mod_entries,
             unmanaged: unmanaged_entries,
         };
@@ -129,23 +124,16 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
     }
 
     // Infrastructure section
-    if !infra_entries.is_empty() || modsync_installed {
+    if !infra_entries.is_empty() {
         println!("Infrastructure:");
         for entry in &infra_entries {
             println!("  {} {}", entry.name, entry.version);
-        }
-        if modsync_installed {
-            println!("  NarcoNet");
         }
         println!();
     }
 
     // Table output
-    if mod_entries.is_empty()
-        && unmanaged_entries.is_empty()
-        && infra_entries.is_empty()
-        && !modsync_installed
-    {
+    if mod_entries.is_empty() && unmanaged_entries.is_empty() && infra_entries.is_empty() {
         println!("No mods installed and no unmanaged mods found.");
         return Ok(());
     }

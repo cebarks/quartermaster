@@ -13,7 +13,6 @@ mod headless_sync;
 mod health;
 mod invite;
 mod logging;
-mod modsync;
 mod numa;
 mod ops;
 mod queue;
@@ -74,7 +73,6 @@ async fn main() -> Result<()> {
         Command::Setup {
             path,
             no_fika,
-            no_modsync,
             admin_password,
             forge_token,
             no_forge_token,
@@ -86,7 +84,6 @@ async fn main() -> Result<()> {
                 cli::setup::SetupArgs {
                     path: path.clone(),
                     no_fika: *no_fika,
-                    no_modsync: *no_modsync,
                     admin_password: admin_password.clone(),
                     forge_token: forge_token.clone(),
                     no_forge_token: *no_forge_token,

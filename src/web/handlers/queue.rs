@@ -198,9 +198,8 @@ pub async fn apply_queue(
             }
         }
 
-        // Regenerate NarcoNet config after all operations
+        // Regenerate convoy catalog after all operations
         state_clone.regenerate_convoy();
-        state_clone.regenerate_modsync().await;
         state_clone.mod_zip_cache.invalidate();
         state_clone.integrity_cache.invalidate();
 
@@ -610,7 +609,7 @@ async fn apply_addon_remove(op: &PendingOperation, state: &AppState) -> anyhow::
         let addon = db
             .get_addon_by_forge_id(forge_addon_id)?
             .ok_or_else(|| anyhow::anyhow!("addon not found for forge_id {forge_addon_id}"))?;
-        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon.id, false)
+        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon.id)
     })
     .await??;
 

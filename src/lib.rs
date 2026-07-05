@@ -13,7 +13,6 @@ pub mod headless_sync;
 pub mod health;
 pub mod invite;
 pub mod logging;
-pub mod modsync;
 pub mod numa;
 pub mod ops;
 pub mod queue;

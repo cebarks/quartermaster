@@ -39,7 +39,6 @@ pub struct AppState {
     pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
-    pub modsync_installed: AtomicBool,
     pub svm: Option<Arc<parking_lot::RwLock<SvmManager>>>,
     pub svm_installed: AtomicBool,
     pub server_transition: Arc<Mutex<Option<String>>>,
@@ -99,64 +98,9 @@ impl AppState {
         *self.server_transition.lock() = transition.map(|s| s.to_string());
     }
 
-    pub fn is_modsync_installed(&self) -> bool {
-        self.modsync_installed
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
     pub fn is_svm_installed(&self) -> bool {
         self.svm_installed
             .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    pub async fn ensure_modsync_layout(&self) {
-        if !self.is_modsync_installed() {
-            return;
-        }
-        let db = self.db.clone();
-        let spt_dir = self.spt_dir.clone();
-        let config = self.config_cloned();
-        let result = actix_web::web::block(move || {
-            let db = db.lock();
-            if let Some(ref ms) = config.modsync {
-                crate::modsync::ensure_all_mod_layouts(&spt_dir, ms, &db)
-            } else {
-                Ok(0)
-            }
-        })
-        .await;
-        match result {
-            Ok(Ok(count)) if count > 0 => {
-                tracing::info!(count, "reconciled mod file layouts for NarcoNet groups");
-            }
-            Ok(Err(e)) => {
-                tracing::warn!(err = %e, "failed to ensure mod file layouts");
-            }
-            Err(e) => {
-                tracing::warn!(err = %e, "mod layout task failed");
-            }
-            _ => {}
-        }
-    }
-
-    pub async fn regenerate_modsync(&self) {
-        if !self.is_modsync_installed() {
-            return;
-        }
-        // Ensure file layout is correct before regenerating config
-        self.ensure_modsync_layout().await;
-
-        let db = self.db.clone();
-        let spt_dir = self.spt_dir.clone();
-        let config = self.config_cloned();
-        let result = actix_web::web::block(move || {
-            let db = db.lock();
-            crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
-        })
-        .await;
-        if let Err(e) = result {
-            tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
-        }
     }
 
     pub fn regenerate_convoy(&self) {

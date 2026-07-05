@@ -161,12 +161,6 @@ struct ModDetailTemplate {
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
-    has_client_files: bool,
-    sync_enforced: Option<bool>,
-    sync_silent: Option<bool>,
-    sync_restart_required: Option<bool>,
-    sync_enabled: Option<bool>,
-    modsync_managed: bool,
 }
 
 #[derive(Template)]
@@ -585,12 +579,7 @@ pub async fn mod_detail(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let has_client_files = archive_files
-        .iter()
-        .any(|f| f.file_path.starts_with("BepInEx/"));
-
     let nav = NavContext::from_state(&state);
-    let modsync_managed = false; // ponytail: modsync replaced by convoy
     let can_disable = user.can("mods.disable");
     let can_remove = user.can("mods.remove");
     let tmpl = ModDetailTemplate {
@@ -605,12 +594,6 @@ pub async fn mod_detail(
         flash,
         csrf_token,
         nav,
-        has_client_files,
-        sync_enforced: None,
-        sync_silent: None,
-        sync_restart_required: None,
-        sync_enabled: None,
-        modsync_managed,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -1097,7 +1080,6 @@ async fn install_mod_from_url(
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
                 state_clone.regenerate_convoy();
-                state_clone.regenerate_modsync().await;
                 tasks.complete(task_id, "Mod installed from URL".to_string());
             }
             Err(e) => {
@@ -1359,9 +1341,8 @@ pub async fn install_mod(
             // Record dependency edges
             crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
 
-            // Regenerate NarcoNet config if enabled
+            // Regenerate convoy catalog if enabled
             state_clone.regenerate_convoy();
-            state_clone.regenerate_modsync().await;
 
             Ok::<_, anyhow::Error>(())
         }
@@ -1373,11 +1354,6 @@ pub async fn install_mod(
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
-                // Re-check NarcoNet detection (installing NarcoNet itself changes this)
-                state_clone.modsync_installed.store(
-                    crate::config::is_modsync_installed(&spt_dir),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
                 if mod_id == crate::svm::SVM_FORGE_ID {
                     state_clone
                         .svm_installed
@@ -1540,9 +1516,8 @@ pub async fn update_mod(
 
             crate::ops::record_dep_edges(&db, mod_db_id, &dep_db_ids);
 
-            // Regenerate NarcoNet config if enabled
+            // Regenerate convoy catalog if enabled
             state_clone.regenerate_convoy();
-            state_clone.regenerate_modsync().await;
 
             Ok::<_, anyhow::Error>(())
         }
@@ -1627,12 +1602,6 @@ pub async fn remove_mod(
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
     state.regenerate_convoy();
-    state.regenerate_modsync().await;
-    // Re-check NarcoNet detection (removing NarcoNet itself changes this)
-    state.modsync_installed.store(
-        crate::config::is_modsync_installed(&state.spt_dir),
-        std::sync::atomic::Ordering::Relaxed,
-    );
     if installed.forge_mod_id == Some(crate::svm::SVM_FORGE_ID) {
         state
             .svm_installed
@@ -1862,18 +1831,12 @@ pub async fn update_all_mods(
             }
         }
 
-        // Regenerate NarcoNet config after all updates
+        // Regenerate convoy catalog after all updates
         state_clone.regenerate_convoy();
-        state_clone.regenerate_modsync().await;
 
         update_cache.invalidate();
         mod_zip_cache.invalidate();
         integrity_cache.invalidate();
-        // Re-check NarcoNet detection (updating mods might affect NarcoNet state)
-        state_clone.modsync_installed.store(
-            crate::config::is_modsync_installed(&spt_dir),
-            std::sync::atomic::Ordering::Relaxed,
-        );
 
         if success_count == total {
             tasks.complete(task_id, format!("All {total} mods updated successfully"));
@@ -2648,7 +2611,7 @@ pub async fn remove_addon(
 
     let result = web::block(move || {
         let db = db2.lock();
-        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon_db_id, false)
+        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon_db_id)
     })
     .await
     .map_err(WebError::from)?;
