@@ -20,6 +20,7 @@ pub struct InstalledMod {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model — fields populated by query results
 pub struct ModGroup {
     pub id: i64,
     pub name: String,
@@ -527,6 +528,7 @@ impl Database {
 
     // ── Convoy Groups ─────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     pub fn list_groups(&self) -> rusqlite::Result<Vec<ModGroup>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, slug, tier, exclude_headless FROM mod_groups ORDER BY name",
@@ -543,6 +545,7 @@ impl Database {
         rows.collect()
     }
 
+    #[allow(dead_code)]
     pub fn get_group(&self, id: i64) -> rusqlite::Result<Option<ModGroup>> {
         self.conn
             .query_row(
@@ -561,6 +564,7 @@ impl Database {
             .optional()
     }
 
+    #[allow(dead_code)]
     pub fn get_group_by_slug(&self, slug: &str) -> rusqlite::Result<Option<ModGroup>> {
         self.conn
             .query_row(
@@ -579,6 +583,7 @@ impl Database {
             .optional()
     }
 
+    #[allow(dead_code)]
     pub fn insert_group(
         &self,
         name: &str,
@@ -593,6 +598,7 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    #[allow(dead_code)]
     pub fn update_group(
         &self,
         id: i64,
@@ -609,6 +615,7 @@ impl Database {
 
     /// Deletes a group. Explicitly NULLs group_id on all member mods first
     /// because ALTER TABLE ADD COLUMN doesn't enforce FK constraints in SQLite.
+    #[allow(dead_code)]
     pub fn delete_group(&self, id: i64) -> rusqlite::Result<usize> {
         self.conn.execute(
             "UPDATE installed_mods SET group_id = NULL WHERE group_id = ?1",
@@ -618,6 +625,7 @@ impl Database {
             .execute("DELETE FROM mod_groups WHERE id = ?1", params![id])
     }
 
+    #[allow(dead_code)]
     pub fn set_mod_group(&self, mod_id: i64, group_id: Option<i64>) -> rusqlite::Result<usize> {
         self.conn.execute(
             "UPDATE installed_mods SET group_id = ?1 WHERE id = ?2",
@@ -625,6 +633,7 @@ impl Database {
         )
     }
 
+    #[allow(dead_code)]
     pub fn get_mods_in_group(&self, group_id: i64) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
@@ -634,6 +643,7 @@ impl Database {
         rows.collect()
     }
 
+    #[allow(dead_code)]
     pub fn get_ungrouped_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
