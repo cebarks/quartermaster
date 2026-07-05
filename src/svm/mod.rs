@@ -36,7 +36,11 @@ impl SvmManager {
 
         // Read loader.json to get active preset
         let loader_content = std::fs::read_to_string(&loader_path).ok()?;
-        let loader_json: Value = serde_json::from_str(&loader_content).ok()?;
+        // SVM is a .NET mod — files may have a UTF-8 BOM
+        let loader_content = loader_content
+            .strip_prefix('\u{feff}')
+            .unwrap_or(&loader_content);
+        let loader_json: Value = serde_json::from_str(loader_content).ok()?;
         let mut active_preset = loader_json
             .get("CurrentlySelectedPreset")
             .and_then(|v| v.as_str())
@@ -154,13 +158,15 @@ impl SvmManager {
             .join(format!("{}.json", name));
         let content = std::fs::read_to_string(&preset_path)
             .with_context(|| format!("Failed to read preset '{}'", name))?;
+        // SVM is a .NET mod — presets may have a UTF-8 BOM
+        let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
 
         // Parse as raw JSON
-        let raw_json: Value = serde_json::from_str(&content)
+        let raw_json: Value = serde_json::from_str(content)
             .with_context(|| format!("Failed to parse preset '{}' as JSON", name))?;
 
         // Parse as typed config
-        let config: SvmConfig = serde_json::from_str(&content)
+        let config: SvmConfig = serde_json::from_str(content)
             .with_context(|| format!("Failed to deserialize preset '{}'", name))?;
 
         // Serialize typed config back to JSON to compare keys
