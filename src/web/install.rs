@@ -7,6 +7,7 @@ use crate::db::Database;
 use crate::forge::client::ForgeClient;
 use crate::forge::models::ForgeVersion;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn web_download_extract_and_record(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,

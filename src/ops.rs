@@ -1734,6 +1734,20 @@ pub fn disable_addon(
     }
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon disabled");
+    {
+        let parent_forge_id = db
+            .get_mod(addon_info.parent_mod_id)
+            .ok()
+            .flatten()
+            .map(|m| m.forge_mod_id);
+        let excluded = parent_forge_id
+            .map(|id| is_excluded_from_headless(config, id))
+            .unwrap_or(false);
+        if !excluded {
+            let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
+            maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
+        }
+    }
     Ok(())
 }
 
@@ -1791,6 +1805,19 @@ pub fn enable_addon(
     cleanup_empty_stash_dirs(spt_dir, &file_paths);
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon enabled");
+    {
+        let parent_forge_id = db
+            .get_mod(addon_info.parent_mod_id)
+            .ok()
+            .flatten()
+            .map(|m| m.forge_mod_id);
+        let excluded = parent_forge_id
+            .map(|id| is_excluded_from_headless(config, id))
+            .unwrap_or(false);
+        if !excluded {
+            maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Install);
+        }
+    }
     Ok(())
 }
 
