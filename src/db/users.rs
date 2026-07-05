@@ -470,6 +470,23 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn insert_pending_url_op(
+        &self,
+        action: QueueAction,
+        mod_name: &str,
+        archive_path: &str,
+        source: &str,
+        source_url: Option<&str>,
+        queued_by: Option<&str>,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by, item_type, forge_addon_id, archive_path, source, source_url)
+             VALUES (?1, NULL, NULL, ?2, NULL, ?3, 'mod', NULL, ?4, ?5, ?6)",
+            params![action.as_str(), mod_name, queued_by, archive_path, source, source_url],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
     pub fn has_pending_op(&self, forge_mod_id: i64, action: QueueAction) -> rusqlite::Result<bool> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM pending_operations WHERE forge_mod_id = ?1 AND action = ?2 AND item_type = 'mod'",

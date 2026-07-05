@@ -941,6 +941,61 @@ fn derive_name_from_path(path: &std::path::Path) -> String {
         .to_string()
 }
 
+async fn queue_url_install(ctx: &CliContext, url: &str, mod_name: &str) -> Result<()> {
+    let queue_dir = ctx.spt_dir.join(".quartermaster").join("queued");
+    std::fs::create_dir_all(&queue_dir)?;
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let filename = derive_name_from_url(url);
+    let dest = queue_dir.join(format!("{timestamp}-{filename}.zip"));
+
+    println!("Downloading archive for queue...");
+    ctx.forge.download_file(url, &dest).await?;
+
+    ctx.db.insert_pending_url_op(
+        crate::db::users::QueueAction::Install,
+        mod_name,
+        dest.to_str().expect("valid UTF-8 path"),
+        "url",
+        Some(url),
+        None,
+    )?;
+
+    println!("Server is running — operation queued. It will be applied on next server restart.");
+    Ok(())
+}
+
+async fn queue_file_install(
+    ctx: &CliContext,
+    archive_path: &std::path::Path,
+    mod_name: &str,
+) -> Result<()> {
+    let queue_dir = ctx.spt_dir.join(".quartermaster").join("queued");
+    std::fs::create_dir_all(&queue_dir)?;
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let filename = archive_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("mod.zip");
+    let dest = queue_dir.join(format!("{timestamp}-{filename}"));
+
+    std::fs::copy(archive_path, &dest)
+        .with_context(|| format!("failed to copy archive to queue dir"))?;
+
+    ctx.db.insert_pending_url_op(
+        crate::db::users::QueueAction::Install,
+        mod_name,
+        dest.to_str().expect("valid UTF-8 path"),
+        "file",
+        None,
+        None,
+    )?;
+
+    println!("Server is running — operation queued. It will be applied on next server restart.");
+    Ok(())
+}
+
 async fn install_from_url(
     url: &str,
     name_override: Option<&str>,
@@ -966,8 +1021,7 @@ async fn install_from_url(
     if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
         .await?
     {
-        println!("Server is running — URL/file installs cannot be queued yet. Use --force to install immediately.");
-        return Ok(());
+        return queue_url_install(ctx, url, &mod_name).await;
     }
 
     super::common::warn_if_forcing_while_running(force, ctx).await?;
@@ -1023,8 +1077,7 @@ async fn install_from_file(
     if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
         .await?
     {
-        println!("Server is running — URL/file installs cannot be queued yet. Use --force to install immediately.");
-        return Ok(());
+        return queue_file_install(ctx, &archive_path, &mod_name).await;
     }
 
     super::common::warn_if_forcing_while_running(force, ctx).await?;

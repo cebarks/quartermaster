@@ -219,19 +219,32 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
             continue;
         }
 
-        let forge_mod_id = op
-            .forge_mod_id
-            .expect("mod operation must have forge_mod_id");
-
         match op.action {
             crate::db::users::QueueAction::Install => {
-                if let Some(version_id) = op.forge_version_id {
+                if let Some(ref archive_path) = op.archive_path {
+                    // URL/file install — archive already downloaded
+                    let archive = std::path::Path::new(archive_path);
+                    if !archive.exists() {
+                        eprintln!("    Error: queued archive not found at {archive_path}");
+                        ctx.db.delete_pending_op(op.id)?;
+                        continue;
+                    }
+                    let source = crate::ops::ModSource::from_str(&op.source)
+                        .unwrap_or(crate::ops::ModSource::Forge);
                     if let Err(e) =
-                        crate::cli::install::install_with_deps(ctx, forge_mod_id, version_id)
-                            .await
-                            .with_context(|| {
-                                format!("failed to apply queued install of {}", op.mod_name)
-                            })
+                        crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+                            db: &ctx.db,
+                            spt_dir: &ctx.spt_dir,
+                            config: &ctx.config,
+                            forge_mod_id: None,
+                            version_id: None,
+                            name: &op.mod_name,
+                            slug: None,
+                            version: "unknown",
+                            archive_path: archive,
+                            source,
+                            source_url: op.source_url.as_deref(),
+                        })
                     {
                         let remaining = pending.len() - applied - 1;
                         eprintln!("\n  Error: {e:#}");
@@ -240,13 +253,40 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                         );
                         return Err(e);
                     }
+                    // Clean up cached archive
+                    let _ = std::fs::remove_file(archive);
+                    println!("    Installed {} from {}", op.mod_name, op.source);
                 } else {
-                    println!("    Skipped — no version ID for install operation");
-                    ctx.db.delete_pending_op(op.id)?;
-                    continue;
+                    // Existing Forge install path
+                    let forge_mod_id = op
+                        .forge_mod_id
+                        .expect("mod operation must have forge_mod_id");
+
+                    if let Some(version_id) = op.forge_version_id {
+                        if let Err(e) =
+                            crate::cli::install::install_with_deps(ctx, forge_mod_id, version_id)
+                                .await
+                                .with_context(|| {
+                                    format!("failed to apply queued install of {}", op.mod_name)
+                                })
+                        {
+                            let remaining = pending.len() - applied - 1;
+                            eprintln!("\n  Error: {e:#}");
+                            eprintln!(
+                                "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                            );
+                            return Err(e);
+                        }
+                    } else {
+                        println!("    Skipped — no version ID for install operation");
+                        ctx.db.delete_pending_op(op.id)?;
+                        continue;
+                    }
                 }
             }
             crate::db::users::QueueAction::Remove => {
+                let forge_mod_id = op.forge_mod_id.expect("mod remove must have forge_mod_id");
+
                 if let Some(installed) = ctx.db.get_mod_by_forge_id(forge_mod_id)? {
                     // Check reverse dependencies like interactive remove does
                     let reverse_deps =
@@ -282,6 +322,8 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                 }
             }
             crate::db::users::QueueAction::Update => {
+                let forge_mod_id = op.forge_mod_id.expect("mod update must have forge_mod_id");
+
                 if let (Some(installed), Some(version_id)) = (
                     ctx.db.get_mod_by_forge_id(forge_mod_id)?,
                     op.forge_version_id,
