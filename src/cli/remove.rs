@@ -24,6 +24,14 @@ pub async fn run(
     if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
         .await?
     {
+        // URL/file mods can't be queued (no forge_mod_id), must use --force
+        if installed.forge_mod_id.is_none() {
+            anyhow::bail!(
+                "Cannot queue removal of {} (installed from URL/file). Use --force to remove immediately.",
+                installed.name
+            );
+        }
+
         if !yes {
             let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
             if !confirm(&format_remove_prompt(&installed.name, file_count))? {
@@ -34,7 +42,7 @@ pub async fn run(
 
         ctx.db.insert_pending_op(
             crate::db::users::QueueAction::Remove,
-            installed.forge_mod_id.unwrap(),
+            installed.forge_mod_id.expect("checked above"), // ponytail: safe, None bails earlier
             None,
             &installed.name,
             None,

@@ -26,8 +26,11 @@ pub async fn run(
             .ok_or_else(|| anyhow::anyhow!("backup #{id} not found"))?,
         (None, Some(mod_ref)) => {
             let installed = super::common::resolve_installed_mod(mod_ref, ctx)?;
+            let forge_mod_id = installed.forge_mod_id.ok_or_else(|| {
+                anyhow::anyhow!("backups are not supported for mods installed from URLs or files")
+            })?;
             ctx.db
-                .get_latest_backup_for_mod(installed.forge_mod_id.unwrap())?
+                .get_latest_backup_for_mod(forge_mod_id)?
                 .ok_or_else(|| anyhow::anyhow!("no backups found for {}", installed.name))?
         }
         (None, None) => anyhow::bail!("specify a backup ID or use --latest <mod>"),
