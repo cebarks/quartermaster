@@ -47,7 +47,10 @@ fn list_backups(mod_ref: Option<&str>, ctx: &CliContext) -> Result<()> {
     let backups = match mod_ref {
         Some(r) => {
             let installed = super::common::resolve_installed_mod(r, ctx)?;
-            ctx.db.list_backups_for_mod(installed.forge_mod_id)?
+            let forge_mod_id = installed.forge_mod_id.ok_or_else(|| {
+                anyhow::anyhow!("backups are not supported for mods installed from URLs or files")
+            })?;
+            ctx.db.list_backups_for_mod(forge_mod_id)?
         }
         None => ctx.db.list_all_backups()?,
     };

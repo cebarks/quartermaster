@@ -106,7 +106,9 @@ impl ModListEntry {
         let (mod_info, file_count, total_size) = row;
         let addon_count = addon_counts.get(&mod_info.id).copied().unwrap_or(0);
         let has_client_files = client_file_mods.contains(&mod_info.id);
-        let excluded_from_headless = excluded_mods.contains(&mod_info.forge_mod_id);
+        let excluded_from_headless = mod_info
+            .forge_mod_id
+            .is_some_and(|id| excluded_mods.contains(&id));
         ModListEntry {
             mod_info,
             file_count,
@@ -313,7 +315,7 @@ async fn get_or_fetch_updates(
     }
     let check_list: Vec<(i64, String)> = installed
         .iter()
-        .map(|m| (m.forge_mod_id, m.version.clone()))
+        .filter_map(|m| m.forge_mod_id.map(|id| (id, m.version.clone())))
         .collect();
     match state
         .forge
@@ -509,8 +511,11 @@ pub async fn list_mods(
     let config = state.config_cloned();
     let excluded_mods: std::collections::HashSet<i64> = all_unfiltered
         .iter()
-        .filter(|(m, _, _)| crate::ops::is_excluded_from_headless(&config, m.forge_mod_id))
-        .map(|(m, _, _)| m.forge_mod_id)
+        .filter(|(m, _, _)| {
+            m.forge_mod_id
+                .is_some_and(|id| crate::ops::is_excluded_from_headless(&config, id))
+        })
+        .filter_map(|(m, _, _)| m.forge_mod_id)
         .collect();
 
     let all_entries: Vec<ModListEntry> = all_unfiltered
@@ -520,14 +525,14 @@ pub async fn list_mods(
 
     let (infrastructure, non_infra): (Vec<_>, Vec<_>) = all_entries
         .into_iter()
-        .partition(|e| is_infrastructure_mod(e.mod_info.forge_mod_id));
+        .partition(|e| e.mod_info.forge_mod_id.is_some_and(is_infrastructure_mod));
 
     let has_any_mods = !non_infra.is_empty();
 
     let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
         .map(|row| ModListEntry::from_db_row(row, &addon_counts, &client_file_mods, &excluded_mods))
-        .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
+        .filter(|e| !e.mod_info.forge_mod_id.is_some_and(is_infrastructure_mod))
         .collect();
 
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
@@ -642,16 +647,18 @@ pub async fn check_updates_partial(
             .iter()
             .filter(|m| {
                 updates_data.updates.iter().any(|u| {
-                    u.current_version.mod_id == m.forge_mod_id
+                    m.forge_mod_id == Some(u.current_version.mod_id)
                         && u.recommended_version.version != m.version
                 })
             })
             .collect();
 
-        let version_futures = mods_with_candidates.iter().map(|m| {
-            state
-                .forge
-                .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
+        let version_futures = mods_with_candidates.iter().filter_map(|m| {
+            m.forge_mod_id.map(|forge_id| {
+                state
+                    .forge
+                    .get_versions(forge_id, Some(&state.spt_info.spt_version))
+            })
         });
         let results = futures_util::future::join_all(version_futures).await;
 
@@ -719,18 +726,20 @@ pub async fn update_status_partial(
         .enumerate()
         .filter(|(_, m)| {
             updates_data.updates.iter().any(|u| {
-                u.current_version.mod_id == m.forge_mod_id
+                m.forge_mod_id == Some(u.current_version.mod_id)
                     && u.recommended_version.version != m.version
             })
         })
         .map(|(i, _)| i)
         .collect();
 
-    let version_futures = needs_check.iter().map(|&i| {
+    let version_futures = needs_check.iter().filter_map(|&i| {
         let m = &installed[i];
-        state
-            .forge
-            .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
+        m.forge_mod_id.map(|forge_id| {
+            state
+                .forge
+                .get_versions(forge_id, Some(&state.spt_info.spt_version))
+        })
     });
     let version_results = futures_util::future::join_all(version_futures).await;
 
@@ -805,7 +814,7 @@ pub async fn updates_carousel_partial(
                 .updates
                 .iter()
                 .find(|u| {
-                    u.current_version.mod_id == m.forge_mod_id
+                    m.forge_mod_id == Some(u.current_version.mod_id)
                         && u.recommended_version.version != m.version
                 })
                 .map(|u| (m, u))
@@ -835,9 +844,13 @@ pub async fn updates_carousel_partial(
             FikaCompat::Unknown => "unknown".to_string(),
         });
 
+    let forge_mod_id = m
+        .forge_mod_id
+        .ok_or(WebError::BadRequest("Mod has no Forge ID".to_string()))?;
+
     let spt_version = match state
         .forge
-        .get_versions(m.forge_mod_id, Some(&state.spt_info.spt_version))
+        .get_versions(forge_mod_id, Some(&state.spt_info.spt_version))
         .await
     {
         Ok(versions) => versions
@@ -849,7 +862,7 @@ pub async fn updates_carousel_partial(
 
     let entry = UpdatesCarouselEntry {
         db_id: m.id,
-        forge_mod_id: m.forge_mod_id,
+        forge_mod_id,
         name: m.name.clone(),
         slug: m.slug.clone(),
         current_version: m.version.clone(),
@@ -964,6 +977,149 @@ pub async fn compat_check(
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
+async fn install_mod_from_url(
+    url: &str,
+    state: &Data<AppState>,
+    session: &Session,
+) -> actix_web::Result<HttpResponse> {
+    let mod_name = crate::ops::derive_name_from_url(url);
+
+    // Check name collision
+    {
+        let db = state.db.clone();
+        let name_check = mod_name.clone();
+        let exists = web::block(move || {
+            let db = db.lock();
+            db.get_mod_by_name_or_slug(&name_check)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if exists.is_some() {
+            set_flash(
+                session,
+                &format!("A mod named '{mod_name}' is already installed"),
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    }
+
+    // Queue if server running
+    if should_queue_operation(state).await {
+        let queue_dir = state.spt_dir.join(".quartermaster").join("queued");
+        let _ = std::fs::create_dir_all(&queue_dir);
+
+        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let extension = if url.ends_with(".7z") { "7z" } else { "zip" };
+        let dest = queue_dir.join(format!("{timestamp}-{mod_name}.{extension}"));
+
+        // Download eagerly
+        if let Err(e) = state.forge.download_file(url, &dest).await {
+            set_flash(
+                session,
+                &format!("Failed to download: {e}"),
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+
+        let db = state.db.clone();
+        let mod_name_q = mod_name.clone();
+        let dest_str = dest.to_string_lossy().to_string();
+        let url_owned = url.to_string();
+        let _ = web::block(move || {
+            let db = db.lock();
+            db.insert_pending_url_op(
+                crate::db::users::QueueAction::Install,
+                &mod_name_q,
+                &dest_str,
+                "url",
+                Some(&url_owned),
+                None,
+            )
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        set_flash(
+            session,
+            "Mod queued for install from URL",
+            FlashType::Success,
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/mods"))
+            .finish());
+    }
+
+    // Direct install via background task
+    let forge = state.forge.clone();
+    let spt_dir = state.spt_dir.clone();
+    let db = state.db.clone();
+    let config = state.config_cloned();
+    let url_owned = url.to_string();
+    let mod_name_task = mod_name.clone();
+    let update_cache = state.update_cache.clone();
+    let mod_zip_cache = state.mod_zip_cache.clone();
+    let state_clone = state.clone();
+
+    // ponytail: use 0 as placeholder forge_mod_id for URL installs
+    let task_id = match state
+        .tasks
+        .start_if_not_running("Installing (URL)", &mod_name, 0)
+    {
+        Some(id) => id,
+        None => {
+            set_flash(session, "An install is already running", FlashType::Warning);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+    };
+    let tasks = state.tasks.clone();
+
+    tokio::spawn(async move {
+        let result = crate::web::install::web_install_from_url(
+            &forge,
+            &db,
+            &spt_dir,
+            &config,
+            &url_owned,
+            &mod_name_task,
+        )
+        .await;
+
+        match result {
+            Ok(_) => {
+                tracing::info!(url = url_owned, "mod installed from URL successfully");
+                update_cache.invalidate();
+                mod_zip_cache.invalidate();
+                state_clone.regenerate_modsync().await;
+                tasks.complete(task_id, "Mod installed from URL".to_string());
+            }
+            Err(e) => {
+                tracing::error!(url = url_owned, err = %e, "URL install failed");
+                tasks.fail(task_id, format!("Install failed: {e}"));
+            }
+        }
+    });
+
+    set_flash(
+        session,
+        &format!("Installing {mod_name} from URL..."),
+        FlashType::Success,
+    );
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/mods"))
+        .finish())
+}
+
 pub async fn install_mod(
     form: Form<InstallForm>,
     state: Data<AppState>,
@@ -982,6 +1138,11 @@ pub async fn install_mod(
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods"))
             .finish());
+    }
+
+    // URL install — skip Forge resolution entirely
+    if mod_ref.starts_with("http://") || mod_ref.starts_with("https://") {
+        return install_mod_from_url(mod_ref, &state, &session).await;
     }
 
     let mod_id: i64 = match mod_ref.parse() {
@@ -1268,9 +1429,13 @@ pub async fn update_mod(
     .map_err(WebError::from)?
     .ok_or(WebError::NotFound)?;
 
+    let forge_mod_id = installed
+        .forge_mod_id
+        .ok_or(WebError::BadRequest("Mod has no Forge ID".to_string()))?;
+
     let versions = state
         .forge
-        .get_versions(installed.forge_mod_id, Some(&state.spt_info.spt_version))
+        .get_versions(forge_mod_id, Some(&state.spt_info.spt_version))
         .await
         .map_err(WebError::from)?;
 
@@ -1293,7 +1458,7 @@ pub async fn update_mod(
         &state,
         &session,
         QueueAction::Update,
-        installed.forge_mod_id,
+        forge_mod_id,
         Some(version.id),
         &installed.name,
         "/quma/mods#queue",
@@ -1303,23 +1468,22 @@ pub async fn update_mod(
         return Ok(resp);
     }
 
-    let task_id =
-        match state
-            .tasks
-            .start_if_not_running("Updating", &installed.name, installed.forge_mod_id)
-        {
-            Some(id) => id,
-            None => {
-                set_flash(
-                    &session,
-                    "This mod is already being updated",
-                    FlashType::Warning,
-                );
-                return Ok(HttpResponse::SeeOther()
-                    .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
-                    .finish());
-            }
-        };
+    let task_id = match state
+        .tasks
+        .start_if_not_running("Updating", &installed.name, forge_mod_id)
+    {
+        Some(id) => id,
+        None => {
+            set_flash(
+                &session,
+                "This mod is already being updated",
+                FlashType::Warning,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{mod_db_id}")))
+                .finish());
+        }
+    };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
     let spt_dir = state.spt_dir.clone();
@@ -1329,7 +1493,6 @@ pub async fn update_mod(
     let update_cache = state.update_cache.clone();
     let mod_zip_cache = state.mod_zip_cache.clone();
     let integrity_cache = state.integrity_cache.clone();
-    let forge_mod_id = installed.forge_mod_id;
     let state_clone = state.clone();
 
     tokio::spawn(async move {
@@ -1431,19 +1594,21 @@ pub async fn remove_mod(
     .map_err(WebError::from)?
     .ok_or(WebError::NotFound)?;
 
-    // Check if the operation should be queued
-    if let Some(resp) = try_queue_mod_op(
-        &state,
-        &session,
-        QueueAction::Remove,
-        installed.forge_mod_id,
-        None,
-        &installed.name,
-        "/quma/mods#queue",
-    )
-    .await?
-    {
-        return Ok(resp);
+    // Check if the operation should be queued (only for forge mods)
+    if let Some(forge_mod_id) = installed.forge_mod_id {
+        if let Some(resp) = try_queue_mod_op(
+            &state,
+            &session,
+            QueueAction::Remove,
+            forge_mod_id,
+            None,
+            &installed.name,
+            "/quma/mods#queue",
+        )
+        .await?
+        {
+            return Ok(resp);
+        }
     }
 
     let spt_dir = state.spt_dir.clone();
@@ -1467,7 +1632,7 @@ pub async fn remove_mod(
         crate::config::is_modsync_installed(&state.spt_dir),
         std::sync::atomic::Ordering::Relaxed,
     );
-    if installed.forge_mod_id == crate::svm::SVM_FORGE_ID {
+    if installed.forge_mod_id == Some(crate::svm::SVM_FORGE_ID) {
         state
             .svm_installed
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1568,7 +1733,7 @@ pub async fn update_all_mods(
 
     let check_list: Vec<(i64, String)> = installed
         .iter()
-        .map(|m| (m.forge_mod_id, m.version.clone()))
+        .filter_map(|m| m.forge_mod_id.map(|id| (id, m.version.clone())))
         .collect();
 
     let results = state
@@ -1644,7 +1809,7 @@ pub async fn update_all_mods(
 
             let mod_db = match installed
                 .iter()
-                .find(|m| m.forge_mod_id == update.current_version.mod_id)
+                .find(|m| m.forge_mod_id == Some(update.current_version.mod_id))
             {
                 Some(m) => m,
                 None => continue,
@@ -1758,14 +1923,17 @@ pub async fn list_body_partial(
     let config = state.config_cloned();
     let excluded_mods: std::collections::HashSet<i64> = all_mods
         .iter()
-        .filter(|(m, _, _)| crate::ops::is_excluded_from_headless(&config, m.forge_mod_id))
-        .map(|(m, _, _)| m.forge_mod_id)
+        .filter(|(m, _, _)| {
+            m.forge_mod_id
+                .is_some_and(|id| crate::ops::is_excluded_from_headless(&config, id))
+        })
+        .filter_map(|(m, _, _)| m.forge_mod_id)
         .collect();
 
     let mods: Vec<ModListEntry> = filtered_entries
         .into_iter()
         .map(|row| ModListEntry::from_db_row(row, &addon_counts, &client_file_mods, &excluded_mods))
-        .filter(|e| !is_infrastructure_mod(e.mod_info.forge_mod_id))
+        .filter(|e| !e.mod_info.forge_mod_id.is_some_and(is_infrastructure_mod))
         .collect();
 
     let grand_total_size: i64 = mods.iter().map(|m| m.total_size).sum();
@@ -2000,8 +2168,8 @@ pub async fn search_addons(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let parent_forge_mod_id = match parent_mod {
-        Some(m) => m.forge_mod_id,
+    let parent_forge_mod_id = match parent_mod.and_then(|m| m.forge_mod_id) {
+        Some(id) => id,
         None => {
             let tmpl = AddonSearchResultsTemplate {
                 results: vec![],
@@ -2221,14 +2389,16 @@ pub async fn install_addon(
                 db: db_ref,
                 spt_dir: &spt_dir,
                 config: &config,
-                forge_addon_id: addon_forge_id,
+                forge_addon_id: Some(addon_forge_id),
                 parent_mod_id: parent_mod_db_id,
-                version_id: version.id,
+                version_id: Some(version.id),
                 name: &addon_name,
                 slug: addon_slug.as_deref(),
                 version: &version.version,
                 mod_version_constraint: version.mod_version_constraint.as_deref(),
                 archive_path: &archive_path,
+                source: crate::ops::ModSource::Forge,
+                source_url: None,
             };
 
             crate::ops::install_addon_from_archive(&req)?;

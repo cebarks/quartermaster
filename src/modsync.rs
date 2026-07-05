@@ -168,13 +168,19 @@ fn generate_config(
         }
 
         let files = db.get_files_for_mod(m.id)?;
-        fc.classify(&files, m.forge_mod_id, &group_for_mod);
+        if let Some(forge_id) = m.forge_mod_id {
+            fc.classify(&files, forge_id, &group_for_mod);
+        }
+        // ponytail: URL/file mods skip NarcoNet classification — add modsync support when needed
 
         // Process addon files for this mod (addons inherit parent's group)
         if let Some(mod_addons) = addons_by_parent.get(&m.id) {
             for addon in mod_addons {
                 let addon_files = db.get_files_for_addon(addon.id)?;
-                fc.classify(&addon_files, m.forge_mod_id, &group_for_mod);
+                if let Some(forge_id) = m.forge_mod_id {
+                    fc.classify(&addon_files, forge_id, &group_for_mod);
+                }
+                // ponytail: URL/file mods skip NarcoNet classification — add modsync support when needed
             }
         }
     }
@@ -358,7 +364,10 @@ pub fn ensure_mod_layout(
         .groups
         .iter()
         .find(|(slug, g)| {
-            slug.as_str() != CATCH_ALL_GROUP_SLUG && g.members.contains(&mod_info.forge_mod_id)
+            slug.as_str() != CATCH_ALL_GROUP_SLUG
+                && mod_info
+                    .forge_mod_id
+                    .is_some_and(|id| g.members.contains(&id))
         })
         .map(|(slug, _)| slug.as_str());
 
@@ -450,7 +459,7 @@ pub fn ensure_mod_layout(
                 let other_group = ms_config
                     .groups
                     .iter()
-                    .find(|(_, g)| g.members.contains(&other.forge_mod_id))
+                    .find(|(_, g)| other.forge_mod_id.is_some_and(|id| g.members.contains(&id)))
                     .map(|(slug, _)| slug.as_str());
                 if other_group != group_slug {
                     tracing::warn!(
@@ -750,7 +759,15 @@ mod tests {
 
     fn setup_db_with_client_mod(db: &Database) -> i64 {
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -771,7 +788,15 @@ mod tests {
 
     fn setup_db_with_server_mod(db: &Database) -> i64 {
         let mod_id = db
-            .insert_mod(200, 300, "ServerMod", Some("server-mod"), "1.0.0")
+            .insert_mod(
+                Some(200),
+                Some(300),
+                "ServerMod",
+                Some("server-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -785,7 +810,15 @@ mod tests {
 
     fn setup_db_with_hybrid_mod(db: &Database) -> i64 {
         let mod_id = db
-            .insert_mod(300, 400, "HybridMod", Some("hybrid-mod"), "2.0.0")
+            .insert_mod(
+                Some(300),
+                Some(400),
+                "HybridMod",
+                Some("hybrid-mod"),
+                "2.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -967,13 +1000,29 @@ mod tests {
     fn generate_config_multiple_mods_sorted() {
         let db = Database::open_in_memory().unwrap();
         let mod1 = db
-            .insert_mod(100, 200, "Zebra", Some("zebra"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "Zebra",
+                Some("zebra"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(mod1, "BepInEx/plugins/Zebra/z.dll", Some("aaa"), Some(100))
             .unwrap();
 
         let mod2 = db
-            .insert_mod(101, 201, "Alpha", Some("alpha"), "1.0.0")
+            .insert_mod(
+                Some(101),
+                Some(201),
+                "Alpha",
+                Some("alpha"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(mod2, "BepInEx/plugins/Alpha/a.dll", Some("bbb"), Some(100))
             .unwrap();
@@ -1011,7 +1060,15 @@ mod tests {
     fn generate_config_mod_with_patcher_files() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "PatcherMod",
+                Some("patcher-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1035,11 +1092,13 @@ mod tests {
         // NarcoNet's own mod with Forge ID 2441
         let mod_id = db
             .insert_mod(
-                NARCONET_FORGE_MOD_ID,
-                999,
+                Some(NARCONET_FORGE_MOD_ID),
+                Some(999),
                 "NarcoNet",
                 Some("narconet"),
                 "1.0.16",
+                "forge",
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -1067,11 +1126,13 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
             .insert_mod(
-                NARCONET_FORGE_MOD_ID,
-                999,
+                Some(NARCONET_FORGE_MOD_ID),
+                Some(999),
                 "NarcoNet",
                 Some("narconet"),
                 "1.0.16",
+                "forge",
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -1217,7 +1278,15 @@ mod tests {
 
         // Install a client mod
         let mod_id = db
-            .insert_mod(100, 200, "TestClientMod", Some("test-client"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestClientMod",
+                Some("test-client"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1276,7 +1345,15 @@ mod tests {
 
         // Server-only mod
         let _server_mod = db
-            .insert_mod(200, 300, "ServerOnly", None, "1.0.0")
+            .insert_mod(
+                Some(200),
+                Some(300),
+                "ServerOnly",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             _server_mod,
@@ -1287,7 +1364,17 @@ mod tests {
         .unwrap();
 
         // Client mod
-        let client_mod = db.insert_mod(300, 400, "ClientMod", None, "1.0.0").unwrap();
+        let client_mod = db
+            .insert_mod(
+                Some(300),
+                Some(400),
+                "ClientMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         db.insert_file(
             client_mod,
             "BepInEx/plugins/ClientMod/client.dll",
@@ -1459,7 +1546,15 @@ mod tests {
 
         // Two mods installing files to the same BepInEx/plugins/SAIN/ directory
         let mod1 = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod1,
@@ -1471,11 +1566,13 @@ mod tests {
 
         let mod2 = db
             .insert_mod(
-                101,
-                201,
+                Some(101),
+                Some(201),
                 "[SAIN] Twitch Players",
                 Some("sain-twitch"),
                 "1.0.0",
+                "forge",
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -1500,13 +1597,29 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         let mod1 = db
-            .insert_mod(100, 200, "ModA", Some("mod-a"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ModA",
+                Some("mod-a"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(mod1, "BepInEx/plugins/Shared/a.dll", Some("aaa"), Some(100))
             .unwrap();
 
         let mod2 = db
-            .insert_mod(101, 201, "ModB", Some("mod-b"), "1.0.0")
+            .insert_mod(
+                Some(101),
+                Some(201),
+                "ModB",
+                Some("mod-b"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(mod2, "BepInEx/plugins/Shared/b.dll", Some("bbb"), Some(100))
             .unwrap();
@@ -1660,7 +1773,15 @@ mod tests {
 
         // Ungrouped mod
         let mod1 = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod1,
@@ -1672,7 +1793,15 @@ mod tests {
 
         // Grouped mod
         let mod2 = db
-            .insert_mod(200, 300, "Donuts", Some("donuts"), "1.0.0")
+            .insert_mod(
+                Some(200),
+                Some(300),
+                "Donuts",
+                Some("donuts"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod2,
@@ -1719,7 +1848,15 @@ mod tests {
     fn generate_config_patcher_only_mod_synced_as_files() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "PatcherMod",
+                Some("patcher-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1753,7 +1890,15 @@ mod tests {
 
         // Register in DB
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1806,7 +1951,15 @@ mod tests {
         std::fs::write(mod_dir.join("SAIN.dll"), b"test").unwrap();
 
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1840,7 +1993,15 @@ mod tests {
         std::fs::write(mod_dir.join("SAIN.dll"), b"test").unwrap();
 
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1863,7 +2024,15 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1898,7 +2067,15 @@ mod tests {
     fn generate_config_patcher_files_synced_individually_without_spt_dir() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "PatcherMod",
+                Some("patcher-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1936,7 +2113,15 @@ mod tests {
 
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "PatcherMod",
+                Some("patcher-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1968,7 +2153,15 @@ mod tests {
 
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "PatcherMod",
+                Some("patcher-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1990,7 +2183,15 @@ mod tests {
     fn generate_config_mixed_plugins_and_patchers() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "FullMod", Some("full-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "FullMod",
+                Some("full-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2020,7 +2221,15 @@ mod tests {
     fn generate_config_non_plugin_skips_extra_sync_paths() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "ConfigMod", Some("config-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "ConfigMod",
+                Some("config-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2050,7 +2259,15 @@ mod tests {
     fn generate_config_non_plugin_uses_global_defaults() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "PatcherMod",
+                Some("patcher-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2078,7 +2295,15 @@ mod tests {
     fn generate_config_disabled_mod_non_plugin_files_excluded() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "PatcherMod", Some("patcher-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "PatcherMod",
+                Some("patcher-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2099,7 +2324,15 @@ mod tests {
     fn generate_config_multiple_non_plugin_subdirs() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(500, 600, "BigMod", Some("big-mod"), "1.0.0")
+            .insert_mod(
+                Some(500),
+                Some(600),
+                "BigMod",
+                Some("big-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2145,7 +2378,15 @@ mod tests {
         // DB only tracks the archive file
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2199,7 +2440,15 @@ mod tests {
 
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2233,7 +2482,15 @@ mod tests {
 
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2265,7 +2522,15 @@ mod tests {
 
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -2308,7 +2573,15 @@ mod tests {
 
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(100, 200, "SAIN", Some("sain"), "3.2.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "SAIN",
+                Some("sain"),
+                "3.2.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,

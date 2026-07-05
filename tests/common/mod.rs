@@ -105,7 +105,7 @@ impl TestAppBuilder {
 
         // Seed mods using the DB API
         for (forge_id, name, version) in &self.mods {
-            db.insert_mod(*forge_id, 1, name, None, version)
+            db.insert_mod(Some(*forge_id), Some(1), name, None, version, "forge", None)
                 .expect("failed to insert mod");
         }
 

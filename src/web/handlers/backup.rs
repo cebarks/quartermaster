@@ -43,7 +43,10 @@ pub async fn mod_backups_partial(
         let installed = db
             .get_mod(mod_db_id)?
             .ok_or_else(|| anyhow::anyhow!("mod not found"))?;
-        let backups = db.list_backups_for_mod(installed.forge_mod_id)?;
+        let backups = match installed.forge_mod_id {
+            Some(id) => db.list_backups_for_mod(id)?,
+            None => vec![],
+        };
         Ok::<_, anyhow::Error>((installed, backups))
     })
     .await

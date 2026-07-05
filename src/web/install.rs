@@ -39,12 +39,52 @@ pub async fn web_download_extract_and_record(
             db: &db,
             spt_dir: &spt_dir,
             config: &config,
-            forge_mod_id: mod_id,
-            version_id,
+            forge_mod_id: Some(mod_id),
+            version_id: Some(version_id),
             name: &mod_name_owned,
             slug: mod_slug_owned.as_deref(),
             version: &version_str,
             archive_path: &archive_path,
+            source: crate::ops::ModSource::Forge,
+            source_url: None,
+        })
+    })
+    .await??;
+
+    Ok(db_id)
+}
+
+pub async fn web_install_from_url(
+    forge: &ForgeClient,
+    db: &Arc<Mutex<Database>>,
+    spt_dir: &Path,
+    config: &crate::config::Config,
+    url: &str,
+    mod_name: &str,
+) -> anyhow::Result<i64> {
+    let tmp_dir = tempfile::tempdir()?;
+    let archive_path = tmp_dir.path().join("mod.zip");
+    forge.download_file(url, &archive_path).await?;
+
+    let mod_name_owned = mod_name.to_string();
+    let url_owned = url.to_string();
+    let db_clone = db.clone();
+    let spt_dir = spt_dir.to_path_buf();
+    let config = config.clone();
+    let db_id = actix_web::web::block(move || {
+        let db = db_clone.lock();
+        crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+            db: &db,
+            spt_dir: &spt_dir,
+            config: &config,
+            forge_mod_id: None,
+            version_id: None,
+            name: &mod_name_owned,
+            slug: None,
+            version: "unknown",
+            archive_path: &archive_path,
+            source: crate::ops::ModSource::Url,
+            source_url: Some(&url_owned),
         })
     })
     .await??;

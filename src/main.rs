@@ -103,11 +103,20 @@ async fn main() -> Result<()> {
         Command::Install {
             mod_ref,
             version,
+            name,
             force,
             addon,
         } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::install::run(mod_ref, version.as_deref(), *force, *addon, &ctx).await
+            cli::install::run(
+                mod_ref,
+                version.as_deref(),
+                name.as_deref(),
+                *force,
+                *addon,
+                &ctx,
+            )
+            .await
         }
         Command::Update {
             mod_ref,

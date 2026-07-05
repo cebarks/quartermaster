@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::Result;
@@ -19,6 +20,47 @@ pub async fn should_queue(
     }
 
     crate::server_detect::is_server_running(config, spt_dir, container_mgr).await
+}
+
+/// Clean up a queued archive file associated with a pending operation.
+/// Ignores NotFound errors (file already removed), logs warnings for other errors.
+pub fn cleanup_queued_archive(op: &crate::db::users::PendingOperation) {
+    if let Some(ref path) = op.archive_path {
+        if let Err(e) = std::fs::remove_file(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(path, err = %e, "failed to clean up queued archive");
+            }
+        }
+    }
+}
+
+/// Remove orphaned archive files from the queue directory.
+/// An archive is orphaned if no pending operation references it.
+pub fn sweep_orphaned_archives(spt_dir: &Path, db: &crate::db::Database) {
+    let queue_dir = spt_dir.join(".quartermaster").join("queued");
+    if !queue_dir.exists() {
+        return;
+    }
+    let pending = match db.list_pending_ops() {
+        Ok(ops) => ops,
+        Err(_) => return,
+    };
+    let known_paths: HashSet<String> = pending
+        .iter()
+        .filter_map(|op| op.archive_path.clone())
+        .collect();
+
+    if let Ok(entries) = std::fs::read_dir(&queue_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(path_str) = path.to_str() {
+                if !known_paths.contains(path_str) {
+                    tracing::debug!(path = path_str, "removing orphaned queued archive");
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

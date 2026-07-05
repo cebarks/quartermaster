@@ -68,6 +68,7 @@ struct PendingInstall {
 pub async fn run(
     mod_ref: &str,
     version: Option<&str>,
+    name: Option<&str>,
     force: bool,
     addon: bool,
     ctx: &CliContext,
@@ -75,6 +76,15 @@ pub async fn run(
     // If --addon flag is set, use addon install flow
     if addon {
         return run_addon_install(mod_ref, version, force, ctx).await;
+    }
+
+    // Detect URLs and file paths before falling through to Forge resolution
+    if is_url(mod_ref) {
+        return install_from_url(mod_ref, name, force, ctx).await;
+    }
+
+    if is_file_path(mod_ref) {
+        return install_from_file(mod_ref, name, force, ctx).await;
     }
 
     let forge_mod = resolve_mod(&ctx.forge, mod_ref).await?;
@@ -229,14 +239,16 @@ async fn run_addon_install(
         db: &ctx.db,
         spt_dir: &ctx.spt_dir,
         config: &ctx.config,
-        forge_addon_id: forge_addon.id,
+        forge_addon_id: Some(forge_addon.id),
         parent_mod_id,
-        version_id: selected_version.id,
+        version_id: Some(selected_version.id),
         name: &forge_addon.name,
         slug: forge_addon.slug.as_deref(),
         version: &selected_version.version,
         mod_version_constraint: selected_version.mod_version_constraint.as_deref(),
         archive_path: &archive_path,
+        source: crate::ops::ModSource::Forge,
+        source_url: None,
     })?;
 
     println!(
@@ -509,12 +521,14 @@ pub async fn download_and_install(
         db,
         spt_dir,
         config,
-        forge_mod_id: *forge_mod_id,
-        version_id: *forge_version_id,
+        forge_mod_id: Some(*forge_mod_id),
+        version_id: Some(*forge_version_id),
         name,
         slug: *slug,
         version,
         archive_path: &archive_path,
+        source: crate::ops::ModSource::Forge,
+        source_url: None,
     })?;
 
     let file_count = db.get_files_for_mod(db_id)?.len();
@@ -561,12 +575,14 @@ pub async fn download_and_install_with_arc(
             db: &db_guard,
             spt_dir,
             config,
-            forge_mod_id: *forge_mod_id,
-            version_id: *forge_version_id,
+            forge_mod_id: Some(*forge_mod_id),
+            version_id: Some(*forge_version_id),
             name,
             slug: *slug,
             version,
             archive_path: &archive_path,
+            source: crate::ops::ModSource::Forge,
+            source_url: None,
         })?
     };
 
@@ -706,8 +722,16 @@ mod tests {
     #[test]
     fn collect_deps_skips_already_installed() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(10, 20, "AlreadyInstalled", None, "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(10),
+            Some(20),
+            "AlreadyInstalled",
+            None,
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
 
         let nodes = vec![dep_node(10, "AlreadyInstalled", 20, "1.0.0", false)];
 
@@ -838,8 +862,16 @@ mod tests {
     #[test]
     fn collect_deps_conflict_already_installed() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(10, 20, "InstalledConflict", None, "1.0.0")
-            .unwrap();
+        db.insert_mod(
+            Some(10),
+            Some(20),
+            "InstalledConflict",
+            None,
+            "1.0.0",
+            "forge",
+            None,
+        )
+        .unwrap();
 
         let nodes = vec![dep_node(10, "InstalledConflict", 20, "1.0.0", true)];
 
@@ -882,4 +914,190 @@ mod tests {
         );
         assert_eq!(skipped, vec!["ConflictMod"]);
     }
+
+    #[test]
+    fn derive_name_from_url_cases() {
+        use crate::ops::derive_name_from_url;
+        assert_eq!(
+            derive_name_from_url("https://example.com/SAIN-v3.2.zip"),
+            "SAIN-v3.2"
+        );
+        assert_eq!(derive_name_from_url("https://example.com/mod.7z"), "mod");
+        assert_eq!(
+            derive_name_from_url("https://example.com/mod.zip?token=abc"),
+            "mod"
+        );
+        assert_eq!(derive_name_from_url("https://example.com/"), "unknown-mod");
+        assert_eq!(
+            derive_name_from_url("https://example.com/.zip"),
+            "unknown-mod"
+        );
+    }
+}
+
+fn is_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://")
+}
+
+fn is_file_path(s: &str) -> bool {
+    std::path::Path::new(s).exists()
+}
+
+async fn queue_url_install(ctx: &CliContext, url: &str, mod_name: &str) -> Result<()> {
+    let queue_dir = ctx.spt_dir.join(".quartermaster").join("queued");
+    std::fs::create_dir_all(&queue_dir)?;
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let filename = crate::ops::derive_name_from_url(url);
+    let extension = if url.ends_with(".7z") { "7z" } else { "zip" };
+    let dest = queue_dir.join(format!("{timestamp}-{filename}.{extension}"));
+
+    println!("Downloading archive for queue...");
+    ctx.forge.download_file(url, &dest).await?;
+
+    ctx.db.insert_pending_url_op(
+        crate::db::users::QueueAction::Install,
+        mod_name,
+        dest.to_str().expect("valid UTF-8 path"),
+        "url",
+        Some(url),
+        None,
+    )?;
+
+    println!("Server is running — operation queued. It will be applied on next server restart.");
+    Ok(())
+}
+
+async fn queue_file_install(
+    ctx: &CliContext,
+    archive_path: &std::path::Path,
+    mod_name: &str,
+) -> Result<()> {
+    let queue_dir = ctx.spt_dir.join(".quartermaster").join("queued");
+    std::fs::create_dir_all(&queue_dir)?;
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let filename = archive_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("mod.zip");
+    let dest = queue_dir.join(format!("{timestamp}-{filename}"));
+
+    std::fs::copy(archive_path, &dest).context("failed to copy archive to queue dir")?;
+
+    ctx.db.insert_pending_url_op(
+        crate::db::users::QueueAction::Install,
+        mod_name,
+        dest.to_str().expect("valid UTF-8 path"),
+        "file",
+        None,
+        None,
+    )?;
+
+    println!("Server is running — operation queued. It will be applied on next server restart.");
+    Ok(())
+}
+
+async fn install_from_url(
+    url: &str,
+    name_override: Option<&str>,
+    force: bool,
+    ctx: &CliContext,
+) -> Result<()> {
+    let mod_name = name_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| crate::ops::derive_name_from_url(url));
+
+    println!("Installing from URL: {url}");
+    println!("Mod name: {mod_name}");
+
+    // Check for name collision
+    if let Some(existing) = ctx.db.get_mod_by_name_or_slug(&mod_name)? {
+        bail!(
+            "'{}' is already installed (version {}). Use --name to pick a different name, or remove the existing mod first.",
+            existing.name,
+            existing.version
+        );
+    }
+
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
+        .await?
+    {
+        return queue_url_install(ctx, url, &mod_name).await;
+    }
+
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
+
+    let tmp_dir = tempfile::tempdir()?;
+    let archive_path = tmp_dir.path().join("mod.zip");
+    ctx.forge.download_file(url, &archive_path).await?;
+
+    let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+        db: &ctx.db,
+        spt_dir: &ctx.spt_dir,
+        config: &ctx.config,
+        forge_mod_id: None,
+        version_id: None,
+        name: &mod_name,
+        slug: None,
+        version: "unknown",
+        archive_path: &archive_path,
+        source: crate::ops::ModSource::Url,
+        source_url: Some(url),
+    })?;
+
+    println!("\n{mod_name} installed successfully (ID: {db_id}).");
+    Ok(())
+}
+
+async fn install_from_file(
+    path_str: &str,
+    name_override: Option<&str>,
+    force: bool,
+    ctx: &CliContext,
+) -> Result<()> {
+    let archive_path = std::path::Path::new(path_str)
+        .canonicalize()
+        .with_context(|| format!("cannot resolve path: {path_str}"))?;
+
+    let mod_name = name_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| crate::ops::derive_name_from_path(&archive_path));
+
+    println!("Installing from file: {}", archive_path.display());
+    println!("Mod name: {mod_name}");
+
+    // Check for name collision
+    if let Some(existing) = ctx.db.get_mod_by_name_or_slug(&mod_name)? {
+        bail!(
+            "'{}' is already installed (version {}). Use --name to pick a different name, or remove the existing mod first.",
+            existing.name,
+            existing.version
+        );
+    }
+
+    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
+        .await?
+    {
+        return queue_file_install(ctx, &archive_path, &mod_name).await;
+    }
+
+    super::common::warn_if_forcing_while_running(force, ctx).await?;
+
+    let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+        db: &ctx.db,
+        spt_dir: &ctx.spt_dir,
+        config: &ctx.config,
+        forge_mod_id: None,
+        version_id: None,
+        name: &mod_name,
+        slug: None,
+        version: "unknown",
+        archive_path: &archive_path,
+        source: crate::ops::ModSource::File,
+        source_url: None,
+    })?;
+
+    println!("\n{mod_name} installed successfully (ID: {db_id}).");
+    Ok(())
 }

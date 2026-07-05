@@ -255,7 +255,15 @@ mod tests {
     fn insert_and_get_addon() {
         let db = Database::open_in_memory().unwrap();
         let mod_id = db
-            .insert_mod(100, 200, "ParentMod", Some("parent-mod"), "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ParentMod",
+                Some("parent-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         let addon_id = db
             .insert_addon(
@@ -280,7 +288,17 @@ mod tests {
     #[test]
     fn get_addon_by_forge_id() {
         let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "ParentMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ParentMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         db.insert_addon(500, mod_id, 600, "TestAddon", None, "1.0.0", None)
             .unwrap();
 
@@ -292,8 +310,12 @@ mod tests {
     #[test]
     fn list_addons_for_mod_returns_only_children() {
         let db = Database::open_in_memory().unwrap();
-        let mod1 = db.insert_mod(100, 200, "Mod1", None, "1.0.0").unwrap();
-        let mod2 = db.insert_mod(101, 201, "Mod2", None, "1.0.0").unwrap();
+        let mod1 = db
+            .insert_mod(Some(100), Some(200), "Mod1", None, "1.0.0", "forge", None)
+            .unwrap();
+        let mod2 = db
+            .insert_mod(Some(101), Some(201), "Mod2", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_addon(500, mod1, 600, "Addon1", None, "1.0.0", None)
             .unwrap();
         db.insert_addon(501, mod1, 601, "Addon2", None, "1.0.0", None)
@@ -309,7 +331,17 @@ mod tests {
     #[test]
     fn delete_addon_cascades_to_files() {
         let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "ParentMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ParentMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         let addon_id = db
             .insert_addon(500, mod_id, 600, "TestAddon", None, "1.0.0", None)
             .unwrap();
@@ -339,7 +371,17 @@ mod tests {
     #[test]
     fn addon_file_has_addon_id_not_mod_id() {
         let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "ParentMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ParentMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         let addon_id = db
             .insert_addon(500, mod_id, 600, "TestAddon", None, "1.0.0", None)
             .unwrap();
@@ -355,7 +397,17 @@ mod tests {
     #[test]
     fn set_addon_disabled_toggles_flag() {
         let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "ParentMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ParentMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         let addon_id = db
             .insert_addon(500, mod_id, 600, "TestAddon", None, "1.0.0", None)
             .unwrap();
@@ -370,7 +422,17 @@ mod tests {
     #[test]
     fn update_addon_sets_version_and_constraint() {
         let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "ParentMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ParentMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         let addon_id = db
             .insert_addon(500, mod_id, 600, "TestAddon", None, "1.0.0", Some("~1.0.0"))
             .unwrap();

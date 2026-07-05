@@ -109,6 +109,9 @@ pub struct PendingOperation {
     pub queued_by: Option<String>,
     pub item_type: String,           // "mod" or "addon"
     pub forge_addon_id: Option<i64>, // set for addon ops
+    pub archive_path: Option<String>,
+    pub source: String,
+    pub source_url: Option<String>,
 }
 
 impl Database {
@@ -467,6 +470,23 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn insert_pending_url_op(
+        &self,
+        action: QueueAction,
+        mod_name: &str,
+        archive_path: &str,
+        source: &str,
+        source_url: Option<&str>,
+        queued_by: Option<&str>,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by, item_type, forge_addon_id, archive_path, source, source_url)
+             VALUES (?1, NULL, NULL, ?2, NULL, ?3, 'mod', NULL, ?4, ?5, ?6)",
+            params![action.as_str(), mod_name, queued_by, archive_path, source, source_url],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
     pub fn has_pending_op(&self, forge_mod_id: i64, action: QueueAction) -> rusqlite::Result<bool> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM pending_operations WHERE forge_mod_id = ?1 AND action = ?2 AND item_type = 'mod'",
@@ -492,7 +512,7 @@ impl Database {
 
     pub fn list_pending_ops(&self) -> rusqlite::Result<Vec<PendingOperation>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, action, forge_mod_id, forge_version_id, mod_name, metadata, queued_at, queued_by, item_type, forge_addon_id
+            "SELECT id, action, forge_mod_id, forge_version_id, mod_name, metadata, queued_at, queued_by, item_type, forge_addon_id, archive_path, source, source_url
              FROM pending_operations ORDER BY queued_at",
         )?;
         let rows = stmt.query_map([], row_to_pending_op)?;
@@ -556,5 +576,8 @@ fn row_to_pending_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingOperati
         queued_by: row.get(7)?,
         item_type: row.get(8)?,
         forge_addon_id: row.get(9)?,
+        archive_path: row.get(10)?,
+        source: row.get(11)?,
+        source_url: row.get(12)?,
     })
 }

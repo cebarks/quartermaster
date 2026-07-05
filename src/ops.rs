@@ -8,6 +8,32 @@ use crate::db::Database;
 use crate::headless_sync::{sync_client_files_to_headless, SyncOp};
 use crate::spt::mods::ExtractedFile;
 
+/// Derive a mod name from a URL by extracting the filename and stripping extensions.
+pub fn derive_name_from_url(url: &str) -> String {
+    let name = url
+        .rsplit('/')
+        .next()
+        .and_then(|s| s.split('?').next())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown-mod")
+        .trim_end_matches(".zip")
+        .trim_end_matches(".7z");
+
+    if name.is_empty() {
+        "unknown-mod".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Derive a mod name from a file path by extracting the file stem.
+pub fn derive_name_from_path(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown-mod")
+        .to_string()
+}
+
 /// Create a staging tempdir on the same filesystem as `spt_dir` so that
 /// `rename()` works instead of falling back to a byte-by-byte copy.
 pub fn staging_tempdir(spt_dir: &Path) -> Result<tempfile::TempDir> {
@@ -55,7 +81,12 @@ fn maybe_sync_headless(
         None => return,
     };
 
-    if let Some(forge_mod_id) = db.get_mod(mod_db_id).ok().flatten().map(|m| m.forge_mod_id) {
+    if let Some(forge_mod_id) = db
+        .get_mod(mod_db_id)
+        .ok()
+        .flatten()
+        .and_then(|m| m.forge_mod_id)
+    {
         if is_excluded_from_headless(config, forge_mod_id) {
             tracing::debug!(
                 forge_mod_id,
@@ -159,17 +190,46 @@ fn remove_stale_files(
     Ok(())
 }
 
+/// Source of a mod installation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModSource {
+    Forge,
+    Url,
+    File,
+}
+
+impl ModSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModSource::Forge => "forge",
+            ModSource::Url => "url",
+            ModSource::File => "file",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "forge" => Some(ModSource::Forge),
+            "url" => Some(ModSource::Url),
+            "file" => Some(ModSource::File),
+            _ => None,
+        }
+    }
+}
+
 /// Parameters for installing a mod from a downloaded archive.
 pub struct InstallRequest<'a> {
     pub db: &'a Database,
     pub spt_dir: &'a Path,
     pub config: &'a crate::config::Config,
-    pub forge_mod_id: i64,
-    pub version_id: i64,
+    pub forge_mod_id: Option<i64>,
+    pub version_id: Option<i64>,
     pub name: &'a str,
     pub slug: Option<&'a str>,
     pub version: &'a str,
     pub archive_path: &'a Path,
+    pub source: ModSource,
+    pub source_url: Option<&'a str>,
 }
 
 /// Parameters for installing an addon from a downloaded archive.
@@ -178,21 +238,24 @@ pub struct InstallAddonRequest<'a> {
     pub db: &'a Database,
     pub spt_dir: &'a Path,
     pub config: &'a crate::config::Config,
-    pub forge_addon_id: i64,
+    pub forge_addon_id: Option<i64>,
     pub parent_mod_id: i64,
-    pub version_id: i64,
+    pub version_id: Option<i64>,
     pub name: &'a str,
     pub slug: Option<&'a str>,
     pub version: &'a str,
     pub mod_version_constraint: Option<&'a str>,
     pub archive_path: &'a Path,
+    pub source: ModSource,
+    pub source_url: Option<&'a str>,
 }
 
 pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     tracing::info!(
         mod_name = req.name,
-        mod_id = req.forge_mod_id,
+        mod_id = ?req.forge_mod_id,
         version = req.version,
+        source = req.source.as_str(),
         "installing mod from archive"
     );
 
@@ -208,6 +271,8 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         req.name,
         req.slug,
         req.version,
+        req.source.as_str(),
+        req.source_url,
     )?;
     record_extracted_files(req.db, db_id, &extracted)?;
     tx.commit()?;
@@ -236,20 +301,29 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
 pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> {
     tracing::info!(
         addon_name = req.name,
-        addon_id = req.forge_addon_id,
+        addon_id = ?req.forge_addon_id,
         parent_mod_id = req.parent_mod_id,
         version = req.version,
+        source = req.source.as_str(),
         "installing addon from archive"
     );
 
     let staging_dir = staging_tempdir(req.spt_dir)?;
     let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
 
+    // ponytail: addon source tracking deferred to Task 5, for now only Forge addons exist
+    let forge_addon_id = req
+        .forge_addon_id
+        .ok_or_else(|| anyhow::anyhow!("addon installation requires forge_addon_id"))?;
+    let version_id = req
+        .version_id
+        .ok_or_else(|| anyhow::anyhow!("addon installation requires version_id"))?;
+
     let tx = req.db.begin_transaction()?;
     let db_id = req.db.insert_addon(
-        req.forge_addon_id,
+        forge_addon_id,
         req.parent_mod_id,
-        req.version_id,
+        version_id,
         req.name,
         req.slug,
         req.version,
@@ -276,7 +350,7 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
             .get_mod(req.parent_mod_id)
             .ok()
             .flatten()
-            .map(|m| m.forge_mod_id);
+            .and_then(|m| m.forge_mod_id);
         let excluded = parent_forge_id
             .map(|id| is_excluded_from_headless(req.config, id))
             .unwrap_or(false);
@@ -430,7 +504,7 @@ pub fn update_addon_from_archive(
             .get_mod(addon.parent_mod_id)
             .ok()
             .flatten()
-            .map(|m| m.forge_mod_id);
+            .and_then(|m| m.forge_mod_id);
         let excluded = parent_forge_id
             .map(|id| is_excluded_from_headless(config, id))
             .unwrap_or(false);
@@ -730,7 +804,10 @@ pub async fn apply_addon_update(
                 .ok()
                 .flatten()
                 .and_then(|a| db.get_mod(a.parent_mod_id).ok().flatten())
-                .map(|m| is_excluded_from_headless(&config_sync, m.forge_mod_id))
+                .and_then(|m| {
+                    m.forge_mod_id
+                        .map(|id| is_excluded_from_headless(&config_sync, id))
+                })
                 .unwrap_or(false);
             if !excluded {
                 // Remove stale files, then install new files
@@ -1081,7 +1158,7 @@ pub fn remove_mod_by_id(
     }
 
     // Look up forge_mod_id before deletion for group cleanup and headless sync
-    let forge_mod_id = db.get_mod(mod_db_id)?.map(|m| m.forge_mod_id);
+    let forge_mod_id = db.get_mod(mod_db_id)?.and_then(|m| m.forge_mod_id);
 
     // Remove client files from headless before DB delete loses the file list
     if let Some(forge_id) = forge_mod_id {
@@ -1162,7 +1239,7 @@ pub fn remove_addon_by_id(
             .get_mod(addon.parent_mod_id)
             .ok()
             .flatten()
-            .map(|m| m.forge_mod_id);
+            .and_then(|m| m.forge_mod_id);
         let excluded = parent_forge_id
             .map(|id| is_excluded_from_headless(config, id))
             .unwrap_or(false);
@@ -1739,7 +1816,7 @@ pub fn disable_addon(
             .get_mod(addon_info.parent_mod_id)
             .ok()
             .flatten()
-            .map(|m| m.forge_mod_id);
+            .and_then(|m| m.forge_mod_id);
         let excluded = parent_forge_id
             .map(|id| is_excluded_from_headless(config, id))
             .unwrap_or(false);
@@ -1810,7 +1887,7 @@ pub fn enable_addon(
             .get_mod(addon_info.parent_mod_id)
             .ok()
             .flatten()
-            .map(|m| m.forge_mod_id);
+            .and_then(|m| m.forge_mod_id);
         let excluded = parent_forge_id
             .map(|id| is_excluded_from_headless(config, id))
             .unwrap_or(false);
@@ -2042,12 +2119,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: Some("test-mod"),
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2079,12 +2158,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "ModA",
             slug: None,
             version: "1.0.0",
             archive_path: zip1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2094,12 +2175,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100, // same ID — triggers UNIQUE constraint
-            version_id: 300,
+            forge_mod_id: Some(100), // same ID — triggers UNIQUE constraint
+            version_id: Some(300),
             name: "ModB",
             slug: None,
             version: "2.0.0",
             archive_path: zip2.path(),
+            source: ModSource::Forge,
+            source_url: None,
         });
         assert!(result.is_err(), "duplicate forge_mod_id should fail");
 
@@ -2130,12 +2213,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2181,12 +2266,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2261,12 +2348,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2324,7 +2413,9 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         // Mod A owns BepInEx/plugins/SharedDir/a.dll
-        let mod_a = db.insert_mod(100, 200, "ModA", None, "1.0.0").unwrap();
+        let mod_a = db
+            .insert_mod(Some(100), Some(200), "ModA", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_file(
             mod_a,
             "BepInEx/plugins/SharedDir/a.dll",
@@ -2334,7 +2425,9 @@ mod tests {
         .unwrap();
 
         // Mod B also has files under BepInEx/plugins/SharedDir/
-        let mod_b = db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        let mod_b = db
+            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_file(
             mod_b,
             "BepInEx/plugins/SharedDir/b.dll",
@@ -2353,7 +2446,9 @@ mod tests {
     fn filter_shared_dirs_exclusive_when_no_overlap() {
         let db = Database::open_in_memory().unwrap();
 
-        let mod_a = db.insert_mod(100, 200, "ModA", None, "1.0.0").unwrap();
+        let mod_a = db
+            .insert_mod(Some(100), Some(200), "ModA", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_file(
             mod_a,
             "SPT/user/mods/ModA/package.json",
@@ -2362,7 +2457,9 @@ mod tests {
         )
         .unwrap();
 
-        let mod_b = db.insert_mod(101, 201, "ModB", None, "1.0.0").unwrap();
+        let mod_b = db
+            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .unwrap();
         db.insert_file(
             mod_b,
             "SPT/user/mods/ModB/package.json",
@@ -2390,12 +2487,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2453,12 +2552,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "LooseMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2495,12 +2596,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2521,12 +2624,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "ModA",
             slug: None,
             version: "1.0.0",
             archive_path: zip_a.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2536,12 +2641,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 101,
-            version_id: 201,
+            forge_mod_id: Some(101),
+            version_id: Some(201),
             name: "ModB",
             slug: None,
             version: "1.0.0",
             archive_path: zip_b.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2578,12 +2685,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2617,7 +2726,7 @@ mod tests {
         // DB should now reflect v2
         let m = db.get_mod(db_id).unwrap().unwrap();
         assert_eq!(m.version, "2.0.0");
-        assert_eq!(m.forge_version_id, 300);
+        assert_eq!(m.forge_version_id, Some(300));
 
         // Pending marker should be cleared
         assert!(db.list_pending_updates().unwrap().is_empty());
@@ -2642,12 +2751,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2706,12 +2817,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2774,7 +2887,17 @@ mod tests {
     #[test]
     fn duplicate_pending_update_for_same_mod_is_rejected() {
         let db = Database::open_in_memory().unwrap();
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
 
         // First insert succeeds
         db.insert_pending_update(mod_id, 300, "2.0.0", "[]", "[]")
@@ -2798,12 +2921,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2830,7 +2955,17 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         // Simulate old-scheme disabled mod: .disabled suffix in DB paths and on disk
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         db.insert_file(
             mod_id,
             "SPT/user/mods/TestMod.disabled/package.json",
@@ -2873,12 +3008,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2913,12 +3050,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2963,7 +3102,17 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         // Already-migrated mod: canonical DB paths, files in stash
-        let mod_id = db.insert_mod(100, 200, "TestMod", None, "1.0.0").unwrap();
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
         db.insert_file(
             mod_id,
             "SPT/user/mods/TestMod/package.json",
@@ -2989,5 +3138,58 @@ mod tests {
             .exists());
         let files = db.get_files_for_mod(mod_id).unwrap();
         assert_eq!(files[0].file_path, "SPT/user/mods/TestMod/package.json");
+    }
+
+    #[test]
+    fn install_from_file_no_forge_id() {
+        let spt_dir = setup_spt_dir();
+        let db = Database::open_in_memory().unwrap();
+        let zip = create_test_zip(&[("BepInEx/plugins/TestMod/test.dll", b"fake dll content")]);
+
+        let db_id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            spt_dir: spt_dir.path(),
+            config: &Config::default(),
+            forge_mod_id: None,
+            version_id: None,
+            name: "TestFileMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: zip.path(),
+            source: ModSource::File,
+            source_url: None,
+        })
+        .unwrap();
+
+        let installed = db.get_mod(db_id).unwrap().unwrap();
+        assert_eq!(installed.name, "TestFileMod");
+        assert_eq!(installed.version, "1.0.0");
+        assert_eq!(installed.source, "file");
+        assert!(installed.forge_mod_id.is_none());
+        assert!(installed.forge_version_id.is_none());
+
+        let files = db.get_files_for_mod(db_id).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_path, "BepInEx/plugins/TestMod/test.dll");
+
+        assert!(spt_dir
+            .path()
+            .join("BepInEx/plugins/TestMod/test.dll")
+            .exists());
+    }
+
+    #[test]
+    fn mod_source_as_str() {
+        assert_eq!(ModSource::Forge.as_str(), "forge");
+        assert_eq!(ModSource::Url.as_str(), "url");
+        assert_eq!(ModSource::File.as_str(), "file");
+    }
+
+    #[test]
+    fn mod_source_parse() {
+        assert_eq!(ModSource::parse("forge"), Some(ModSource::Forge));
+        assert_eq!(ModSource::parse("url"), Some(ModSource::Url));
+        assert_eq!(ModSource::parse("file"), Some(ModSource::File));
+        assert_eq!(ModSource::parse("unknown"), None);
     }
 }

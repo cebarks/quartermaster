@@ -216,7 +216,7 @@ pub async fn check_mods_health(
     if !installed_mods.is_empty() {
         let check_list: Vec<(i64, String)> = installed_mods
             .iter()
-            .map(|m| (m.forge_mod_id, m.version.clone()))
+            .filter_map(|m| m.forge_mod_id.map(|id| (id, m.version.clone())))
             .collect();
 
         if let Ok(results) = forge.check_updates(&check_list, spt_version).await {
@@ -418,14 +418,16 @@ mod tests {
     fn test_mod(id: i64, forge_mod_id: i64, name: &str) -> InstalledMod {
         InstalledMod {
             id,
-            forge_mod_id,
-            forge_version_id: forge_mod_id + 100,
+            forge_mod_id: Some(forge_mod_id),
+            forge_version_id: Some(forge_mod_id + 100),
             name: name.to_string(),
             slug: None,
             version: "1.0.0".to_string(),
             installed_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: None,
             disabled: false,
+            source: "forge".to_string(),
+            source_url: None,
         }
     }
 
@@ -736,7 +738,15 @@ mod tests {
         let ctx = test_cli_context(tmp.path());
         let mod_id = ctx
             .db
-            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         ctx.db
             .insert_file(
@@ -773,7 +783,15 @@ mod tests {
         let ctx = test_cli_context(tmp.path());
         let mod_id = ctx
             .db
-            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         ctx.db
             .insert_file(
@@ -1069,7 +1087,15 @@ mod tests {
         let ctx = test_cli_context(tmp.path());
         let mod_id = ctx
             .db
-            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
 
         // Create file at canonical location
@@ -1121,7 +1147,15 @@ mod tests {
         let db = crate::db::Database::open_in_memory().unwrap();
 
         let mod_id = db
-            .insert_mod(100, 200, "Fika Server", None, "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "Fika Server",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_id,
@@ -1149,7 +1183,15 @@ mod tests {
         let ctx = test_cli_context(tmp.path());
         let mod_id = ctx
             .db
-            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         ctx.db
             .insert_file(
@@ -1186,7 +1228,15 @@ mod tests {
         let ctx = test_cli_context(tmp.path());
         let mod_id = ctx
             .db
-            .insert_mod(100, 200, "TestMod", None, "1.0.0")
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
             .unwrap();
         ctx.db
             .insert_file(
