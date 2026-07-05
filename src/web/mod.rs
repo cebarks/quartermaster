@@ -255,6 +255,14 @@ pub fn configure_app(
             web::get().to(handlers::mods::integrity_partial),
         )
         .route(
+            "/mods/integrity/recheck",
+            web::post().to(handlers::mods::integrity_recheck),
+        )
+        .route(
+            "/mods/integrity/progress",
+            web::get().to(handlers::mods::integrity_progress),
+        )
+        .route(
             "/headless/status",
             web::get().to(handlers::clients::client_status_partial),
         )

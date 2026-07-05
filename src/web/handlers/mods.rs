@@ -11,7 +11,7 @@ use crate::db::mods::{
 use crate::db::rbac::Permission;
 use crate::db::users::QueueAction;
 use crate::forge::models::{DependencyNode, FikaCompat};
-use crate::health::{self, IntegrityHealth};
+use crate::health::IntegrityHealth;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
@@ -1776,26 +1776,36 @@ pub async fn list_body_partial(
 #[template(path = "partials/status_integrity.html")]
 struct IntegrityTemplate {
     report: IntegrityHealth,
+    csrf_token: String,
 }
 
-pub async fn integrity_partial(state: Data<AppState>, req: HttpRequest) -> actix_web::Result<Html> {
+pub async fn integrity_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<Html> {
     require_auth(&req)?;
-    let db = state.db.clone();
-    let tracked_files = web::block(move || {
-        let db = db.lock();
-        db.get_all_enabled_mod_files()
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let spt_dir = state.spt_dir.clone();
-    let report = web::block(move || health::check_integrity_from(&tracked_files, &spt_dir))
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-    let tmpl = IntegrityTemplate { report };
-    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+    if state.integrity_cache.is_stale() {
+        state.integrity_cache.start_check(
+            state.db.clone(),
+            state.spt_dir.clone(),
+            state.events.clone(),
+        );
+    }
+
+    match state.integrity_cache.get() {
+        Some(report) => {
+            let tmpl = IntegrityTemplate { report, csrf_token };
+            Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+        }
+        None => {
+            Ok(Html::new(
+                r#"<div class="card"><h2>Integrity</h2><p class="text-muted loading-pulse">Checking...</p></div>"#.to_string()
+            ))
+        }
+    }
 }
 
 #[derive(Template)]
@@ -1818,20 +1828,20 @@ pub async fn file_tracking_page(
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let db = state.db.clone();
-    let tracked_files = web::block(move || {
-        let db = db.lock();
-        db.get_all_enabled_mod_files()
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    if state.integrity_cache.is_stale() {
+        state.integrity_cache.start_check(
+            state.db.clone(),
+            state.spt_dir.clone(),
+            state.events.clone(),
+        );
+    }
 
-    let spt_dir = state.spt_dir.clone();
-    let report = web::block(move || health::check_integrity_from(&tracked_files, &spt_dir))
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
+    let report = state.integrity_cache.get().unwrap_or(IntegrityHealth {
+        tracked_files: 0,
+        missing_files: vec![],
+        modified_files: vec![],
+        untracked_dirs: vec![],
+    });
 
     let tmpl = FileTrackingTemplate {
         user,
@@ -1839,6 +1849,48 @@ pub async fn file_tracking_page(
         flash,
         csrf_token,
         report,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn integrity_recheck(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
+) -> actix_web::Result<HttpResponse> {
+    require_auth(&req)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+    state.integrity_cache.invalidate();
+    state.integrity_cache.start_check(
+        state.db.clone(),
+        state.spt_dir.clone(),
+        state.events.clone(),
+    );
+    Ok(HttpResponse::NoContent().finish())
+}
+
+#[derive(Template)]
+#[template(path = "partials/integrity_progress.html")]
+struct IntegrityProgressTemplate {
+    checked: usize,
+    total: usize,
+    running: bool,
+}
+
+pub async fn integrity_progress(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<Html> {
+    require_auth(&req)?;
+    let (checked, total) = state.integrity_cache.progress();
+    let running = state.integrity_cache.is_running();
+    let tmpl = IntegrityProgressTemplate {
+        checked,
+        total,
+        running,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
