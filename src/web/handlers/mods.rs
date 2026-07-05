@@ -2176,14 +2176,16 @@ pub async fn install_addon(
                 db: db_ref,
                 spt_dir: &spt_dir,
                 config: &config,
-                forge_addon_id: addon_forge_id,
+                forge_addon_id: Some(addon_forge_id),
                 parent_mod_id: parent_mod_db_id,
-                version_id: version.id,
+                version_id: Some(version.id),
                 name: &addon_name,
                 slug: addon_slug.as_deref(),
                 version: &version.version,
                 mod_version_constraint: version.mod_version_constraint.as_deref(),
                 archive_path: &archive_path,
+                source: crate::ops::ModSource::Forge,
+                source_url: None,
             };
 
             crate::ops::install_addon_from_archive(&req)?;

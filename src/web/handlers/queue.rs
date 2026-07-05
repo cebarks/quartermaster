@@ -282,12 +282,14 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
             db: &db,
             spt_dir: &spt_dir,
             config: &config,
-            forge_mod_id,
-            version_id,
+            forge_mod_id: Some(forge_mod_id),
+            version_id: Some(version_id),
             name: &mod_name,
             slug: None,
             version: &version_str,
             archive_path: &archive_path,
+            source: crate::ops::ModSource::Forge,
+            source_url: None,
         })?;
         Ok::<_, anyhow::Error>(Some(id))
     })
@@ -448,14 +450,16 @@ async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow:
             db: &db,
             spt_dir: &spt_dir,
             config: &config,
-            forge_addon_id,
+            forge_addon_id: Some(forge_addon_id),
             parent_mod_id: parent_mod_db_id,
-            version_id,
+            version_id: Some(version_id),
             name: &addon_name,
             slug: addon_slug.as_deref(),
             version: &version_str,
             mod_version_constraint: mod_version_constraint.as_deref(),
             archive_path: &archive_path,
+            source: crate::ops::ModSource::Forge,
+            source_url: None,
         };
         crate::ops::install_addon_from_archive(&req)?;
         Ok::<_, anyhow::Error>(())

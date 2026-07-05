@@ -164,17 +164,46 @@ fn remove_stale_files(
     Ok(())
 }
 
+/// Source of a mod installation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModSource {
+    Forge,
+    Url,
+    File,
+}
+
+impl ModSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModSource::Forge => "forge",
+            ModSource::Url => "url",
+            ModSource::File => "file",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "forge" => Some(ModSource::Forge),
+            "url" => Some(ModSource::Url),
+            "file" => Some(ModSource::File),
+            _ => None,
+        }
+    }
+}
+
 /// Parameters for installing a mod from a downloaded archive.
 pub struct InstallRequest<'a> {
     pub db: &'a Database,
     pub spt_dir: &'a Path,
     pub config: &'a crate::config::Config,
-    pub forge_mod_id: i64,
-    pub version_id: i64,
+    pub forge_mod_id: Option<i64>,
+    pub version_id: Option<i64>,
     pub name: &'a str,
     pub slug: Option<&'a str>,
     pub version: &'a str,
     pub archive_path: &'a Path,
+    pub source: ModSource,
+    pub source_url: Option<&'a str>,
 }
 
 /// Parameters for installing an addon from a downloaded archive.
@@ -183,21 +212,24 @@ pub struct InstallAddonRequest<'a> {
     pub db: &'a Database,
     pub spt_dir: &'a Path,
     pub config: &'a crate::config::Config,
-    pub forge_addon_id: i64,
+    pub forge_addon_id: Option<i64>,
     pub parent_mod_id: i64,
-    pub version_id: i64,
+    pub version_id: Option<i64>,
     pub name: &'a str,
     pub slug: Option<&'a str>,
     pub version: &'a str,
     pub mod_version_constraint: Option<&'a str>,
     pub archive_path: &'a Path,
+    pub source: ModSource,
+    pub source_url: Option<&'a str>,
 }
 
 pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     tracing::info!(
         mod_name = req.name,
-        mod_id = req.forge_mod_id,
+        mod_id = ?req.forge_mod_id,
         version = req.version,
+        source = req.source.as_str(),
         "installing mod from archive"
     );
 
@@ -208,13 +240,13 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
 
     let tx = req.db.begin_transaction()?;
     let db_id = req.db.insert_mod(
-        Some(req.forge_mod_id),
-        Some(req.version_id),
+        req.forge_mod_id,
+        req.version_id,
         req.name,
         req.slug,
         req.version,
-        "forge",
-        None,
+        req.source.as_str(),
+        req.source_url,
     )?;
     record_extracted_files(req.db, db_id, &extracted)?;
     tx.commit()?;
@@ -243,20 +275,29 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
 pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> {
     tracing::info!(
         addon_name = req.name,
-        addon_id = req.forge_addon_id,
+        addon_id = ?req.forge_addon_id,
         parent_mod_id = req.parent_mod_id,
         version = req.version,
+        source = req.source.as_str(),
         "installing addon from archive"
     );
 
     let staging_dir = staging_tempdir(req.spt_dir)?;
     let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
 
+    // ponytail: addon source tracking deferred to Task 5, for now only Forge addons exist
+    let forge_addon_id = req
+        .forge_addon_id
+        .ok_or_else(|| anyhow::anyhow!("addon installation requires forge_addon_id"))?;
+    let version_id = req
+        .version_id
+        .ok_or_else(|| anyhow::anyhow!("addon installation requires version_id"))?;
+
     let tx = req.db.begin_transaction()?;
     let db_id = req.db.insert_addon(
-        req.forge_addon_id,
+        forge_addon_id,
         req.parent_mod_id,
-        req.version_id,
+        version_id,
         req.name,
         req.slug,
         req.version,
@@ -2023,12 +2064,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: Some("test-mod"),
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2060,12 +2103,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "ModA",
             slug: None,
             version: "1.0.0",
             archive_path: zip1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2075,12 +2120,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100, // same ID — triggers UNIQUE constraint
-            version_id: 300,
+            forge_mod_id: Some(100), // same ID — triggers UNIQUE constraint
+            version_id: Some(300),
             name: "ModB",
             slug: None,
             version: "2.0.0",
             archive_path: zip2.path(),
+            source: ModSource::Forge,
+            source_url: None,
         });
         assert!(result.is_err(), "duplicate forge_mod_id should fail");
 
@@ -2111,12 +2158,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2162,12 +2211,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2242,12 +2293,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2379,12 +2432,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2442,12 +2497,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "LooseMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2484,12 +2541,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2510,12 +2569,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "ModA",
             slug: None,
             version: "1.0.0",
             archive_path: zip_a.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2525,12 +2586,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 101,
-            version_id: 201,
+            forge_mod_id: Some(101),
+            version_id: Some(201),
             name: "ModB",
             slug: None,
             version: "1.0.0",
             archive_path: zip_b.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2567,12 +2630,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2631,12 +2696,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2695,12 +2762,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2797,12 +2866,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2882,12 +2953,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -2922,12 +2995,14 @@ mod tests {
             db: &db,
             spt_dir: spt_dir.path(),
             config: &Config::default(),
-            forge_mod_id: 100,
-            version_id: 200,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
             name: "TestMod",
             slug: None,
             version: "1.0.0",
             archive_path: zip_v1.path(),
+            source: ModSource::Forge,
+            source_url: None,
         })
         .unwrap();
 
@@ -3008,5 +3083,20 @@ mod tests {
             .exists());
         let files = db.get_files_for_mod(mod_id).unwrap();
         assert_eq!(files[0].file_path, "SPT/user/mods/TestMod/package.json");
+    }
+
+    #[test]
+    fn mod_source_as_str() {
+        assert_eq!(ModSource::Forge.as_str(), "forge");
+        assert_eq!(ModSource::Url.as_str(), "url");
+        assert_eq!(ModSource::File.as_str(), "file");
+    }
+
+    #[test]
+    fn mod_source_from_str() {
+        assert_eq!(ModSource::from_str("forge"), Some(ModSource::Forge));
+        assert_eq!(ModSource::from_str("url"), Some(ModSource::Url));
+        assert_eq!(ModSource::from_str("file"), Some(ModSource::File));
+        assert_eq!(ModSource::from_str("unknown"), None);
     }
 }

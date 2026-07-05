@@ -229,14 +229,16 @@ async fn run_addon_install(
         db: &ctx.db,
         spt_dir: &ctx.spt_dir,
         config: &ctx.config,
-        forge_addon_id: forge_addon.id,
+        forge_addon_id: Some(forge_addon.id),
         parent_mod_id,
-        version_id: selected_version.id,
+        version_id: Some(selected_version.id),
         name: &forge_addon.name,
         slug: forge_addon.slug.as_deref(),
         version: &selected_version.version,
         mod_version_constraint: selected_version.mod_version_constraint.as_deref(),
         archive_path: &archive_path,
+        source: crate::ops::ModSource::Forge,
+        source_url: None,
     })?;
 
     println!(
@@ -509,12 +511,14 @@ pub async fn download_and_install(
         db,
         spt_dir,
         config,
-        forge_mod_id: *forge_mod_id,
-        version_id: *forge_version_id,
+        forge_mod_id: Some(*forge_mod_id),
+        version_id: Some(*forge_version_id),
         name,
         slug: *slug,
         version,
         archive_path: &archive_path,
+        source: crate::ops::ModSource::Forge,
+        source_url: None,
     })?;
 
     let file_count = db.get_files_for_mod(db_id)?.len();
@@ -561,12 +565,14 @@ pub async fn download_and_install_with_arc(
             db: &db_guard,
             spt_dir,
             config,
-            forge_mod_id: *forge_mod_id,
-            version_id: *forge_version_id,
+            forge_mod_id: Some(*forge_mod_id),
+            version_id: Some(*forge_version_id),
             name,
             slug: *slug,
             version,
             archive_path: &archive_path,
+            source: crate::ops::ModSource::Forge,
+            source_url: None,
         })?
     };
 

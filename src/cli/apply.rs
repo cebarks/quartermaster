@@ -94,14 +94,16 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                                 db: &ctx.db,
                                 spt_dir: &ctx.spt_dir,
                                 config: &ctx.config,
-                                forge_addon_id,
+                                forge_addon_id: Some(forge_addon_id),
                                 parent_mod_id: parent.id,
-                                version_id,
+                                version_id: Some(version_id),
                                 name: &addon.name,
                                 slug: addon.slug.as_deref(),
                                 version: &version.version,
                                 mod_version_constraint: version.mod_version_constraint.as_deref(),
                                 archive_path: &archive_path,
+                                source: crate::ops::ModSource::Forge,
+                                source_url: None,
                             },
                         ) {
                             let remaining = pending.len() - applied - 1;
