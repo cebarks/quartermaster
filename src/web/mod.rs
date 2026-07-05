@@ -4,6 +4,7 @@ pub mod error;
 pub mod flash;
 pub mod handlers;
 pub mod install;
+pub mod integrity_cache;
 pub mod invite;
 pub mod mod_zip_cache;
 pub mod nav;
