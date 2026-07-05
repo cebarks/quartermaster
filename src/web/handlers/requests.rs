@@ -307,6 +307,7 @@ async fn trigger_install_for_request(
                         }
                         tracing::info!("SVM installed via request — config editor reinitialized");
                     }
+                    state_clone.clear_fika_items();
                     tasks.complete(task_id, "Mod installed successfully".to_string());
                 }
                 Err(e) => {

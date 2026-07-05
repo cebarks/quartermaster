@@ -1101,6 +1101,7 @@ async fn install_mod_from_url(
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
                 state_clone.regenerate_modsync().await;
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Mod installed from URL".to_string());
             }
             Err(e) => {
@@ -1391,6 +1392,7 @@ pub async fn install_mod(
                     }
                     tracing::info!("SVM installed — config editor reinitialized");
                 }
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Mod installed successfully".to_string());
             }
             Err(e) => {
@@ -1555,6 +1557,7 @@ pub async fn update_mod(
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Mod updated successfully".to_string());
             }
             Err(e) => {
@@ -1873,8 +1876,10 @@ pub async fn update_all_mods(
         );
 
         if success_count == total {
+            state_clone.clear_fika_items();
             tasks.complete(task_id, format!("All {total} mods updated successfully"));
         } else if success_count > 0 {
+            state_clone.clear_fika_items();
             tasks.complete(
                 task_id,
                 format!("{success_count}/{total} mods updated (some failed — check logs)"),
@@ -2369,6 +2374,7 @@ pub async fn install_addon(
     let addon_slug = addon_info.slug.clone();
     let mod_zip_cache = state.mod_zip_cache.clone();
     let integrity_cache = state.integrity_cache.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -2408,6 +2414,7 @@ pub async fn install_addon(
 
         match result {
             Ok(_) => {
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Addon installed successfully".to_string());
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
@@ -2547,6 +2554,7 @@ pub async fn update_addon(
     let parent_mod_id = addon.parent_mod_id;
     let mod_zip_cache = state.mod_zip_cache.clone();
     let integrity_cache = state.integrity_cache.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let result = async {
@@ -2590,6 +2598,7 @@ pub async fn update_addon(
 
         match result {
             Ok(_) => {
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Addon updated successfully".to_string());
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
