@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}All Raids — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("raids", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>All Raids</h1>
+
+<div class="card">
+    <div class="flex-between" style="margin-bottom:1rem">
+        <h2 style="margin:0">Raid History</h2>
+        <span class="text-muted text-sm">{{ raids.len() }} shown{% if offset > 0 %} (offset {{ offset }}){% endif %}</span>
+    </div>
+    {% if raids.is_empty() %}
+    <p class="text-muted text-sm">No raids recorded yet.</p>
+    {% else %}
+    <table>
+        <thead>
+            <tr><th>Player</th><th>Map</th><th>Side</th><th>Started</th><th>Duration</th><th>Outcome</th></tr>
+        </thead>
+        <tbody>
+            {% for (raid, username) in raids %}
+            <tr onclick="window.location='/quma/raids/{{ raid.id }}'" style="cursor:pointer">
+                <td><a href="/quma/profiles/{{ username }}">{{ username }}</a></td>
+                <td>{{ raid.map }}</td>
+                <td>{{ raid.player_side }}</td>
+                <td class="text-sm text-muted">{{ raid.started_at|fmt("{:.16}") }}</td>
+                <td>{% if let Some(duration) = raid.play_time_seconds %}{{ (duration / 60)|fmt("{}") }}m{% else %}—{% endif %}</td>
+                <td>
+                    {% if let Some(status) = raid.exit_status %}
+                        {% include "raids/partials/outcome_badge.html" %}
+                    {% else %}
+                        <span class="badge badge-muted">In Progress</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div style="margin-top:1rem;text-align:center;display:flex;gap:0.5rem;justify-content:center">
+        {% if offset > 0 %}
+        <a href="/quma/raids?offset={{ (offset - 50)|fmt("{}") }}" class="btn btn-outline">Previous</a>
+        {% endif %}
+        {% if has_more %}
+        <a href="/quma/raids?offset={{ offset + 50 }}" class="btn btn-outline">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

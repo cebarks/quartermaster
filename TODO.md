@@ -15,8 +15,6 @@
 - account creation dropdown missing SPT dev profiles
 - can't rekove already approved mods that haven't been installed
 - mod requests list shouldn't include already installed mods
-- numbers on the stats board (particularly map popularity and total raids) seem wrong
-- /quma/raids returns 500 when no raid data exists (handler doesn't handle empty state)
 
 ## Core Architecture
 - consolidate all mod management logic from all paths (web handlers bypass `ops.rs` in places)

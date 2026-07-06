@@ -619,6 +619,7 @@ pub fn configure_app(
             web::get().to(handlers::clients::client_detail),
         )
         .route("/stats", web::get().to(handlers::raids::stats_page))
+        .route("/raids", web::get().to(handlers::raids::all_raids_page))
         .route(
             "/raids/{raid_id}",
             web::get().to(handlers::raids::raid_detail_page),
