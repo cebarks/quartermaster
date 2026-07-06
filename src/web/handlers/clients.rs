@@ -677,6 +677,7 @@ pub async fn client_scale(
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
     let db_clone = state.db.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let result = crate::client::converge::converge(
@@ -698,28 +699,31 @@ pub async fn client_scale(
             tracing::info!(target_count = target, "Client scaling completed");
 
             // Persist the updated client count to config file
-            match crate::config::Config::load_with_env(&config_path) {
-                Ok(mut fresh_config) => {
-                    if let Some(ref mut headless) = fresh_config.headless {
-                        let current = headless.client_count();
-                        if target > current {
-                            for _ in 0..(target - current) {
-                                headless
-                                    .clients
-                                    .push(crate::config::HeadlessClientDef::default());
+            {
+                let _guard = state_clone.config_lock.lock();
+                match crate::config::Config::load_with_env(&config_path) {
+                    Ok(mut fresh_config) => {
+                        if let Some(ref mut headless) = fresh_config.headless {
+                            let current = headless.client_count();
+                            if target > current {
+                                for _ in 0..(target - current) {
+                                    headless
+                                        .clients
+                                        .push(crate::config::HeadlessClientDef::default());
+                                }
+                            } else if target < current {
+                                headless.clients.truncate(target as usize);
                             }
-                        } else if target < current {
-                            headless.clients.truncate(target as usize);
+                        }
+                        if let Err(e) = fresh_config.save(&config_path) {
+                            tracing::error!(err = %e, "Failed to save updated headless config");
+                        } else {
+                            *config_handle.write() = fresh_config;
                         }
                     }
-                    if let Err(e) = fresh_config.save(&config_path) {
-                        tracing::error!(err = %e, "Failed to save updated headless config");
-                    } else {
-                        *config_handle.write() = fresh_config;
+                    Err(e) => {
+                        tracing::error!(err = %e, "Failed to reload config for persisting headless changes");
                     }
-                }
-                Err(e) => {
-                    tracing::error!(err = %e, "Failed to reload config for persisting headless changes");
                 }
             }
         }
@@ -902,26 +906,30 @@ pub async fn client_create(
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
     let db_clone = state.db.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         // Persist first
-        match crate::config::Config::load_with_env(&config_path) {
-            Ok(mut fresh_config) => {
-                if let Some(ref mut headless) = fresh_config.headless {
-                    headless
-                        .clients
-                        .push(crate::config::HeadlessClientDef::default());
+        {
+            let _guard = state_clone.config_lock.lock();
+            match crate::config::Config::load_with_env(&config_path) {
+                Ok(mut fresh_config) => {
+                    if let Some(ref mut headless) = fresh_config.headless {
+                        headless
+                            .clients
+                            .push(crate::config::HeadlessClientDef::default());
+                    }
+                    if let Err(e) = fresh_config.save(&config_path) {
+                        tracing::error!(err = %e, "Failed to save new client to config");
+                        return;
+                    } else {
+                        *config_handle.write() = fresh_config;
+                    }
                 }
-                if let Err(e) = fresh_config.save(&config_path) {
-                    tracing::error!(err = %e, "Failed to save new client to config");
+                Err(e) => {
+                    tracing::error!(err = %e, "Failed to reload config for adding client");
                     return;
-                } else {
-                    *config_handle.write() = fresh_config;
                 }
-            }
-            Err(e) => {
-                tracing::error!(err = %e, "Failed to reload config for adding client");
-                return;
             }
         }
 
@@ -1042,6 +1050,7 @@ pub async fn client_delete(
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
     let db_clone = state.db.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         // Stop/remove the container for the deleted index
@@ -1056,23 +1065,26 @@ pub async fn client_delete(
         }
 
         // Persist
-        match crate::config::Config::load_with_env(&config_path) {
-            Ok(mut fresh_config) => {
-                if let Some(ref mut headless) = fresh_config.headless {
-                    if (index as usize) <= headless.clients.len() && index > 0 {
-                        headless.clients.remove((index - 1) as usize);
+        {
+            let _guard = state_clone.config_lock.lock();
+            match crate::config::Config::load_with_env(&config_path) {
+                Ok(mut fresh_config) => {
+                    if let Some(ref mut headless) = fresh_config.headless {
+                        if (index as usize) <= headless.clients.len() && index > 0 {
+                            headless.clients.remove((index - 1) as usize);
+                        }
+                    }
+                    if let Err(e) = fresh_config.save(&config_path) {
+                        tracing::error!(err = %e, "Failed to save config after deleting client");
+                        return;
+                    } else {
+                        *config_handle.write() = fresh_config;
                     }
                 }
-                if let Err(e) = fresh_config.save(&config_path) {
-                    tracing::error!(err = %e, "Failed to save config after deleting client");
+                Err(e) => {
+                    tracing::error!(err = %e, "Failed to reload config for deleting client");
                     return;
-                } else {
-                    *config_handle.write() = fresh_config;
                 }
-            }
-            Err(e) => {
-                tracing::error!(err = %e, "Failed to reload config for deleting client");
-                return;
             }
         }
 
