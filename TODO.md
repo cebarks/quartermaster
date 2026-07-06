@@ -10,14 +10,10 @@
 
 ## Triage
 - fika settings
-    - headless client settings should be merged with existing headless page, no need to expose headless profile amount or force ip.
-
 
 ## Bugs
 - account creation dropdown missing SPT dev profiles
 - can't rekove already approved mods that haven't been installed
-- headless profiles should not show be included in raid stats
-- numa scheduling webui config is broken
 - mod requests list shouldn't include already installed mods
 - numbers on the stats board (particularly map popularity and total raids) seem wrong
 - /quma/raids returns 500 when no raid data exists (handler doesn't handle empty state)
@@ -32,29 +28,21 @@
 - build simpler, lighterweight container
 
 ## Headless Client
-- convergence restarts SPT server without warning users (`converge.rs`)
 - ~~SELinux fully disabled for ntsync (`converge.rs` — `label=disable` is overkill)~~ (partially done — #232, volumes use `:z` shared label; `label=disable` still applied when GPU devices are present)
 - shared RW volume mount for base game dir (`converge.rs`)
-- unauthenticated GitHub API requests (`converge.rs`)
-- non-contiguous index handling after middle deletion (`converge.rs`)
-- duplicate reqwest clients for GitHub (`converge.rs`)
-- `client_port` integer overflow on large index (`converge.rs`)
 - too-many-arguments on convergence functions (clippy lint suppressed)
 - name a headless client (changes in-game profile name, also shows name in headless control panel)
 - image name should be per-client configurable
 - ensure headless + spt-server images have been pulled on startup
 - better health client detection
-- show active headless' in raid on dashboard, with player profile names, not ids
 - don't delete headless overlay by default, allow selection of which existing, not already in use overlay to use on new client creation (or when editting a client)
 - be able to `podman rm` and re-init the client without wiping anything else
-- persistent headless stats
+- set fika headless profiles early and use the same profiles for headless forever
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
 - TOCTOU on duplicate mod install/update check (`mods.rs` — task-manager dedup mitigates double-click, but concurrent installs from different paths can still race past the pre-spawn check)
-- config file race in headless client background tasks (`clients.rs`)
 - no limit on concurrent SSE connections (`sse.rs`)
-- no upper bound on headless client scale count (`clients.rs`)
 - unbounded zlib decompression — potential bomb (`raid_tracker.rs`, `proxy.rs`)
 - silent cascade removal of reverse dependencies during queue apply (`queue.rs`)
 - proxy buffers entire request body with no size limit (`proxy.rs`)
@@ -107,8 +95,6 @@
 ### Headless Client
 
 **Medium:**
-- convergence restarts SPT server without warning users (`converge.rs`)
-- no overlay cleanup on scale-down (`converge.rs` — orphan dirs accumulate)
 - supervisor exit watchers cache restart policy/backoff values at spawn time — config changes require supervisor restart (`supervisor.rs`)
 
 **Low:**
