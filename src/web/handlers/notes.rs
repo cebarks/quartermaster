@@ -219,7 +219,7 @@ pub async fn update_note(
     let db = state.db.clone();
     let user_id = user.user_id;
     let has_edit = user.has_permission(Permission::NotesEdit);
-    web::block(move || {
+    let updated = web::block(move || {
         let db = db.lock();
         let note = db
             .get_note(note_id)?
@@ -248,6 +248,10 @@ pub async fn update_note(
             WebError::from(e)
         }
     })?;
+
+    if !updated {
+        return Err(WebError::Forbidden.into());
+    }
 
     set_flash(&session, "Note updated.", FlashType::Success);
     Ok(HttpResponse::SeeOther()

@@ -1,5 +1,3 @@
-#![allow(dead_code)] // ponytail: used by web handlers in Task 3
-
 use rusqlite::{params, OptionalExtension};
 
 use super::Database;
@@ -14,7 +12,9 @@ pub struct NoteView {
     pub visibility: String,
     pub pinned: bool,
     pub created_at: String,
+    #[allow(dead_code)] // ponytail: available for templates if needed, currently unused
     pub updated_at: String,
+    #[allow(dead_code)] // ponytail: available for templates if needed, currently unused
     pub updated_by: Option<i64>,
     pub updated_by_username: Option<String>,
 }

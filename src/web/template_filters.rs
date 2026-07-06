@@ -1,5 +1,3 @@
-#![allow(dead_code)] // ponytail: markdown filter used via templates
-
 fn format_bytes(n: i64) -> String {
     const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
     if n == 0 {
@@ -96,6 +94,8 @@ pub fn format_datetime(s: &str, _env: &dyn askama::Values) -> askama::Result<Str
     Ok(s.chars().take(19).collect())
 }
 
+// ponytail: askama invokes via generated code, clippy can't see usage
+#[allow(dead_code)]
 #[askama::filter_fn]
 pub fn markdown(content: &str, _env: &dyn askama::Values) -> askama::Result<String> {
     use pulldown_cmark::{html, Options, Parser};
