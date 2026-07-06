@@ -391,6 +391,25 @@ impl ForgeClient {
         Ok(())
     }
 
+    /// Make a GET request to a non-Forge URL, stripping the Authorization header.
+    ///
+    /// Reuses the client's connection pool and User-Agent but does not send
+    /// the Forge Bearer token to external services.
+    pub async fn get_external_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T> {
+        use reqwest::header::AUTHORIZATION;
+        self.client
+            .get(url)
+            .header(AUTHORIZATION, "") // override default Bearer token
+            .send()
+            .await
+            .with_context(|| format!("GET {url} failed"))?
+            .error_for_status()
+            .with_context(|| format!("GET {url} returned error status"))?
+            .json()
+            .await
+            .with_context(|| format!("failed to parse JSON from {url}"))
+    }
+
     /// Invalidate all cached responses.
     #[allow(dead_code)] // public API for cache management, used by external consumers
     pub fn invalidate_cache(&self) {

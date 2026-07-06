@@ -151,24 +151,12 @@ async fn ensure_fika_headless(
     );
 
     // Query GitHub API for the latest release
-    let client = reqwest::Client::builder()
-        .user_agent("quartermaster")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let release: serde_json::Value = client
-        .get(format!(
+    let release: serde_json::Value = forge
+        .get_external_json(&format!(
             "https://api.github.com/repos/{FIKA_HEADLESS_GITHUB_REPO}/releases/latest"
         ))
-        .send()
         .await
-        .context("failed to query GitHub for Fika.Headless releases")?
-        .error_for_status()
-        .context("GitHub API returned error")?
-        .json()
-        .await
-        .context("failed to parse GitHub release response")?;
+        .context("failed to query GitHub for Fika.Headless releases")?;
 
     let tag = release["tag_name"].as_str().unwrap_or("unknown");
     let asset = release["assets"]
