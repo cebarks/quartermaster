@@ -749,6 +749,21 @@ pub fn configure_app(
         .route(
             "/players/{profile_id}/message",
             web::post().to(handlers::dashboard::send_player_message),
+        )
+        .route("/notes", web::get().to(handlers::notes::notes_page))
+        .route("/notes/new", web::get().to(handlers::notes::new_note_form))
+        .route("/notes", web::post().to(handlers::notes::create_note))
+        .route(
+            "/notes/{id}/edit",
+            web::get().to(handlers::notes::edit_note_form),
+        )
+        .route(
+            "/notes/{id}/update",
+            web::post().to(handlers::notes::update_note),
+        )
+        .route(
+            "/notes/{id}/delete",
+            web::post().to(handlers::notes::delete_note),
         );
 
     quma_scope = quma_scope.service(auth_scope);

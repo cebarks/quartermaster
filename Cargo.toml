@@ -74,6 +74,10 @@ actix-ws = "0.4"
 # Templating
 askama = "0.16"
 
+# Markdown rendering
+pulldown-cmark = "0.13"
+ammonia = "4"
+
 # Static asset embedding
 rust-embed = "8"
 

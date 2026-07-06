@@ -18,6 +18,8 @@ pub enum Permission {
     UsersManage,
     SettingsManage,
     ItemsGive,
+    NotesEdit,
+    NotesManage,
 }
 
 impl Permission {
@@ -37,6 +39,8 @@ impl Permission {
         Permission::UsersManage,
         Permission::SettingsManage,
         Permission::ItemsGive,
+        Permission::NotesEdit,
+        Permission::NotesManage,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -56,6 +60,8 @@ impl Permission {
             Permission::UsersManage => "users.manage",
             Permission::SettingsManage => "settings.manage",
             Permission::ItemsGive => "items.give",
+            Permission::NotesEdit => "notes.edit",
+            Permission::NotesManage => "notes.manage",
         }
     }
 
@@ -76,6 +82,8 @@ impl Permission {
             "users.manage" => Some(Permission::UsersManage),
             "settings.manage" => Some(Permission::SettingsManage),
             "items.give" => Some(Permission::ItemsGive),
+            "notes.edit" => Some(Permission::NotesEdit),
+            "notes.manage" => Some(Permission::NotesManage),
             _ => None,
         }
     }
@@ -97,6 +105,8 @@ impl Permission {
             Permission::UsersManage => "Manage Users",
             Permission::SettingsManage => "Manage Settings",
             Permission::ItemsGive => "Give Items",
+            Permission::NotesEdit => "Edit Shared Notes",
+            Permission::NotesManage => "Manage Notes",
         }
     }
 
@@ -117,6 +127,7 @@ impl Permission {
             Permission::UsersManage | Permission::SettingsManage | Permission::ItemsGive => {
                 "Administration"
             }
+            Permission::NotesEdit | Permission::NotesManage => "Content",
         }
     }
 }

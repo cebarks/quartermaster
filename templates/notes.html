@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
+{% block title %}Notes — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("notes", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1rem">
+    <h1>Notes</h1>
+    <a href="/quma/notes/new" class="btn btn-primary">New Note</a>
+</div>
+
+<h2>My Notes</h2>
+{% if my_notes.is_empty() %}
+<p class="text-muted">No notes yet. <a href="/quma/notes/new">Create one</a>.</p>
+{% else %}
+{% for note in my_notes %}
+<div class="card" style="margin-bottom: 0.75rem">
+    <div class="flex-between">
+        <div>
+            {% if note.pinned %}<span class="badge badge-info" title="Pinned">📌</span> {% endif %}
+            <strong>{{ note.title }}</strong>
+            {% if note.visibility == "public_readonly" %}
+            <span class="badge badge-success">Public (Read-Only)</span>
+            {% else if note.visibility == "public_editable" %}
+            <span class="badge badge-warning">Public (Editable)</span>
+            {% else %}
+            <span class="badge">Private</span>
+            {% endif %}
+        </div>
+        <div>
+            <a href="/quma/notes/{{ note.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
+            <form method="post" action="/quma/notes/{{ note.id }}/delete" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete this note?')">Delete</button>
+            </form>
+        </div>
+    </div>
+    <details>
+        <summary class="text-muted text-sm" style="cursor:pointer; margin-top:0.5rem">
+            {{ note.created_at }}
+            {% if let Some(by) = note.updated_by_username %} · edited by {{ by }}{% endif %}
+        </summary>
+        <div class="note-content" style="margin-top:0.5rem">{{ note.content|markdown|safe }}</div>
+    </details>
+</div>
+{% endfor %}
+{% endif %}
+
+<h2 style="margin-top: 1.5rem">Shared Notes</h2>
+{% if shared_notes.is_empty() %}
+<p class="text-muted">No shared notes from other users.</p>
+{% else %}
+{% for note in shared_notes %}
+<div class="card" style="margin-bottom: 0.75rem">
+    <div class="flex-between">
+        <div>
+            {% if note.pinned %}<span class="badge badge-info" title="Pinned">📌</span> {% endif %}
+            <strong>{{ note.title }}</strong>
+            <span class="text-muted text-sm">by {{ note.author_username }}</span>
+            {% if note.visibility == "public_readonly" %}
+            <span class="badge badge-success">Read-Only</span>
+            {% else if note.visibility == "public_editable" %}
+            <span class="badge badge-warning">Editable</span>
+            {% else if note.visibility == "private" %}
+            <span class="badge">Private</span>
+            {% endif %}
+        </div>
+        <div>
+            {% if note.visibility == "public_editable" && user.can("notes.edit") %}
+            <a href="/quma/notes/{{ note.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
+            {% endif %}
+            {% if user.can("notes.manage") %}
+            <form method="post" action="/quma/notes/{{ note.id }}/delete" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete this note?')">Delete</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    <details>
+        <summary class="text-muted text-sm" style="cursor:pointer; margin-top:0.5rem">
+            {{ note.created_at }}
+            {% if let Some(by) = note.updated_by_username %} · edited by {{ by }}{% endif %}
+        </summary>
+        <div class="note-content" style="margin-top:0.5rem">{{ note.content|markdown|safe }}</div>
+    </details>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}
