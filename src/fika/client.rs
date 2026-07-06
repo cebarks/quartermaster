@@ -1,6 +1,3 @@
-// ponytail: Many types here unused until later tasks; allow dead_code module-wide
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -130,21 +127,6 @@ impl FikaClient {
         Ok(())
     }
 
-    /// GET /fika/api/players — online players list
-    pub async fn players(&self) -> Result<FikaPlayersResponse> {
-        let resp = self
-            .http
-            .get(self.api_url("/fika/api/players"))
-            .bearer_auth(&self.api_key)
-            .header("requestcompressed", "0")
-            .send()
-            .await
-            .context("failed to call Fika players API")?;
-        resp.json()
-            .await
-            .context("failed to parse Fika players response")
-    }
-
     /// GET /fika/api/items — list all sendable items
     pub async fn get_items(&self) -> Result<FikaGetItemsResponse> {
         let resp = self
@@ -217,6 +199,7 @@ impl std::fmt::Debug for FikaClient {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // fields populated by serde deserialization from Fika API
 pub struct FikaPlayerPresence {
     pub profile_id: String,
     pub nickname: String,
@@ -228,26 +211,13 @@ pub struct FikaPlayerPresence {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // fields populated by serde deserialization from Fika API
 pub struct FikaRaidInfo {
     pub location: String,
     pub side: i32,
     pub time: i32,
     pub started: bool,
     pub match_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FikaPlayersResponse {
-    pub players: Vec<FikaPlayer>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FikaPlayer {
-    pub profile_id: String,
-    pub nickname: String,
-    pub level: i32,
-    pub location: u8,
 }
 
 #[derive(Debug, Serialize)]
@@ -272,6 +242,7 @@ pub struct StartHeadlessRaidRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // fields populated by serde deserialization from Fika API
 pub struct StartHeadlessRaidResponse {
     pub match_id: Option<String>,
     pub error: Option<String>,

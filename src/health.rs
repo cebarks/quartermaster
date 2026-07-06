@@ -1,5 +1,4 @@
 use anyhow::Result;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -247,9 +246,8 @@ pub async fn check_mods_health(
     }
 }
 
-/// Parallel integrity check using rayon for concurrent file hashing.
+/// Integrity check: hash each tracked file and compare against stored hashes.
 /// Updates `progress` and `total` atomics for progress reporting.
-// ponytail: rayon parallel hash + TTL cache; upgrade to inotify (notify crate) per-file watching when file counts justify it
 pub fn check_integrity_parallel(
     tracked_files: &[crate::db::mods::InstalledFile],
     spt_dir: &std::path::Path,
@@ -260,7 +258,7 @@ pub fn check_integrity_parallel(
     progress.store(0, Ordering::Relaxed);
 
     let results: Vec<(Option<String>, Option<String>)> = tracked_files
-        .par_iter()
+        .iter()
         .map(|file| {
             let full_path = spt_dir.join(&file.file_path);
             let result = if !full_path.exists() {

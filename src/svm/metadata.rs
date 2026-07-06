@@ -4,12 +4,11 @@
 //! descriptions, input types, and subgroup organization. Used by templates to
 //! render forms without hardcoding field information.
 
-#![allow(dead_code)] // Used in later tasks
-
 #[derive(Debug, Clone)]
 pub struct SectionMeta {
     pub key: &'static str,
     pub label: &'static str,
+    #[allow(dead_code)] // populated in metadata arrays, read when SVM section toggles are wired up
     pub enable_field: Option<&'static str>,
 }
 

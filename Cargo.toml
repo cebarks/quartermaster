@@ -15,7 +15,6 @@ path = "src/main.rs"
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.18"
 
 # Serialization & config
 serde = { version = "1", features = ["derive"] }
@@ -86,9 +85,6 @@ rpassword = "7"
 
 # Non-poisoning Mutex for web DB access
 parking_lot = "0.12"
-
-# Parallel iteration
-rayon = "1"
 
 # Regex for targeted text replacement
 regex = "1"
