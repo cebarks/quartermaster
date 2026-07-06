@@ -5,9 +5,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 pub struct ConfigHistoryRepo {
+    #[allow(dead_code)] // ponytail: used in later tasks
     path: PathBuf,
 }
 
+#[allow(dead_code)] // ponytail: used in later tasks
 pub struct HistoryEntry {
     pub rev: String,
     pub timestamp: DateTime<Utc>,
@@ -22,6 +24,7 @@ impl ConfigHistoryRepo {
     }
 
     /// Ensure the git repo exists, creating it if needed.
+    #[allow(dead_code)] // ponytail: used in later tasks
     fn ensure_repo(&self) -> Result<()> {
         if self.path.join(".git").exists() {
             Ok(())
@@ -63,6 +66,7 @@ impl ConfigHistoryRepo {
     /// Snapshot a file into the history repo and commit it.
     /// `rel_path` is relative to the repo root (e.g., "user/mods/SAIN/config/config.json").
     /// `content` is the file's content to snapshot.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn snapshot(
         &self,
         rel_path: &Path,
@@ -123,6 +127,7 @@ impl ConfigHistoryRepo {
     }
 
     /// List commit history for a specific file.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn history(&self, rel_path: &Path) -> Result<Vec<HistoryEntry>> {
         if !self.path.join(".git").exists() {
             return Ok(Vec::new());
@@ -178,6 +183,7 @@ impl ConfigHistoryRepo {
     }
 
     /// Get file content at a specific revision.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn content_at_rev(&self, rel_path: &Path, rev: &str) -> Result<String> {
         let rel_path_str = rel_path.to_str().context("non-UTF-8 path")?;
 
@@ -201,6 +207,7 @@ impl ConfigHistoryRepo {
     }
 
     /// Check if a file has ever been committed to the history repo.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn has_file(&self, rel_path: &Path) -> bool {
         if !self.path.join(".git").exists() {
             return false;

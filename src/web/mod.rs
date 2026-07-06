@@ -851,6 +851,8 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         tracing::info!("SVM detected — web config editor enabled");
     }
 
+    let config_mgmt = crate::config_mgmt::ConfigManager::new(&spt_dir);
+
     let tls_enabled = config.tls_enabled;
     let spt_dir_for_tls = spt_dir.clone();
 
@@ -922,6 +924,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         modsync_installed: std::sync::atomic::AtomicBool::new(modsync_installed),
         svm,
         svm_installed: std::sync::atomic::AtomicBool::new(svm_installed_flag),
+        config_mgmt,
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
         game_data,
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),

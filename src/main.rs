@@ -4,6 +4,7 @@ mod backup;
 mod cli;
 mod client;
 mod config;
+mod config_mgmt;
 mod container;
 mod db;
 mod fika;

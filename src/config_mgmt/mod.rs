@@ -14,14 +14,20 @@ pub struct ConfigManager {
 }
 
 pub struct ModConfigSet {
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub mod_id: i64,
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub mod_name: String,
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub config_files: Vec<ConfigFile>,
 }
 
 pub struct ConfigFile {
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub rel_path: PathBuf,
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub filename: String,
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub size: u64,
 }
 
@@ -125,6 +131,7 @@ impl ConfigManager {
     }
 
     /// Read a config file, stripping UTF-8 BOM if present.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn read_config(&self, mod_dir: &str, config_rel_path: &Path) -> Result<String> {
         let path = self.config_path(mod_dir, config_rel_path);
         let content = std::fs::read_to_string(&path)
@@ -133,6 +140,7 @@ impl ConfigManager {
     }
 
     /// Validate and save a config file. Returns Ok(true) if changed, Ok(false) if no change.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn save_config(
         &self,
         mod_dir: &str,
@@ -189,6 +197,7 @@ impl ConfigManager {
     }
 
     /// Restore a config file to a previous revision.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn restore_config(
         &self,
         mod_dir: &str,
@@ -230,6 +239,7 @@ impl ConfigManager {
     }
 
     /// Get history for a config file.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn history(&self, mod_dir: &str, config_rel_path: &Path) -> Result<Vec<HistoryEntry>> {
         let history_rel = Path::new("user/mods")
             .join(mod_dir)
@@ -239,6 +249,7 @@ impl ConfigManager {
     }
 
     /// Get content at a specific revision.
+    #[allow(dead_code)] // ponytail: used in later tasks
     pub fn content_at_rev(
         &self,
         mod_dir: &str,
@@ -252,6 +263,7 @@ impl ConfigManager {
         self.history.content_at_rev(&history_rel, rev)
     }
 
+    #[allow(dead_code)] // ponytail: used in later tasks
     fn config_path(&self, mod_dir: &str, config_rel_path: &Path) -> PathBuf {
         self.spt_dir
             .join("SPT/user/mods")
@@ -261,6 +273,7 @@ impl ConfigManager {
     }
 }
 
+#[allow(dead_code)] // ponytail: used in later tasks
 fn strip_bom(s: &str) -> &str {
     s.strip_prefix('\u{feff}').unwrap_or(s)
 }
