@@ -383,50 +383,48 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
         }
     }
 
-    // Stop and remove container
-    let container_name = crate::client::converge::client_container_name(client);
-    if container_mgr
-        .is_running(&container_name)
-        .await
-        .unwrap_or(false)
-    {
-        println!("Stopping {}...", container_name);
-        container_mgr.stop(&container_name).await?;
-    }
-    if container_mgr.inspect(&container_name).await.is_ok() {
-        container_mgr.remove_container(&container_name).await?;
-    }
+    // Remove ALL managed containers so converge recreates with correct indices
+    println!("Removing all headless containers for clean index renumbering...");
+    crate::client::converge::remove_all_managed_containers(container_mgr).await?;
 
     // Remove from config
     let config_path = Config::resolve_path(None, Some(&ctx.spt_dir));
     let mut config = Config::load_with_env(&config_path)?;
+    let mut updated_headless = headless_config.clone();
     if let Some(ref mut headless) = config.headless {
         headless.clients.remove(index - 1);
+        updated_headless = headless.clone();
     }
     config.save(&config_path)?;
 
-    // Update fika.jsonc
-    let new_count = config
-        .headless
-        .as_ref()
-        .map(|h| h.client_count())
-        .unwrap_or(0);
-    let fika_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
-    if fika_path.exists() {
-        // ponytail: no fika_config_lock here — CLI runs single-threaded, no lock needed
-        let cst = crate::fika::config::read_fika_cst(&fika_path)?;
-        crate::fika::config::set_headless_amount(&cst, new_count);
-        crate::fika::config::write_fika_cst(&cst, &fika_path)?;
+    // Clean up overlay directory for deleted index
+    let overlay_dir =
+        crate::client::converge::client_overlay_dir(&updated_headless.install_dir, client);
+    if overlay_dir.exists() {
+        std::fs::remove_dir_all(&overlay_dir)?;
     }
 
-    // Clean up overlay directory
-    if let Some(ref headless) = config.headless {
-        let overlay_dir =
-            crate::client::converge::client_overlay_dir(&headless.install_dir, client);
-        if overlay_dir.exists() {
-            std::fs::remove_dir_all(&overlay_dir).ok();
-        }
-    }
+    let new_count = updated_headless.client_count();
+
+    // Converge to recreate containers with correct indices
+    println!("Re-converging to recreate containers with correct indices...");
+    let (server_host, server_port) =
+        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+    let spt_client = SptClient::new(&server_host, server_port)?;
+    let db = db_arc_for_converge(ctx)?;
+
+    crate::client::converge::converge(
+        container_mgr,
+        &updated_headless,
+        &ctx.config,
+        &ctx.spt_dir,
+        &spt_client,
+        &ctx.forge,
+        &ctx.spt_info.spt_version,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        &db,
+    )
+    .await?;
 
     println!(
         "Deleted client {}. {} client(s) remaining.",

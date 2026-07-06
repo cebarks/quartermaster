@@ -1053,15 +1053,10 @@ pub async fn client_delete(
     let state_clone = state.clone();
 
     tokio::spawn(async move {
-        // Stop/remove the container for the deleted index
-        let container_name = crate::client::converge::client_container_name(index);
-        if let Ok(true) = mgr_clone.is_running(&container_name).await {
-            if let Err(e) = mgr_clone.stop(&container_name).await {
-                tracing::warn!(err = %e, container = %container_name, "failed to stop container before delete");
-            }
-        }
-        if let Err(e) = mgr_clone.remove_container(&container_name).await {
-            tracing::warn!(err = %e, container = %container_name, "failed to remove container (may not exist)");
+        // Remove ALL managed containers so converge recreates with correct indices
+        if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr_clone).await {
+            tracing::error!(err = %e, "Failed to remove managed containers before re-convergence");
+            return;
         }
 
         // Persist
@@ -1085,6 +1080,15 @@ pub async fn client_delete(
                     tracing::error!(err = %e, "Failed to reload config for deleting client");
                     return;
                 }
+            }
+        }
+
+        // Clean up overlay for the deleted index
+        let overlay =
+            crate::client::converge::client_overlay_dir(&updated_config.install_dir, index);
+        if overlay.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&overlay) {
+                tracing::warn!(err = %e, "Failed to clean overlay dir for deleted client {index}");
             }
         }
 

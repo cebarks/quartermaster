@@ -182,6 +182,36 @@ async fn ensure_fika_headless(
     Ok(())
 }
 
+/// Remove all quartermaster-managed headless containers.
+///
+/// Returns the number of containers removed. Used before re-convergence
+/// after a middle deletion to ensure clean index renumbering.
+pub async fn remove_all_managed_containers(container_mgr: &ContainerManager) -> Result<u32> {
+    let managed = container_mgr
+        .detect_containers_by_label(MANAGED_BY_LABEL, MANAGED_BY_VALUE)
+        .await?;
+
+    let mut removed = 0u32;
+    for name in &managed {
+        if container_mgr.is_running(name).await.unwrap_or(false) {
+            container_mgr
+                .stop(name)
+                .await
+                .with_context(|| format!("failed to stop {name}"))?;
+        }
+        container_mgr
+            .remove_container(name)
+            .await
+            .with_context(|| format!("failed to remove {name}"))?;
+        removed += 1;
+    }
+
+    if removed > 0 {
+        info!("Removed {removed} managed container(s) for clean re-convergence");
+    }
+    Ok(removed)
+}
+
 /// Discover new profile IDs that appeared after a baseline snapshot.
 ///
 /// Compares the current set of .json files in the profiles directory against a baseline
