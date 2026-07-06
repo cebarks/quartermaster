@@ -85,7 +85,8 @@ pub enum HeadlessAction {
     },
     /// Set the desired number of headless clients
     Scale {
-        /// Desired number of clients
+        /// Desired number of clients (max 16)
+        #[arg(value_parser = clap::value_parser!(u32).range(0..=16))]
         count: u32,
     },
 }

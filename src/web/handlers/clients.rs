@@ -554,6 +554,20 @@ pub async fn client_scale(
     let target = form.count;
     let force = form.force;
 
+    if target > crate::config::MAX_HEADLESS_CLIENTS {
+        set_flash(
+            &session,
+            &format!(
+                "Maximum {} headless clients allowed",
+                crate::config::MAX_HEADLESS_CLIENTS
+            ),
+            FlashType::Error,
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/headless"))
+            .finish());
+    }
+
     // Check if we have headless clients configured
     if state.config().headless.is_none() {
         set_flash(
@@ -835,6 +849,20 @@ pub async fn client_create(
                 .finish());
         }
     };
+
+    if headless_config.client_count() >= crate::config::MAX_HEADLESS_CLIENTS {
+        set_flash(
+            &session,
+            &format!(
+                "Maximum {} headless clients allowed",
+                crate::config::MAX_HEADLESS_CLIENTS
+            ),
+            FlashType::Error,
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/headless"))
+            .finish());
+    }
 
     let container_mgr = match require_container_mgr(&state, &session) {
         Ok(m) => m,
