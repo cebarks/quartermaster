@@ -11,6 +11,7 @@ pub mod logs;
 pub mod metrics;
 pub mod mods;
 pub mod modsync;
+pub mod notes;
 pub mod profiles;
 pub mod queue;
 pub mod raids;

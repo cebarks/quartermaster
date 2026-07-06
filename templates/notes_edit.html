@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}{% if note.is_some() %}Edit Note{% else %}New Note{% endif %} — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("notes", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+{% if let Some(n) = note %}
+<h1>Edit Note</h1>
+<form method="post" action="/quma/notes/{{ n.id }}/update">
+{% else %}
+<h1>New Note</h1>
+<form method="post" action="/quma/notes">
+{% endif %}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="form-group">
+        <label for="title">Title</label>
+        <input type="text" id="title" name="title" class="form-control" required
+               value="{% if let Some(n) = note %}{{ n.title }}{% endif %}">
+    </div>
+
+    <div class="form-group">
+        <label for="content">Content (Markdown)</label>
+        <textarea id="content" name="content" class="form-control" rows="12" required>{% if let Some(n) = note %}{{ n.content }}{% endif %}</textarea>
+    </div>
+
+    <div class="form-group">
+        <label>Visibility</label>
+        <div>
+            <label style="margin-right:1rem"><input type="radio" name="visibility" value="private"
+                {% if let Some(n) = note %}{% if n.visibility == "private" %} checked{% endif %}{% else %} checked{% endif %}> Private</label>
+            <label style="margin-right:1rem"><input type="radio" name="visibility" value="public_readonly"
+                {% if let Some(n) = note %}{% if n.visibility == "public_readonly" %} checked{% endif %}{% endif %}> Public (Read-Only)</label>
+            <label><input type="radio" name="visibility" value="public_editable"
+                {% if let Some(n) = note %}{% if n.visibility == "public_editable" %} checked{% endif %}{% endif %}> Public (Editable)</label>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label><input type="checkbox" name="pinned" value="1"
+            {% if let Some(n) = note %}{% if n.pinned %} checked{% endif %}{% endif %}> Pin this note</label>
+    </div>
+
+    <div>
+        <button type="submit" class="btn btn-primary">{% if note.is_some() %}Save{% else %}Create{% endif %}</button>
+        <a href="/quma/notes" class="btn btn-outline" style="margin-left:0.5rem">Cancel</a>
+    </div>
+</form>
+{% endblock %}
