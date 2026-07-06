@@ -9,7 +9,8 @@ use crate::db::rbac::{
 };
 use crate::db::users::{DeleteInviteResult, DeleteUserResult, InviteCodeWithUsers, User};
 use crate::spt::profiles::{
-    list_profiles, load_all_profile_stats, ProfileStatus, SptProfile, SptProfileStats,
+    list_profiles, load_all_profile_stats, load_single_profile_status, ProfileStatus, SptProfile,
+    SptProfileStats,
 };
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
@@ -994,27 +995,12 @@ async fn render_user_row(
 
     let spt_dir = state.spt_dir.clone();
     let aid = user.spt_profile_id.clone().unwrap_or_default();
-    let profile_stats = web::block(move || load_all_profile_stats(&spt_dir))
-        .await
-        .map_err(WebError::from)?;
-
     let profile = if aid.is_empty() {
         ProfileStatus::NotFound
     } else {
-        match profile_stats.get(&aid) {
-            Some(stats) => ProfileStatus::Found(stats.clone()),
-            None => {
-                let path = state
-                    .spt_dir
-                    .join("SPT/user/profiles")
-                    .join(format!("{aid}.json"));
-                if path.exists() {
-                    ProfileStatus::ParseError
-                } else {
-                    ProfileStatus::NotFound
-                }
-            }
-        }
+        web::block(move || load_single_profile_status(&spt_dir, &aid))
+            .await
+            .map_err(WebError::from)?
     };
 
     let spt_dir2 = state.spt_dir.clone();

@@ -138,7 +138,7 @@
         {% if let Some(link) = reset_link %}
         <div class="reset-link-display" style="margin-top:0.5rem">
             <input type="text" readonly value="{{ link }}" style="width:100%;font-family:monospace;font-size:0.85rem" onclick="this.select()">
-            <button type="button" class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText('{{ link }}').then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy Link', 2000); })">Copy Link</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText('{{ link }}').then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy Link', 2000); }).catch(() => { this.textContent='Copy failed'; setTimeout(() => this.textContent='Copy Link', 2000); })">Copy Link</button>
         </div>
         {% endif %}
         {% endif %}

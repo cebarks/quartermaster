@@ -8,7 +8,7 @@
             <label for="forge_token">Forge API Token</label>
             <div style="display: flex; gap: 0.5rem;">
                 <input type="password" id="forge_token" name="forge_token" value="" placeholder="{% if has_forge_token %}Enter new token to replace existing{% else %}Optional: tok_xxx{% endif %}" style="flex: 1;">
-                <button type="button" class="btn" onclick="var i=document.getElementById('forge_token');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+                <button type="button" class="btn" onclick="togglePassword('forge_token', this)">Show</button>
             </div>
             {% if has_forge_token %}
             <label><input type="checkbox" name="clear_forge_token"> Clear existing token</label>

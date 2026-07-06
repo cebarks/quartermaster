@@ -65,11 +65,48 @@
     <p class="text-muted loading-pulse" style="margin: 0.5rem 0 0">Checking for updates...</p>
 </div>
 
+{% if user.can("mods.install") %}
+<div class="card">
+    <h2>Install Mod</h2>
+    <form id="install-form" method="post" action="/quma/mods/install">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="mod_ref" id="install-mod-ref" value="">
+        <label for="install-search">Search Forge, enter a Mod ID, or paste a URL</label>
+        <div style="position:relative">
+            <input type="text" id="install-search"
+                   placeholder="e.g. SAIN, Big Brain, 2326, or https://..."
+                   autocomplete="off"
+                   hx-get="/quma/api/mods/search"
+                   hx-trigger="input changed delay:300ms"
+                   hx-target="#install-search-results"
+                   hx-swap="innerHTML"
+                   hx-indicator="#install-search-spinner"
+                   name="q">
+            <span id="install-search-spinner" class="htmx-indicator text-muted text-sm">Searching...</span>
+            <div id="install-search-results"
+                 style="position:absolute;z-index:100;width:100%;max-height:300px;overflow-y:auto;background:var(--bg-card);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.3)"></div>
+        </div>
+        <div id="install-selected-preview" style="display:none" class="card mt-1" role="status">
+            <div class="flex-between">
+                <div>
+                    <strong id="install-preview-name"></strong>
+                    <span class="text-muted text-sm" id="install-preview-id"></span>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline" id="install-clear-btn" title="Clear selection">✕</button>
+            </div>
+            <p class="text-muted text-sm" id="install-preview-desc" style="margin:0.25rem 0 0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></p>
+            <div id="install-preview-badges" style="margin-top:0.25rem;display:flex;gap:0.5rem"></div>
+        </div>
+        <button type="submit" class="btn mt-1" id="install-submit-btn" disabled>{% call icons::download() %}{% endcall %} Install</button>
+    </form>
+</div>
+{% endif %}
+
 {% if !has_any_mods %}
 <div class="card">
     <div class="empty-state">
         <p>No mods installed.</p>
-        {% if user.can("mods.install") %}<p class="mt-1">Use the form below to install your first mod.</p>{% endif %}
+        {% if user.can("mods.install") %}<p class="mt-1">Use the install form above to add your first mod.</p>{% endif %}
     </div>
 </div>
 {% else %}
@@ -105,43 +142,6 @@
         {% include "mods/partials/list_body.html" %}
     </table>
     <span hx-get="/quma/api/mods/update-status" hx-trigger="load, sse:modsChanged" hx-swap="none"></span>
-</div>
-{% endif %}
-
-{% if user.can("mods.install") %}
-<div class="card">
-    <h2>Install Mod</h2>
-    <form id="install-form" method="post" action="/quma/mods/install">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="mod_ref" id="install-mod-ref" value="">
-        <label for="install-search">Search Forge, enter a Mod ID, or paste a URL</label>
-        <div style="position:relative">
-            <input type="text" id="install-search"
-                   placeholder="e.g. SAIN, Big Brain, 2326, or https://..."
-                   autocomplete="off"
-                   hx-get="/quma/api/mods/search"
-                   hx-trigger="input changed delay:300ms"
-                   hx-target="#install-search-results"
-                   hx-swap="innerHTML"
-                   hx-indicator="#install-search-spinner"
-                   name="q">
-            <span id="install-search-spinner" class="htmx-indicator text-muted text-sm">Searching...</span>
-            <div id="install-search-results"
-                 style="position:absolute;z-index:100;width:100%;max-height:300px;overflow-y:auto;background:var(--bg-card);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.3)"></div>
-        </div>
-        <div id="install-selected-preview" style="display:none" class="card mt-1" role="status">
-            <div class="flex-between">
-                <div>
-                    <strong id="install-preview-name"></strong>
-                    <span class="text-muted text-sm" id="install-preview-id"></span>
-                </div>
-                <button type="button" class="btn btn-sm btn-outline" id="install-clear-btn" title="Clear selection">✕</button>
-            </div>
-            <p class="text-muted text-sm" id="install-preview-desc" style="margin:0.25rem 0 0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></p>
-            <div id="install-preview-badges" style="margin-top:0.25rem;display:flex;gap:0.5rem"></div>
-        </div>
-        <button type="submit" class="btn mt-1" id="install-submit-btn" disabled>{% call icons::download() %}{% endcall %} Install</button>
-    </form>
 </div>
 {% endif %}
 

@@ -25,9 +25,15 @@
             {% endfor %}
         </select>
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required minlength="8">
+        <div style="display: flex; gap: 0.5rem;">
+            <input type="password" id="password" name="password" required minlength="8" style="flex: 1;">
+            <button type="button" class="btn" onclick="togglePassword('password', this)">Show</button>
+        </div>
         <label for="password_confirm">Confirm Password</label>
-        <input type="password" id="password_confirm" name="password_confirm" required minlength="8">
+        <div style="display: flex; gap: 0.5rem;">
+            <input type="password" id="password_confirm" name="password_confirm" required minlength="8" style="flex: 1;">
+            <button type="button" class="btn" onclick="togglePassword('password_confirm', this)">Show</button>
+        </div>
         <button type="submit" class="btn">Create Account</button>
     </form>
 </div>

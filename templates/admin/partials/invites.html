@@ -38,11 +38,11 @@
                 {% if let Some(url) = external_url %}
                 <button type="button" class="btn btn-sm btn-outline" style="margin-left:0.5rem"
                         data-url="{{ url }}/quma/join?code={{ iv.code }}"
-                        onclick="navigator.clipboard.writeText(this.dataset.url).then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy Link', 2000); })">Copy Link</button>
+                        onclick="navigator.clipboard.writeText(this.dataset.url).then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy Link', 2000); }).catch(() => { this.textContent='Copy failed'; setTimeout(() => this.textContent='Copy Link', 2000); })">Copy Link</button>
                 {% endif %}
                 <button type="button" class="btn btn-sm btn-outline" style="margin-left:0.5rem"
                         data-code="{{ iv.code }}"
-                        onclick="navigator.clipboard.writeText(this.dataset.code).then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy Code', 2000); })">Copy Code</button>
+                        onclick="navigator.clipboard.writeText(this.dataset.code).then(() => { this.textContent='Copied!'; setTimeout(() => this.textContent='Copy Code', 2000); }).catch(() => { this.textContent='Copy failed'; setTimeout(() => this.textContent='Copy Code', 2000); })">Copy Code</button>
                 {% endif %}
             </td>
             <td>{% if let Some(u) = iv.created_by_username.as_deref() %}<a href="/quma/profiles/{{ u }}">{{ u }}</a>{% else %}—{% endif %}</td>

@@ -66,15 +66,7 @@
                 <td>{% if let Some(duration) = raid.play_time_seconds %}{{ (duration / 60)|fmt("{}") }}m{% else %}—{% endif %}</td>
                 <td>
                     {% if let Some(status) = raid.exit_status %}
-                        {% if status == "Survived" %}
-                            <span class="badge badge-success">{{ status }}</span>
-                        {% else if status == "Killed" %}
-                            <span class="badge badge-danger">{{ status }}</span>
-                        {% else if status == "Runner" || status == "MissingInAction" %}
-                            <span class="badge badge-warning">{{ status }}</span>
-                        {% else %}
-                            <span class="badge badge-muted">{{ status }}</span>
-                        {% endif %}
+                        {% include "raids/partials/outcome_badge.html" %}
                     {% else %}
                         <span class="badge badge-muted">In Progress</span>
                     {% endif %}
