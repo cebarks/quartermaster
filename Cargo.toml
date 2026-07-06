@@ -15,7 +15,6 @@ path = "src/main.rs"
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.18"
 
 # Serialization & config
 serde = { version = "1", features = ["derive"] }
