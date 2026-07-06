@@ -3,6 +3,7 @@ pub mod auth;
 pub mod backup;
 pub mod clients;
 pub mod common;
+pub mod configs;
 pub mod dashboard;
 pub mod fika_settings;
 pub mod give_items;

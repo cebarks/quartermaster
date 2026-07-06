@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Config Management — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Mod Configuration Files</h1>
+
+{% if let Some(flash_msg) = flash %}
+<div class="flash flash-{{ flash_msg.flash_type }}">{{ flash_msg.message }}</div>
+{% endif %}
+
+<p>Stub template for config list. config_sets.len() = {{ config_sets.len() }}</p>
+{% endblock %}

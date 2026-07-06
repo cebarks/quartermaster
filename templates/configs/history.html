@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}History: {{ filename }} — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Config History</h1>
+
+<p>Stub template for config history.</p>
+<p>Mod: {{ mod_name }} ({{ mod_dir }})</p>
+<p>File: {{ filename }}</p>
+<p>Can restore: {{ can_restore }}</p>
+<p>Entries: {{ entries.len() }}</p>
+{% endblock %}

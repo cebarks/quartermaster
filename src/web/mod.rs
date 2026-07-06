@@ -681,6 +681,28 @@ pub fn configure_app(
             "/addons/{id}/toggle-disable",
             web::post().to(handlers::mods::toggle_addon_disable),
         )
+        // Config management routes
+        .route("/configs", web::get().to(handlers::configs::configs_list))
+        .route(
+            "/mods/{id}/config/{file}",
+            web::get().to(handlers::configs::config_editor),
+        )
+        .route(
+            "/mods/{id}/config/{file}",
+            web::post().to(handlers::configs::config_save),
+        )
+        .route(
+            "/mods/{id}/config/{file}/history",
+            web::get().to(handlers::configs::config_history),
+        )
+        .route(
+            "/mods/{id}/config/{file}/history/view",
+            web::get().to(handlers::configs::config_history_view),
+        )
+        .route(
+            "/mods/{id}/config/{file}/restore",
+            web::post().to(handlers::configs::config_restore),
+        )
         .route(
             "/backups/{id}/restore",
             web::post().to(handlers::backup::restore_backup),

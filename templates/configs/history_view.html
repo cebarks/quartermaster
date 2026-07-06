@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}View {{ filename }} @ {{ rev }} — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Config History View</h1>
+
+<p>Stub template for config history view.</p>
+<p>Mod: {{ mod_name }} ({{ mod_dir }})</p>
+<p>File: {{ filename }}</p>
+<p>Revision: {{ rev }}</p>
+<p>Can restore: {{ can_restore }}</p>
+<p>Content length: {{ content.len() }}</p>
+{% endblock %}

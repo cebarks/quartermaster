@@ -8,6 +8,7 @@ use crate::db::Database;
 
 pub use git::{ConfigHistoryRepo, HistoryEntry};
 
+#[derive(Clone)]
 pub struct ConfigManager {
     pub history: ConfigHistoryRepo,
     spt_dir: PathBuf,

@@ -4,6 +4,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
+#[derive(Clone)]
 pub struct ConfigHistoryRepo {
     #[allow(dead_code)] // ponytail: used in later tasks
     path: PathBuf,

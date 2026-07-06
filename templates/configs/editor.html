@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% block title %}Edit {{ filename }} — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Config Editor</h1>
+
+{% if let Some(flash_msg) = flash %}
+<div class="flash flash-{{ flash_msg.flash_type }}">{{ flash_msg.message }}</div>
+{% endif %}
+
+<p>Stub template for config editor.</p>
+<p>Mod: {{ mod_name }} ({{ mod_dir }})</p>
+<p>File: {{ filename }}</p>
+<p>Can edit: {{ can_edit }}</p>
+<p>Server running: {{ server_running }}</p>
+<p>Content length: {{ content.len() }}</p>
+{% endblock %}
