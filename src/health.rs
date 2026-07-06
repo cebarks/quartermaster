@@ -441,7 +441,7 @@ mod tests {
             },
             config: crate::config::Config::default(),
             db: crate::db::Database::open_in_memory().unwrap(),
-            forge: crate::forge::client::ForgeClient::new(None).unwrap(),
+            forge: crate::forge::client::ForgeClient::new().unwrap(),
             container_mgr: None,
         }
     }

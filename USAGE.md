@@ -164,7 +164,6 @@ Config lives at `<spt_dir>/quartermaster.toml`. All settings can be overridden w
 
 ```toml
 spt_dir = "/path/to/spt-server"
-forge_token = "your-forge-api-token"
 
 # Web UI
 web_bind = "0.0.0.0"           # default
@@ -285,7 +284,6 @@ The following `QUMA_*` environment variables override their corresponding config
 |----------|-------------|------|
 | `QUMA_SPT_DIR` | `spt_dir` | path |
 | `QUMA_CONFIG` | config file path | path |
-| `QUMA_FORGE_TOKEN` | `forge_token` | string |
 | `QUMA_WEB_BIND` | `web_bind` | string |
 | `QUMA_WEB_PORT` | `web_port` | integer |
 | `QUMA_WEB_WORKERS` | `web_workers` | integer |

@@ -61,12 +61,6 @@ pub enum Command {
         /// Set admin password non-interactively (min 8 chars)
         #[arg(long)]
         admin_password: Option<String>,
-        /// Set Forge API token non-interactively
-        #[arg(long)]
-        forge_token: Option<String>,
-        /// Skip Forge API token prompt
-        #[arg(long, conflicts_with = "forge_token")]
-        no_forge_token: bool,
         /// Use a separate container name for development (won't collide with production)
         #[arg(long)]
         dev: bool,
