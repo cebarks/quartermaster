@@ -1155,6 +1155,18 @@ async fn remove_excess_clients(
         container_mgr.remove_container(&name).await?;
     }
 
+    // Clean up overlay directories for removed clients
+    for i in (desired_count + 1)..=current_count {
+        let overlay = client_overlay_dir(&headless_config.install_dir, i);
+        if overlay.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&overlay) {
+                warn!("Failed to clean overlay dir for client {i}: {e}");
+            } else {
+                info!("Removed overlay directory for client {i}");
+            }
+        }
+    }
+
     // 2. Edit fika.jsonc to set amount
     {
         // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
