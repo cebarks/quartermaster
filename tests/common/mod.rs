@@ -198,6 +198,7 @@ impl TestAppBuilder {
             ),
             integrity_cache: spt_quartermaster::web::integrity_cache::IntegrityCache::new(300),
             log_level_counts,
+            config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(&spt_dir),
         });
 
         TestApp {
