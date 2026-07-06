@@ -75,8 +75,6 @@ async fn main() -> Result<()> {
             no_fika,
             no_modsync,
             admin_password,
-            forge_token,
-            no_forge_token,
             dev,
             container_name,
         } => {
@@ -87,8 +85,6 @@ async fn main() -> Result<()> {
                     no_fika: *no_fika,
                     no_modsync: *no_modsync,
                     admin_password: admin_password.clone(),
-                    forge_token: forge_token.clone(),
-                    no_forge_token: *no_forge_token,
                     dev: *dev,
                     container_name: container_name.clone(),
                 },

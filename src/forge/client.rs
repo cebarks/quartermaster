@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use tokio::io::AsyncWriteExt;
 
 use super::cache::ForgeResponseCache;
@@ -37,28 +37,20 @@ pub struct ForgeClient {
 }
 
 impl ForgeClient {
-    /// Create a new client pointing at the production Forge API.
-    /// If `token` is provided it is sent as a Bearer token on every request.
-    pub fn new(token: Option<String>) -> Result<Self> {
-        Self::build(DEFAULT_BASE_URL.to_string(), token)
+    pub fn new() -> Result<Self> {
+        Self::build(DEFAULT_BASE_URL.to_string())
     }
 
     #[allow(dead_code)] // used by integration tests
-    pub fn with_base_url(base_url: String, token: Option<String>) -> Result<Self> {
-        Self::build(base_url, token)
+    pub fn with_base_url(base_url: String) -> Result<Self> {
+        Self::build(base_url)
     }
 
-    fn build(base_url: String, token: Option<String>) -> Result<Self> {
+    fn build(base_url: String) -> Result<Self> {
         let mut headers = HeaderMap::new();
 
         let ua = format!("quartermaster/{}", env!("CARGO_PKG_VERSION"));
         headers.insert(USER_AGENT, HeaderValue::from_str(&ua)?);
-
-        if let Some(ref t) = token {
-            let val =
-                HeaderValue::from_str(&format!("Bearer {t}")).context("invalid auth token")?;
-            headers.insert(AUTHORIZATION, val);
-        }
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
@@ -319,7 +311,7 @@ impl ForgeClient {
                 .send()
                 .await
         } else {
-            // External host (GitLab, GitHub, etc.) — don't send Forge auth token
+            // External host (GitLab, GitHub, etc.) — different timeout config
             reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(30))
                 .read_timeout(EXTERNAL_READ_TIMEOUT)
@@ -425,7 +417,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn test_client(server: &MockServer) -> ForgeClient {
-        ForgeClient::with_base_url(server.uri(), None).unwrap()
+        ForgeClient::with_base_url(server.uri()).unwrap()
     }
 
     #[tokio::test]
@@ -872,37 +864,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn download_file_external_url_omits_auth() {
-        let forge_server = MockServer::start().await;
-        let external_server = MockServer::start().await;
-        let file_content = b"external file content";
-
-        Mock::given(method("GET"))
-            .and(path("/files/mod.zip"))
-            .and(wiremock::matchers::header_exists("Authorization"))
-            .respond_with(ResponseTemplate::new(401))
-            .mount(&external_server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path("/files/mod.zip"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(file_content.to_vec()))
-            .mount(&external_server)
-            .await;
-
-        let client =
-            ForgeClient::with_base_url(forge_server.uri(), Some("secret-token".into())).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let dest = dir.path().join("mod.zip");
-
-        let url = format!("{}/files/mod.zip", external_server.uri());
-        client.download_file(&url, &dest).await.unwrap();
-
-        let written = std::fs::read(&dest).unwrap();
-        assert_eq!(written, file_content);
-    }
-
-    #[tokio::test]
     async fn download_file_404_returns_error() {
         let server = MockServer::start().await;
 
@@ -1015,9 +976,9 @@ mod tests {
     #[test]
     fn is_forge_url_returns_false_on_parse_failure() {
         let client =
-            ForgeClient::with_base_url("https://forge.sp-tarkov.com/api/v0".into(), None).unwrap();
+            ForgeClient::with_base_url("https://forge.sp-tarkov.com/api/v0".into()).unwrap();
 
-        // Unparseable URL should return false (don't leak auth token)
+        // Unparseable URL should return false
         assert!(!client.is_forge_url("not a url at all"));
 
         // Valid URL on different host should return false
@@ -1025,29 +986,6 @@ mod tests {
 
         // Valid URL on same host should return true
         assert!(client.is_forge_url("https://forge.sp-tarkov.com/api/v0/files/download.zip"));
-    }
-
-    #[tokio::test]
-    async fn auth_token_sent_in_header() {
-        let server = MockServer::start().await;
-        let body = serde_json::json!({"data": []});
-
-        Mock::given(method("GET"))
-            .and(path("/mods"))
-            .and(wiremock::matchers::header(
-                "Authorization",
-                "Bearer test-token-123",
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client =
-            ForgeClient::with_base_url(server.uri(), Some("test-token-123".to_string())).unwrap();
-
-        let mods = client.search_mods("test").await.unwrap();
-        assert!(mods.is_empty());
     }
 
     #[tokio::test]
@@ -1427,7 +1365,7 @@ mod tests {
             .mount(&external_server)
             .await;
 
-        let client = ForgeClient::with_base_url(forge_server.uri(), None).unwrap();
+        let client = ForgeClient::with_base_url(forge_server.uri()).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("huge.7z");
 

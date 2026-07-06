@@ -122,8 +122,8 @@ impl TestAppBuilder {
         };
 
         // Create ForgeClient pointing at mock server
-        let forge = ForgeClient::with_base_url(mock_server.uri(), None)
-            .expect("failed to create ForgeClient");
+        let forge =
+            ForgeClient::with_base_url(mock_server.uri()).expect("failed to create ForgeClient");
 
         // Build a test config with known session secret
         let config = Config {

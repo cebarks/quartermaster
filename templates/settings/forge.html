@@ -2,19 +2,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="card">
         <h2>Forge API</h2>
-        <p class="text-muted text-sm mb-1">Configure SPT Forge API access and caching behavior.</p>
-
-        <div class="form-group">
-            <label for="forge_token">Forge API Token</label>
-            <div style="display: flex; gap: 0.5rem;">
-                <input type="password" id="forge_token" name="forge_token" value="" placeholder="{% if has_forge_token %}Enter new token to replace existing{% else %}Optional: tok_xxx{% endif %}" style="flex: 1;">
-                <button type="button" class="btn" onclick="togglePassword('forge_token', this)">Show</button>
-            </div>
-            {% if has_forge_token %}
-            <label><input type="checkbox" name="clear_forge_token"> Clear existing token</label>
-            {% endif %}
-            <p class="text-muted text-sm">Optional API token for authenticated Forge API requests.{% if has_forge_token %} A token is currently configured. Leave blank to keep it, or enter a new value to replace it.{% endif %}</p>
-        </div>
+        <p class="text-muted text-sm mb-1">Configure SPT Forge API caching behavior.</p>
 
         <div class="form-group">
             <label for="forge_cache_ttl">Cache TTL (seconds)</label>
