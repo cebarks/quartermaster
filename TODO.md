@@ -16,8 +16,6 @@
     - account creation dropdown missing SPT dev profiles (toggleable?)
 - can't remove already approved mods that haven't been installed
 - mod requests list shouldn't include already installed mods
-- numbers on the stats board (particularly map popularity) seem wrong, not deduplicated?
-- /quma/raids returns 500 always
 
 ## Core Architecture
 - consolidate all mod management logic from all paths (web handlers bypass `ops.rs` in places; install logic duplicated between mods and requests handlers)

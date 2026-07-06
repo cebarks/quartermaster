@@ -486,8 +486,10 @@ impl Database {
     }
 
     pub fn get_server_raid_stats(&self) -> rusqlite::Result<ServerRaidStats> {
+        // Dedup co-op raids: multiple players share the same server_id,
+        // solo raids have NULL server_id so use row id as fallback key.
         let total_raids: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0",
+            "SELECT COUNT(DISTINCT COALESCE(r.server_id, 'solo_' || r.id)) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0",
             [],
             |row| row.get(0),
         )?;
@@ -498,20 +500,21 @@ impl Database {
             |row| row.get(0),
         )?;
 
-        let survived_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE r.exit_status = 'Survived' AND u.is_headless = 0",
+        // Survival rate stays per-player: each player's outcome is independent
+        let (player_raid_count, survived_count): (i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.exit_status = 'Survived' THEN 1 ELSE 0 END), 0) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
 
-        let overall_survival_rate = if total_raids > 0 {
-            (survived_count as f64 / total_raids as f64) * 100.0
+        let overall_survival_rate = if player_raid_count > 0 {
+            (survived_count as f64 / player_raid_count as f64) * 100.0
         } else {
             0.0
         };
 
         let mut map_stmt = self.conn.prepare(
-            "SELECT r.map, COUNT(*) as count FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 GROUP BY r.map ORDER BY count DESC",
+            "SELECT r.map, COUNT(DISTINCT COALESCE(r.server_id, 'solo_' || r.id)) as count FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 GROUP BY r.map ORDER BY count DESC",
         )?;
         let map_counts: Vec<(String, i64)> = map_stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -541,6 +544,23 @@ impl Database {
             top_killers,
             recent_raids,
         })
+    }
+
+    pub fn get_all_raids(&self, limit: i64, offset: i64) -> rusqlite::Result<Vec<(Raid, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT r.id, r.user_id, r.spt_profile_id, r.server_id, r.player_side, r.faction, r.map, r.time_variant, r.started_at, r.ended_at, r.play_time_seconds, r.exit_status, r.exit_name, r.killer_id, r.killer_aid, r.xp_before, r.xp_after, r.level_before, r.level_after, r.victim_count_before, u.username
+             FROM raids r
+             JOIN users u ON r.user_id = u.id
+             WHERE u.is_headless = 0
+             ORDER BY r.started_at DESC
+             LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(params![limit, offset], |row| {
+            let raid = row_to_raid(row)?;
+            let username: String = row.get(20)?;
+            Ok((raid, username))
+        })?;
+        rows.collect()
     }
 
     pub fn get_recent_raids(&self, limit: i64) -> rusqlite::Result<Vec<(Raid, String)>> {
