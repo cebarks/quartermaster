@@ -440,7 +440,7 @@ pub fn setup_client_overlay(
         }
     }
 
-    let port = client_port(base_udp_port, index);
+    let port = client_port(base_udp_port, index)?;
     write_fika_udp_port(&overlay_dir, port)?;
     write_fika_upnp(&overlay_dir, use_upnp)?;
 
@@ -609,8 +609,11 @@ pub fn client_overlay_dir(install_dir: &Path, index: u32) -> PathBuf {
 /// - index 1 → base_udp_port
 /// - index 2 → base_udp_port + 1
 /// - index 3 → base_udp_port + 2
-pub fn client_port(base: u16, index: u32) -> u16 {
-    base + (index - 1) as u16
+pub fn client_port(base: u16, index: u32) -> Result<u16> {
+    let offset = u16::try_from(index.checked_sub(1).context("client index must be >= 1")?)
+        .context("client index too large for u16 port offset")?;
+    base.checked_add(offset)
+        .context(format!("port overflow: {base} + {offset} exceeds u16::MAX"))
 }
 
 /// Find containers that match the naming pattern but lack the managed-by label.
@@ -1314,7 +1317,7 @@ async fn create_client_container(
     // Environment variables
     let mut env = vec![(
         "UDP_PORT".to_string(),
-        client_port(headless_config.base_udp_port, index).to_string(),
+        client_port(headless_config.base_udp_port, index)?.to_string(),
     )];
 
     // Always set PROFILE_ID — the claudeoris image defaults to "test" if unset,
@@ -1379,7 +1382,7 @@ async fn create_client_container(
         ("quma.client.index".to_string(), index.to_string()),
     ];
 
-    let udp_port = client_port(headless_config.base_udp_port, index);
+    let udp_port = client_port(headless_config.base_udp_port, index)?;
     let ports = vec![PortMapping {
         host_port: udp_port,
         container_port: udp_port,
@@ -1502,8 +1505,8 @@ mod tests {
 
     #[test]
     fn client_udp_port() {
-        assert_eq!(client_port(25565, 1), 25565);
-        assert_eq!(client_port(25565, 3), 25567);
+        assert_eq!(client_port(25565, 1).unwrap(), 25565);
+        assert_eq!(client_port(25565, 3).unwrap(), 25567);
     }
 
     #[test]
