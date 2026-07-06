@@ -164,8 +164,16 @@ impl ClientSupervisor {
                     existing.cpu_percent = new_state.cpu_percent;
                     existing.memory_mb = new_state.memory_mb;
                     existing.health = new_state.health.clone();
-                    // NOTE: consecutive_failures and first_seen are owned by
-                    // exit watchers — do NOT overwrite them here.
+                    // Reset failure counter when container is running and healthy
+                    // (handles recovery after manual restart outside of quartermaster)
+                    if matches!(
+                        new_state.health,
+                        ClientHealth::Healthy | ClientHealth::Degraded
+                    ) {
+                        existing.consecutive_failures = 0;
+                    }
+                    // NOTE: consecutive_failures is reset above when container recovers.
+                    // first_seen is owned by exit watchers — do NOT overwrite it here.
                 } else {
                     // New client, add it
                     state_lock.push(new_state.clone());

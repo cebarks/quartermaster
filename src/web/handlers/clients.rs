@@ -198,6 +198,16 @@ async fn client_lifecycle(
             &format!("Client {index} {verb_past}"),
             FlashType::Success,
         );
+        // Reset failure state on manual start/restart so GivenUp can recover
+        if action == "start" || action == "restart" {
+            if let Some(states) = &state.client_states {
+                let mut clients = states.write().await;
+                if let Some(client) = clients.iter_mut().find(|c| c.index == index) {
+                    client.consecutive_failures = 0;
+                    client.health = ClientHealth::Degraded;
+                }
+            }
+        }
     }
 
     Ok(HttpResponse::SeeOther()
