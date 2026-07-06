@@ -1034,6 +1034,29 @@ async fn restart_running_clients(container_mgr: &ContainerManager, count: u32) -
     }
 }
 
+/// Log a warning if human players are connected when the SPT server is about to restart.
+async fn warn_active_players(spt_client: &SptClient, reason: &str) {
+    match spt_client.headless_clients().await {
+        Ok(resp) => {
+            let player_count: usize = resp
+                .headlesses
+                .values()
+                .filter(|info| matches!(info.state, crate::spt::headless::EHeadlessStatus::InRaid))
+                .map(|info| info.players.len())
+                .sum();
+            if player_count > 0 {
+                warn!(
+                    "Restarting SPT server ({reason}) with {player_count} player(s) \
+                     currently in headless raids — they will be disconnected"
+                );
+            }
+        }
+        Err(_) => {
+            // Server may already be unresponsive — nothing to warn about
+        }
+    }
+}
+
 /// Ensure containers exist from current_count up to desired_count.
 #[allow(clippy::too_many_arguments)]
 async fn ensure_clients(
@@ -1065,6 +1088,7 @@ async fn ensure_clients(
         .as_deref()
         .expect("server_container validated by HeadlessConfig::validate");
 
+    warn_active_players(spt_client, "scaling up headless clients").await;
     info!("Stopping SPT server");
     container_mgr
         .stop(container)
@@ -1183,6 +1207,7 @@ async fn remove_excess_clients(
         .as_deref()
         .expect("server_container validated by HeadlessConfig::validate");
 
+    warn_active_players(spt_client, "scaling down headless clients").await;
     info!("Restarting SPT server to deregister removed headless clients");
     container_mgr
         .stop(container)
