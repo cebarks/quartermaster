@@ -716,6 +716,10 @@ pub fn configure_app(
             "/queue/{id}/cancel",
             web::post().to(handlers::queue::cancel_op),
         )
+        .route(
+            "/queue/{id}/cancel-reject",
+            web::post().to(handlers::queue::cancel_and_reject_op),
+        )
         .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
         .route(
             "/headless/{n}/restart",
