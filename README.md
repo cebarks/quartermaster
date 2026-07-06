@@ -138,6 +138,10 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 | `src/logging/` | Structured logging (console, file, SQLite, SSE broadcast) |
 | `src/config.rs` | Config types, TOML serialization, `QUMA_*` env overrides |
 
+## AI Disclosure
+
+Portions of this codebase were implemented with the assistance of LLM-based tools (Claude Code). All architecture, design decisions, and direction were done by a human — the LLM was used as an implementation aid under continuous human supervision and review.
+
 ## License
 
 [AGPL-3.0](LICENSE)

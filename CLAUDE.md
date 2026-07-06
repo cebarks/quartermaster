@@ -139,3 +139,7 @@ Do not pause for confirmation on any of these during SDD execution. The review c
 - `include=versions` on list endpoint returns abbreviated versions (last 6, no `link`/`content_length`/`fika_compatibility`).
 - `include=versions` on single-mod endpoint returns full versions (last 10, all fields).
 - Dedicated versions endpoint (`GET /mod/{id}/versions`) supports filtering and pagination.
+
+## AI Disclosure
+
+This project uses LLM-based tools (Claude Code) for implementation assistance. All architecture, design, and technical direction are human-driven — the LLM operates as an implementation aid under continuous supervision and review. This CLAUDE.md file itself is how the LLM receives project context and conventions.
