@@ -367,6 +367,14 @@ pub fn configure_app(
             "/requests/{id}/install",
             web::post().to(handlers::requests::install_from_request),
         )
+        .route(
+            "/requests/{id}/reopen",
+            web::post().to(handlers::requests::reopen_request),
+        )
+        .route(
+            "/requests/{id}/history",
+            web::get().to(handlers::requests::request_history),
+        )
         // SVM API routes
         .route(
             "/svm/edit/{section}",

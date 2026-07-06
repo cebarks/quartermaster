@@ -5,7 +5,7 @@ use askama::Template;
 
 use crate::config::FIKA_CLIENT_FORGE_ID;
 use crate::db::rbac::Permission;
-use crate::db::requests::{ModRequest, ModRequestView, VoteComment};
+use crate::db::requests::{ModRequest, ModRequestView, RequestStatus, VoteComment};
 use crate::forge::models::FikaCompat;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::csrf;
@@ -35,11 +35,6 @@ mod filters {
 }
 
 // -- Query / Form structs --
-
-#[derive(serde::Deserialize)]
-pub struct StatusQuery {
-    pub status: Option<String>,
-}
 
 #[derive(serde::Deserialize)]
 pub struct SearchQuery {
@@ -74,10 +69,11 @@ pub struct ResolveForm {
 #[template(path = "mods/partials/requests.html")]
 struct RequestsTabTemplate {
     user: SessionUser,
-    requests: Vec<ModRequestView>,
-    active_filter: String,
+    pending_requests: Vec<ModRequestView>,
+    approved_requests: Vec<ModRequestView>,
+    queued_requests: Vec<ModRequestView>,
+    completed_requests: Vec<ModRequestView>,
     csrf_token: String,
-    has_uninstalled_approved: bool,
 }
 
 #[derive(Template)]
@@ -102,7 +98,36 @@ struct VoteCommentsTemplate {
     comments: Vec<VoteComment>,
 }
 
+#[derive(Template)]
+#[template(path = "mods/partials/request_history.html")]
+struct RequestHistoryTemplate {
+    entries: Vec<crate::db::requests::RequestStatusLog>,
+}
+
 // -- Helpers --
+
+fn partition_requests(
+    requests: Vec<ModRequestView>,
+) -> (
+    Vec<ModRequestView>,
+    Vec<ModRequestView>,
+    Vec<ModRequestView>,
+    Vec<ModRequestView>,
+) {
+    let mut pending = Vec::new();
+    let mut approved = Vec::new();
+    let mut queued = Vec::new();
+    let mut completed = Vec::new();
+    for r in requests {
+        match r.request.status.as_str() {
+            "pending" => pending.push(r),
+            "approved" => approved.push(r),
+            "queued" => queued.push(r),
+            _ => completed.push(r),
+        }
+    }
+    (pending, approved, queued, completed)
+}
 
 fn strip_html_tags(html: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> =
@@ -206,6 +231,9 @@ async fn trigger_install_for_request(
         let mod_name = request.mod_name.clone();
         let version_id = version.id;
         let username = user.username.clone();
+        let request_id = request.id;
+        let user_id = user.user_id;
+        let metadata = serde_json::json!({"request_id": request_id}).to_string();
         let already_queued = web::block(move || {
             let db = db.lock();
             if db.has_pending_op(forge_mod_id, crate::db::users::QueueAction::Install)? {
@@ -216,8 +244,15 @@ async fn trigger_install_for_request(
                 forge_mod_id,
                 Some(version_id),
                 &mod_name,
-                None,
+                Some(&metadata),
                 Some(&username),
+            )?;
+            db.transition_request_status(
+                request_id,
+                &[RequestStatus::Approved],
+                RequestStatus::Queued,
+                Some(user_id),
+                Some("Queued for install"),
             )?;
             Ok(false)
         })
@@ -238,6 +273,7 @@ async fn trigger_install_for_request(
             message += "Install already in progress.";
             return Ok(message);
         };
+        let request_id = request.id;
         let tasks = state.tasks.clone();
         let forge = state.forge.clone();
         let spt_dir = state.spt_dir.clone();
@@ -290,6 +326,20 @@ async fn trigger_install_for_request(
             match result {
                 Ok(()) => {
                     tracing::info!(forge_mod_id, "mod installed from request");
+                    {
+                        let db_req = db.clone();
+                        let _ = web::block(move || {
+                            let db_req = db_req.lock();
+                            db_req.transition_request_status(
+                                request_id,
+                                &[RequestStatus::Approved],
+                                RequestStatus::Installed,
+                                None,
+                                Some("Installed from request"),
+                            )
+                        })
+                        .await;
+                    }
                     update_cache.invalidate();
                     mod_zip_cache.invalidate();
                     state_clone.modsync_installed.store(
@@ -327,27 +377,15 @@ pub async fn requests_tab(
     state: Data<AppState>,
     req: HttpRequest,
     session: Session,
-    query: Query<StatusQuery>,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
     let csrf_token = csrf::get_or_create_token(&session);
 
-    let filter = query
-        .status
-        .clone()
-        .unwrap_or_else(|| "pending".to_string());
-    let filter_param = if filter == "all" {
-        None
-    } else {
-        Some(filter.as_str())
-    };
-
     let db = state.db.clone();
     let user_id = user.user_id;
-    let filter_owned = filter_param.map(|s| s.to_string());
-    let requests = web::block(move || {
+    let all_requests = web::block(move || {
         let db = db.lock();
-        db.list_mod_requests(filter_owned.as_deref(), user_id)
+        db.list_mod_requests(None, user_id)
     })
     .await
     .map_err(WebError::from)?
@@ -359,7 +397,7 @@ pub async fn requests_tab(
     const MAX_BACKGROUND_REFRESHES: usize = 3;
     if let Some(ttl) = state.config().forge_cache_ttl.filter(|&t| t > 0) {
         let mut refresh_count = 0usize;
-        for rv in &requests {
+        for rv in &all_requests {
             if refresh_count >= MAX_BACKGROUND_REFRESHES {
                 break;
             }
@@ -399,14 +437,16 @@ pub async fn requests_tab(
         }
     }
 
-    // ponytail: stub until Task 2 implements proper status checks
-    let has_uninstalled_approved = requests.iter().any(|r| r.request.status == "approved");
+    let (pending_requests, approved_requests, queued_requests, completed_requests) =
+        partition_requests(all_requests);
+
     let tmpl = RequestsTabTemplate {
         user,
-        requests,
-        active_filter: filter,
+        pending_requests,
+        approved_requests,
+        queued_requests,
+        completed_requests,
         csrf_token,
-        has_uninstalled_approved,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -495,20 +535,24 @@ pub async fn create_request(
 
     // Return the updated requests tab
     let db = state.db.clone();
-    let requests = web::block(move || {
+    let all_requests = web::block(move || {
         let db = db.lock();
-        db.list_mod_requests(Some("pending"), user_id)
+        db.list_mod_requests(None, user_id)
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let (pending_requests, approved_requests, queued_requests, completed_requests) =
+        partition_requests(all_requests);
+
     let tmpl = RequestsTabTemplate {
         user,
-        requests,
-        active_filter: "pending".to_string(),
+        pending_requests,
+        approved_requests,
+        queued_requests,
+        completed_requests,
         csrf_token,
-        has_uninstalled_approved: false,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -543,7 +587,11 @@ pub async fn vote(
     .map_err(WebError::from)?
     .ok_or(WebError::NotFound)?;
 
-    if request.status != "pending" {
+    let status: RequestStatus = request
+        .status
+        .parse()
+        .map_err(|e: String| WebError::Internal(anyhow::anyhow!(e)))?;
+    if status != RequestStatus::Pending {
         return Err(WebError::BadRequest(
             "Voting is only allowed on pending requests.".to_string(),
         )
@@ -663,35 +711,48 @@ pub async fn resolve_request(
         return Err(WebError::BadRequest("Invalid action.".to_string()).into());
     }
 
-    let status = if action == "approve" {
-        "approved"
-    } else {
-        "rejected"
-    };
     let comment = form.comment.as_deref().filter(|s| !s.trim().is_empty());
 
-    // ponytail: stub until Task 2 implements proper transition logic
-    let db = state.db.clone();
+    // Determine allowed source statuses and target
+    let (expected_from, new_status) = if action == "approve" {
+        (vec![RequestStatus::Pending], RequestStatus::Approved)
+    } else {
+        // reject allowed from pending or approved
+        (
+            vec![RequestStatus::Pending, RequestStatus::Approved],
+            RequestStatus::Rejected,
+        )
+    };
+
     let resolved_by = user.user_id;
     let comment_owned = comment.map(|s| s.to_string());
-    let status_owned = status.to_string();
-    web::block({
-        let db = db.clone();
-        let status_owned = status_owned.clone();
+
+    // Atomic: set resolver + transition in one web::block (one lock acquisition)
+    let db = state.db.clone();
+    let transitioned = web::block({
         let comment_owned = comment_owned.clone();
         move || {
             let db = db.lock();
             db.set_request_resolver(request_id, resolved_by, comment_owned.as_deref())?;
-            db.conn().execute(
-                "UPDATE mod_requests SET status = ?1 WHERE id = ?2",
-                rusqlite::params![status_owned, request_id],
-            )?;
-            Ok::<_, rusqlite::Error>(())
+            db.transition_request_status(
+                request_id,
+                &expected_from,
+                new_status,
+                Some(resolved_by),
+                comment_owned.as_deref(),
+            )
         }
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
+
+    if !transitioned {
+        return Err(WebError::BadRequest(
+            "This request has already been resolved or its status changed.".to_string(),
+        )
+        .into());
+    }
 
     let mut message = if action == "approve" {
         "Request approved.".to_string()
@@ -701,7 +762,7 @@ pub async fn resolve_request(
 
     if action == "approve" && form.install.as_deref() == Some("true") {
         let request = web::block({
-            let db = db.clone();
+            let db = state.db.clone();
             move || {
                 let db = db.lock();
                 db.get_mod_request(request_id)
@@ -771,7 +832,11 @@ pub async fn install_from_request(
     .map_err(WebError::from)?
     .ok_or(WebError::NotFound)?;
 
-    if request.status != "approved" {
+    let current: RequestStatus = request
+        .status
+        .parse()
+        .map_err(|e: String| WebError::Internal(anyhow::anyhow!(e)))?;
+    if current != RequestStatus::Approved {
         return Err(
             WebError::BadRequest("Only approved requests can be installed.".to_string()).into(),
         );
@@ -883,22 +948,24 @@ pub async fn install_all_approved(
 
     let csrf_token = csrf::get_or_create_token(&session);
     let user_id = user.user_id;
-    let requests = web::block(move || {
+    let all_requests = web::block(move || {
         let db = db.lock();
-        db.list_mod_requests(Some("approved"), user_id)
+        db.list_mod_requests(None, user_id)
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    // ponytail: stub until Task 2 implements proper status checks
-    let has_uninstalled_approved = !requests.is_empty();
+    let (pending_requests, approved_requests, queued_requests, completed_requests) =
+        partition_requests(all_requests);
+
     let tmpl = RequestsTabTemplate {
         user,
-        requests,
-        active_filter: "approved".to_string(),
+        pending_requests,
+        approved_requests,
+        queued_requests,
+        completed_requests,
         csrf_token,
-        has_uninstalled_approved,
     };
 
     let toast_class = if failed > 0 {
@@ -911,6 +978,91 @@ pub async fn install_all_approved(
         "<div class=\"toast {toast_class}\" style=\"margin-bottom:0.5rem\">{message}</div>{html}"
     );
     Ok(Html::new(html))
+}
+
+pub async fn reopen_request(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<i64>,
+    form: Form<csrf::CsrfForm>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::RequestsResolve)?;
+    if !csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let request_id = path.into_inner();
+    let user_id = user.user_id;
+
+    let transitioned = web::block({
+        let db = state.db.clone();
+        move || {
+            let db = db.lock();
+            db.transition_request_status(
+                request_id,
+                &[RequestStatus::Rejected],
+                RequestStatus::Pending,
+                Some(user_id),
+                Some("Reopened"),
+            )
+        }
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    if !transitioned {
+        return Err(
+            WebError::BadRequest("Only rejected requests can be reopened.".to_string()).into(),
+        );
+    }
+
+    let views = web::block({
+        let db = state.db.clone();
+        move || {
+            let db = db.lock();
+            db.list_mod_requests(None, user_id)
+        }
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let rv = views
+        .into_iter()
+        .find(|v| v.request.id == request_id)
+        .ok_or(WebError::NotFound)?;
+    let csrf_token = csrf::get_or_create_token(&session);
+    let tmpl = RequestCardTemplate {
+        user,
+        r: rv,
+        csrf_token,
+        message: Some("Request reopened.".to_string()),
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn request_history(
+    state: Data<AppState>,
+    req: HttpRequest,
+    path: Path<i64>,
+) -> actix_web::Result<Html> {
+    let _user = require_auth(&req)?;
+    let request_id = path.into_inner();
+
+    let db = state.db.clone();
+    let entries = web::block(move || {
+        let db = db.lock();
+        db.get_request_status_log(request_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let tmpl = RequestHistoryTemplate { entries };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
 #[cfg(test)]
