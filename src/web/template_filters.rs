@@ -1,3 +1,5 @@
+#![allow(dead_code)] // ponytail: markdown filter used via templates
+
 fn format_bytes(n: i64) -> String {
     const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
     if n == 0 {
@@ -92,6 +94,16 @@ pub fn format_roubles_i64(value: &i64, _env: &dyn askama::Values) -> askama::Res
 #[askama::filter_fn]
 pub fn format_datetime(s: &str, _env: &dyn askama::Values) -> askama::Result<String> {
     Ok(s.chars().take(19).collect())
+}
+
+#[askama::filter_fn]
+pub fn markdown(content: &str, _env: &dyn askama::Values) -> askama::Result<String> {
+    use pulldown_cmark::{html, Options, Parser};
+    let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    let parser = Parser::new_ext(content, opts);
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, parser);
+    Ok(ammonia::clean(&html_output))
 }
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -190,5 +202,32 @@ mod tests {
     #[test]
     fn format_roubles_exact_thousand() {
         assert_eq!(format_roubles_value(1000), "1,000");
+    }
+
+    fn render_markdown(content: &str) -> String {
+        use pulldown_cmark::{html, Options, Parser};
+        let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+        let parser = Parser::new_ext(content, opts);
+        let mut html_output = String::new();
+        html::push_html(&mut html_output, parser);
+        ammonia::clean(&html_output)
+    }
+
+    #[test]
+    fn markdown_renders_basic() {
+        let html = render_markdown("**bold**");
+        assert!(html.contains("<strong>bold</strong>"));
+    }
+
+    #[test]
+    fn markdown_sanitizes_scripts() {
+        let html = render_markdown("<script>alert(1)</script>");
+        assert!(!html.contains("<script>"));
+    }
+
+    #[test]
+    fn markdown_renders_strikethrough() {
+        let html = render_markdown("~~deleted~~");
+        assert!(html.contains("<del>deleted</del>"));
     }
 }
