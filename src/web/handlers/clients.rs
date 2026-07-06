@@ -19,6 +19,11 @@ use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
+#[allow(unused_imports)]
+mod filters {
+    pub use crate::web::template_filters::*;
+}
+
 #[derive(Clone)]
 struct PlayerInfo {
     id: String,
@@ -73,6 +78,7 @@ struct ClientDetailTemplate {
     csrf_token: String,
     nav: NavContext,
     client: ClientView,
+    session_stats: Vec<crate::db::headless_stats::HeadlessSessionRow>,
 }
 
 #[derive(Template)]
@@ -344,12 +350,24 @@ pub async fn client_detail(
         .into_iter()
         .next()
         .ok_or(WebError::NotFound)?;
+
+    let db = state.db.clone();
+    let client_index = index;
+    let session_stats = web::block(move || {
+        let db = db.lock();
+        db.get_recent_session_stats(client_index, 20)
+    })
+    .await
+    .map_err(WebError::from)?
+    .unwrap_or_default();
+
     let tmpl = ClientDetailTemplate {
         user,
         flash,
         csrf_token,
         nav: NavContext::from_state(&state),
         client,
+        session_stats,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
 }

@@ -143,6 +143,34 @@
     </table>
 </div>
 
+{% if !session_stats.is_empty() %}
+<div class="card">
+    <h2>Recent Raids</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Completed</th>
+                <th>Duration</th>
+                <th>Sent</th>
+                <th>Received</th>
+                <th>Loss</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for stat in session_stats %}
+            <tr>
+                <td>{{ stat.completed_at }}</td>
+                <td>{{ stat.time_in_raid_seconds / 60 }}m {{ stat.time_in_raid_seconds % 60 }}s</td>
+                <td>{{ stat.sent_data_bytes / 1024 / 1024 }} MB ({{ stat.sent_packets }} pkts)</td>
+                <td>{{ stat.received_data_bytes / 1024 / 1024 }} MB ({{ stat.received_packets }} pkts)</td>
+                <td>{{ stat.packet_loss_percent|fmt_pct }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 {% if client.state.fika_status == Some(crate::spt::headless::EHeadlessStatus::Ready) && user.can("headless.manage") %}
 <div class="card">
     <h2>Start Raid</h2>
