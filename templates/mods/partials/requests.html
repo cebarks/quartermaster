@@ -1,23 +1,5 @@
-<div class="status-filter mb-1">
-    <button class="btn btn-sm {% if active_filter == "pending" %}btn-outline active{% else %}btn-outline{% endif %}"
-            hx-get="/quma/api/mods/requests?status=pending"
-            hx-target="#mods-tab-content"
-            hx-swap="innerHTML">Pending</button>
-    <button class="btn btn-sm {% if active_filter == "approved" %}btn-outline active{% else %}btn-outline{% endif %}"
-            hx-get="/quma/api/mods/requests?status=approved"
-            hx-target="#mods-tab-content"
-            hx-swap="innerHTML">Approved</button>
-    <button class="btn btn-sm {% if active_filter == "rejected" %}btn-outline active{% else %}btn-outline{% endif %}"
-            hx-get="/quma/api/mods/requests?status=rejected"
-            hx-target="#mods-tab-content"
-            hx-swap="innerHTML">Rejected</button>
-    <button class="btn btn-sm {% if active_filter == "all" %}btn-outline active{% else %}btn-outline{% endif %}"
-            hx-get="/quma/api/mods/requests?status=all"
-            hx-target="#mods-tab-content"
-            hx-swap="innerHTML">All</button>
-</div>
-
-<div class="card" id="request-form-area">
+{# Placeholder — Task 5 replaces this with kanban layout #}
+<div id="request-form-area" class="card">
     <h3>Request a Mod</h3>
     <div>
         <input type="text" id="mod-search-input" placeholder="Search Forge by name, paste a URL, or enter a mod ID..."
@@ -46,7 +28,7 @@
     </form>
 </div>
 
-{% if has_uninstalled_approved && user.can("mods.install") %}
+{% if !approved_requests.is_empty() && user.can("mods.install") %}
 <div style="margin-bottom:0.5rem">
     <form hx-post="/quma/api/requests/install-all" hx-target="#mods-tab-content" hx-swap="innerHTML" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -55,19 +37,38 @@
 </div>
 {% endif %}
 
-{% if requests.is_empty() %}
-<div class="card">
-    <div class="empty-state">
-        <p>No {{ active_filter }} requests yet.</p>
-    </div>
-</div>
-{% else %}
-{% for r in &requests %}
+<h3>Pending ({{ pending_requests.len() }})</h3>
+{% for r in &pending_requests %}
 <div id="request-{{ r.request.id }}">
 {% include "mods/partials/request_card_body.html" %}
 </div>
 {% endfor %}
+
+<h3>Approved ({{ approved_requests.len() }})</h3>
+{% for r in &approved_requests %}
+<div id="request-{{ r.request.id }}">
+{% include "mods/partials/request_card_body.html" %}
+</div>
+{% endfor %}
+
+<h3>Queued ({{ queued_requests.len() }})</h3>
+{% for r in &queued_requests %}
+<div id="request-{{ r.request.id }}">
+{% include "mods/partials/request_card_body.html" %}
+</div>
+{% endfor %}
+
+{% if !completed_requests.is_empty() %}
+<details class="mt-1">
+    <summary>Show completed ({{ completed_requests.len() }})</summary>
+    {% for r in &completed_requests %}
+    <div id="request-{{ r.request.id }}">
+    {% include "mods/partials/request_card_body.html" %}
+    </div>
+    {% endfor %}
+</details>
 {% endif %}
+
 <script>
 function toggleVoteComment(btn, requestId) {
     var el = document.getElementById('vote-comment-' + requestId);
