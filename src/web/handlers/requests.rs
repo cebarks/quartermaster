@@ -505,7 +505,6 @@ pub async fn create_request(
         if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
             return Err(UserFacingError("This mod is already installed.".into()).into());
         }
-        // ponytail: stub until Task 2 implements proper status checks
         if db.has_active_request_for_mod(forge_mod_id)? {
             return Err(
                 UserFacingError("An active request for this mod already exists.".into()).into(),
@@ -898,7 +897,6 @@ pub async fn install_all_approved(
         return Err(WebError::Forbidden.into());
     }
 
-    // ponytail: stub until Task 2 implements proper status queries
     let db = state.db.clone();
     let request_ids = web::block({
         let db = db.clone();

@@ -44,6 +44,7 @@ impl std::str::FromStr for RequestStatus {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model — fields read by Askama templates
 pub struct RequestStatusLog {
     pub id: i64,
     pub request_id: i64,
