@@ -48,6 +48,10 @@ Write tests for new features and bug fixes. Integration tests often provide more
 - Keep functions focused; avoid premature abstraction
 - Only comment code that is confusing or non-obvious
 
+## Forge API
+
+If you're working on the Forge client (`src/forge/`), see [docs/forge-api-notes.md](docs/forge-api-notes.md) for undocumented API quirks and behaviors.
+
 ## Commits
 
 Group related changes into logical, complete commits. Write clear messages that explain *why*, not just *what*.

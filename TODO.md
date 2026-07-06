@@ -113,61 +113,34 @@
 
 ## From Reviews
 
-Items below are sourced from review/audit documents. See the linked file for full context.
-
-### Headless Client Review (`HEADLESS_REVIEW.md`)
+### Headless Client
 
 **Medium:**
-- convergence restarts SPT server without warning users (`converge.rs:778-798`)
-- ~~SELinux fully disabled for ntsync (`converge.rs:1017` — `label=disable` is overkill)~~ (partially done — #232)
-- no overlay cleanup on scale-down (`converge.rs:841` — orphan dirs accumulate)
+- convergence restarts SPT server without warning users (`converge.rs`)
+- no overlay cleanup on scale-down (`converge.rs` — orphan dirs accumulate)
 - supervisor exit watchers cache restart policy/backoff values at spawn time — config changes require supervisor restart (`supervisor.rs`)
 
 **Low:**
-- shared RW volume mount for base game dir (`converge.rs:920`)
-- unauthenticated GitHub API requests (`converge.rs:189,249`)
-- non-contiguous index handling after middle deletion (`converge.rs:581`)
-- duplicate reqwest clients for GitHub (`converge.rs:189,249`)
-- web handler boilerplate in client lifecycle handlers (`clients.rs:79-306`)
-- too-many-arguments on convergence functions
+- web handler boilerplate in client lifecycle handlers (`clients.rs`)
 
-### Permissions Audit (`PERMISSIONS_AUDIT.md`)
+### Permissions
 
 **High:**
-- proxy has no authentication — unauthenticated access to SPT server API (F1, `proxy.rs:20`)
+- proxy has no authentication — unauthenticated access to SPT server API (`proxy.rs`)
 
 **Low:**
-- `update_status_partial` serves privileged data to all authenticated users (F5, `mods.rs`)
+- `update_status_partial` serves privileged data to all authenticated users (`mods.rs`)
 
 **Info:**
-- profile/raid data visible to all authenticated users (F14)
-- no mechanism to sync role permissions on upgrade (F15)
+- profile/raid data visible to all authenticated users
+- no mechanism to sync role permissions on upgrade
 
-### Web Review (`WEB_REVIEW_2026-06-26.md`)
+### Web
 
 **Critical/High:**
-- proxy buffers entire request body with no size limit (1.5, `proxy.rs:41`)
+- proxy buffers entire request body with no size limit (`proxy.rs`)
 
 **Architecture/Performance:**
-- install logic duplicated between mods and requests handlers (3.2)
-- `render_user_row` reloads ALL profile stats for one row (3.4, `admin.rs:780`)
-- `WebError` always returns HTML even for API endpoints (3.5, `error.rs`)
-- blocking filesystem reads on async runtime (3.6, `settings.rs`, `svm.rs`)
-- static assets served with no caching (4.1)
-- no download size limit on Forge downloads (4.4, `forge/client.rs:191`)
-- metrics page polls every 1 second (4.5)
-
-**Frontend/UX:**
-- missing CSS class definitions: `.badge-error`, `.status-dot.degraded`, `.badge-primary`, `.form-control`, `.alert-danger` (5.1)
-- undefined CSS variables: `--primary`, `--error` (no fallbacks); `--warning-bg` has inline fallback (5.2)
-- clipboard API fails silently on HTTP (5.5)
-- no global HTMX error handling (5.6)
-- no responsive design (5.7)
-- no ARIA attributes (5.8)
-- toast messages auto-fade too fast for errors (5.10)
-
-**Robustness:**
-- no mutual exclusion on server start/stop/restart (6.1, `server.rs`)
-- TOCTOU on duplicate mod install/update check (6.2, `mods.rs` — task-manager dedup mitigates double-click, but different request paths can still race)
-- config file race in headless client background tasks (6.4, `clients.rs:466`)
-- no limit on concurrent SSE connections (6.7, `sse.rs`)
+- install logic duplicated between mods and requests handlers
+- `WebError` always returns HTML even for API endpoints (`error.rs`)
+- blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)

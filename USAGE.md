@@ -35,6 +35,7 @@ quma install big-brain         # by slug
 quma install 42                # by Forge ID
 quma install big-brain 1.2.0   # specific version
 quma install ./mod.zip         # from local file
+quma install ./mod.zip --name "My Mod"  # local file with custom name
 quma install --addon music-pack  # install a Forge addon
 ```
 
@@ -45,19 +46,25 @@ Dependencies are resolved and installed automatically.
 ```bash
 quma update                    # update all installed mods
 quma update big-brain          # update a specific mod
+quma update --addon music-pack # update an addon
 ```
 
 ### Removing
 
 ```bash
-quma remove big-brain
+quma remove big-brain          # remove a mod (prompts for confirmation)
+quma remove big-brain -y       # skip confirmation
+quma remove --addon music-pack # remove an addon
 ```
 
 ### Listing & Checking
 
 ```bash
 quma list                      # list installed mods
+quma list --json               # JSON output
 quma check                     # check all mods for available updates
+quma status                    # health checks (server, mods, integrity)
+quma status --json             # JSON output
 ```
 
 ### Change Queue
@@ -79,18 +86,14 @@ quma server restart
 quma server logs               # tail container logs
 ```
 
-## Health Checks
-
-```bash
-quma status                    # server liveness, version, mod integrity (SHA256)
-```
-
 ## Headless Clients (Fika)
 
 Manage Fika dedicated headless clients:
 
 ```bash
 quma headless status           # show client status
+quma headless create           # create a new headless client
+quma headless delete 1         # delete client #1
 quma headless scale 3          # set desired client count
 quma headless start 1          # start client #1
 quma headless stop 1           # stop client #1
@@ -107,7 +110,10 @@ Headless clients require Fika to be installed and a `[headless]` section in your
 quma backup                    # full snapshot (mods, profiles, config)
 quma backup big-brain          # backup a specific mod
 quma backup --list             # list existing backups
-quma restore <backup-id>       # restore from a backup
+quma restore                   # restore from latest backup (interactive)
+quma restore <backup-id>       # restore a specific backup
+quma restore --latest big-brain  # restore latest backup for a specific mod
+quma restore -f <backup-id>   # skip confirmation
 ```
 
 ## Web UI
@@ -166,10 +172,10 @@ web_port = 9190                # default
 external_url = "https://tarkov.example.com"  # public-facing URL for proxy rewrites
 server_name = "My Server"      # display name in the web UI
 
-# Server container
-server_container = "spt-server"
-server_host = "127.0.0.1"     # SPT server host (default: auto-detect)
-server_port = 6969             # SPT server port (default: 6969)
+# Server container (set during `quma setup`)
+# server_container = "spt-server"  # container name (no default — set by setup)
+# server_host = "127.0.0.1"       # SPT server host (no default — auto-detected)
+# server_port = 6969               # SPT server port (no default — uses SPT's 6969)
 auto_start_server = true       # start container when web UI starts (default)
 on_exit = "nothing"            # nothing | stop | remove — what to do with the container on exit
 
@@ -273,16 +279,49 @@ max_entries = 100000           # max stored log entries (default)
 
 ### Environment Variable Overrides
 
-Any config value can be overridden with a `QUMA_` prefixed environment variable:
+The following `QUMA_*` environment variables override their corresponding config values:
+
+| Variable | Config field | Type |
+|----------|-------------|------|
+| `QUMA_SPT_DIR` | `spt_dir` | path |
+| `QUMA_CONFIG` | config file path | path |
+| `QUMA_FORGE_TOKEN` | `forge_token` | string |
+| `QUMA_WEB_BIND` | `web_bind` | string |
+| `QUMA_WEB_PORT` | `web_port` | integer |
+| `QUMA_WEB_WORKERS` | `web_workers` | integer |
+| `QUMA_SERVER_CONTAINER` | `server_container` | string |
+| `QUMA_SERVER_HOST` | `server_host` | string |
+| `QUMA_SERVER_PORT` | `server_port` | integer |
+| `QUMA_SERVER_NAME` | `server_name` | string |
+| `QUMA_EXTERNAL_URL` | `external_url` | string |
+| `QUMA_AUTO_START_SERVER` | `auto_start_server` | bool |
+| `QUMA_ON_EXIT` | `on_exit` | nothing/stop/remove |
+| `QUMA_CONTAINER_STOP_TIMEOUT` | `container_stop_timeout` | integer |
+| `QUMA_UPDATE_CHECK_INTERVAL` | `update_check_interval` | integer |
+| `QUMA_FORGE_CACHE_TTL` | `forge_cache_ttl` | integer |
+| `QUMA_TLS_ENABLED` | `tls_enabled` | bool |
+| `QUMA_TLS_CERT` | `tls_cert` | path |
+| `QUMA_TLS_KEY` | `tls_key` | path |
+| `QUMA_PROXY_ENABLED` | `proxy_enabled` | bool |
+| `QUMA_SNAPSHOTS_ENABLED` | `snapshots_enabled` | bool |
+| `QUMA_LEADERBOARD_MIN_RAIDS` | `leaderboard_min_raids` | integer |
+| `QUMA_LOG_LEVEL` | `logging.level` | string |
+| `QUMA_LOG_CONSOLE_FORMAT` | `logging.console.format` | compact/full/json |
+| `QUMA_LOG_FILE_ENABLED` | `logging.file.enabled` | bool |
+| `QUMA_LOG_FILE_PATH` | `logging.file.path` | string |
+| `QUMA_LOG_FILE_LEVEL` | `logging.file.level` | string |
+| `QUMA_AUTO_BACKUP` | `backup.auto_backup` | bool |
+| `QUMA_BACKUP_DIR` | `backup.backup_dir` | string |
+| `QUMA_MAX_BACKUPS` | `backup.max_backups` | integer |
+| `QUMA_REQUIRE_BACKUP` | `backup.require_backup` | bool |
+| `QUMA_HEADLESS_RESTART_POLICY` | `headless.restart_policy` | auto/manual |
+| `QUMA_HEADLESS_INSTALL_DIR` | `headless.install_dir` | path |
+| `QUMA_HEADLESS_SERVER_READY_TIMEOUT` | `headless.server_ready_timeout` | integer |
 
 ```bash
 QUMA_SPT_DIR=/path/to/spt quma serve
 QUMA_WEB_PORT=8080 quma serve
-QUMA_FORGE_TOKEN=abc123 quma check
 QUMA_LOG_LEVEL=debug quma serve
-QUMA_AUTO_START_SERVER=false quma serve
-QUMA_TLS_ENABLED=false quma serve
-QUMA_PROXY_ENABLED=false quma serve
 ```
 
 ## Verbosity

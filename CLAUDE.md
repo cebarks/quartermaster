@@ -28,7 +28,6 @@ just release-dry-run    # dist build (dry run)
 **Additional recipes:**
 
 ```bash
-just build-headless     # build the headless client container image
 just dev-install-tools  # install dev tools (cargo-watch for auto-reload)
 just check-logging      # validate logging conventions via scripts/check-logging.sh
 just cpd                # jscpd copy-paste detection
