@@ -59,6 +59,9 @@ globset = "0.4"
 sevenz-rust2 = "0.21"
 tempfile = "3"
 
+# Config history (git-backed)
+gix = "0.85"
+
 # Compression (profile snapshots)
 flate2 = "1"
 
