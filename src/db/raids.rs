@@ -63,7 +63,7 @@ pub struct NewRaidKill {
     pub kill_time: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UserRaidStats {
     pub total_raids: i64,
     pub pmc_raids: i64,
@@ -350,6 +350,20 @@ impl Database {
     }
 
     pub fn get_user_raid_stats(&self, user_id: i64) -> rusqlite::Result<UserRaidStats> {
+        // Defense-in-depth: headless users should never have stats queried
+        let is_headless: bool = self
+            .conn
+            .query_row(
+                "SELECT is_headless FROM users WHERE id = ?1",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if is_headless {
+            return Ok(UserRaidStats::default());
+        }
+
         let total_raids: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM raids WHERE user_id = ?1",
             params![user_id],

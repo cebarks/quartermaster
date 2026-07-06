@@ -422,15 +422,21 @@ pub async fn save_headless_settings(
         .filter(|l| !l.is_empty())
         .collect();
 
-    let (numa_auto, numa_node) = match form.numa_policy.as_str() {
-        "auto" => (true, None),
-        "node" => (false, form.numa_node),
-        _ => (false, None),
-    };
-
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     let existing = config.headless.as_ref();
+
+    let (numa_auto, numa_node) = match form.numa_policy.as_str() {
+        "auto" => (true, None),
+        "node" => (false, form.numa_node),
+        "none" => (false, None),
+        _ => {
+            // Form fields absent (e.g., no NUMA hardware detected) — preserve existing config
+            existing
+                .map(|h| (h.numa_auto, h.numa_node))
+                .unwrap_or((false, None))
+        }
+    };
 
     let final_config = HeadlessConfig {
         install_dir: std::path::PathBuf::from(form.install_dir.trim()),

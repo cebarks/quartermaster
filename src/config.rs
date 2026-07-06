@@ -770,6 +770,8 @@ impl Default for HeadlessConfig {
     }
 }
 
+pub const MAX_HEADLESS_CLIENTS: u32 = 16;
+
 impl HeadlessConfig {
     pub fn client_count(&self) -> u32 {
         self.clients.len() as u32

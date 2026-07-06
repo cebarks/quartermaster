@@ -151,24 +151,12 @@ async fn ensure_fika_headless(
     );
 
     // Query GitHub API for the latest release
-    let client = reqwest::Client::builder()
-        .user_agent("quartermaster")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let release: serde_json::Value = client
-        .get(format!(
+    let release: serde_json::Value = forge
+        .get_external_json(&format!(
             "https://api.github.com/repos/{FIKA_HEADLESS_GITHUB_REPO}/releases/latest"
         ))
-        .send()
         .await
-        .context("failed to query GitHub for Fika.Headless releases")?
-        .error_for_status()
-        .context("GitHub API returned error")?
-        .json()
-        .await
-        .context("failed to parse GitHub release response")?;
+        .context("failed to query GitHub for Fika.Headless releases")?;
 
     let tag = release["tag_name"].as_str().unwrap_or("unknown");
     let asset = release["assets"]
@@ -192,6 +180,36 @@ async fn ensure_fika_headless(
 
     info!("Fika.Headless {tag} installed to {}", install_dir.display());
     Ok(())
+}
+
+/// Remove all quartermaster-managed headless containers.
+///
+/// Returns the number of containers removed. Used before re-convergence
+/// after a middle deletion to ensure clean index renumbering.
+pub async fn remove_all_managed_containers(container_mgr: &ContainerManager) -> Result<u32> {
+    let managed = container_mgr
+        .detect_containers_by_label(MANAGED_BY_LABEL, MANAGED_BY_VALUE)
+        .await?;
+
+    let mut removed = 0u32;
+    for name in &managed {
+        if container_mgr.is_running(name).await.unwrap_or(false) {
+            container_mgr
+                .stop(name)
+                .await
+                .with_context(|| format!("failed to stop {name}"))?;
+        }
+        container_mgr
+            .remove_container(name)
+            .await
+            .with_context(|| format!("failed to remove {name}"))?;
+        removed += 1;
+    }
+
+    if removed > 0 {
+        info!("Removed {removed} managed container(s) for clean re-convergence");
+    }
+    Ok(removed)
 }
 
 /// Discover new profile IDs that appeared after a baseline snapshot.
@@ -440,7 +458,7 @@ pub fn setup_client_overlay(
         }
     }
 
-    let port = client_port(base_udp_port, index);
+    let port = client_port(base_udp_port, index)?;
     write_fika_udp_port(&overlay_dir, port)?;
     write_fika_upnp(&overlay_dir, use_upnp)?;
 
@@ -609,8 +627,11 @@ pub fn client_overlay_dir(install_dir: &Path, index: u32) -> PathBuf {
 /// - index 1 → base_udp_port
 /// - index 2 → base_udp_port + 1
 /// - index 3 → base_udp_port + 2
-pub fn client_port(base: u16, index: u32) -> u16 {
-    base + (index - 1) as u16
+pub fn client_port(base: u16, index: u32) -> Result<u16> {
+    let offset = u16::try_from(index.checked_sub(1).context("client index must be >= 1")?)
+        .context("client index too large for u16 port offset")?;
+    base.checked_add(offset)
+        .context(format!("port overflow: {base} + {offset} exceeds u16::MAX"))
 }
 
 /// Find containers that match the naming pattern but lack the managed-by label.
@@ -1013,6 +1034,29 @@ async fn restart_running_clients(container_mgr: &ContainerManager, count: u32) -
     }
 }
 
+/// Log a warning if human players are connected when the SPT server is about to restart.
+async fn warn_active_players(spt_client: &SptClient, reason: &str) {
+    match spt_client.headless_clients().await {
+        Ok(resp) => {
+            let player_count: usize = resp
+                .headlesses
+                .values()
+                .filter(|info| matches!(info.state, crate::spt::headless::EHeadlessStatus::InRaid))
+                .map(|info| info.players.len())
+                .sum();
+            if player_count > 0 {
+                warn!(
+                    "Restarting SPT server ({reason}) with {player_count} player(s) \
+                     currently in headless raids — they will be disconnected"
+                );
+            }
+        }
+        Err(_) => {
+            // Server may already be unresponsive — nothing to warn about
+        }
+    }
+}
+
 /// Ensure containers exist from current_count up to desired_count.
 #[allow(clippy::too_many_arguments)]
 async fn ensure_clients(
@@ -1044,6 +1088,7 @@ async fn ensure_clients(
         .as_deref()
         .expect("server_container validated by HeadlessConfig::validate");
 
+    warn_active_players(spt_client, "scaling up headless clients").await;
     info!("Stopping SPT server");
     container_mgr
         .stop(container)
@@ -1134,6 +1179,18 @@ async fn remove_excess_clients(
         container_mgr.remove_container(&name).await?;
     }
 
+    // Clean up overlay directories for removed clients
+    for i in (desired_count + 1)..=current_count {
+        let overlay = client_overlay_dir(&headless_config.install_dir, i);
+        if overlay.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&overlay) {
+                warn!("Failed to clean overlay dir for client {i}: {e}");
+            } else {
+                info!("Removed overlay directory for client {i}");
+            }
+        }
+    }
+
     // 2. Edit fika.jsonc to set amount
     {
         // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
@@ -1150,6 +1207,7 @@ async fn remove_excess_clients(
         .as_deref()
         .expect("server_container validated by HeadlessConfig::validate");
 
+    warn_active_players(spt_client, "scaling down headless clients").await;
     info!("Restarting SPT server to deregister removed headless clients");
     container_mgr
         .stop(container)
@@ -1314,7 +1372,7 @@ async fn create_client_container(
     // Environment variables
     let mut env = vec![(
         "UDP_PORT".to_string(),
-        client_port(headless_config.base_udp_port, index).to_string(),
+        client_port(headless_config.base_udp_port, index)?.to_string(),
     )];
 
     // Always set PROFILE_ID — the claudeoris image defaults to "test" if unset,
@@ -1379,7 +1437,7 @@ async fn create_client_container(
         ("quma.client.index".to_string(), index.to_string()),
     ];
 
-    let udp_port = client_port(headless_config.base_udp_port, index);
+    let udp_port = client_port(headless_config.base_udp_port, index)?;
     let ports = vec![PortMapping {
         host_port: udp_port,
         container_port: udp_port,
@@ -1502,8 +1560,8 @@ mod tests {
 
     #[test]
     fn client_udp_port() {
-        assert_eq!(client_port(25565, 1), 25565);
-        assert_eq!(client_port(25565, 3), 25567);
+        assert_eq!(client_port(25565, 1).unwrap(), 25565);
+        assert_eq!(client_port(25565, 3).unwrap(), 25567);
     }
 
     #[test]
