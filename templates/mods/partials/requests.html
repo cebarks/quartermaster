@@ -1,4 +1,3 @@
-{# Placeholder — Task 5 replaces this with kanban layout #}
 <div id="request-form-area" class="card">
     <h3>Request a Mod</h3>
     <div>
@@ -37,35 +36,59 @@
 </div>
 {% endif %}
 
-<h3>Pending ({{ pending_requests.len() }})</h3>
-{% for r in &pending_requests %}
-<div id="request-{{ r.request.id }}">
-{% include "mods/partials/request_card_body.html" %}
-</div>
-{% endfor %}
+<div class="request-kanban">
+    <div class="request-kanban-column">
+        <h3>Pending ({{ pending_requests.len() }})</h3>
+        {% if pending_requests.is_empty() %}
+        <div class="card"><div class="empty-state"><p>No pending requests.</p></div></div>
+        {% else %}
+        {% for r in &pending_requests %}
+        <div id="request-{{ r.request.id }}">
+        {% include "mods/partials/request_card_body.html" %}
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
 
-<h3>Approved ({{ approved_requests.len() }})</h3>
-{% for r in &approved_requests %}
-<div id="request-{{ r.request.id }}">
-{% include "mods/partials/request_card_body.html" %}
-</div>
-{% endfor %}
+    <div class="request-kanban-column">
+        <h3>Approved ({{ approved_requests.len() }})</h3>
+        {% if approved_requests.is_empty() %}
+        <div class="card"><div class="empty-state"><p>No approved requests.</p></div></div>
+        {% else %}
+        {% for r in &approved_requests %}
+        <div id="request-{{ r.request.id }}">
+        {% include "mods/partials/request_card_body.html" %}
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
 
-<h3>Queued ({{ queued_requests.len() }})</h3>
-{% for r in &queued_requests %}
-<div id="request-{{ r.request.id }}">
-{% include "mods/partials/request_card_body.html" %}
+    <div class="request-kanban-column">
+        <h3>Queued ({{ queued_requests.len() }})</h3>
+        {% if queued_requests.is_empty() %}
+        <div class="card"><div class="empty-state"><p>No queued requests.</p></div></div>
+        {% else %}
+        {% for r in &queued_requests %}
+        <div id="request-{{ r.request.id }}">
+        {% include "mods/partials/request_card_body.html" %}
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
 </div>
-{% endfor %}
 
 {% if !completed_requests.is_empty() %}
 <details class="mt-1">
-    <summary>Show completed ({{ completed_requests.len() }})</summary>
+    <summary class="btn btn-sm btn-outline" style="cursor:pointer">
+        Show completed ({{ completed_requests.len() }})
+    </summary>
+    <div class="mt-1">
     {% for r in &completed_requests %}
     <div id="request-{{ r.request.id }}">
     {% include "mods/partials/request_card_body.html" %}
     </div>
     {% endfor %}
+    </div>
 </details>
 {% endif %}
 

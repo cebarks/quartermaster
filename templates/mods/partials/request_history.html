@@ -1,1 +1,20 @@
-<span class="text-muted">Loading...</span>
+{% if entries.is_empty() %}
+<span class="text-muted">No history yet.</span>
+{% else %}
+{% for e in &entries %}
+<div style="padding:0.15rem 0;border-bottom:1px solid var(--border)">
+    <span class="badge badge-muted" style="font-size:0.75rem">{{ e.from_status }}</span>
+    →
+    <span class="badge badge-muted" style="font-size:0.75rem">{{ e.to_status }}</span>
+    {% if let Some(username) = e.changed_by_username.as_deref() %}
+    <span class="text-muted">by {{ username }}</span>
+    {% else %}
+    <span class="text-muted">by system</span>
+    {% endif %}
+    · <span class="text-muted">{{ e.changed_at }}</span>
+    {% if let Some(c) = e.comment.as_deref() %}
+    — <em>{{ c }}</em>
+    {% endif %}
+</div>
+{% endfor %}
+{% endif %}
