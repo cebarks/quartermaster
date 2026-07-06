@@ -178,8 +178,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (modRefInput.value) {
             modRefInput.value = '';
             preview.style.display = 'none';
-            submitBtn.disabled = true;
         }
+        var v = searchInput.value.trim();
+        // ponytail: enable button for URLs or numeric mod IDs typed directly
+        submitBtn.disabled = !(v.startsWith('http://') || v.startsWith('https://') || /^\d+$/.test(v));
     });
 
     document.getElementById('install-clear-btn').addEventListener('click', function() {
