@@ -1410,3 +1410,83 @@ fn transition_request_status_rejects_wrong_from() {
     let req = db.get_mod_request(req_id).unwrap().unwrap();
     assert_eq!(req.status, "pending");
 }
+
+#[test]
+fn transition_request_by_forge_mod_id() {
+    let db = test_db();
+    let user_id = db
+        .insert_user("admin", Some("aid"), Some("hash"), "admin", false)
+        .unwrap();
+
+    // Create three requests: two for mod 100, one for mod 200
+    let req1 = db
+        .create_mod_request(user_id, 100, "Mod100", None, None, "unknown", None)
+        .unwrap();
+    let req2 = db
+        .create_mod_request(user_id, 100, "Mod100", None, None, "unknown", None)
+        .unwrap();
+    let req3 = db
+        .create_mod_request(user_id, 200, "Mod200", None, None, "unknown", None)
+        .unwrap();
+
+    // Approve req1
+    db.transition_request_status(
+        req1,
+        &[RequestStatus::Pending],
+        RequestStatus::Approved,
+        Some(user_id),
+        None,
+    )
+    .unwrap();
+
+    // Transition all mod 100 requests from approved to installed
+    let count = db
+        .transition_request_by_forge_mod_id(
+            100,
+            &[RequestStatus::Approved],
+            RequestStatus::Installed,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+
+    let r1 = db.get_mod_request(req1).unwrap().unwrap();
+    let r2 = db.get_mod_request(req2).unwrap().unwrap();
+    let r3 = db.get_mod_request(req3).unwrap().unwrap();
+
+    assert_eq!(r1.status, "installed");
+    assert_eq!(r2.status, "pending"); // not approved, so not transitioned
+    assert_eq!(r3.status, "pending"); // different mod, not transitioned
+}
+
+#[test]
+fn set_request_resolver() {
+    let db = test_db();
+    let user1 = db
+        .insert_user("user1", Some("p1"), Some("hash"), "admin", false)
+        .unwrap();
+    let user2 = db
+        .insert_user("user2", Some("p2"), Some("hash"), "admin", false)
+        .unwrap();
+
+    let req_id = db
+        .create_mod_request(user1, 100, "TestMod", None, None, "unknown", None)
+        .unwrap();
+
+    // Set resolver for first time
+    db.set_request_resolver(req_id, user2, Some("resolving"))
+        .unwrap();
+
+    let req = db.get_mod_request(req_id).unwrap().unwrap();
+    assert_eq!(req.resolved_by, Some(user2));
+    assert_eq!(req.resolve_comment.as_deref(), Some("resolving"));
+
+    // Try to set resolver again — should have no effect (already set)
+    db.set_request_resolver(req_id, user1, Some("second attempt"))
+        .unwrap();
+
+    let req = db.get_mod_request(req_id).unwrap().unwrap();
+    assert_eq!(req.resolved_by, Some(user2)); // unchanged
+    assert_eq!(req.resolve_comment.as_deref(), Some("resolving")); // unchanged
+}

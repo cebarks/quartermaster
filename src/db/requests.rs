@@ -216,7 +216,7 @@ impl Database {
     ) -> rusqlite::Result<bool> {
         let from_strs: Vec<&str> = expected_from.iter().map(|s| s.as_str()).collect();
         let placeholders: String = (0..from_strs.len())
-            .map(|i| format!("?{}", i + 3))
+            .map(|i| format!("?{}", i + 2))
             .collect::<Vec<_>>()
             .join(", ");
 

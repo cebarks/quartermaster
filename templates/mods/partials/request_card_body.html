@@ -95,17 +95,14 @@
         </form>
     </div>
     {% endif %}
-    {% if r.request.status == "approved" && !r.is_installed && user.can("mods.install") %}
+    {# ponytail: stub until Task 2 implements proper status checks #}
+    {% if r.request.status == "approved" && user.can("mods.install") %}
     <div class="mt-1">
         <form hx-post="/quma/api/requests/{{ r.request.id }}/install" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
               style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-primary">Install</button>
         </form>
-    </div>
-    {% elif r.request.status == "approved" && r.is_installed %}
-    <div class="mt-1">
-        <span class="text-sm text-muted">Installed</span>
     </div>
     {% endif %}
     <div id="comments-{{ r.request.id }}"></div>

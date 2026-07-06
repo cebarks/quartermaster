@@ -399,9 +399,8 @@ pub async fn requests_tab(
         }
     }
 
-    let has_uninstalled_approved = requests
-        .iter()
-        .any(|r| r.request.status == "approved" && !r.is_installed);
+    // ponytail: stub until Task 2 implements proper status checks
+    let has_uninstalled_approved = requests.iter().any(|r| r.request.status == "approved");
     let tmpl = RequestsTabTemplate {
         user,
         requests,
@@ -466,9 +465,10 @@ pub async fn create_request(
         if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
             return Err(UserFacingError("This mod is already installed.".into()).into());
         }
-        if db.has_pending_request_for_mod(forge_mod_id)? {
+        // ponytail: stub until Task 2 implements proper status checks
+        if db.has_active_request_for_mod(forge_mod_id)? {
             return Err(
-                UserFacingError("A pending request for this mod already exists.".into()).into(),
+                UserFacingError("An active request for this mod already exists.".into()).into(),
             );
         }
 
@@ -670,34 +670,28 @@ pub async fn resolve_request(
     };
     let comment = form.comment.as_deref().filter(|s| !s.trim().is_empty());
 
-    // Resolve the request (only if pending)
+    // ponytail: stub until Task 2 implements proper transition logic
     let db = state.db.clone();
     let resolved_by = user.user_id;
     let comment_owned = comment.map(|s| s.to_string());
     let status_owned = status.to_string();
-    let rows = web::block({
+    web::block({
         let db = db.clone();
         let status_owned = status_owned.clone();
         let comment_owned = comment_owned.clone();
         move || {
             let db = db.lock();
-            db.resolve_mod_request(
-                request_id,
-                &status_owned,
-                resolved_by,
-                comment_owned.as_deref(),
-            )
+            db.set_request_resolver(request_id, resolved_by, comment_owned.as_deref())?;
+            db.conn().execute(
+                "UPDATE mod_requests SET status = ?1 WHERE id = ?2",
+                rusqlite::params![status_owned, request_id],
+            )?;
+            Ok::<_, rusqlite::Error>(())
         }
     })
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
-
-    if rows == 0 {
-        return Err(
-            WebError::BadRequest("This request has already been resolved.".to_string()).into(),
-        );
-    }
 
     let mut message = if action == "approve" {
         "Request approved.".to_string()
@@ -839,12 +833,13 @@ pub async fn install_all_approved(
         return Err(WebError::Forbidden.into());
     }
 
+    // ponytail: stub until Task 2 implements proper status queries
     let db = state.db.clone();
     let request_ids = web::block({
         let db = db.clone();
         move || {
             let db = db.lock();
-            db.list_approved_uninstalled_request_ids()
+            db.list_approved_request_ids()
         }
     })
     .await
@@ -896,7 +891,8 @@ pub async fn install_all_approved(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let has_uninstalled_approved = requests.iter().any(|r| !r.is_installed);
+    // ponytail: stub until Task 2 implements proper status checks
+    let has_uninstalled_approved = !requests.is_empty();
     let tmpl = RequestsTabTemplate {
         user,
         requests,
