@@ -90,7 +90,7 @@ struct DashboardClientsStatusTemplate {
     degraded_count: usize,
     down_count: usize,
     total_count: usize,
-    clients: Vec<ClientState>,
+    clients: Vec<ClientView>,
 }
 
 fn build_profile_names(spt_dir: &std::path::Path) -> HashMap<String, String> {
@@ -1235,24 +1235,27 @@ pub async fn dashboard_clients_status_partial(
 ) -> actix_web::Result<web::Html> {
     require_auth(&req)?;
 
-    let clients = match &state.client_states {
+    let raw_clients = match &state.client_states {
         Some(states) => states.read().await.clone(),
         None => vec![],
     };
 
-    let healthy_count = clients
+    let names = build_profile_names(&state.spt_dir);
+    let clients = resolve_clients(raw_clients.clone(), &names);
+
+    let healthy_count = raw_clients
         .iter()
         .filter(|c| c.health == ClientHealth::Healthy)
         .count();
-    let degraded_count = clients
+    let degraded_count = raw_clients
         .iter()
         .filter(|c| c.health == ClientHealth::Degraded)
         .count();
-    let down_count = clients
+    let down_count = raw_clients
         .iter()
         .filter(|c| matches!(c.health, ClientHealth::Down | ClientHealth::GivenUp))
         .count();
-    let total_count = clients.len();
+    let total_count = raw_clients.len();
 
     let tmpl = DashboardClientsStatusTemplate {
         healthy_count,
