@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Data layer for Task 2 - methods will be used in future tasks
-
 use rusqlite::{params, OptionalExtension};
 
 use super::mods::InstalledFile;
@@ -113,27 +111,6 @@ impl Database {
              FROM installed_addons WHERE parent_mod_id = ?1 ORDER BY name",
         )?;
         let rows = stmt.query_map(params![parent_mod_id], row_to_installed_addon)?;
-        rows.collect()
-    }
-
-    pub fn list_addons_with_file_counts(
-        &self,
-    ) -> rusqlite::Result<Vec<(InstalledAddon, usize, i64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT a.id, a.forge_addon_id, a.parent_mod_id, a.forge_version_id, a.name, a.slug,
-                    a.version, a.mod_version_constraint, a.disabled, a.installed_at, a.updated_at,
-                    COUNT(f.id) as file_count, COALESCE(SUM(f.file_size), 0) as total_size
-             FROM installed_addons a
-             LEFT JOIN installed_files f ON f.addon_id = a.id
-             GROUP BY a.id
-             ORDER BY a.name",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            let a = row_to_installed_addon(row)?;
-            let count: i64 = row.get(11)?;
-            let size: i64 = row.get(12)?;
-            Ok((a, count as usize, size))
-        })?;
         rows.collect()
     }
 
