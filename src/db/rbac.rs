@@ -7,6 +7,7 @@ pub enum Permission {
     ModsUpdate,
     ModsRemove,
     ModsDisable,
+    ModsConfigEdit,
     ModsyncManage,
     SvmEdit,
     RequestsResolve,
@@ -28,6 +29,7 @@ impl Permission {
         Permission::ModsUpdate,
         Permission::ModsRemove,
         Permission::ModsDisable,
+        Permission::ModsConfigEdit,
         Permission::ModsyncManage,
         Permission::SvmEdit,
         Permission::RequestsResolve,
@@ -49,6 +51,7 @@ impl Permission {
             Permission::ModsUpdate => "mods.update",
             Permission::ModsRemove => "mods.remove",
             Permission::ModsDisable => "mods.disable",
+            Permission::ModsConfigEdit => "mods.config_edit",
             Permission::ModsyncManage => "modsync.manage",
             Permission::SvmEdit => "svm.edit",
             Permission::RequestsResolve => "requests.resolve",
@@ -71,6 +74,7 @@ impl Permission {
             "mods.update" => Some(Permission::ModsUpdate),
             "mods.remove" => Some(Permission::ModsRemove),
             "mods.disable" => Some(Permission::ModsDisable),
+            "mods.config_edit" => Some(Permission::ModsConfigEdit),
             "modsync.manage" => Some(Permission::ModsyncManage),
             "svm.edit" => Some(Permission::SvmEdit),
             "requests.resolve" => Some(Permission::RequestsResolve),
@@ -94,6 +98,7 @@ impl Permission {
             Permission::ModsUpdate => "Update Mods",
             Permission::ModsRemove => "Remove Mods",
             Permission::ModsDisable => "Disable Mods",
+            Permission::ModsConfigEdit => "Edit Mod Configs",
             Permission::ModsyncManage => "Manage NarcoNet",
             Permission::SvmEdit => "Edit Server Config",
             Permission::RequestsResolve => "Resolve Mod Requests",
@@ -115,7 +120,8 @@ impl Permission {
             Permission::ModsInstall
             | Permission::ModsUpdate
             | Permission::ModsRemove
-            | Permission::ModsDisable => "Mods",
+            | Permission::ModsDisable
+            | Permission::ModsConfigEdit => "Mods",
             Permission::ModsyncManage | Permission::SvmEdit | Permission::RequestsResolve => {
                 "Configuration"
             }
