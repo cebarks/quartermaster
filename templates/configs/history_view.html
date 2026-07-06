@@ -1,14 +1,26 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
-{% block title %}View {{ filename }} @ {{ rev }} — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% import "partials/icons.html" as icons %}
+{% block title %}{{ filename }} @ {{ rev[..7] }} — {{ mod_name }} — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("configs", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
-<h1>Config History View</h1>
+<h1>{{ mod_name }} / {{ filename }} @ {{ rev[..7] }}</h1>
 
-<p>Stub template for config history view.</p>
-<p>Mod: {{ mod_name }} ({{ mod_dir }})</p>
-<p>File: {{ filename }}</p>
-<p>Revision: {{ rev }}</p>
-<p>Can restore: {{ can_restore }}</p>
-<p>Content length: {{ content.len() }}</p>
+<div class="flex gap-1" style="margin-bottom: 1rem;">
+    <a href="/quma/mods/{{ mod_id }}/config/{{ filename }}/history" class="btn btn-sm btn-outline">← Back to History</a>
+    {% if can_restore %}
+    <form method="post" action="/quma/mods/{{ mod_id }}/config/{{ filename }}/restore"
+          onsubmit="return confirm('Restore this version?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="rev" value="{{ rev }}">
+        <button type="submit" class="btn btn-sm btn-warning">Restore This Version</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="card">
+    <textarea readonly
+              style="width:100%; min-height:400px; font-family:monospace; font-size:0.85rem; tab-size:2; resize:vertical;"
+              spellcheck="false">{{ content }}</textarea>
+</div>
 {% endblock %}

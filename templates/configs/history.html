@@ -1,13 +1,44 @@
 {% extends "base.html" %}
 {% import "partials/nav.html" as nav %}
-{% block title %}History: {{ filename }} — Quartermaster{% endblock %}
-{% block nav %}{% call nav::nav("mods", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% import "partials/icons.html" as icons %}
+{% block title %}History: {{ filename }} — {{ mod_name }} — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("configs", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
-<h1>Config History</h1>
+<h1>{{ mod_name }} / {{ filename }} — History</h1>
 
-<p>Stub template for config history.</p>
-<p>Mod: {{ mod_name }} ({{ mod_dir }})</p>
-<p>File: {{ filename }}</p>
-<p>Can restore: {{ can_restore }}</p>
-<p>Entries: {{ entries.len() }}</p>
+<div class="flex gap-1" style="margin-bottom: 1rem;">
+    <a href="/quma/mods/{{ mod_id }}/config/{{ filename }}" class="btn btn-sm btn-outline">← Back to Editor</a>
+</div>
+
+{% if entries.is_empty() %}
+<div class="card">
+    <p class="text-muted">No history yet. Save a change to start tracking versions.</p>
+</div>
+{% else %}
+<div class="card">
+    <table>
+        <thead><tr><th>Date</th><th>Author</th><th>Message</th><th></th></tr></thead>
+        <tbody>
+            {% for entry in &entries %}
+            <tr>
+                <td class="text-sm">{{ entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC") }}</td>
+                <td class="text-sm">{{ entry.author }}</td>
+                <td class="text-sm">{{ entry.message }}</td>
+                <td class="flex gap-1">
+                    <a href="/quma/mods/{{ mod_id }}/config/{{ filename }}/history/view?rev={{ entry.rev }}" class="btn btn-sm btn-outline">View</a>
+                    {% if can_restore %}
+                    <form method="post" action="/quma/mods/{{ mod_id }}/config/{{ filename }}/restore"
+                          onsubmit="return confirm('Restore this version?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="rev" value="{{ entry.rev }}">
+                        <button type="submit" class="btn btn-sm btn-warning">Restore</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
 {% endblock %}
