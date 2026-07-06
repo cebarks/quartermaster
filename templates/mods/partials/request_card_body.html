@@ -138,12 +138,12 @@
     {% endif %}
 
     {# -- History toggle -- #}
-    <details class="mt-1">
-        <summary class="text-sm text-muted" style="cursor:pointer"
-                 hx-get="/quma/api/requests/{{ r.request.id }}/history"
-                 hx-target="#history-{{ r.request.id }}"
-                 hx-swap="innerHTML"
-                 hx-trigger="toggle once">History</summary>
+    <details class="mt-1"
+             hx-get="/quma/api/requests/{{ r.request.id }}/history"
+             hx-target="#history-{{ r.request.id }}"
+             hx-swap="innerHTML"
+             hx-trigger="toggle once">
+        <summary class="text-sm text-muted" style="cursor:pointer">History</summary>
         <div id="history-{{ r.request.id }}" class="text-sm" style="padding:0.25rem 0">
             <span class="text-muted">Loading…</span>
         </div>
