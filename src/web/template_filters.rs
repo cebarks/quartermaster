@@ -60,6 +60,48 @@ pub fn format_uptime(started_at: &str, _env: &dyn askama::Values) -> askama::Res
     compute_uptime(started_at)
 }
 
+fn compute_time_ago(timestamp: &str) -> Result<String, askama::Error> {
+    use chrono::{DateTime, NaiveDateTime, Utc};
+    let dt: DateTime<Utc> = timestamp
+        .parse::<DateTime<Utc>>()
+        .or_else(|_| {
+            NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%d %H:%M:%S").map(|d| d.and_utc())
+        })
+        .map_err(|e| askama::Error::Custom(Box::new(e)))?;
+
+    let secs = (Utc::now() - dt).num_seconds().max(0);
+    let result = if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else if secs < 604800 {
+        format!("{}d ago", secs / 86400)
+    } else if secs < 2592000 {
+        format!("{}w ago", secs / 604800)
+    } else {
+        dt.format("%Y-%m-%d").to_string()
+    };
+    Ok(result)
+}
+
+#[askama::filter_fn]
+pub fn time_ago(timestamp: &str, _env: &dyn askama::Values) -> askama::Result<String> {
+    compute_time_ago(timestamp)
+}
+
+#[askama::filter_fn]
+pub fn time_ago_opt(
+    timestamp: &Option<String>,
+    _env: &dyn askama::Values,
+) -> askama::Result<String> {
+    match timestamp {
+        Some(t) => compute_time_ago(t),
+        None => Ok(String::new()),
+    }
+}
+
 fn format_roubles_value(n: i64) -> String {
     if n == 0 {
         return "0".to_string();
@@ -229,5 +271,54 @@ mod tests {
     fn markdown_renders_strikethrough() {
         let html = render_markdown("~~deleted~~");
         assert!(html.contains("<del>deleted</del>"));
+    }
+
+    #[test]
+    fn time_ago_just_now() {
+        let now = chrono::Utc::now().to_rfc3339();
+        assert_eq!(compute_time_ago(&now).unwrap(), "just now");
+    }
+
+    #[test]
+    fn time_ago_minutes() {
+        let t = (chrono::Utc::now() - chrono::Duration::minutes(5)).to_rfc3339();
+        assert_eq!(compute_time_ago(&t).unwrap(), "5m ago");
+    }
+
+    #[test]
+    fn time_ago_hours() {
+        let t = (chrono::Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
+        assert_eq!(compute_time_ago(&t).unwrap(), "3h ago");
+    }
+
+    #[test]
+    fn time_ago_days() {
+        let t = (chrono::Utc::now() - chrono::Duration::days(2)).to_rfc3339();
+        assert_eq!(compute_time_ago(&t).unwrap(), "2d ago");
+    }
+
+    #[test]
+    fn time_ago_weeks() {
+        let t = (chrono::Utc::now() - chrono::Duration::weeks(2)).to_rfc3339();
+        assert_eq!(compute_time_ago(&t).unwrap(), "2w ago");
+    }
+
+    #[test]
+    fn time_ago_old_date() {
+        assert_eq!(
+            compute_time_ago("2020-01-15T00:00:00+00:00").unwrap(),
+            "2020-01-15"
+        );
+    }
+
+    #[test]
+    fn time_ago_sqlite_format() {
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        assert_eq!(compute_time_ago(&now).unwrap(), "just now");
+    }
+
+    #[test]
+    fn time_ago_invalid() {
+        assert!(compute_time_ago("not-a-date").is_err());
     }
 }
