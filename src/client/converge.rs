@@ -404,6 +404,41 @@ fn write_fika_upnp(overlay_dir: &Path, enabled: bool) -> Result<()> {
     Ok(())
 }
 
+/// Patch `Game.ini` to control EFT's CPU affinity behaviour.
+///
+/// EFT's `SetAffinityToLogicalCores` is confusingly named:
+/// `true` = restrict to physical cores only, `false` = use all cores.
+/// We map `physical_cores_only` directly to this value.
+fn write_game_ini_affinity(install_dir: &Path, physical_cores_only: bool) -> Result<()> {
+    let ini_path = install_dir.join("SPT/user/sptSettings/Game.ini");
+    if !ini_path.exists() {
+        debug!(
+            "Game.ini not found at {}, skipping affinity write",
+            ini_path.display()
+        );
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&ini_path)
+        .with_context(|| format!("failed to read {}", ini_path.display()))?;
+
+    let mut value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse {} as JSON", ini_path.display()))?;
+
+    value["SetAffinityToLogicalCores"] = serde_json::Value::Bool(physical_cores_only);
+
+    let updated = serde_json::to_string_pretty(&value)
+        .with_context(|| format!("failed to serialize {}", ini_path.display()))?;
+    std::fs::write(&ini_path, &updated)
+        .with_context(|| format!("failed to write {}", ini_path.display()))?;
+
+    debug!(
+        "Set SetAffinityToLogicalCores to {physical_cores_only} in {}",
+        ini_path.display()
+    );
+    Ok(())
+}
+
 /// Set up overlay directory for a client, copying isolated paths from the install directory.
 ///
 /// Creates `<install_dir>/.quma/clients/<index>/` and recursively copies any paths from
@@ -420,6 +455,7 @@ pub fn setup_client_overlay(
     isolated_paths: &[String],
     base_udp_port: u16,
     use_upnp: bool,
+    physical_cores_only: bool,
 ) -> Result<()> {
     let overlay_dir = client_overlay_dir(install_dir, index);
 
@@ -471,6 +507,11 @@ pub fn setup_client_overlay(
     let port = client_port(base_udp_port, index)?;
     write_fika_udp_port(&overlay_dir, port)?;
     write_fika_upnp(&overlay_dir, use_upnp)?;
+
+    // Game.ini is shared (not per-client overlay), so only patch once.
+    if index == 1 {
+        write_game_ini_affinity(install_dir, physical_cores_only)?;
+    }
 
     // Stub out GPU-specific DLLs that crash in headless (no-GPU) containers.
     // DLSSImporter.dll dereferences a null pointer when no GPU is present,
@@ -964,6 +1005,7 @@ pub async fn converge(
             &effective_paths,
             headless_config.base_udp_port,
             headless_config.use_upnp,
+            headless_config.physical_cores_only,
         )?;
     }
 
@@ -1325,6 +1367,7 @@ async fn create_client_container(
         effective_paths,
         headless_config.base_udp_port,
         headless_config.use_upnp,
+        headless_config.physical_cores_only,
     )?;
 
     // Build volume mounts
@@ -1554,6 +1597,7 @@ mod tests {
             &["BepInEx/config".to_string()],
             25565,
             false,
+            false,
         )
         .unwrap();
 
@@ -1587,6 +1631,7 @@ mod tests {
             &["BepInEx/config".to_string()],
             25565,
             false,
+            false,
         )
         .unwrap();
 
@@ -1618,6 +1663,7 @@ mod tests {
             &["BepInEx/config".to_string()],
             25565,
             false,
+            false,
         )
         .unwrap();
 
@@ -1629,6 +1675,7 @@ mod tests {
             1,
             &["BepInEx/config".to_string(), "BepInEx/cache".to_string()],
             25565,
+            false,
             false,
         )
         .unwrap();
@@ -1893,5 +1940,31 @@ mod tests {
         let (cpus1, mems1) = resolve_numa_cpuset(&h, 1, &topo).unwrap();
         assert_eq!(cpus1, Some("8-15".to_string()));
         assert_eq!(mems1, Some("1".to_string()));
+    }
+
+    #[test]
+    fn write_game_ini_affinity_patches_setting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_dir = tmp.path().join("SPT/user/sptSettings");
+        std::fs::create_dir_all(&settings_dir).unwrap();
+        let ini_path = settings_dir.join("Game.ini");
+        std::fs::write(
+            &ini_path,
+            r#"{"SetAffinityToLogicalCores": true, "FieldOfView": 50}"#,
+        )
+        .unwrap();
+
+        write_game_ini_affinity(tmp.path(), false).unwrap();
+
+        let result: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&ini_path).unwrap()).unwrap();
+        assert_eq!(result["SetAffinityToLogicalCores"], false);
+        assert_eq!(result["FieldOfView"], 50);
+    }
+
+    #[test]
+    fn write_game_ini_affinity_missing_file_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(write_game_ini_affinity(tmp.path(), true).is_ok());
     }
 }

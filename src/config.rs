@@ -741,6 +741,8 @@ pub struct HeadlessConfig {
     pub server_ready_timeout: u64,
     #[serde(default)]
     pub use_upnp: bool,
+    #[serde(default)]
+    pub physical_cores_only: bool,
 }
 
 impl Default for HeadlessConfig {
@@ -766,6 +768,7 @@ impl Default for HeadlessConfig {
             numa_node: None,
             server_ready_timeout: 120,
             use_upnp: false,
+            physical_cores_only: false,
         }
     }
 }
@@ -1763,6 +1766,7 @@ save_log_on_exit = false
 enable_log_purge = true
 overwrite_fika = false
 server_ready_timeout = 300
+physical_cores_only = true
 
 [[headless.clients]]
 
@@ -1795,6 +1799,7 @@ extra_isolated_paths = ["BepInEx/plugins/testing"]
         assert!(!headless.save_log_on_exit);
         assert!(headless.enable_log_purge);
         assert!(!headless.overwrite_fika);
+        assert!(headless.physical_cores_only);
         assert_eq!(headless.server_ready_timeout, 300);
     }
 
@@ -1841,6 +1846,7 @@ install_dir = "/opt/fika"
         assert!(config.save_log_on_exit);
         assert!(!config.enable_log_purge);
         assert!(!config.overwrite_fika);
+        assert!(!config.physical_cores_only);
         assert_eq!(config.server_ready_timeout, 120);
     }
 

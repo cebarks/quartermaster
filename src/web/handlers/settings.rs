@@ -154,6 +154,8 @@ pub struct HeadlessSettingsForm {
     numa_node: Option<u32>,
     #[serde(default)]
     use_upnp: Option<String>,
+    #[serde(default)]
+    physical_cores_only: Option<String>,
 }
 
 pub async fn save_web_settings(
@@ -446,6 +448,7 @@ pub async fn save_headless_settings(
         overwrite_fika: existing.map(|h| h.overwrite_fika).unwrap_or(true),
         server_ready_timeout: form.server_ready_timeout,
         use_upnp: form.use_upnp.is_some(),
+        physical_cores_only: form.physical_cores_only.is_some(),
     };
 
     config.headless = if form.install_dir.trim().is_empty() {
