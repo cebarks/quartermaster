@@ -33,9 +33,14 @@ struct PlayerInfo {
 struct ClientView {
     state: ClientState,
     players: Vec<PlayerInfo>,
+    alias: Option<String>,
 }
 
-fn resolve_clients(clients: Vec<ClientState>, names: &HashMap<String, String>) -> Vec<ClientView> {
+fn resolve_clients(
+    clients: Vec<ClientState>,
+    names: &HashMap<String, String>,
+    aliases: &HashMap<String, String>,
+) -> Vec<ClientView> {
     clients
         .into_iter()
         .map(|state| {
@@ -47,7 +52,15 @@ fn resolve_clients(clients: Vec<ClientState>, names: &HashMap<String, String>) -
                     id: id.clone(),
                 })
                 .collect();
-            ClientView { state, players }
+            let alias = state
+                .profile_id
+                .as_ref()
+                .and_then(|pid| aliases.get(pid).cloned());
+            ClientView {
+                state,
+                players,
+                alias,
+            }
         })
         .collect()
 }
@@ -105,6 +118,13 @@ fn build_profile_names(spt_dir: &std::path::Path) -> HashMap<String, String> {
         .into_iter()
         .map(|p| (p.aid, p.username))
         .collect()
+}
+
+fn build_client_aliases(spt_dir: &std::path::Path) -> HashMap<String, String> {
+    let path = crate::fika::config::fika_config_path(spt_dir);
+    crate::fika::config::read_fika_config(&path)
+        .map(|c| c.headless.profiles.aliases)
+        .unwrap_or_default()
 }
 
 fn require_container_mgr<'a>(
@@ -301,7 +321,8 @@ pub async fn headless_page(
         .unwrap_or_else(|| ("none".to_string(), None));
 
     let profile_names = build_profile_names(&state.spt_dir);
-    let headless_clients = resolve_clients(headless_clients, &profile_names);
+    let aliases = build_client_aliases(&state.spt_dir);
+    let headless_clients = resolve_clients(headless_clients, &profile_names, &aliases);
     let tmpl = HeadlessPageTemplate {
         user,
         flash,
@@ -346,7 +367,8 @@ pub async fn client_detail(
         .ok_or(WebError::NotFound)?;
 
     let profile_names = build_profile_names(&state.spt_dir);
-    let client = resolve_clients(vec![client], &profile_names)
+    let aliases = build_client_aliases(&state.spt_dir);
+    let client = resolve_clients(vec![client], &profile_names, &aliases)
         .into_iter()
         .next()
         .ok_or(WebError::NotFound)?;
@@ -845,7 +867,8 @@ pub async fn client_status_partial(
 
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let profile_names = build_profile_names(&state.spt_dir);
-    let clients = resolve_clients(clients, &profile_names);
+    let aliases = build_client_aliases(&state.spt_dir);
+    let clients = resolve_clients(clients, &profile_names, &aliases);
     let tmpl = ClientsStatusPartialTemplate {
         clients,
         user,
@@ -1259,7 +1282,8 @@ pub async fn dashboard_clients_status_partial(
     };
 
     let names = build_profile_names(&state.spt_dir);
-    let clients = resolve_clients(raw_clients.clone(), &names);
+    let aliases = build_client_aliases(&state.spt_dir);
+    let clients = resolve_clients(raw_clients.clone(), &names, &aliases);
 
     let healthy_count = raw_clients
         .iter()
