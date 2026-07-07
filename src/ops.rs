@@ -294,6 +294,21 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         }
     }
     maybe_sync_headless(req.config, req.spt_dir, req.db, db_id, SyncOp::Install);
+
+    // Transition matching request to installed
+    if let Some(forge_mod_id) = req.forge_mod_id {
+        let _ = req.db.transition_request_by_forge_mod_id(
+            forge_mod_id,
+            &[
+                crate::db::requests::RequestStatus::Approved,
+                crate::db::requests::RequestStatus::Queued,
+            ],
+            crate::db::requests::RequestStatus::Installed,
+            None,
+            Some("Mod installed"),
+        );
+    }
+
     Ok(db_id)
 }
 
@@ -1197,6 +1212,18 @@ pub fn remove_mod_by_id(
     if let Err(e) = crate::modsync::regenerate_if_enabled(spt_dir, config, db) {
         tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
     }
+
+    // Transition matching request back to approved
+    if let Some(forge_mod_id) = forge_mod_id {
+        let _ = db.transition_request_by_forge_mod_id(
+            forge_mod_id,
+            &[crate::db::requests::RequestStatus::Installed],
+            crate::db::requests::RequestStatus::Approved,
+            None,
+            Some("Mod removed"),
+        );
+    }
+
     Ok(())
 }
 

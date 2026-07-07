@@ -367,6 +367,14 @@ pub fn configure_app(
             "/requests/{id}/install",
             web::post().to(handlers::requests::install_from_request),
         )
+        .route(
+            "/requests/{id}/reopen",
+            web::post().to(handlers::requests::reopen_request),
+        )
+        .route(
+            "/requests/{id}/history",
+            web::get().to(handlers::requests::request_history),
+        )
         // SVM API routes
         .route(
             "/svm/edit/{section}",
@@ -708,6 +716,10 @@ pub fn configure_app(
         .route(
             "/queue/{id}/cancel",
             web::post().to(handlers::queue::cancel_op),
+        )
+        .route(
+            "/queue/{id}/cancel-reject",
+            web::post().to(handlers::queue::cancel_and_reject_op),
         )
         .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
         .route(
