@@ -80,7 +80,10 @@
         </div>
 
         <div class="card">
-            <h2>Recent Raids</h2>
+            <div class="flex-between" style="margin-bottom:0.5rem">
+                <h2 style="margin:0">Recent Raids</h2>
+                <a href="/quma/raids" class="btn btn-sm btn-outline">View All</a>
+            </div>
             <div id="recent-raids" hx-get="/quma/api/raids/recent" hx-trigger="sse:raidEnded" hx-swap="innerHTML">
                 {% include "raids/partials/recent.html" %}
             </div>

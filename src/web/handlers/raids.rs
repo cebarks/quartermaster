@@ -62,6 +62,18 @@ struct RaidDetailPageTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "raids/list.html")]
+struct AllRaidsPageTemplate {
+    user: crate::web::auth::SessionUser,
+    flash: Option<FlashMessage>,
+    csrf_token: String,
+    nav: NavContext,
+    raids: Vec<(Raid, String)>,
+    offset: i64,
+    has_more: bool,
+}
+
+#[derive(Template)]
 #[template(path = "raids/partials/active.html")]
 struct ActiveRaidsPartialTemplate {
     active_raids: Vec<(Raid, String)>,
@@ -77,6 +89,41 @@ struct RecentRaidsPartialTemplate {
 pub struct RaidsQuery {
     #[serde(default)]
     offset: Option<i64>,
+}
+
+pub async fn all_raids_page(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    query: Query<RaidsQuery>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    let flash = take_flash(&session);
+    let csrf_token = csrf::get_or_create_token(&session);
+    let offset = query.offset.unwrap_or(0);
+
+    let db = state.db.clone();
+    let raids = web::block(move || {
+        let db = db.lock();
+        db.get_all_raids(51, offset)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let has_more = raids.len() > 50;
+    let raids = raids.into_iter().take(50).collect();
+
+    let tmpl = AllRaidsPageTemplate {
+        user,
+        flash,
+        csrf_token,
+        nav: NavContext::from_state(&state),
+        raids,
+        offset,
+        has_more,
+    };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
 pub async fn stats_page(

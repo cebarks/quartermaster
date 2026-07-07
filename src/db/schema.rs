@@ -15,7 +15,8 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/009_headless_session_stats.sql"),
     include_str!("../../migrations/010_url_install_support.sql"),
     include_str!("../../migrations/011_items_give_permission.sql"),
-    include_str!("../../migrations/012_request_lifecycle.sql"),
+    include_str!("../../migrations/012_notes.sql"),
+    include_str!("../../migrations/013_request_lifecycle.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
