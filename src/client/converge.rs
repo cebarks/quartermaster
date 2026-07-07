@@ -30,7 +30,7 @@ pub const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 
 /// Regex for editing UDP port in Fika client config
 static PORT_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex"));
+    LazyLock::new(|| regex::Regex::new(r"(?m)^(UDP Port\s*=\s*)\d+").expect("valid regex"));
 
 /// Regex for editing Use UPnP in Fika client config
 static UPNP_RE: LazyLock<regex::Regex> =
@@ -329,16 +329,23 @@ async fn select_profiles_for_assignment(
 /// Write the UDP port into the Fika client config file in a per-client overlay.
 ///
 /// The Fika client reads its P2P port from `BepInEx/config/com.fika.core.cfg`
-/// under the `[Network]` section, `Port = <value>`. This function uses regex
+/// under the `[Network]` section, `UDP Port = <value>`. This function uses regex
 /// replacement to update the port value while preserving comments and formatting.
 ///
-/// If the config file doesn't exist yet (overlay was just created), this is a no-op —
-/// the config will be populated when Fika runs for the first time.
+/// If the config file doesn't exist yet (first boot before Fika generates it),
+/// a minimal seed config is written. BepInEx fills in defaults for missing entries.
 fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
     let cfg_path = overlay_dir.join("BepInEx/config/com.fika.core.cfg");
     if !cfg_path.exists() {
+        if let Some(parent) = cfg_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create config dir {}", parent.display()))?;
+        }
+        let seed = format!("[Network]\nUDP Port = {port}\n");
+        std::fs::write(&cfg_path, &seed)
+            .with_context(|| format!("failed to seed {}", cfg_path.display()))?;
         debug!(
-            "Fika config not found at {}, skipping UDP port write",
+            "Seeded Fika config with UDP port {port} at {}",
             cfg_path.display()
         );
         return Ok(());
@@ -348,7 +355,10 @@ fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
         .with_context(|| format!("failed to read {}", cfg_path.display()))?;
 
     if !PORT_RE.is_match(&content) {
-        debug!("No Port setting found in {}, skipping", cfg_path.display());
+        debug!(
+            "No UDP Port setting found in {}, skipping",
+            cfg_path.display()
+        );
         return Ok(());
     }
 
@@ -1699,23 +1709,27 @@ mod tests {
         let cfg_path = config_dir.join("com.fika.core.cfg");
         std::fs::write(
             &cfg_path,
-            "[Network]\n\n## Port\n# Setting type: UInt16\n# Default value: 25565\nPort = 25565\n",
+            "[Network]\n\n## UDP Port\n# Setting type: UInt16\n# Default value: 25565\nUDP Port = 25565\n",
         )
         .unwrap();
 
         write_fika_udp_port(tmp.path(), 25567).unwrap();
 
         let content = std::fs::read_to_string(&cfg_path).unwrap();
-        assert!(content.contains("Port = 25567"));
-        assert!(!content.contains("Port = 25565"));
+        assert!(content.contains("UDP Port = 25567"));
+        assert!(!content.contains("UDP Port = 25565"));
     }
 
     #[test]
-    fn write_fika_udp_port_no_config_file_is_ok() {
+    fn write_fika_udp_port_seeds_config_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        // No config file exists — should not error, just skip
         let result = write_fika_udp_port(tmp.path(), 25567);
         assert!(result.is_ok());
+
+        let cfg_path = tmp.path().join("BepInEx/config/com.fika.core.cfg");
+        assert!(cfg_path.exists());
+        let content = std::fs::read_to_string(cfg_path).unwrap();
+        assert!(content.contains("UDP Port = 25567"));
     }
 
     #[test]
