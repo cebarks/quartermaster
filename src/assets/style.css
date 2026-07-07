@@ -516,22 +516,20 @@ pre code {
 .svm-import-form { max-width: none; }
 .svm-import-form textarea { font-family: monospace; font-size: 0.9em; }
 
-/* Request kanban */
-.request-kanban {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 1rem;
-    margin-top: 0.5rem;
-}
-.request-kanban-column {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    min-width: 0;
-}
-.request-kanban-column h3 {
-    margin: 0;
-    padding-bottom: 0.25rem;
-    border-bottom: 2px solid var(--border);
-    font-size: 0.95rem;
-}
+/* Request table */
+.request-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 0; }
+.request-tabs .tab { padding: 0.5rem 1.25rem; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; color: var(--text-muted); font-size: 0.95rem; }
+.request-tabs .tab.active { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
+.request-tabs .tab:hover { color: var(--text); }
+.request-table { width: 100%; border-collapse: collapse; }
+.request-table th { text-align: left; padding: 8px 16px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+.request-table th:nth-child(2), .request-table td:nth-child(2) { text-align: center; width: 80px; }
+.request-table th:nth-child(3), .request-table td:nth-child(3) { width: 100px; }
+.request-table th:nth-child(4), .request-table td:nth-child(4) { text-align: center; width: 80px; }
+.request-row { cursor: pointer; border-bottom: 1px solid var(--border); }
+.request-row:hover { background: var(--bg-hover, rgba(255,255,255,0.03)); }
+.request-row td { padding: 10px 16px; vertical-align: middle; }
+.request-row.expanded { background: var(--bg-hover, rgba(255,255,255,0.03)); }
+.request-detail { border-bottom: 1px solid var(--border); border-left: 3px solid var(--accent); }
+.request-detail td { padding: 8px 16px 12px 19px; }
+.resolve-form-input { background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); padding: 0.25rem 0.5rem; font-size: 0.85rem; }
