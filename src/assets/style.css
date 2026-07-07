@@ -529,5 +529,7 @@ pre code {
 .request-row td { padding: 10px 16px; vertical-align: middle; }
 .request-row.expanded { background: var(--bg-hover, rgba(255,255,255,0.03)); }
 .request-detail { border-bottom: 1px solid var(--border); border-left: 3px solid var(--accent); }
+.request-expanded .request-detail { display: table-row !important; }
+.request-expanded .request-row { background: var(--bg-hover, rgba(255,255,255,0.03)); }
 .request-detail td { padding: 8px 16px 12px 19px; }
 .resolve-form-input { background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); padding: 0.25rem 0.5rem; font-size: 0.85rem; }

@@ -87,22 +87,36 @@ function requestTabSwitch(el) {
         installAll.style.display = el.dataset.tab === 'approved' ? '' : 'none';
     }
 }
+var expandedRequestId = null;
 function toggleRequestDetail(id) {
     var detail = document.getElementById('detail-' + id);
     var row = detail.previousElementSibling;
+    var tbody = document.getElementById('request-' + id);
     if (detail.style.display === 'none') {
-        // Collapse any other expanded detail
         document.querySelectorAll('.request-detail').forEach(function(d) {
             d.style.display = 'none';
             d.previousElementSibling.classList.remove('expanded');
+            d.closest('tbody').classList.remove('request-expanded');
         });
         detail.style.display = '';
         row.classList.add('expanded');
+        tbody.classList.add('request-expanded');
+        expandedRequestId = id;
     } else {
         detail.style.display = 'none';
         row.classList.remove('expanded');
+        tbody.classList.remove('request-expanded');
+        expandedRequestId = null;
     }
 }
+document.addEventListener('htmx:beforeSwap', function(e) {
+    if (expandedRequestId && e.detail.target.id === 'request-' + expandedRequestId) {
+        e.detail.serverResponse = e.detail.serverResponse.replace(
+            'id="request-' + expandedRequestId + '"',
+            'id="request-' + expandedRequestId + '" class="request-expanded"'
+        );
+    }
+});
 function toggleVoteComment(btn, requestId) {
     var el = document.getElementById('vote-comment-' + requestId);
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
