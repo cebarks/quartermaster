@@ -11,6 +11,7 @@ pub mod headless;
 pub mod install;
 pub mod invite;
 pub mod list;
+pub mod reindex;
 pub mod remove;
 pub mod restore;
 pub mod serve;
@@ -172,6 +173,13 @@ pub enum Command {
         /// List existing backups instead of creating one
         #[arg(long)]
         list: bool,
+    },
+
+    /// Rebuild file tracking index by re-downloading archives from Forge
+    Reindex {
+        /// Actually apply changes (dry-run by default)
+        #[arg(long)]
+        apply: bool,
     },
 
     /// Restore from a backup
