@@ -82,7 +82,7 @@ fn match_prefix_case_insensitive<'a>(path: &'a str, segments: &[&str]) -> Option
 }
 
 /// List all entry names in an archive (ZIP or 7z).
-fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
+pub fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
     match detect_format(archive_path)? {
         ArchiveFormat::Zip => {
             let file = fs::File::open(archive_path)

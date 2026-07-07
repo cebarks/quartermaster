@@ -161,6 +161,10 @@ async fn main() -> Result<()> {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::invite::run(expires.as_deref(), &ctx)
         }
+        Command::Reindex { apply } => {
+            let ctx = init_context(&cli, &reload_handles)?;
+            cli::reindex::run(!apply, &ctx).await
+        }
         Command::Backup { mod_ref, list } => {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::backup::run(mod_ref.as_deref(), *list, &ctx)
