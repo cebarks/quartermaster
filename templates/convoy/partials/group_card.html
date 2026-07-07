@@ -8,7 +8,7 @@
         <div data-members style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem">
             {% for member in members %}
             <span class="badge {% if member.has_client_files %}badge-success{% else %}badge-secondary{% endif %}"
-                  data-mod-id="{{ member.forge_id }}"
+                  data-mod-id="{{ member.id }}"
                   style="display: inline-block; padding: 0.2rem 0.5rem; font-size: 0.8rem">
                 {{ member.name }}
             </span>
@@ -52,7 +52,7 @@
         <div data-members style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem">
             {% for member in members %}
             <span class="badge {% if member.has_client_files %}badge-success{% else %}badge-secondary{% endif %}"
-                  data-mod-id="{{ member.forge_id }}"
+                  data-mod-id="{{ member.id }}"
                   style="display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.5rem; font-size: 0.8rem">
                 {{ member.name }}
                 <button type="button" data-remove-member
@@ -72,7 +72,7 @@
             <select id="add-mod-{{ index }}" data-add-mod style="min-width: 200px">
                 <option value="">-- Select --</option>
                 {% for m in available_mods %}
-                <option value="{{ m.forge_id }}" data-mod-name="{{ m.name }}">{{ m.name }}</option>
+                <option value="{{ m.id }}" data-mod-name="{{ m.name }}">{{ m.name }}</option>
                 {% endfor %}
             </select>
         </div>

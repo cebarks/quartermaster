@@ -322,6 +322,43 @@ impl Database {
         rows.collect()
     }
 
+    pub fn get_files_for_mod_ids(
+        &self,
+        mod_ids: &[i64],
+    ) -> rusqlite::Result<Vec<InstalledFile>> {
+        if mod_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: String = mod_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             FROM installed_files f
+             JOIN installed_mods m ON f.mod_id = m.id
+             WHERE m.id IN ({placeholders})
+             AND m.disabled = 0
+             UNION ALL
+             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             FROM installed_files f
+             JOIN installed_addons a ON f.addon_id = a.id
+             JOIN installed_mods m ON a.parent_mod_id = m.id
+             WHERE m.id IN ({placeholders})
+             AND a.disabled = 0 AND m.disabled = 0
+             ORDER BY file_path"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::types::ToSql> = mod_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        let params_copy: Vec<&dyn rusqlite::types::ToSql> = mod_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        params.extend(params_copy);
+        let rows = stmt.query_map(params.as_slice(), row_to_installed_file)?;
+        rows.collect()
+    }
+
     pub fn get_all_enabled_mod_files(&self) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
             "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source

@@ -183,7 +183,7 @@ pub fn configure_app(
                 web::post().to(handlers::convoy::download),
             )
             .route(
-                "/convoy/mod/{forge_id}/archive",
+                "/convoy/mod/{mod_id}/archive",
                 web::get().to(handlers::convoy::single_mod_archive),
             );
     } else {
@@ -219,7 +219,7 @@ pub fn configure_app(
                 web::post().to(handlers::convoy::download),
             )
             .route(
-                "/convoy/mod/{forge_id}/archive",
+                "/convoy/mod/{mod_id}/archive",
                 web::get().to(handlers::convoy::single_mod_archive),
             );
     }

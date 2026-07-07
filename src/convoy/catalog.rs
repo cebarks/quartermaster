@@ -24,6 +24,7 @@ pub struct CatalogGroup {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CatalogMod {
+    pub id: i64,
     pub forge_id: Option<i64>,
     pub name: String,
     pub version: String,
@@ -34,11 +35,7 @@ fn get_client_file_checksums(
     db: &Database,
     m: &crate::db::mods::InstalledMod,
 ) -> anyhow::Result<BTreeMap<String, String>> {
-    let files = if let Some(forge_id) = m.forge_mod_id {
-        db.get_files_for_forge_ids(&[forge_id])?
-    } else {
-        db.get_files_for_mod(m.id)?
-    };
+    let files = db.get_files_for_mod_ids(&[m.id])?;
     Ok(files
         .iter()
         .filter(|f| f.file_path.starts_with("BepInEx/"))
@@ -74,6 +71,7 @@ pub fn generate_catalog(
         let checksums = get_client_file_checksums(db, m)?;
         if !checksums.is_empty() {
             default_mods.push(CatalogMod {
+                id: m.id,
                 forge_id: m.forge_mod_id,
                 name: m.name.clone(),
                 version: m.version.clone(),
@@ -102,6 +100,7 @@ pub fn generate_catalog(
             let checksums = get_client_file_checksums(db, m)?;
             if !checksums.is_empty() {
                 catalog_mods.push(CatalogMod {
+                    id: m.id,
                     forge_id: m.forge_mod_id,
                     name: m.name.clone(),
                     version: m.version.clone(),

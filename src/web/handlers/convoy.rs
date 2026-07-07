@@ -90,12 +90,12 @@ pub async fn convoy_page(
 
 #[derive(Clone)]
 struct AvailableMod {
-    forge_id: i64,
+    id: i64,
     name: String,
 }
 
 struct GroupMember {
-    forge_id: i64,
+    id: i64,
     name: String,
     has_client_files: bool,
 }
@@ -127,12 +127,9 @@ fn mods_with_client_files(
     let mods = db.list_mods()?;
     let mut result = Vec::new();
     for m in &mods {
-        let Some(forge_mod_id) = m.forge_mod_id else {
-            continue;
-        };
         let files = db.get_files_for_mod(m.id)?;
         let has_client = files.iter().any(|f| f.file_path.starts_with("BepInEx/"));
-        result.push((forge_mod_id, m.name.clone(), has_client));
+        result.push((m.id, m.name.clone(), has_client));
     }
     Ok(result)
 }
@@ -174,9 +171,7 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
         for m in members {
-            if let Some(forge_id) = m.forge_mod_id {
-                assigned.insert(forge_id);
-            }
+            assigned.insert(m.id);
         }
     }
 
@@ -193,8 +188,8 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
         let default_members: Vec<GroupMember> = all_mods
             .iter()
             .filter(|(id, _, has_client)| *has_client && !assigned.contains(id))
-            .map(|(forge_id, name, _)| GroupMember {
-                forge_id: *forge_id,
+            .map(|(id, name, _)| GroupMember {
+                id: *id,
                 name: name.clone(),
                 has_client_files: true,
             })
@@ -227,25 +222,24 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
 
         let members: Vec<GroupMember> = db_members
             .iter()
-            .filter_map(|m| {
-                let forge_id = m.forge_mod_id?;
-                if let Some(&(name, has_client)) = mod_lookup.get(&forge_id) {
-                    Some(GroupMember {
-                        forge_id,
+            .map(|m| {
+                if let Some(&(name, has_client)) = mod_lookup.get(&m.id) {
+                    GroupMember {
+                        id: m.id,
                         name: name.to_string(),
                         has_client_files: has_client,
-                    })
+                    }
                 } else {
-                    Some(GroupMember {
-                        forge_id,
-                        name: format!("Mod #{forge_id}"),
+                    GroupMember {
+                        id: m.id,
+                        name: format!("Mod #{}", m.id),
                         has_client_files: false,
-                    })
+                    }
                 }
             })
             .collect();
 
-        let member_ids: Vec<i64> = db_members.iter().filter_map(|m| m.forge_mod_id).collect();
+        let member_ids: Vec<i64> = db_members.iter().map(|m| m.id).collect();
 
         let card_available: Vec<AvailableMod> = all_mods
             .iter()
@@ -253,7 +247,7 @@ async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String,
                 *has_client && (!assigned.contains(id) || member_ids.contains(id))
             })
             .map(|(id, name, _)| AvailableMod {
-                forge_id: *id,
+                id: *id,
                 name: name.clone(),
             })
             .collect();
@@ -334,9 +328,7 @@ pub async fn new_group_card(
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
         for m in members {
-            if let Some(forge_id) = m.forge_mod_id {
-                assigned.insert(forge_id);
-            }
+            assigned.insert(m.id);
         }
     }
 
@@ -344,7 +336,7 @@ pub async fn new_group_card(
         .iter()
         .filter(|(id, _, has_client)| *has_client && !assigned.contains(id))
         .map(|(id, name, _)| AvailableMod {
-            forge_id: *id,
+            id: *id,
             name: name.clone(),
         })
         .collect();
@@ -438,38 +430,11 @@ pub async fn save_groups(
         }
     }
 
-    // Build forge_id → mod_db_id lookup map (O(1) instead of O(n²))
-    let db = state.db.clone();
-    let forge_to_db: HashMap<i64, i64> = web::block(move || {
-        let db = db.lock();
-        let mods = db.list_mods()?;
-        Ok::<_, anyhow::Error>(
-            mods.into_iter()
-                .filter_map(|m| m.forge_mod_id.map(|forge_id| (forge_id, m.id)))
-                .collect(),
-        )
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
-
-    // Convert forge_mod_ids to mod_db_ids
-    let groups_with_db_ids: Vec<(String, String, String, bool, Vec<i64>)> = processed_groups
-        .into_iter()
-        .map(|(name, slug, tier, exclude_headless, forge_ids)| {
-            let mod_db_ids: Vec<i64> = forge_ids
-                .into_iter()
-                .filter_map(|forge_id| forge_to_db.get(&forge_id).copied())
-                .collect();
-            (name, slug, tier, exclude_headless, mod_db_ids)
-        })
-        .collect();
-
-    // Save to DB atomically
+    // Save to DB atomically (members are already DB ids)
     let db = state.db.clone();
     web::block(move || {
         let db = db.lock();
-        db.save_groups_atomic(&groups_with_db_ids)
+        db.save_groups_atomic(&processed_groups)
     })
     .await
     .map_err(WebError::from)?
@@ -656,11 +621,11 @@ pub async fn download(
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
-    let forge_ids = body.mods.clone();
+    let mod_ids = body.mods.clone();
 
     let zip_bytes = web::block(move || {
         let db = db.lock();
-        crate::convoy::download::build_download_zip(&db, &spt_dir, &forge_ids)
+        crate::convoy::download::build_download_zip(&db, &spt_dir, &mod_ids)
     })
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?
@@ -675,18 +640,18 @@ pub async fn download(
         .body(zip_bytes))
 }
 
-/// GET /quma/convoy/mod/{forge_id}/archive — single mod download
+/// GET /quma/convoy/mod/{mod_id}/archive — single mod download
 pub async fn single_mod_archive(
     state: web::Data<AppState>,
     path: web::Path<i64>,
 ) -> actix_web::Result<HttpResponse> {
-    let forge_id = path.into_inner();
+    let mod_id = path.into_inner();
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
 
     let zip_bytes = web::block(move || {
         let db = db.lock();
-        crate::convoy::download::build_download_zip(&db, &spt_dir, &[forge_id])
+        crate::convoy::download::build_download_zip(&db, &spt_dir, &[mod_id])
     })
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?
@@ -696,7 +661,7 @@ pub async fn single_mod_archive(
         .content_type("application/zip")
         .insert_header((
             "content-disposition",
-            format!("attachment; filename=\"mod-{forge_id}.zip\""),
+            format!("attachment; filename=\"mod-{mod_id}.zip\""),
         ))
         .body(zip_bytes))
 }

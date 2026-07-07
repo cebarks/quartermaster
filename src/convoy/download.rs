@@ -7,9 +7,9 @@ use crate::db::Database;
 pub fn build_download_zip(
     db: &Database,
     spt_dir: &Path,
-    forge_ids: &[i64],
+    mod_ids: &[i64],
 ) -> anyhow::Result<Vec<u8>> {
-    let files = db.get_files_for_forge_ids(forge_ids)?;
+    let files = db.get_files_for_mod_ids(mod_ids)?;
     let buf = Cursor::new(Vec::new());
     let mut zip = ZipWriter::new(buf);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
