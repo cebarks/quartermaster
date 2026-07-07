@@ -127,9 +127,28 @@ pub struct ForgeVersion {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ForgeDependency {
     pub mod_id: i64,
+    pub mod_guid: Option<String>,
     pub version_id: Option<i64>,
+    #[serde(alias = "mod_name")]
     pub name: Option<String>,
+    #[serde(alias = "version_constraint")]
     pub version: Option<String>,
+    pub is_optional: Option<bool>,
+}
+
+// ---------------------------------------------------------------------------
+// Pagination types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct PaginationLinks {
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct PaginatedResponse<T> {
+    pub data: T,
+    pub links: Option<PaginationLinks>,
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +208,7 @@ pub struct DependencyResponse {
 pub struct UpdateCheckMod {
     pub id: i64,
     pub mod_id: i64,
+    pub guid: Option<String>,
     pub name: String,
     pub slug: Option<String>,
     pub version: String,
@@ -201,6 +221,7 @@ pub struct UpdateRecommendedVersion {
     pub version: String,
     pub link: Option<String>,
     pub content_length: Option<u64>,
+    pub spt_versions: Option<Vec<String>>,
     pub fika_compatibility: Option<FikaCompat>,
 }
 
@@ -485,6 +506,25 @@ mod tests {
         assert_eq!(deps[0].name.as_deref(), Some("CoreLib"));
         assert_eq!(deps[1].version_id, None);
         assert_eq!(deps[1].version.as_deref(), None);
+    }
+
+    #[test]
+    fn deserialize_dependency_with_api_field_names() {
+        let json = r#"{
+            "mod_id": 42,
+            "mod_guid": "com.example.core-library",
+            "mod_name": "Core Library",
+            "version_constraint": "^2.0.0",
+            "is_optional": false
+        }"#;
+
+        let dep: ForgeDependency = serde_json::from_str(json).unwrap();
+        assert_eq!(dep.mod_id, 42);
+        assert_eq!(dep.mod_guid.as_deref(), Some("com.example.core-library"));
+        assert_eq!(dep.name.as_deref(), Some("Core Library"));
+        assert_eq!(dep.version.as_deref(), Some("^2.0.0"));
+        assert_eq!(dep.is_optional, Some(false));
+        assert_eq!(dep.version_id, None);
     }
 
     #[test]
