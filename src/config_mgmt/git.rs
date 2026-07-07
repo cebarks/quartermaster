@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -60,6 +60,13 @@ impl ConfigHistoryRepo {
                 .output()
                 .context("failed to set git user.email")?;
 
+            // Disable hooks to prevent interference (especially in tests)
+            Command::new("git")
+                .args(["config", "core.hooksPath", "/dev/null"])
+                .current_dir(&self.path)
+                .output()
+                .context("failed to disable git hooks")?;
+
             Ok(())
         }
     }
@@ -108,11 +115,15 @@ impl ConfigHistoryRepo {
                 &format!("user.name={author}"),
                 "-c",
                 "user.email=quartermaster@localhost",
+                "-c",
+                "commit.gpgsign=false",
                 "commit",
+                "--no-verify",
                 "-m",
                 message,
             ])
             .current_dir(&self.path)
+            .stdin(Stdio::null())
             .output()
             .context("failed to run git commit")?;
 

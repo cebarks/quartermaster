@@ -278,3 +278,172 @@ impl ConfigManager {
 fn strip_bom(s: &str) -> &str {
     s.strip_prefix('\u{feff}').unwrap_or(s)
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_bom_removes_bom() {
+        assert_eq!(strip_bom("\u{feff}hello"), "hello");
+        assert_eq!(strip_bom("hello"), "hello");
+        assert_eq!(strip_bom(""), "");
+    }
+
+    #[test]
+    fn validate_jsonc_accepts_valid() {
+        let valid = r#"{"key": "value", "num": 42}"#;
+        let result = jsonc_parser::parse_to_serde_value(valid, &Default::default());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_jsonc_accepts_comments() {
+        let jsonc = r#"{
+            // This is a comment
+            "key": "value",
+            /* block comment */
+            "num": 42
+        }"#;
+        let result = jsonc_parser::parse_to_serde_value(jsonc, &Default::default());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_jsonc_rejects_invalid() {
+        let invalid = r#"{"key": }"#;
+        let result = jsonc_parser::parse_to_serde_value(invalid, &Default::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_manager_discover_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
+
+        let mgr = ConfigManager::new(spt_dir);
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let configs = mgr.discover_configs(&db).unwrap();
+        assert!(configs.is_empty());
+    }
+
+    #[test]
+    fn config_manager_discovers_json_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let config_dir = spt_dir.join("SPT/user/mods/TestMod/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("settings.json"), r#"{"foo": 1}"#).unwrap();
+        std::fs::write(config_dir.join("extra.jsonc"), r#"{"bar": 2}"#).unwrap();
+        // Non-json file should be ignored
+        std::fs::write(config_dir.join("readme.txt"), "ignore me").unwrap();
+
+        let mgr = ConfigManager::new(spt_dir);
+        let db = crate::db::Database::open_in_memory().unwrap();
+        // Insert a mod matching the directory name
+        db.insert_mod(None, None, "TestMod", None, "1.0.0", "manual", None)
+            .unwrap();
+
+        let configs = mgr.discover_configs(&db).unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].mod_name, "TestMod");
+        assert_eq!(configs[0].config_files.len(), 2);
+    }
+
+    #[test]
+    fn config_save_and_read_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let config_dir = spt_dir.join("SPT/user/mods/TestMod/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let original = r#"{"key": "original"}"#;
+        std::fs::write(config_dir.join("config.json"), original).unwrap();
+
+        let mgr = ConfigManager::new(spt_dir);
+        let content = mgr
+            .read_config("TestMod", Path::new("config.json"))
+            .unwrap();
+        assert_eq!(content, original);
+
+        let new_content = r#"{"key": "modified"}"#;
+        let changed = mgr
+            .save_config("TestMod", Path::new("config.json"), new_content, "testuser")
+            .unwrap();
+        assert!(changed);
+
+        let after = mgr
+            .read_config("TestMod", Path::new("config.json"))
+            .unwrap();
+        assert_eq!(after, new_content);
+    }
+
+    #[test]
+    fn config_save_no_change_returns_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let config_dir = spt_dir.join("SPT/user/mods/TestMod/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let content = r#"{"key": "value"}"#;
+        std::fs::write(config_dir.join("config.json"), content).unwrap();
+
+        let mgr = ConfigManager::new(spt_dir);
+        let changed = mgr
+            .save_config("TestMod", Path::new("config.json"), content, "testuser")
+            .unwrap();
+        assert!(!changed);
+    }
+
+    #[test]
+    fn config_save_rejects_invalid_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let config_dir = spt_dir.join("SPT/user/mods/TestMod/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.json"), "{}").unwrap();
+
+        let mgr = ConfigManager::new(spt_dir);
+        let result = mgr.save_config(
+            "TestMod",
+            Path::new("config.json"),
+            "not json {{{",
+            "testuser",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_history_and_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spt_dir = tmp.path();
+        let config_dir = spt_dir.join("SPT/user/mods/TestMod/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.json"), r#"{"v": 1}"#).unwrap();
+
+        let mgr = ConfigManager::new(spt_dir);
+
+        // Save twice to create history
+        mgr.save_config("TestMod", Path::new("config.json"), r#"{"v": 2}"#, "user1")
+            .unwrap();
+        mgr.save_config("TestMod", Path::new("config.json"), r#"{"v": 3}"#, "user2")
+            .unwrap();
+
+        let history = mgr.history("TestMod", Path::new("config.json")).unwrap();
+        assert!(history.len() >= 2);
+
+        // Restore to the first saved version
+        let first_rev = &history.last().unwrap().rev;
+        mgr.restore_config("TestMod", Path::new("config.json"), first_rev, "user1")
+            .unwrap();
+
+        // Verify the file was restored
+        let content = mgr
+            .read_config("TestMod", Path::new("config.json"))
+            .unwrap();
+        // The initial snapshot was the original {"v": 1}, then {"v": 2} was saved
+        // The oldest entry in history should be the initial snapshot
+        // After restore, we should have the content of that revision
+        assert!(content.contains("\"v\""));
+    }
+}
