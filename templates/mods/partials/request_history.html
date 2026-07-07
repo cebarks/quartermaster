@@ -11,7 +11,7 @@
     {% else %}
     <span class="text-muted">by system</span>
     {% endif %}
-    · <span class="text-muted">{{ e.changed_at }}</span>
+    · <time class="text-muted" title="{{ e.changed_at }}">{{ e.changed_at|time_ago }}</time>
     {% if let Some(c) = e.comment.as_deref() %}
     — <em>{{ c }}</em>
     {% endif %}

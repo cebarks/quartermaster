@@ -1,6 +1,6 @@
-<div id="request-{{ r.request.id }}">
+<tbody id="request-{{ r.request.id }}">
 {% if let Some(msg) = message.as_deref() %}
-<div class="toast toast-success" style="margin-bottom:0.5rem">{{ msg }}</div>
+<tr><td colspan="4"><div class="toast toast-success" style="margin-bottom:0">{{ msg }}</div></td></tr>
 {% endif %}
-{% include "mods/partials/request_card_body.html" %}
-</div>
+{% include "mods/partials/request_row.html" %}
+</tbody>
