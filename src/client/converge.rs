@@ -1,4 +1,4 @@
-use crate::config::{Config, HeadlessConfig, HeadlessDisplayServer, HeadlessRunner};
+use crate::config::{Config, HeadlessConfig};
 use crate::container::{
     ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
 };
@@ -49,72 +49,8 @@ fn is_fika_client_present(install_dir: &Path) -> bool {
     })
 }
 
-/// Sync the Fika client plugin from the SPT server directory to the headless install.
-///
-/// Copies Fika.Core.dll (and supporting files) directly from the server's
-/// BepInEx/plugins/Fika/ directory rather than downloading from Forge/GitHub.
-/// This ensures the headless client uses the exact same binary that modsync
-/// serves to players, avoiding CRC mismatches from different builds of the
-/// same version.
-///
-/// Returns `true` if files were updated on disk (callers should restart containers).
-pub fn ensure_fika_client(install_dir: &Path, spt_dir: &Path) -> Result<bool> {
-    let server_fika_dir = spt_dir.join("BepInEx/plugins/Fika");
-    let server_dll = server_fika_dir.join("Fika.Core.dll");
-
-    if !server_dll.is_file() {
-        bail!(
-            "Fika.Core.dll not found in server directory at {}",
-            server_dll.display()
-        );
-    }
-
-    let headless_fika_dir = install_dir.join("BepInEx/plugins/Fika");
-    let headless_dll = headless_fika_dir.join("Fika.Core.dll");
-
-    // Hash comparison — version strings can't detect different builds of the same version
-    if headless_dll.is_file() {
-        let server_hash = crate::spt::mods::compute_file_hash(&server_dll)?;
-        let headless_hash = crate::spt::mods::compute_file_hash(&headless_dll)?;
-        if server_hash == headless_hash {
-            debug!("Fika.Core.dll already matches server");
-            return Ok(false);
-        }
-        info!("Fika.Core.dll hash differs from server — updating headless copy");
-    }
-
-    std::fs::create_dir_all(&headless_fika_dir)
-        .context("failed to create headless Fika directory")?;
-
-    let mut copied = 0;
-    for entry in std::fs::read_dir(&server_fika_dir)
-        .with_context(|| format!("failed to read {}", server_fika_dir.display()))?
-    {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        // Skip headless-specific files (managed by ensure_fika_headless)
-        if name_str.contains("Headless") {
-            continue;
-        }
-        std::fs::copy(entry.path(), headless_fika_dir.join(&name))
-            .with_context(|| format!("failed to copy {name_str} to headless"))?;
-        copied += 1;
-    }
-
-    info!("Fika client synced from server directory ({copied} files)");
-    Ok(true)
-}
-
 const FIKA_HEADLESS_GITHUB_REPO: &str = "project-fika/Fika-Headless";
 
-/// Check if the Fika.Headless plugin is present in the install directory.
-///
-/// This is a separate plugin from Fika.Core — it implements the headless idle
-/// loop that keeps the game running and ready to host raids.
 fn is_fika_headless_present(install_dir: &Path) -> bool {
     install_dir
         .join("BepInEx/plugins/Fika/Fika.Headless.dll")
@@ -123,26 +59,15 @@ fn is_fika_headless_present(install_dir: &Path) -> bool {
 
 /// Ensure the Fika.Headless plugin is installed in the headless install directory.
 ///
-/// Unlike Fika.Core (which is on Forge), Fika.Headless is distributed via GitHub
-/// releases at project-fika/Fika-Headless. This function fetches the latest release,
-/// downloads the zip, and extracts it.
-async fn ensure_fika_headless(
-    forge: &ForgeClient,
-    install_dir: &Path,
-    fika_core_updated: bool,
-) -> Result<()> {
-    if is_fika_headless_present(install_dir) && !fika_core_updated {
+/// Unlike Fika.Core (which is on Forge and synced via normal mod sync),
+/// Fika.Headless is distributed via GitHub releases only.
+/// ponytail: presence-only check, no version/hash tracking — if Fika.Core
+/// updates via mod sync, Fika.Headless stays at first-install version.
+/// Add hash comparison against GitHub latest if version drift causes issues.
+async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result<()> {
+    if is_fika_headless_present(install_dir) {
         debug!("Fika.Headless already present in {}", install_dir.display());
         return Ok(());
-    }
-
-    // Fika.Core and Fika.Headless are released in tandem — refresh both
-    if fika_core_updated {
-        let dll = install_dir.join("BepInEx/plugins/Fika/Fika.Headless.dll");
-        if dll.is_file() {
-            info!("Fika.Core was updated — refreshing Fika.Headless to match");
-            let _ = std::fs::remove_file(&dll);
-        }
     }
 
     info!(
@@ -150,7 +75,6 @@ async fn ensure_fika_headless(
         install_dir.display()
     );
 
-    // Query GitHub API for the latest release
     let release: serde_json::Value = forge
         .get_external_json(&format!(
             "https://api.github.com/repos/{FIKA_HEADLESS_GITHUB_REPO}/releases/latest"
@@ -884,9 +808,8 @@ pub async fn converge(
     // Determine current count
     let current_count = managed.len() as u32;
 
-    // Ensure the Fika client mod is installed (required for all operations)
-    let fika_updated = ensure_fika_client(&headless_config.install_dir, spt_dir)?;
-    ensure_fika_headless(forge, &headless_config.install_dir, fika_updated).await?;
+    // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge)
+    ensure_fika_headless(forge, &headless_config.install_dir).await?;
 
     // Reconcile headless mod files on every convergence (not just scale-up)
     // This catches drift from manual changes or group config updates
@@ -1007,14 +930,6 @@ pub async fn converge(
             headless_config.use_upnp,
             headless_config.physical_cores_only,
         )?;
-    }
-
-    // Restart running containers if Fika was updated on disk — BepInEx loads
-    // plugins once at boot, so a restart is required to pick up new DLLs.
-    if fika_updated && current_count > 0 {
-        let live_count = current_count.min(desired_count);
-        info!("Fika was updated — restarting {live_count} headless client(s) to load new plugins");
-        restart_running_clients(container_mgr, live_count).await?;
     }
 
     info!("Convergence complete");
@@ -1428,8 +1343,7 @@ async fn create_client_container(
         client_port(headless_config.base_udp_port, index)?.to_string(),
     )];
 
-    // Always set PROFILE_ID — the claudeoris image defaults to "test" if unset,
-    // which would silently connect with a bogus profile. An empty string
+    // Always set PROFILE_ID — the entrypoint passes it to -token=, and an empty string
     // causes the entrypoint to fail clearly instead.
     match profile_id {
         Some(ref pid) => {
@@ -1454,35 +1368,8 @@ async fn create_client_container(
     env.push(("SERVER_URL".to_string(), proxy_host.to_string()));
     env.push(("SERVER_PORT".to_string(), config.web_port.to_string()));
 
-    // Claudeoris image runtime knobs
-    let runner_str = match headless_config.runner {
-        HeadlessRunner::Umu => "umu",
-        HeadlessRunner::Wine => "wine",
-    };
-    env.push(("RUNNER".to_string(), runner_str.to_string()));
-
-    let effective_ntsync = ntsync_available && headless_config.ntsync;
-    env.push(("NTSYNC".to_string(), effective_ntsync.to_string()));
     env.push(("ESYNC".to_string(), headless_config.esync.to_string()));
     env.push(("FSYNC".to_string(), headless_config.fsync.to_string()));
-
-    let display_server_str = match headless_config.display_server {
-        HeadlessDisplayServer::Gamescope => "gamescope",
-        HeadlessDisplayServer::Xvfb => "xvfb",
-    };
-    env.push(("DISPLAY_SERVER".to_string(), display_server_str.to_string()));
-    env.push((
-        "SAVE_LOG_ON_EXIT".to_string(),
-        headless_config.save_log_on_exit.to_string(),
-    ));
-    env.push((
-        "ENABLE_LOG_PURGE".to_string(),
-        headless_config.enable_log_purge.to_string(),
-    ));
-    env.push((
-        "OVERWRITE_FIKA".to_string(),
-        headless_config.overwrite_fika.to_string(),
-    ));
 
     // Labels
     let labels = vec![
@@ -1498,7 +1385,7 @@ async fn create_client_container(
     }];
 
     let mut devices = vec![];
-    if ntsync_available {
+    if ntsync_available && headless_config.ntsync {
         devices.push(DeviceMapping {
             path_on_host: Some("/dev/ntsync".to_string()),
             path_in_container: Some("/dev/ntsync".to_string()),
