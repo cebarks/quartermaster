@@ -50,12 +50,14 @@
             onclick="requestTabSwitch(this)">Completed ({{ completed_requests.len() }})</button>
 </div>
 
-<div id="request-install-all" style="margin:0.5rem 0{% if approved_requests.is_empty() || !user.can("mods.install") %};display:none{% endif %}">
+{% if user.can("mods.install") && !approved_requests.is_empty() %}
+<div id="request-install-all" style="margin:0.5rem 0;display:none">
     <form hx-post="/quma/api/requests/install-all" hx-target="#mods-tab-content" hx-swap="innerHTML" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-sm btn-primary">Install all approved</button>
     </form>
 </div>
+{% endif %}
 
 <table class="request-table" id="request-table">
     <thead>
