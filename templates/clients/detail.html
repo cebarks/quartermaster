@@ -2,11 +2,11 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% import "clients/partials/badges.html" as badges %}
-{% block title %}Client {{ client.state.index }} — Quartermaster{% endblock %}
+{% block title %}{% if let Some(name) = client.alias %}{{ name }}{% else %}Client {{ client.state.index }}{% endif %} — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("headless", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
-    <h1>Client {{ client.state.index }}</h1>
+    <h1>{% if let Some(name) = client.alias %}{{ name }} <span class="text-muted text-sm">(Client {{ client.state.index }})</span>{% else %}Client {{ client.state.index }}{% endif %}</h1>
     {% if user.can("headless.manage") %}
     <div class="flex gap-1">
         <a href="/quma/logs?tab=headless&container={{ client.state.container_name }}" class="btn btn-sm">Logs</a>
