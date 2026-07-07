@@ -104,6 +104,20 @@ struct RequestHistoryTemplate {
     entries: Vec<crate::db::requests::RequestStatusLog>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct TabQuery {
+    pub status: String,
+}
+
+#[derive(Template)]
+#[template(path = "mods/partials/request_tab_body.html")]
+struct RequestTabBodyTemplate {
+    user: SessionUser,
+    requests: Vec<ModRequestView>,
+    status: String,
+    csrf_token: String,
+}
+
 // -- Helpers --
 
 fn partition_requests(
@@ -1060,6 +1074,51 @@ pub async fn request_history(
     .map_err(WebError::from)?;
 
     let tmpl = RequestHistoryTemplate { entries };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn request_tab_body(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    query: Query<TabQuery>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    let csrf_token = csrf::get_or_create_token(&session);
+    let user_id = user.user_id;
+    let status_filter = query.status.clone();
+
+    let db_status = match status_filter.as_str() {
+        "completed" => None, // completed = installed + rejected, partition in Rust
+        other => Some(other.to_string()),
+    };
+    let db = state.db.clone();
+    let requests = web::block(move || {
+        let db = db.lock();
+        if let Some(ref s) = db_status {
+            db.list_mod_requests(Some(s), user_id)
+        } else {
+            // "completed" = all terminal states; fetch all, keep non-active
+            let all = db.list_mod_requests(None, user_id)?;
+            Ok(all
+                .into_iter()
+                .filter(|r| {
+                    let s = r.request.status.as_str();
+                    s != "pending" && s != "approved" && s != "queued"
+                })
+                .collect())
+        }
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let tmpl = RequestTabBodyTemplate {
+        user,
+        requests,
+        status: status_filter,
+        csrf_token,
+    };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
