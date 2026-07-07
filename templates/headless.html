@@ -62,7 +62,7 @@
             <tbody>
                 {% for client in headless_clients %}
                 <tr>
-                    <td><a href="/quma/headless/{{ client.state.index }}">Client {{ client.state.index }}</a></td>
+                    <td><a href="/quma/headless/{{ client.state.index }}">{% if let Some(name) = client.alias %}{{ name }}{% else %}Client {{ client.state.index }}{% endif %}</a></td>
                     <td>{% call badges::container_status(client.state.container_status) %}{% endcall %}</td>
                     <td>{% call badges::client_health(client.state.health) %}{% endcall %}</td>
                     <td>{% call badges::fika_status(client.state.fika_status) %}{% endcall %}</td>
