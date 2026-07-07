@@ -6,7 +6,16 @@
 {% block nav %}{% call nav::nav("headless", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
-    <h1>{% if let Some(name) = client.alias %}{{ name }} <span class="text-muted text-sm">(Client {{ client.state.index }})</span>{% else %}Client {{ client.state.index }}{% endif %}</h1>
+    <div>
+        <h1>{% if let Some(name) = client.alias %}{{ name }} <span class="text-muted text-sm">(Client {{ client.state.index }})</span>{% else %}Client {{ client.state.index }}{% endif %}</h1>
+        {% if user.can("headless.manage") && client.state.profile_id.is_some() %}
+        <form method="post" action="/quma/headless/{{ client.state.index }}/rename" class="flex gap-1 align-center" style="margin-bottom: 0.5rem">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="name" value="{{ client.alias.as_deref().unwrap_or_default() }}" placeholder="Custom name" class="form-control" style="max-width: 250px">
+            <button type="submit" class="btn btn-sm">Rename</button>
+        </form>
+        {% endif %}
+    </div>
     {% if user.can("headless.manage") %}
     <div class="flex gap-1">
         <a href="/quma/logs?tab=headless&container={{ client.state.container_name }}" class="btn btn-sm">Logs</a>

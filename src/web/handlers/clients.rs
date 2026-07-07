@@ -6,6 +6,7 @@ use actix_session::Session;
 use actix_web::web::{self, Data, Form, Path};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
+use jsonc_parser::cst::CstInputValue;
 
 use crate::client::{ClientHealth, ClientState};
 use crate::config::{Config, HeadlessDisplayServer, RestartPolicy};
@@ -1262,6 +1263,115 @@ pub async fn client_start_raid(
                 &format!("Start raid failed: {e}"),
                 FlashType::Error,
             );
+        }
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .finish())
+}
+
+#[derive(serde::Deserialize)]
+pub struct RenameForm {
+    csrf_token: String,
+    name: String,
+}
+
+pub async fn client_rename(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<u32>,
+    form: Form<RenameForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let index = path.into_inner();
+
+    let profile_id = match &state.client_states {
+        Some(states) => {
+            let clients = states.read().await;
+            clients
+                .iter()
+                .find(|c| c.index == index)
+                .and_then(|c| c.profile_id.clone())
+        }
+        None => None,
+    };
+
+    let profile_id = match profile_id {
+        Some(pid) => pid,
+        None => {
+            set_flash(
+                &session,
+                "Cannot rename: client has no profile assigned yet. Start the SPT server first.",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/headless/{index}")))
+                .finish());
+        }
+    };
+
+    let spt_dir = state.spt_dir.clone();
+    let new_name = form.into_inner().name.trim().to_string();
+
+    let result = actix_web::web::block(move || {
+        let _guard = state.fika_config_lock.lock();
+        let path = crate::fika::config::fika_config_path(&spt_dir);
+
+        // Read current aliases from typed config
+        let config = crate::fika::config::read_fika_config(&path)?;
+        let mut aliases = config.headless.profiles.aliases;
+
+        if new_name.is_empty() {
+            aliases.remove(&profile_id);
+        } else {
+            aliases.insert(profile_id, new_name);
+        }
+
+        // Read CST, set aliases, write back
+        let cst = crate::fika::config::read_fika_cst(&path)?;
+        let root = cst.object_value_or_set();
+        if let Some(headless) = root.object_value("headless") {
+            if let Some(profiles) = headless.object_value("profiles") {
+                let alias_entries: Vec<(String, CstInputValue)> = aliases
+                    .into_iter()
+                    .map(|(k, v)| (k, CstInputValue::String(v)))
+                    .collect();
+                if let Some(prop) = profiles.get("aliases") {
+                    prop.set_value(CstInputValue::Object(alias_entries));
+                }
+            }
+        }
+        crate::fika::config::write_fika_cst(&cst, &path)?;
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => set_flash(
+            &session,
+            "Client renamed. Restart the SPT server for the in-game name to take effect.",
+            FlashType::Success,
+        ),
+        Ok(Err(e)) => {
+            tracing::warn!("failed to rename client: {e:#}");
+            set_flash(
+                &session,
+                &format!("Failed to rename: {e}"),
+                FlashType::Error,
+            );
+        }
+        Err(e) => {
+            tracing::error!(err = %e, "task failed renaming client");
+            set_flash(&session, "Failed to rename client", FlashType::Error);
         }
     }
 

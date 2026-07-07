@@ -743,6 +743,10 @@ pub fn configure_app(
             web::post().to(handlers::clients::client_delete),
         )
         .route(
+            "/headless/{n}/rename",
+            web::post().to(handlers::clients::client_rename),
+        )
+        .route(
             "/headless/{n}/start-raid",
             web::post().to(handlers::clients::client_start_raid),
         )
