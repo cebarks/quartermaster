@@ -83,6 +83,14 @@ pub enum HeadlessAction {
         /// Client number
         client: u32,
     },
+    /// Rename a headless client (sets Fika alias)
+    Rename {
+        /// Client number
+        client: u32,
+        /// Display name (empty to clear)
+        #[arg(default_value = "")]
+        name: String,
+    },
     /// Set the desired number of headless clients
     Scale {
         /// Desired number of clients (max 16)
@@ -111,6 +119,7 @@ pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
         HeadlessAction::Start { client } => start(ctx, *client).await,
         HeadlessAction::Restart { client } => restart(ctx, *client).await,
         HeadlessAction::GracefulRestart { client } => graceful_restart(ctx, *client).await,
+        HeadlessAction::Rename { client, name } => rename(ctx, *client, name).await,
         HeadlessAction::Scale { count } => scale(ctx, *count).await,
     }
 }
@@ -600,6 +609,78 @@ async fn graceful_restart(ctx: &CliContext, client: u32) -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+async fn rename(ctx: &CliContext, client: u32, name: &str) -> Result<()> {
+    let headless_config = require_headless_config(&ctx.config)?;
+    if client == 0 || client > headless_config.client_count() {
+        bail!(
+            "Client {} does not exist (valid range: 1-{})",
+            client,
+            headless_config.client_count()
+        );
+    }
+
+    let container_mgr = require_container_manager(ctx)?;
+    let container_name = client_container_name(client);
+
+    // Get profile_id from container env
+    let profile_id = container_mgr
+        .inspect(&container_name)
+        .await
+        .ok()
+        .and_then(|info| {
+            info.config.and_then(|c| c.env).and_then(|env| {
+                env.iter()
+                    .find(|e| e.starts_with("PROFILE_ID="))
+                    .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                    .map(String::from)
+            })
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "Client {} has no profile assigned. \
+                 Start the SPT server to generate headless profiles.",
+                client
+            )
+        })?;
+
+    let fika_config_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    let config = crate::fika::config::read_fika_config(&fika_config_path)
+        .context("failed to read fika.jsonc")?;
+    let mut aliases = config.headless.profiles.aliases;
+
+    let name = name.trim();
+    if name.is_empty() {
+        if aliases.remove(&profile_id).is_some() {
+            println!("Cleared alias for client {}.", client);
+        } else {
+            println!("Client {} has no alias to clear.", client);
+            return Ok(());
+        }
+    } else {
+        aliases.insert(profile_id, name.to_string());
+        println!("Renamed client {} to \"{}\".", client, name);
+    }
+
+    // Write via CST to preserve comments
+    let cst = crate::fika::config::read_fika_cst(&fika_config_path)?;
+    let root = cst.object_value_or_set();
+    if let Some(headless) = root.object_value("headless") {
+        if let Some(profiles) = headless.object_value("profiles") {
+            let alias_entries: Vec<(String, jsonc_parser::cst::CstInputValue)> = aliases
+                .into_iter()
+                .map(|(k, v)| (k, jsonc_parser::cst::CstInputValue::String(v)))
+                .collect();
+            if let Some(prop) = profiles.get("aliases") {
+                prop.set_value(jsonc_parser::cst::CstInputValue::Object(alias_entries));
+            }
+        }
+    }
+    crate::fika::config::write_fika_cst(&cst, &fika_config_path)?;
+
+    println!("Restart the SPT server for the in-game name to take effect.");
     Ok(())
 }
 
