@@ -4,13 +4,13 @@
 - !!! mod requests/queue/installed lifecycle review
     - canceling an install queue item puts it back in requests (if it was previously requested)
 - !!! Notes page
-- mod config management
 - move groups config to tab on mods page
 
 ## Triage
 - fika settings
 
 ## Bugs
+- config editor flash message displays twice after save (once in base.html layout, once in template)
 - SVM preset upload size limit too low
 - SPT profile generation on account creation doesn't work
     - account creation dropdown missing SPT dev profiles (toggleable?)
