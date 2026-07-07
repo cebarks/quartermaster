@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
+use crate::config_mgmt::ConfigManager;
 use crate::container::ContainerManager;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
@@ -43,6 +44,7 @@ pub struct AppState {
     pub modsync_installed: AtomicBool,
     pub svm: Option<Arc<parking_lot::RwLock<SvmManager>>>,
     pub svm_installed: AtomicBool,
+    pub config_mgmt: ConfigManager,
     pub server_transition: Arc<Mutex<Option<String>>>,
     pub game_data: Arc<GameData>,
     pub proxy_metrics: ProxyMetrics,

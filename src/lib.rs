@@ -4,6 +4,7 @@ pub mod backup;
 pub mod cli;
 pub mod client;
 pub mod config;
+pub mod config_mgmt;
 pub mod container;
 pub mod db;
 pub mod fika;

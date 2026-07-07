@@ -147,6 +147,24 @@
 </div>
 {% endif %}
 
+{% if !config_files.is_empty() %}
+<div class="card">
+    <h2>Config Files ({{ config_files.len() }})</h2>
+    <table>
+        <thead><tr><th>File</th><th>Size</th><th></th></tr></thead>
+        <tbody>
+            {% for f in &config_files %}
+            <tr>
+                <td class="text-sm">{{ f.filename }}</td>
+                <td class="text-muted text-sm">{{ (f.size as i64)|format_size_i64 }}</td>
+                <td><a href="/quma/mods/{{ mod_info.id }}/config/{{ f.filename }}" class="btn btn-sm">Edit</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 <div class="card">
     <div class="flex-between">
         <h2>Addons ({{ addons.len() }})</h2>

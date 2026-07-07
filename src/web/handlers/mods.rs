@@ -167,6 +167,7 @@ struct ModDetailTemplate {
     sync_restart_required: Option<bool>,
     sync_enabled: Option<bool>,
     modsync_managed: bool,
+    config_files: Vec<crate::config_mgmt::ConfigFile>,
 }
 
 #[derive(Template)]
@@ -597,6 +598,33 @@ pub async fn mod_detail(
     let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
     let can_disable = user.can("mods.disable");
     let can_remove = user.can("mods.remove");
+
+    let config_files = state
+        .config_mgmt
+        .find_mod_dir(&mod_info.name)
+        .ok()
+        .flatten()
+        .and_then(|dir| {
+            let config_dir = state
+                .spt_dir
+                .join("SPT/user/mods")
+                .join(&dir)
+                .join("config");
+            if config_dir.is_dir() {
+                let mut files = Vec::new();
+                crate::config_mgmt::ConfigManager::scan_config_dir(
+                    &config_dir,
+                    &config_dir,
+                    &mut files,
+                )
+                .ok();
+                Some(files)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
     let tmpl = ModDetailTemplate {
         user,
         mod_info,
@@ -615,6 +643,7 @@ pub async fn mod_detail(
         sync_restart_required: None,
         sync_enabled: None,
         modsync_managed,
+        config_files,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }

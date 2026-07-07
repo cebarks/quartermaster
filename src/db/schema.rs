@@ -17,6 +17,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/011_items_give_permission.sql"),
     include_str!("../../migrations/012_notes.sql"),
     include_str!("../../migrations/013_request_lifecycle.sql"),
+    include_str!("../../migrations/014_config_edit_permission.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
