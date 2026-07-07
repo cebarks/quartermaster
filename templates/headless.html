@@ -254,7 +254,7 @@
 
         <div class="form-group">
             <label for="clients_image">Container Image</label>
-            <input type="text" id="clients_image" name="image" value="{% if let Some(c) = &config.headless %}{{ c.image }}{% else %}localhost/quma-headless:latest{% endif %}">
+            <input type="text" id="clients_image" name="image" value="{% if let Some(c) = &config.headless %}{{ c.image }}{% else %}ghcr.io/cebarks/quartermaster/headless:latest{% endif %}">
         </div>
 
         <div class="form-group">

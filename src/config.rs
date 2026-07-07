@@ -291,7 +291,7 @@ fn default_base_udp_port() -> u16 {
     25565
 }
 fn default_headless_image() -> String {
-    "localhost/quma-headless:latest".to_string()
+    "ghcr.io/cebarks/quartermaster/headless:latest".to_string()
 }
 fn default_isolated_paths() -> Vec<String> {
     vec!["BepInEx/config".to_string()]
@@ -1771,7 +1771,10 @@ install_dir = "/opt/fika"
         assert_eq!(headless.max_restart_attempts, 5);
         assert_eq!(headless.restart_backoff_cap, 300);
         assert_eq!(headless.base_udp_port, 25565);
-        assert_eq!(headless.image, "localhost/quma-headless:latest");
+        assert_eq!(
+            headless.image,
+            "ghcr.io/cebarks/quartermaster/headless:latest"
+        );
         assert_eq!(headless.isolated_paths, vec!["BepInEx/config".to_string()]);
         assert_eq!(headless.server_ready_timeout, 120);
     }
