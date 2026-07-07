@@ -161,6 +161,7 @@ struct ModDetailTemplate {
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
+    config_files: Vec<crate::config_mgmt::ConfigFile>,
 }
 
 #[derive(Template)]
@@ -582,6 +583,33 @@ pub async fn mod_detail(
     let nav = NavContext::from_state(&state);
     let can_disable = user.can("mods.disable");
     let can_remove = user.can("mods.remove");
+
+    let config_files = state
+        .config_mgmt
+        .find_mod_dir(&mod_info.name)
+        .ok()
+        .flatten()
+        .and_then(|dir| {
+            let config_dir = state
+                .spt_dir
+                .join("SPT/user/mods")
+                .join(&dir)
+                .join("config");
+            if config_dir.is_dir() {
+                let mut files = Vec::new();
+                crate::config_mgmt::ConfigManager::scan_config_dir(
+                    &config_dir,
+                    &config_dir,
+                    &mut files,
+                )
+                .ok();
+                Some(files)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
     let tmpl = ModDetailTemplate {
         user,
         mod_info,
@@ -594,6 +622,7 @@ pub async fn mod_detail(
         flash,
         csrf_token,
         nav,
+        config_files,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -1080,6 +1109,7 @@ async fn install_mod_from_url(
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
                 state_clone.regenerate_convoy();
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Mod installed from URL".to_string());
             }
             Err(e) => {
@@ -1365,6 +1395,7 @@ pub async fn install_mod(
                     }
                     tracing::info!("SVM installed — config editor reinitialized");
                 }
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Mod installed successfully".to_string());
             }
             Err(e) => {
@@ -1529,6 +1560,7 @@ pub async fn update_mod(
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Mod updated successfully".to_string());
             }
             Err(e) => {
@@ -1602,6 +1634,7 @@ pub async fn remove_mod(
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
     state.regenerate_convoy();
+    state.clear_fika_items();
     if installed.forge_mod_id == Some(crate::svm::SVM_FORGE_ID) {
         state
             .svm_installed
@@ -1659,6 +1692,7 @@ pub async fn toggle_disable(
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
     state.regenerate_convoy();
+    state.clear_fika_items();
 
     if was_disabled {
         set_flash(
@@ -1839,8 +1873,10 @@ pub async fn update_all_mods(
         integrity_cache.invalidate();
 
         if success_count == total {
+            state_clone.clear_fika_items();
             tasks.complete(task_id, format!("All {total} mods updated successfully"));
         } else if success_count > 0 {
+            state_clone.clear_fika_items();
             tasks.complete(
                 task_id,
                 format!("{success_count}/{total} mods updated (some failed — check logs)"),
@@ -2371,6 +2407,7 @@ pub async fn install_addon(
 
         match result {
             Ok(_) => {
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Addon installed successfully".to_string());
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
@@ -2555,6 +2592,7 @@ pub async fn update_addon(
 
         match result {
             Ok(_) => {
+                state_clone.clear_fika_items();
                 tasks.complete(task_id, "Addon updated successfully".to_string());
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
@@ -2626,6 +2664,7 @@ pub async fn remove_addon(
             state.mod_zip_cache.invalidate();
             state.integrity_cache.invalidate();
             state.regenerate_convoy();
+            state.clear_fika_items();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon removal failed");
@@ -2710,6 +2749,7 @@ pub async fn toggle_addon_disable(
             state.mod_zip_cache.invalidate();
             state.integrity_cache.invalidate();
             state.regenerate_convoy();
+            state.clear_fika_items();
         }
         Err(e) => {
             tracing::error!(addon_db_id, err = %e, "addon toggle failed");

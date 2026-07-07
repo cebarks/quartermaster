@@ -15,7 +15,6 @@ path = "src/main.rs"
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.18"
 
 # Serialization & config
 serde = { version = "1", features = ["derive"] }
@@ -60,6 +59,7 @@ globset = "0.4"
 sevenz-rust2 = "0.21"
 tempfile = "3"
 
+
 # Compression (profile snapshots)
 flate2 = "1"
 
@@ -75,6 +75,10 @@ actix-ws = "0.4"
 # Templating
 askama = "0.16"
 
+# Markdown rendering
+pulldown-cmark = "0.13"
+ammonia = "4"
+
 # Static asset embedding
 rust-embed = "8"
 
@@ -86,9 +90,6 @@ rpassword = "7"
 
 # Non-poisoning Mutex for web DB access
 parking_lot = "0.12"
-
-# Parallel iteration
-rayon = "1"
 
 # Regex for targeted text replacement
 regex = "1"

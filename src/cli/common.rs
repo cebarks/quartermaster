@@ -40,7 +40,7 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
         tracing::error!(err = %e, "failed to migrate disabled mods to stash");
     }
 
-    let forge = ForgeClient::new(config.forge_token.clone())?;
+    let forge = ForgeClient::new()?;
 
     let container_mgr = ContainerManager::new(config.container_stop_timeout).ok();
 

@@ -5,10 +5,10 @@
 {% block content %}
 <h1>Logs</h1>
 
-<div class="log-tab-bar">
-    <button class="tab-btn active" data-tab="app">Application Logs</button>
-    <button class="tab-btn" data-tab="server">Server Logs</button>
-    <button class="tab-btn" data-tab="headless">Headless Logs</button>
+<div class="tab-bar">
+    <button class="tab active" data-tab="app" onclick="tabSwitch(this, {toggle: '.tab-panel', query: true})">Application Logs</button>
+    <button class="tab" data-tab="server" onclick="tabSwitch(this, {toggle: '.tab-panel', query: true})">Server Logs</button>
+    <button class="tab" data-tab="headless" onclick="tabSwitch(this, {toggle: '.tab-panel', query: true})">Headless Logs</button>
 </div>
 
 <div id="tab-app" class="tab-panel">
@@ -96,13 +96,9 @@
         return removed;
     }
 
-    // Tab switching
-    document.querySelectorAll('.tab-btn').forEach(btn => {
+    // Lazy-load tabs on first visit (visual switching handled by tabSwitch onclick)
+    document.querySelectorAll('.tab-bar .tab').forEach(btn => {
         btn.addEventListener('click', () => {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
-            btn.classList.add('active');
-            document.getElementById('tab-' + btn.dataset.tab).style.display = '';
             if (btn.dataset.tab === 'server' && !serverLogsLoaded) {
                 serverLogsLoaded = true;
                 loadServerLogs();
@@ -482,29 +478,22 @@
     });
 
     // Deep-link support: ?tab=headless&container=fika-headless-1
-    const urlParams = new URLSearchParams(window.location.search);
-    const initialTab = urlParams.get('tab');
-    const initialContainer = urlParams.get('container');
-
-    if (initialTab) {
-        const tabBtn = document.querySelector(`.tab-btn[data-tab="${initialTab}"]`);
+    const initialContainer = new URLSearchParams(window.location.search).get('container');
+    if (initialContainer) {
+        // Special case: deep-link to a specific headless container
+        const tabBtn = document.querySelector('.tab-bar .tab[data-tab="headless"]');
         if (tabBtn) {
-            if (initialTab === 'headless' && initialContainer) {
-                headlessLoaded = true;
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
-                tabBtn.classList.add('active');
-                document.getElementById('tab-headless').style.display = '';
-                loadHeadlessContainers().then(() => {
-                    if (headlessSelect.querySelector('option[value="' + initialContainer + '"]')) {
-                        headlessSelect.value = initialContainer;
-                        loadHeadlessLogs();
-                    }
-                });
-            } else {
-                tabBtn.click();
-            }
+            headlessLoaded = true;
+            tabSwitch(tabBtn, {toggle: '.tab-panel', query: true});
+            loadHeadlessContainers().then(() => {
+                if (headlessSelect.querySelector('option[value="' + initialContainer + '"]')) {
+                    headlessSelect.value = initialContainer;
+                    loadHeadlessLogs();
+                }
+            });
         }
+    } else {
+        tabRestore('tab');
     }
 
     // Initialize — connect SSE only after initial load finishes

@@ -5,7 +5,7 @@
 {% block content %}
 <h1>Metrics</h1>
 
-<div hx-get="/quma/api/metrics/proxy" hx-trigger="load, every 1s" hx-swap="innerHTML">
+<div hx-get="/quma/api/metrics/proxy" hx-trigger="load, every 5s" hx-swap="innerHTML">
     <div class="card"><h2>Proxy</h2><p class="text-muted loading-pulse">Loading...</p></div>
 </div>
 {% endblock %}

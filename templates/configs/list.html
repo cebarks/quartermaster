@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
+{% block title %}Mod Configs — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("configs", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>Mod Configs</h1>
+
+{% if let Some(flash) = flash %}
+<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
+{% endif %}
+
+{% if config_sets.is_empty() %}
+<div class="card">
+    <p class="text-muted">No installed mods have config files.</p>
+</div>
+{% else %}
+{% for cs in &config_sets %}
+<div class="card">
+    <h2><a href="/quma/mods/{{ cs.mod_id }}">{{ cs.mod_name }}</a></h2>
+    <table>
+        <thead><tr><th>Config File</th><th>Size</th><th></th></tr></thead>
+        <tbody>
+            {% for f in &cs.config_files %}
+            <tr>
+                <td>{{ f.filename }}</td>
+                <td class="text-muted text-sm">{{ (f.size as i64)|format_size_i64 }}</td>
+                <td><a href="/quma/mods/{{ cs.mod_id }}/config/{{ f.filename }}" class="btn btn-sm">Edit</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

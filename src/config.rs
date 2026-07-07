@@ -584,6 +584,8 @@ pub struct HeadlessConfig {
     pub server_ready_timeout: u64,
     #[serde(default)]
     pub use_upnp: bool,
+    #[serde(default)]
+    pub physical_cores_only: bool,
 }
 
 impl Default for HeadlessConfig {
@@ -609,9 +611,12 @@ impl Default for HeadlessConfig {
             numa_node: None,
             server_ready_timeout: 120,
             use_upnp: false,
+            physical_cores_only: false,
         }
     }
 }
+
+pub const MAX_HEADLESS_CLIENTS: u32 = 16;
 
 impl HeadlessConfig {
     pub fn client_count(&self) -> u32 {
@@ -861,9 +866,6 @@ pub struct Config {
     #[serde(default)]
     pub spt_dir: Option<PathBuf>,
 
-    #[serde(default)]
-    pub forge_token: Option<String>,
-
     #[serde(default = "default_queue_changes")]
     pub queue_changes: bool,
 
@@ -977,7 +979,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             spt_dir: None,
-            forge_token: None,
             queue_changes: true,
             auto_drain_on_lifecycle: false,
             auto_start_server: true,
@@ -1148,7 +1149,6 @@ impl Config {
         tracing::debug!("applied environment variable overrides to config");
         tracing::trace!(
             spt_dir = ?config.spt_dir,
-            forge_token = "<redacted>",
             queue_changes = config.queue_changes,
             auto_drain_on_lifecycle = config.auto_drain_on_lifecycle,
             session_secret = "<redacted>",
@@ -1162,7 +1162,6 @@ impl Config {
     /// Override config fields from `QUMA_*` environment variables.
     pub fn apply_env_overrides(&mut self) {
         env_override!(opt_path: self.spt_dir, "QUMA_SPT_DIR");
-        env_override!(redacted: self.forge_token, "QUMA_FORGE_TOKEN");
         env_override!(str: self.web_bind, "QUMA_WEB_BIND");
         env_override!(parse: self.web_port, "QUMA_WEB_PORT", u16);
         env_override!(opt_parse: self.web_workers, "QUMA_WEB_WORKERS", usize);
@@ -1242,7 +1241,6 @@ mod tests {
     fn deserialize_full_config() {
         let toml_str = r#"
 spt_dir = "/opt/spt"
-forge_token = "tok_abc123"
 queue_changes = false
 auto_drain_on_lifecycle = true
 auto_start_server = false
@@ -1258,7 +1256,6 @@ update_check_interval = 600
         let config: Config = toml::from_str(toml_str).expect("should parse full TOML");
 
         assert_eq!(config.spt_dir, Some(PathBuf::from("/opt/spt")));
-        assert_eq!(config.forge_token, Some("tok_abc123".to_string()));
         assert!(!config.queue_changes);
         assert!(config.auto_drain_on_lifecycle);
         assert!(!config.auto_start_server);
@@ -1276,7 +1273,6 @@ update_check_interval = 600
         let config: Config = toml::from_str("").expect("should parse empty TOML");
 
         assert_eq!(config.spt_dir, None);
-        assert_eq!(config.forge_token, None);
         assert!(config.queue_changes); // default: true
         assert!(!config.auto_drain_on_lifecycle); // default: false
         assert!(config.auto_start_server); // default: true
@@ -1326,7 +1322,6 @@ web_port = 3000
         let mut config = Config::default();
         config.spt_dir = Some(PathBuf::from("/opt/game"));
         config.web_port = 7777;
-        config.forge_token = Some("my-token".to_string());
         config.update_check_interval = 120;
 
         config.save(&config_path).expect("should save");
@@ -1340,7 +1335,6 @@ web_port = 3000
         temp_env::with_vars(
             [
                 ("QUMA_SPT_DIR", Some("/env/spt")),
-                ("QUMA_FORGE_TOKEN", Some("env_token")),
                 ("QUMA_WEB_PORT", Some("4000")),
                 ("QUMA_WEB_BIND", Some("10.0.0.1")),
                 ("QUMA_SERVER_CONTAINER", Some("env-container")),
@@ -1352,7 +1346,6 @@ web_port = 3000
                 config.apply_env_overrides();
 
                 assert_eq!(config.spt_dir, Some(PathBuf::from("/env/spt")));
-                assert_eq!(config.forge_token, Some("env_token".to_string()));
                 assert_eq!(config.web_port, 4000);
                 assert_eq!(config.web_bind, "10.0.0.1");
                 assert_eq!(config.server_container, Some("env-container".to_string()));
@@ -1577,6 +1570,7 @@ save_log_on_exit = false
 enable_log_purge = true
 overwrite_fika = false
 server_ready_timeout = 300
+physical_cores_only = true
 
 [[headless.clients]]
 
@@ -1609,6 +1603,7 @@ extra_isolated_paths = ["BepInEx/plugins/testing"]
         assert!(!headless.save_log_on_exit);
         assert!(headless.enable_log_purge);
         assert!(!headless.overwrite_fika);
+        assert!(headless.physical_cores_only);
         assert_eq!(headless.server_ready_timeout, 300);
     }
 
@@ -1655,6 +1650,7 @@ install_dir = "/opt/fika"
         assert!(config.save_log_on_exit);
         assert!(!config.enable_log_purge);
         assert!(!config.overwrite_fika);
+        assert!(!config.physical_cores_only);
         assert_eq!(config.server_ready_timeout, 120);
     }
 

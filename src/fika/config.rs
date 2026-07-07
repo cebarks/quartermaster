@@ -1,6 +1,3 @@
-// ponytail: Many types here unused until later tasks; allow dead_code module-wide
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 use jsonc_parser::cst::CstRootNode;
 use serde::Deserialize;
@@ -177,6 +174,7 @@ pub struct FikaHeadlessConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // fields populated by serde deserialization from Fika config
 pub struct FikaHeadlessProfilesConfig {
     pub amount: u32,
     #[serde(default)]

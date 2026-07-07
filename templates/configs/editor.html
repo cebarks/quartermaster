@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% import "partials/nav.html" as nav %}
+{% import "partials/icons.html" as icons %}
+{% block title %}{{ filename }} — {{ mod_name }} — Quartermaster{% endblock %}
+{% block nav %}{% call nav::nav("configs", user, csrf_token, nav) %}{% endcall %}{% endblock %}
+{% block content %}
+<h1>{{ mod_name }} / {{ filename }}</h1>
+
+{% if let Some(flash) = flash %}
+<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
+{% endif %}
+
+{% if server_running %}
+<div class="alert alert-warning">Server is running. Config changes will take effect after a restart.</div>
+{% endif %}
+
+<div class="card">
+    <div class="flex-between" style="margin-bottom: 1rem;">
+        <div class="flex gap-1">
+            <a href="/quma/mods/{{ mod_id }}" class="btn btn-sm btn-outline">← Back to Mod</a>
+            <a href="/quma/mods/{{ mod_id }}/config/{{ filename }}/history" class="btn btn-sm btn-outline">{% call icons::list() %}{% endcall %} History</a>
+        </div>
+        <span id="validation-status" class="text-muted text-sm"></span>
+    </div>
+
+    <form method="post" action="/quma/mods/{{ mod_id }}/config/{{ filename }}" id="config-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <textarea name="content"
+                  id="config-editor"
+                  style="width:100%; min-height:400px; font-family:monospace; font-size:0.85rem; tab-size:2; resize:vertical;"
+                  {% if !can_edit %}readonly{% endif %}
+                  spellcheck="false">{{ content }}</textarea>
+        {% if can_edit %}
+        <div style="margin-top: 1rem;">
+            <button type="submit" class="btn" id="save-btn">Save</button>
+        </div>
+        {% endif %}
+    </form>
+</div>
+
+<script>
+(function() {
+    var editor = document.getElementById('config-editor');
+    var status = document.getElementById('validation-status');
+    var btn = document.getElementById('save-btn');
+    var original = editor.value;
+
+    function validate() {
+        try {
+            JSON.parse(editor.value);
+            status.textContent = 'Valid JSON';
+            status.style.color = 'var(--success)';
+            if (btn) btn.disabled = (editor.value === original);
+            return true;
+        } catch(e) {
+            // Allow JSONC (comments) — strip // and /* */ comments, trailing commas, try again
+            var stripped = editor.value
+                .replace(/\/\/.*$/gm, '')
+                .replace(/\/\*[\s\S]*?\*\//g, '')
+                .replace(/,\s*([\]}])/g, '$1');
+            try {
+                JSON.parse(stripped);
+                status.textContent = 'Valid JSONC';
+                status.style.color = 'var(--success)';
+                if (btn) btn.disabled = (editor.value === original);
+                return true;
+            } catch(e2) {
+                status.textContent = 'Invalid: ' + e2.message;
+                status.style.color = 'var(--danger)';
+                if (btn) btn.disabled = true;
+                return false;
+            }
+        }
+    }
+
+    editor.addEventListener('input', validate);
+    validate();
+
+    // Tab key inserts spaces
+    editor.addEventListener('keydown', function(e) {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            var start = this.selectionStart;
+            var end = this.selectionEnd;
+            this.value = this.value.substring(0, start) + '  ' + this.value.substring(end);
+            this.selectionStart = this.selectionEnd = start + 2;
+            validate();
+        }
+    });
+})();
+</script>
+{% endblock %}

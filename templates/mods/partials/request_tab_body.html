@@ -1,0 +1,16 @@
+<thead>
+    <tr>
+        <th>Mod</th>
+        <th>Votes</th>
+        <th>Requested</th>
+        <th>Fika</th>
+    </tr>
+</thead>
+{% for r in &requests %}
+<tbody id="request-{{ r.request.id }}">
+{% include "mods/partials/request_row.html" %}
+</tbody>
+{% endfor %}
+{% if requests.is_empty() %}
+<tbody><tr><td colspan="4" class="text-muted" style="text-align:center;padding:2rem">No {{ status }} requests.</td></tr></tbody>
+{% endif %}

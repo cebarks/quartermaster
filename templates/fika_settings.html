@@ -228,7 +228,7 @@
             <label for="api_key_display">API Key (read-only)</label>
             <div style="display: flex; gap: 0.5rem;">
                 <input type="password" id="api_key_display" value="{{ config.server.api_key }}" readonly style="flex: 1; background: #f5f5f5;" disabled>
-                <button type="button" class="btn" onclick="var i=document.getElementById('api_key_display');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+                <button type="button" class="btn" onclick="togglePassword('api_key_display', this)">Show</button>
             </div>
             <p class="text-muted text-sm">The Fika API key is read-only. Edit fika.jsonc directly to change it.</p>
         </div>

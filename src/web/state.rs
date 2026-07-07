@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -6,6 +7,7 @@ use parking_lot::Mutex;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
+use crate::config_mgmt::ConfigManager;
 use crate::container::ContainerManager;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
@@ -41,6 +43,7 @@ pub struct AppState {
     pub fika_installed: bool,
     pub svm: Option<Arc<parking_lot::RwLock<SvmManager>>>,
     pub svm_installed: AtomicBool,
+    pub config_mgmt: ConfigManager,
     pub server_transition: Arc<Mutex<Option<String>>>,
     pub game_data: Arc<GameData>,
     pub proxy_metrics: ProxyMetrics,
@@ -52,6 +55,9 @@ pub struct AppState {
     #[allow(dead_code)] // ponytail: used in later tasks
     pub fika_config_lock: parking_lot::Mutex<()>,
     pub catalog_cache: crate::convoy::catalog::CatalogCache,
+    #[allow(clippy::type_complexity)]
+    pub fika_items:
+        Arc<parking_lot::Mutex<Option<Arc<HashMap<String, crate::fika::client::FikaItemInfo>>>>>,
 }
 
 impl AppState {
@@ -114,5 +120,9 @@ impl AppState {
             self.catalog_cache.invalidate();
             self.mod_zip_cache.invalidate();
         }
+    }
+
+    pub fn clear_fika_items(&self) {
+        *self.fika_items.lock() = None;
     }
 }

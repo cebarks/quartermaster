@@ -2,11 +2,20 @@
 {% import "partials/nav.html" as nav %}
 {% import "partials/icons.html" as icons %}
 {% import "clients/partials/badges.html" as badges %}
-{% block title %}Client {{ client.state.index }} — Quartermaster{% endblock %}
+{% block title %}{% if let Some(name) = client.alias %}{{ name }}{% else %}Client {{ client.state.index }}{% endif %} — Quartermaster{% endblock %}
 {% block nav %}{% call nav::nav("headless", user, csrf_token, nav) %}{% endcall %}{% endblock %}
 {% block content %}
 <div class="flex-between">
-    <h1>Client {{ client.state.index }}</h1>
+    <div>
+        <h1>{% if let Some(name) = client.alias %}{{ name }} <span class="text-muted text-sm">(Client {{ client.state.index }})</span>{% else %}Client {{ client.state.index }}{% endif %}</h1>
+        {% if user.can("headless.manage") && client.state.profile_id.is_some() %}
+        <form method="post" action="/quma/headless/{{ client.state.index }}/rename" class="flex gap-1 align-center" style="margin-bottom: 0.5rem">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="name" value="{{ client.alias.as_deref().unwrap_or_default() }}" placeholder="Custom name" class="form-control" style="max-width: 250px">
+            <button type="submit" class="btn btn-sm">Rename</button>
+        </form>
+        {% endif %}
+    </div>
     {% if user.can("headless.manage") %}
     <div class="flex gap-1">
         <a href="/quma/logs?tab=headless&container={{ client.state.container_name }}" class="btn btn-sm">Logs</a>
@@ -142,6 +151,34 @@
         </tbody>
     </table>
 </div>
+
+{% if !session_stats.is_empty() %}
+<div class="card">
+    <h2>Recent Raids</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Completed</th>
+                <th>Duration</th>
+                <th>Sent</th>
+                <th>Received</th>
+                <th>Loss</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for stat in session_stats %}
+            <tr>
+                <td>{{ stat.completed_at }}</td>
+                <td>{{ stat.time_in_raid_seconds / 60 }}m {{ stat.time_in_raid_seconds % 60 }}s</td>
+                <td>{{ stat.sent_data_bytes / 1024 / 1024 }} MB ({{ stat.sent_packets }} pkts)</td>
+                <td>{{ stat.received_data_bytes / 1024 / 1024 }} MB ({{ stat.received_packets }} pkts)</td>
+                <td>{{ stat.packet_loss_percent|fmt_pct }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
 
 {% if client.state.fika_status == Some(crate::spt::headless::EHeadlessStatus::Ready) && user.can("headless.manage") %}
 <div class="card">

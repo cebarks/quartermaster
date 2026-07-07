@@ -7,6 +7,7 @@ pub enum Permission {
     ModsUpdate,
     ModsRemove,
     ModsDisable,
+    ModsConfigEdit,
     ConvoyManage,
     SvmEdit,
     RequestsResolve,
@@ -17,6 +18,9 @@ pub enum Permission {
     QueueManage,
     UsersManage,
     SettingsManage,
+    ItemsGive,
+    NotesEdit,
+    NotesManage,
 }
 
 impl Permission {
@@ -25,6 +29,7 @@ impl Permission {
         Permission::ModsUpdate,
         Permission::ModsRemove,
         Permission::ModsDisable,
+        Permission::ModsConfigEdit,
         Permission::ConvoyManage,
         Permission::SvmEdit,
         Permission::RequestsResolve,
@@ -35,6 +40,9 @@ impl Permission {
         Permission::QueueManage,
         Permission::UsersManage,
         Permission::SettingsManage,
+        Permission::ItemsGive,
+        Permission::NotesEdit,
+        Permission::NotesManage,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -43,6 +51,7 @@ impl Permission {
             Permission::ModsUpdate => "mods.update",
             Permission::ModsRemove => "mods.remove",
             Permission::ModsDisable => "mods.disable",
+            Permission::ModsConfigEdit => "mods.config_edit",
             Permission::ConvoyManage => "convoy.manage",
             Permission::SvmEdit => "svm.edit",
             Permission::RequestsResolve => "requests.resolve",
@@ -53,6 +62,9 @@ impl Permission {
             Permission::QueueManage => "queue.manage",
             Permission::UsersManage => "users.manage",
             Permission::SettingsManage => "settings.manage",
+            Permission::ItemsGive => "items.give",
+            Permission::NotesEdit => "notes.edit",
+            Permission::NotesManage => "notes.manage",
         }
     }
 
@@ -62,6 +74,7 @@ impl Permission {
             "mods.update" => Some(Permission::ModsUpdate),
             "mods.remove" => Some(Permission::ModsRemove),
             "mods.disable" => Some(Permission::ModsDisable),
+            "mods.config_edit" => Some(Permission::ModsConfigEdit),
             "convoy.manage" | "modsync.manage" => Some(Permission::ConvoyManage),
             "svm.edit" => Some(Permission::SvmEdit),
             "requests.resolve" => Some(Permission::RequestsResolve),
@@ -72,6 +85,9 @@ impl Permission {
             "queue.manage" => Some(Permission::QueueManage),
             "users.manage" => Some(Permission::UsersManage),
             "settings.manage" => Some(Permission::SettingsManage),
+            "items.give" => Some(Permission::ItemsGive),
+            "notes.edit" => Some(Permission::NotesEdit),
+            "notes.manage" => Some(Permission::NotesManage),
             _ => None,
         }
     }
@@ -82,6 +98,7 @@ impl Permission {
             Permission::ModsUpdate => "Update Mods",
             Permission::ModsRemove => "Remove Mods",
             Permission::ModsDisable => "Disable Mods",
+            Permission::ModsConfigEdit => "Edit Mod Configs",
             Permission::ConvoyManage => "Manage Convoy",
             Permission::SvmEdit => "Edit Server Config",
             Permission::RequestsResolve => "Resolve Mod Requests",
@@ -92,6 +109,9 @@ impl Permission {
             Permission::QueueManage => "Manage Queue",
             Permission::UsersManage => "Manage Users",
             Permission::SettingsManage => "Manage Settings",
+            Permission::ItemsGive => "Give Items",
+            Permission::NotesEdit => "Edit Shared Notes",
+            Permission::NotesManage => "Manage Notes",
         }
     }
 
@@ -100,7 +120,8 @@ impl Permission {
             Permission::ModsInstall
             | Permission::ModsUpdate
             | Permission::ModsRemove
-            | Permission::ModsDisable => "Mods",
+            | Permission::ModsDisable
+            | Permission::ModsConfigEdit => "Mods",
             Permission::ConvoyManage | Permission::SvmEdit | Permission::RequestsResolve => {
                 "Configuration"
             }
@@ -109,7 +130,10 @@ impl Permission {
             | Permission::ServerMetrics
             | Permission::HeadlessManage => "Server",
             Permission::QueueManage => "Operations",
-            Permission::UsersManage | Permission::SettingsManage => "Administration",
+            Permission::UsersManage | Permission::SettingsManage | Permission::ItemsGive => {
+                "Administration"
+            }
+            Permission::NotesEdit | Permission::NotesManage => "Content",
         }
     }
 }

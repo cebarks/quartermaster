@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use futures_util::StreamExt;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -83,9 +84,18 @@ pub enum HeadlessAction {
         /// Client number
         client: u32,
     },
+    /// Rename a headless client (sets Fika alias)
+    Rename {
+        /// Client number
+        client: u32,
+        /// Display name (empty to clear)
+        #[arg(default_value = "")]
+        name: String,
+    },
     /// Set the desired number of headless clients
     Scale {
-        /// Desired number of clients
+        /// Desired number of clients (max 16)
+        #[arg(value_parser = clap::value_parser!(u32).range(0..=16))]
         count: u32,
     },
 }
@@ -110,6 +120,7 @@ pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
         HeadlessAction::Start { client } => start(ctx, *client).await,
         HeadlessAction::Restart { client } => restart(ctx, *client).await,
         HeadlessAction::GracefulRestart { client } => graceful_restart(ctx, *client).await,
+        HeadlessAction::Rename { client, name } => rename(ctx, *client, name).await,
         HeadlessAction::Scale { count } => scale(ctx, *count).await,
     }
 }
@@ -161,6 +172,12 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
         states.push(info);
     }
 
+    // Load Fika aliases for display names
+    let fika_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    let aliases: HashMap<String, String> = crate::fika::config::read_fika_config(&fika_path)
+        .map(|c| c.headless.profiles.aliases)
+        .unwrap_or_default();
+
     // Get Fika API data if server is running
     let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
     let spt_client = SptClient::new(&server_host, server_port)?;
@@ -174,10 +191,10 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
         None => {
             // Table of all clients
             println!(
-                "{:<8} {:<20} {:<15} {:<10}",
-                "CLIENT", "CONTAINER", "STATUS", "FIKA STATE"
+                "{:<8} {:<20} {:<20} {:<15} {:<10}",
+                "CLIENT", "ALIAS", "CONTAINER", "STATUS", "FIKA STATE"
             );
-            println!("{}", "-".repeat(60));
+            println!("{}", "-".repeat(80));
 
             for ci in &states {
                 let fika_state: String = if let Some(ref map) = headless_map {
@@ -202,9 +219,15 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
                     "server offline".into()
                 };
 
+                let alias = ci
+                    .profile_id
+                    .as_ref()
+                    .and_then(|pid| aliases.get(pid))
+                    .map(|s| s.as_str())
+                    .unwrap_or("-");
                 println!(
-                    "{:<8} {:<20} {:<15} {:<10}",
-                    ci.index, ci.name, ci.container_status, fika_state
+                    "{:<8} {:<20} {:<20} {:<15} {:<10}",
+                    ci.index, alias, ci.name, ci.container_status, fika_state
                 );
             }
         }
@@ -255,6 +278,9 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
 
             if let Some(ref pid) = profile_id {
                 println!("  Profile ID: {}", pid);
+                if let Some(alias) = aliases.get(pid) {
+                    println!("  Alias: {}", alias);
+                }
             }
 
             if let Some(ref map) = headless_map {
@@ -382,50 +408,48 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
         }
     }
 
-    // Stop and remove container
-    let container_name = crate::client::converge::client_container_name(client);
-    if container_mgr
-        .is_running(&container_name)
-        .await
-        .unwrap_or(false)
-    {
-        println!("Stopping {}...", container_name);
-        container_mgr.stop(&container_name).await?;
-    }
-    if container_mgr.inspect(&container_name).await.is_ok() {
-        container_mgr.remove_container(&container_name).await?;
-    }
+    // Remove ALL managed containers so converge recreates with correct indices
+    println!("Removing all headless containers for clean index renumbering...");
+    crate::client::converge::remove_all_managed_containers(container_mgr).await?;
 
     // Remove from config
     let config_path = Config::resolve_path(None, Some(&ctx.spt_dir));
     let mut config = Config::load_with_env(&config_path)?;
+    let mut updated_headless = headless_config.clone();
     if let Some(ref mut headless) = config.headless {
         headless.clients.remove(index - 1);
+        updated_headless = headless.clone();
     }
     config.save(&config_path)?;
 
-    // Update fika.jsonc
-    let new_count = config
-        .headless
-        .as_ref()
-        .map(|h| h.client_count())
-        .unwrap_or(0);
-    let fika_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
-    if fika_path.exists() {
-        // ponytail: no fika_config_lock here — CLI runs single-threaded, no lock needed
-        let cst = crate::fika::config::read_fika_cst(&fika_path)?;
-        crate::fika::config::set_headless_amount(&cst, new_count);
-        crate::fika::config::write_fika_cst(&cst, &fika_path)?;
+    // Clean up overlay directory for deleted index
+    let overlay_dir =
+        crate::client::converge::client_overlay_dir(&updated_headless.install_dir, client);
+    if overlay_dir.exists() {
+        std::fs::remove_dir_all(&overlay_dir)?;
     }
 
-    // Clean up overlay directory
-    if let Some(ref headless) = config.headless {
-        let overlay_dir =
-            crate::client::converge::client_overlay_dir(&headless.install_dir, client);
-        if overlay_dir.exists() {
-            std::fs::remove_dir_all(&overlay_dir).ok();
-        }
-    }
+    let new_count = updated_headless.client_count();
+
+    // Converge to recreate containers with correct indices
+    println!("Re-converging to recreate containers with correct indices...");
+    let (server_host, server_port) =
+        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+    let spt_client = SptClient::new(&server_host, server_port)?;
+    let db = db_arc_for_converge(ctx)?;
+
+    crate::client::converge::converge(
+        container_mgr,
+        &updated_headless,
+        &ctx.config,
+        &ctx.spt_dir,
+        &spt_client,
+        &ctx.forge,
+        &ctx.spt_info.spt_version,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        &db,
+    )
+    .await?;
 
     println!(
         "Deleted client {}. {} client(s) remaining.",
@@ -601,6 +625,86 @@ async fn graceful_restart(ctx: &CliContext, client: u32) -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+async fn rename(ctx: &CliContext, client: u32, name: &str) -> Result<()> {
+    let headless_config = require_headless_config(&ctx.config)?;
+    if client == 0 || client > headless_config.client_count() {
+        bail!(
+            "Client {} does not exist (valid range: 1-{})",
+            client,
+            headless_config.client_count()
+        );
+    }
+
+    let container_mgr = require_container_manager(ctx)?;
+    let container_name = client_container_name(client);
+
+    // Get profile_id from container env
+    let profile_id = container_mgr
+        .inspect(&container_name)
+        .await
+        .ok()
+        .and_then(|info| {
+            info.config.and_then(|c| c.env).and_then(|env| {
+                env.iter()
+                    .find(|e| e.starts_with("PROFILE_ID="))
+                    .and_then(|e| e.strip_prefix("PROFILE_ID="))
+                    .map(String::from)
+            })
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "Client {} has no profile assigned. \
+                 Start the SPT server to generate headless profiles.",
+                client
+            )
+        })?;
+
+    let fika_config_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    let config = crate::fika::config::read_fika_config(&fika_config_path)
+        .context("failed to read fika.jsonc")?;
+    let mut aliases = config.headless.profiles.aliases;
+
+    let name = name.trim();
+    if name.is_empty() {
+        if aliases.remove(&profile_id).is_some() {
+            println!("Cleared alias for client {}.", client);
+        } else {
+            println!("Client {} has no alias to clear.", client);
+            return Ok(());
+        }
+    } else {
+        aliases.insert(profile_id, name.to_string());
+        println!("Renamed client {} to \"{}\".", client, name);
+    }
+
+    // Write via CST to preserve comments
+    let cst = crate::fika::config::read_fika_cst(&fika_config_path)?;
+    let root = cst.object_value_or_set();
+    if let Some(headless) = root.object_value("headless") {
+        if let Some(profiles) = headless.object_value("profiles") {
+            let alias_entries: Vec<(String, jsonc_parser::cst::CstInputValue)> = aliases
+                .into_iter()
+                .map(|(k, v)| (k, jsonc_parser::cst::CstInputValue::String(v)))
+                .collect();
+            match profiles.get("aliases") {
+                Some(prop) => {
+                    prop.set_value(jsonc_parser::cst::CstInputValue::Object(alias_entries))
+                }
+                None => {
+                    profiles.append(
+                        "aliases",
+                        jsonc_parser::cst::CstInputValue::Object(alias_entries),
+                    );
+                }
+            }
+        }
+    }
+    crate::fika::config::write_fika_cst(&cst, &fika_config_path)?;
+
+    println!("Restart the SPT server for the in-game name to take effect.");
     Ok(())
 }
 

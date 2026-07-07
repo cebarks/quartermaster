@@ -40,7 +40,6 @@ struct SettingsTemplate {
     console_format: String,
     file_format: String,
     file_rotation: String,
-    has_forge_token: bool,
 }
 
 pub async fn settings_page(
@@ -67,8 +66,6 @@ pub async fn settings_page(
     let console_format = config.logging.console.format.to_string();
     let file_format = config.logging.file.format.to_string();
     let file_rotation = config.logging.file.rotation.to_string();
-    let has_forge_token = config.forge_token.is_some();
-
     let tmpl = SettingsTemplate {
         user,
         flash,
@@ -79,7 +76,6 @@ pub async fn settings_page(
         console_format,
         file_format,
         file_rotation,
-        has_forge_token,
     };
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
@@ -119,9 +115,7 @@ pub struct QueueSettingsForm {
 #[derive(serde::Deserialize)]
 pub struct ForgeSettingsForm {
     csrf_token: String,
-    forge_token: String,
     forge_cache_ttl: String,
-    clear_forge_token: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -160,6 +154,8 @@ pub struct HeadlessSettingsForm {
     numa_node: Option<u32>,
     #[serde(default)]
     use_upnp: Option<String>,
+    #[serde(default)]
+    physical_cores_only: Option<String>,
 }
 
 pub async fn save_web_settings(
@@ -316,16 +312,6 @@ pub async fn save_forge_settings(
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
 
-    if form.clear_forge_token.is_some() {
-        config.forge_token = None;
-    } else {
-        let token_input = form.forge_token.trim();
-        if !token_input.is_empty() {
-            config.forge_token = Some(token_input.to_string());
-        }
-        // else: leave config.forge_token as-is (unchanged from disk)
-    }
-
     config.forge_cache_ttl = ttl;
 
     state.persist_config(&config)?;
@@ -422,15 +408,21 @@ pub async fn save_headless_settings(
         .filter(|l| !l.is_empty())
         .collect();
 
-    let (numa_auto, numa_node) = match form.numa_policy.as_str() {
-        "auto" => (true, None),
-        "node" => (false, form.numa_node),
-        _ => (false, None),
-    };
-
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     let existing = config.headless.as_ref();
+
+    let (numa_auto, numa_node) = match form.numa_policy.as_str() {
+        "auto" => (true, None),
+        "node" => (false, form.numa_node),
+        "none" => (false, None),
+        _ => {
+            // Form fields absent (e.g., no NUMA hardware detected) — preserve existing config
+            existing
+                .map(|h| (h.numa_auto, h.numa_node))
+                .unwrap_or((false, None))
+        }
+    };
 
     let final_config = HeadlessConfig {
         install_dir: std::path::PathBuf::from(form.install_dir.trim()),
@@ -456,6 +448,7 @@ pub async fn save_headless_settings(
         overwrite_fika: existing.map(|h| h.overwrite_fika).unwrap_or(true),
         server_ready_timeout: form.server_ready_timeout,
         use_upnp: form.use_upnp.is_some(),
+        physical_cores_only: form.physical_cores_only.is_some(),
     };
 
     config.headless = if form.install_dir.trim().is_empty() {

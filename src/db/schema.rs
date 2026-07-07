@@ -14,8 +14,12 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/008_headless_users.sql"),
     include_str!("../../migrations/009_headless_session_stats.sql"),
     include_str!("../../migrations/010_url_install_support.sql"),
-    include_str!("../../migrations/011_convoy_groups.sql"),
-    include_str!("../../migrations/012_convoy_permission.sql"),
+    include_str!("../../migrations/011_items_give_permission.sql"),
+    include_str!("../../migrations/012_notes.sql"),
+    include_str!("../../migrations/013_request_lifecycle.sql"),
+    include_str!("../../migrations/014_config_edit_permission.sql"),
+    include_str!("../../migrations/015_convoy_groups.sql"),
+    include_str!("../../migrations/016_convoy_permission.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {

@@ -24,6 +24,18 @@
     </main>
     </div>
     <script>
+    // ponytail: auto-dismiss toasts; errors get 8s, others 4s
+    document.querySelectorAll('.toast').forEach(function(t) {
+        var ms = t.classList.contains('toast-error') ? 8000 : 4000;
+        t.style.animationDuration = '0.3s, 0.3s';
+        t.style.animationDelay = '0s, ' + (ms / 1000) + 's';
+        setTimeout(function() { t.remove(); }, ms + 400);
+    });
+    function togglePassword(id, btn) {
+        var i = document.getElementById(id);
+        i.type = i.type === 'password' ? 'text' : 'password';
+        btn.textContent = i.type === 'password' ? 'Show' : 'Hide';
+    }
     function tabSwitch(el, opts) {
         document.querySelectorAll('.tab-bar .tab').forEach(function(t) { t.classList.remove('active'); });
         el.classList.add('active');

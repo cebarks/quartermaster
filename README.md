@@ -6,21 +6,23 @@ Built for Linux hosts running SPT in a Podman container.
 
 ## Features
 
-- **Mod management** — Install, update, and remove mods by name, slug, or Forge ID with automatic dependency resolution
+- **Mod management** — Install, update, and remove mods and addons by name, slug, or Forge ID with automatic dependency resolution
 - **Web dashboard** — Real-time server status, mod browsing, task progress via SSE, log streaming
 - **Change queue** — Mod operations queue while the server is running, then apply on restart
 - **Health checks** — Server liveness, version verification, mod load checks, file integrity (SHA256)
 - **Multi-user auth** — Invite-based registration, admin/player roles, session cookies
-- **Fika support** — Dedicated headless client management and scaling for Fika multiplayer
+- **Fika support** — Dedicated headless client management, scaling, and Fika settings configuration
 - **HTTPS/WSS proxy** — Transparent reverse proxy to SPT server so clients connect through Quartermaster
 - **NarcoNet integration** — Auto-manages NarcoNet `config.yaml` from installed mod state for client mod syncing
 - **Player profiles** — View player profiles with quest, trader, and hideout progress, plus stash viewer
 - **Raid statistics** — Per-raid stats tracking via proxy interception, with leaderboard
 - **Server Value Modifiers (SVM)** — Browse and configure server value modifiers from the web UI
-- **Server settings** — View and manage SPT server configuration
+- **Settings management** — View and manage Quartermaster configuration from the web UI
 - **Mod requests** — Players can request mods; admins review and approve with a voting system
 - **Mod enable/disable** — Toggle mods on and off without uninstalling
 - **Backup/restore** — Per-mod and full snapshots of mod files, profiles, and config with CLI and web UI support
+- **Join page** — Client bootstrapping with mod archive download and setup scripts
+- **Give Items** — Admin tool to send items to players via the Fika API
 - **RBAC** — Role-based access control with admin and player roles
 - **Container lifecycle** — Start, stop, restart the SPT server container via Podman
 - **Systemd integration** — Generate and install a systemd service for the web UI
@@ -46,24 +48,26 @@ quma [OPTIONS] <COMMAND>
 Commands:
   setup       Bootstrap or initialize Quartermaster for an SPT server
   install     Install a mod and its dependencies
-  update      Update installed mods (specific or all)
+  update      Update installed mods
   remove      Remove an installed mod
   list        List installed mods
   check       Check all installed mods for updates
   status      Run health checks against SPT server and mod integrity
-  server      Manage the SPT server container (start/stop/restart/logs)
+  server      Manage the SPT server container
   headless    Manage Fika headless clients
   serve       Start the Quartermaster web UI
-  generate    Generate configuration files (systemd service)
+  generate    Generate configuration files
   invite      Generate an invite code for a player
   backup      Backup mods, profiles, and config
   restore     Restore from a backup
 
 Options:
-  --spt-dir <PATH>      Explicit SPT server directory
-  --config <PATH>       Config file path override
-  -v, --verbose         Increase verbosity (-v debug, -vv trace)
-  --log-level <LEVEL>   Set log level (trace, debug, info, warn, error)
+  --spt-dir <SPT_DIR>        Explicit SPT server directory
+  --config <CONFIG>          Config file path override
+  -v, --verbose              Increase verbosity (-v debug, -vv trace)
+  --log-level <LOG_LEVEL>    Set log level (trace, debug, info, warn, error)
+  --log-format <LOG_FORMAT>  Console log format (compact, full, json)
+  -V, --version              Print version
 ```
 
 Mods can be referenced by name, Forge slug, or numeric Forge ID. Use `--force` on install/update/remove to bypass the change queue and apply immediately.
@@ -78,12 +82,19 @@ Built with HTMX and server-sent events — no JavaScript build step required.
 
 ## Configuration
 
-Config lives at `<spt_dir>/quartermaster.toml`. All settings can be overridden with `QUMA_*` environment variables.
+Config lives at `<spt_dir>/quartermaster.toml`. All settings can be overridden with `QUMA_*` environment variables. See [USAGE.md](USAGE.md) for the full configuration reference.
 
 ```bash
 # Override via environment
 QUMA_SPT_DIR=~/spt-server quma status
 ```
+
+## Documentation
+
+- [USAGE.md](USAGE.md) — Full CLI reference, web UI guide, and configuration reference
+- [CONTRIBUTING.md](CONTRIBUTING.md) — Development setup, workflow, and code style
+- [docs/forge-api-notes.md](docs/forge-api-notes.md) — Undocumented Forge API quirks and behaviors
+- [docs/spt-remote-client-connectivity.md](docs/spt-remote-client-connectivity.md) — SPT remote client connectivity investigation and proxy setup
 
 ## Development
 
@@ -137,6 +148,10 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 | `src/numa.rs` | NUMA-aware container CPU pinning |
 | `src/logging/` | Structured logging (console, file, SQLite, SSE broadcast) |
 | `src/config.rs` | Config types, TOML serialization, `QUMA_*` env overrides |
+
+## AI Disclosure
+
+Portions of this codebase were implemented with the assistance of LLM-based tools (Claude Code). All architecture, design decisions, and direction were done by a human — the LLM was used as an implementation aid under continuous human supervision and review.
 
 ## License
 

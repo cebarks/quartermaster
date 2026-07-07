@@ -245,7 +245,7 @@ mod tests {
             },
             config: Config::default(),
             db: Database::open_in_memory().unwrap(),
-            forge: ForgeClient::new(None).unwrap(),
+            forge: ForgeClient::new().unwrap(),
             container_mgr: None,
         }
     }

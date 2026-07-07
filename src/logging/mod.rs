@@ -1,9 +1,7 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
-
-use parking_lot::RwLock;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -36,45 +34,25 @@ pub struct LogEntry {
 }
 
 // ---------------------------------------------------------------------------
-// LogBroadcast — tokio broadcast channel + bounded ring buffer for recent()
+// LogBroadcast — tokio broadcast channel for real-time log streaming
 // ---------------------------------------------------------------------------
 
 pub struct LogBroadcast {
     sender: broadcast::Sender<LogEntry>,
-    buffer: Arc<RwLock<VecDeque<LogEntry>>>,
-    buffer_size: usize,
 }
 
 impl LogBroadcast {
     pub fn new(buffer_size: usize) -> Self {
         let (sender, _) = broadcast::channel(buffer_size.max(16));
-        Self {
-            sender,
-            buffer: Arc::new(RwLock::new(VecDeque::with_capacity(buffer_size))),
-            buffer_size,
-        }
+        Self { sender }
     }
 
     pub fn send(&self, entry: LogEntry) {
-        {
-            let mut buf = self.buffer.write();
-            if buf.len() >= self.buffer_size {
-                buf.pop_front();
-            }
-            buf.push_back(entry.clone());
-        }
         let _ = self.sender.send(entry);
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<LogEntry> {
         self.sender.subscribe()
-    }
-
-    #[allow(dead_code)] // Replaced by database-backed log API (Task 5), kept for future use
-    pub fn recent(&self, limit: usize) -> Vec<LogEntry> {
-        let buf = self.buffer.read();
-        let skip = buf.len().saturating_sub(limit);
-        buf.iter().skip(skip).cloned().collect()
     }
 }
 
@@ -733,43 +711,6 @@ mod tests {
     // --- LogBroadcast tests ---
 
     #[test]
-    fn log_broadcast_stores_entries_in_ring_buffer() {
-        let lb = LogBroadcast::new(3);
-        for i in 0..5 {
-            let entry = LogEntry {
-                timestamp: Utc::now(),
-                level: "INFO".to_string(),
-                target: "test".to_string(),
-                message: format!("msg {i}"),
-                fields: HashMap::new(),
-            };
-            lb.send(entry);
-        }
-        let recent = lb.recent(10);
-        assert_eq!(recent.len(), 3);
-        assert_eq!(recent[0].message, "msg 2");
-        assert_eq!(recent[2].message, "msg 4");
-    }
-
-    #[test]
-    fn log_broadcast_recent_respects_limit() {
-        let lb = LogBroadcast::new(100);
-        for i in 0..10 {
-            let entry = LogEntry {
-                timestamp: Utc::now(),
-                level: "INFO".to_string(),
-                target: "test".to_string(),
-                message: format!("msg {i}"),
-                fields: HashMap::new(),
-            };
-            lb.send(entry);
-        }
-        let recent = lb.recent(3);
-        assert_eq!(recent.len(), 3);
-        assert_eq!(recent[0].message, "msg 7");
-    }
-
-    #[test]
     fn log_broadcast_subscribe_receives_new_entries() {
         let lb = LogBroadcast::new(100);
         let mut rx = lb.subscribe();
@@ -809,16 +750,13 @@ mod tests {
             entry.fields.get("key"),
             Some(&serde_json::Value::String("value".to_string()))
         );
-
-        let recent = lb.recent(10);
-        assert_eq!(recent.len(), 1);
-        assert_eq!(recent[0].message, "hello world");
     }
 
     #[test]
     fn broadcast_layer_captures_multiple_levels() {
         let lb = Arc::new(LogBroadcast::new(100));
         let layer = BroadcastLayer::new(Arc::clone(&lb));
+        let mut rx = lb.subscribe();
         let filter = Targets::new().with_default(tracing::Level::TRACE);
 
         let subscriber = tracing_subscriber::registry().with(filter).with(layer);
@@ -828,11 +766,12 @@ mod tests {
         tracing::warn!("warn msg");
         tracing::debug!("debug msg");
 
-        let recent = lb.recent(10);
-        assert_eq!(recent.len(), 3);
-        assert_eq!(recent[0].level, "ERROR");
-        assert_eq!(recent[1].level, "WARN");
-        assert_eq!(recent[2].level, "DEBUG");
+        let e1 = rx.try_recv().unwrap();
+        let e2 = rx.try_recv().unwrap();
+        let e3 = rx.try_recv().unwrap();
+        assert_eq!(e1.level, "ERROR");
+        assert_eq!(e2.level, "WARN");
+        assert_eq!(e3.level, "DEBUG");
     }
 
     // --- Floor filter computation tests ---

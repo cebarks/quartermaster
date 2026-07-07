@@ -3,6 +3,7 @@ pub mod backups;
 pub mod headless_stats;
 pub mod logs;
 pub mod mods;
+pub mod notes;
 pub mod raids;
 pub mod rbac;
 pub mod requests;

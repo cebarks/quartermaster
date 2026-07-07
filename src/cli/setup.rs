@@ -23,8 +23,6 @@ pub struct SetupArgs {
     pub path: Option<PathBuf>,
     pub no_fika: bool,
     pub admin_password: Option<String>,
-    pub forge_token: Option<String>,
-    pub no_forge_token: bool,
     pub dev: bool,
     pub container_name: Option<String>,
 }
@@ -44,15 +42,6 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
         }
         None => prompt_admin_password()?,
     };
-    let forge_token = if args.no_forge_token {
-        None
-    } else {
-        match args.forge_token {
-            Some(token) => Some(token),
-            None => prompt_forge_token()?,
-        }
-    };
-
     let container_name = if let Some(name) = args.container_name {
         name
     } else if args.dev {
@@ -65,7 +54,6 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
         data_dir,
         install_fika,
         admin_password,
-        forge_token,
         container_name,
     };
 
@@ -86,7 +74,6 @@ struct ResolvedSetup {
     data_dir: PathBuf,
     install_fika: bool,
     admin_password: String,
-    forge_token: Option<String>,
     container_name: String,
 }
 
@@ -221,7 +208,6 @@ async fn install_infrastructure_from_forge(
     spt_dir: &Path,
     db: &Database,
     config: &Config,
-    forge_token: Option<String>,
     install_fika: bool,
 ) -> Result<()> {
     use crate::config::{FIKA_CLIENT_FORGE_ID, FIKA_SERVER_FORGE_ID};
@@ -231,7 +217,7 @@ async fn install_infrastructure_from_forge(
         return Ok(());
     }
 
-    let forge = ForgeClient::new(forge_token)?;
+    let forge = ForgeClient::new()?;
 
     println!("\nInstalling Fika...");
     install_from_forge(
@@ -276,22 +262,6 @@ fn prompt_admin_password() -> Result<String> {
         }
 
         return Ok(password);
-    }
-}
-
-fn prompt_forge_token() -> Result<Option<String>> {
-    println!("\nA Forge API token increases rate limits for mod downloads.");
-    println!("Get one at: https://forge.sp-tarkov.com/account/settings");
-    print!("Forge API token (leave blank to skip): ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim();
-
-    if trimmed.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(trimmed.to_string()))
     }
 }
 
@@ -382,12 +352,7 @@ async fn wait_for_server(config: &Config, spt_dir: &Path, container_name: &str) 
     }
 }
 
-fn create_config(
-    data_dir: &Path,
-    forge_token: Option<String>,
-    container_name: &str,
-    cli: &Cli,
-) -> Result<(Config, PathBuf)> {
+fn create_config(data_dir: &Path, container_name: &str, cli: &Cli) -> Result<(Config, PathBuf)> {
     let config_path = Config::resolve_path(cli.config.as_deref(), Some(data_dir));
     let mut config = if config_path.exists() {
         Config::load(&config_path)?
@@ -398,7 +363,6 @@ fn create_config(
     config.server_container = Some(container_name.to_string());
     config.server_host = Some("0.0.0.0".to_string());
     config.server_port = Some(DEFAULT_SPT_PORT);
-    config.forge_token = forge_token;
     config.ensure_session_secret();
     config.save(&config_path)?;
     println!("Config saved to {}", config_path.display());
@@ -423,7 +387,7 @@ fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database
     Ok(db)
 }
 
-fn print_summary(config: &Config, data_dir: &Path, install_fika: bool, forge_token_set: bool) {
+fn print_summary(config: &Config, data_dir: &Path, install_fika: bool) {
     println!("\n=== Setup Complete ===\n");
     println!("SPT directory: {}", data_dir.display());
     if let Some(ref container) = config.server_container {
@@ -435,14 +399,6 @@ fn print_summary(config: &Config, data_dir: &Path, install_fika: bool, forge_tok
             "installed"
         } else {
             "disabled"
-        }
-    );
-    println!(
-        "Forge API token: {}",
-        if forge_token_set {
-            "configured"
-        } else {
-            "not set (use QUMA_FORGE_TOKEN or edit config)"
         }
     );
     println!("Web UI: http://{}:{}", config.web_bind, config.web_port);
@@ -485,8 +441,7 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     mgr.start(&p.container_name).await?;
 
     // 6. Create config (needed for wait_for_server to resolve address)
-    let forge_token_set = p.forge_token.is_some();
-    let (config, _config_path) = create_config(&p.data_dir, p.forge_token, &p.container_name, cli)?;
+    let (config, _config_path) = create_config(&p.data_dir, &p.container_name, cli)?;
 
     // 7. Wait for server
     wait_for_server(&config, &p.data_dir, &p.container_name).await?;
@@ -500,17 +455,10 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
 
     // 10. Install infrastructure mods from Forge
-    install_infrastructure_from_forge(
-        &p.data_dir,
-        &db,
-        &config,
-        config.forge_token.clone(),
-        p.install_fika,
-    )
-    .await?;
+    install_infrastructure_from_forge(&p.data_dir, &db, &config, p.install_fika).await?;
 
     // 11. Summary
-    print_summary(&config, &p.data_dir, p.install_fika, forge_token_set);
+    print_summary(&config, &p.data_dir, p.install_fika);
 
     Ok(())
 }
@@ -529,9 +477,7 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
         detect_or_create_container(mgr, &p.data_dir, &p.container_name).await?;
 
     // 2. Create config
-    let forge_token_set = p.forge_token.is_some();
-    let (mut config, config_path) =
-        create_config(&p.data_dir, p.forge_token, &p.container_name, cli)?;
+    let (mut config, config_path) = create_config(&p.data_dir, &p.container_name, cli)?;
     config.server_container = Some(resolved_container);
     config.save(&config_path)?;
 
@@ -560,17 +506,10 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
     }
 
     // 5. Install infrastructure mods from Forge
-    install_infrastructure_from_forge(
-        &p.data_dir,
-        &db,
-        &config,
-        config.forge_token.clone(),
-        p.install_fika,
-    )
-    .await?;
+    install_infrastructure_from_forge(&p.data_dir, &db, &config, p.install_fika).await?;
 
     // 6. Summary
-    print_summary(&config, &p.data_dir, p.install_fika, forge_token_set);
+    print_summary(&config, &p.data_dir, p.install_fika);
 
     Ok(())
 }

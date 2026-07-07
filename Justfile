@@ -76,7 +76,7 @@ dev-init:
         echo "Run 'just dev-reset-db' to wipe the database, or 'just dev-clean' to start over."
         exit 0
     fi
-    cargo run -- setup "{{dev_dir}}" --no-fika --admin-password devdevdev --no-forge-token --dev --container-name "{{dev_container}}"
+    cargo run -- setup "{{dev_dir}}" --no-fika --admin-password devdevdev --dev --container-name "{{dev_container}}"
 
 # Build and run the web server against the dev directory
 dev-serve *ARGS: dev-init

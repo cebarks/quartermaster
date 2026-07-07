@@ -78,6 +78,17 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-sm btn-outline">{% call icons::x() %}{% endcall %} Cancel</button>
                     </form>
+                    {% if op.action.as_str() == "install" %}
+                    {% if let Some(m) = &op.metadata %}
+                    {% if m.contains("request_id") %}
+                    <form method="post" action="/quma/queue/{{ op.id }}/cancel-reject" style="display:inline;margin-left:0.25rem"
+                          onsubmit="return confirm('Cancel this operation and reject the request?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-danger">{% call icons::x() %}{% endcall %} Cancel & Reject</button>
+                    </form>
+                    {% endif %}
+                    {% endif %}
+                    {% endif %}
                 </td>
                 {% endif %}
             </tr>

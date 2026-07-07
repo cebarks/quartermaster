@@ -66,7 +66,7 @@ async fn serve_asset(path: web::Path<String>) -> HttpResponse {
     match Assets::get(&path) {
         Some(file) => HttpResponse::Ok()
             .content_type(content_type_for(&path))
-            .insert_header(("Cache-Control", "no-cache"))
+            .insert_header(("Cache-Control", "public, max-age=3600"))
             .body(file.data.into_owned()),
         None => HttpResponse::NotFound().body("asset not found"),
     }
@@ -353,6 +353,10 @@ pub fn configure_app(
             web::get().to(handlers::requests::requests_tab),
         )
         .route(
+            "/requests/tab",
+            web::get().to(handlers::requests::request_tab_body),
+        )
+        .route(
             "/queue/content",
             web::get().to(handlers::queue::queue_content_partial),
         )
@@ -384,6 +388,14 @@ pub fn configure_app(
             "/requests/{id}/install",
             web::post().to(handlers::requests::install_from_request),
         )
+        .route(
+            "/requests/{id}/reopen",
+            web::post().to(handlers::requests::reopen_request),
+        )
+        .route(
+            "/requests/{id}/history",
+            web::get().to(handlers::requests::request_history),
+        )
         // SVM API routes
         .route(
             "/svm/edit/{section}",
@@ -409,6 +421,18 @@ pub fn configure_app(
         .route(
             "/convoy/preview",
             web::get().to(handlers::convoy::preview_partial),
+        )
+        .route(
+            "/give-items/search",
+            web::get().to(handlers::give_items::give_items_search),
+        )
+        .route(
+            "/give-items/send",
+            web::post().to(handlers::give_items::give_items_send),
+        )
+        .route(
+            "/give-items/refresh",
+            web::post().to(handlers::give_items::give_items_refresh),
         )
         // Admin API (requires can_manage_users via scoped middleware)
         .service(
@@ -531,6 +555,10 @@ pub fn configure_app(
         .route("/logs", web::get().to(handlers::logs::logs_page))
         .route("/metrics", web::get().to(handlers::metrics::metrics_page))
         .route("/admin", web::get().to(handlers::admin::admin_page))
+        .route(
+            "/give-items",
+            web::get().to(handlers::give_items::give_items_page),
+        )
         .route("/mods", web::get().to(handlers::mods::list_mods))
         .route("/files", web::get().to(handlers::mods::file_tracking_page))
         .route("/convoy", web::get().to(handlers::convoy::convoy_page))
@@ -612,6 +640,7 @@ pub fn configure_app(
             web::get().to(handlers::clients::client_detail),
         )
         .route("/stats", web::get().to(handlers::raids::stats_page))
+        .route("/raids", web::get().to(handlers::raids::all_raids_page))
         .route(
             "/raids/{raid_id}",
             web::get().to(handlers::raids::raid_detail_page),
@@ -673,6 +702,28 @@ pub fn configure_app(
             "/addons/{id}/toggle-disable",
             web::post().to(handlers::mods::toggle_addon_disable),
         )
+        // Config management routes
+        .route("/configs", web::get().to(handlers::configs::configs_list))
+        .route(
+            "/mods/{id}/config/{file}",
+            web::get().to(handlers::configs::config_editor),
+        )
+        .route(
+            "/mods/{id}/config/{file}",
+            web::post().to(handlers::configs::config_save),
+        )
+        .route(
+            "/mods/{id}/config/{file}/history",
+            web::get().to(handlers::configs::config_history),
+        )
+        .route(
+            "/mods/{id}/config/{file}/history/view",
+            web::get().to(handlers::configs::config_history_view),
+        )
+        .route(
+            "/mods/{id}/config/{file}/restore",
+            web::post().to(handlers::configs::config_restore),
+        )
         .route(
             "/backups/{id}/restore",
             web::post().to(handlers::backup::restore_backup),
@@ -700,6 +751,10 @@ pub fn configure_app(
         .route(
             "/queue/{id}/cancel",
             web::post().to(handlers::queue::cancel_op),
+        )
+        .route(
+            "/queue/{id}/cancel-reject",
+            web::post().to(handlers::queue::cancel_and_reject_op),
         )
         .route("/queue/apply", web::post().to(handlers::queue::apply_queue))
         .route(
@@ -735,6 +790,10 @@ pub fn configure_app(
             web::post().to(handlers::clients::client_delete),
         )
         .route(
+            "/headless/{n}/rename",
+            web::post().to(handlers::clients::client_rename),
+        )
+        .route(
             "/headless/{n}/start-raid",
             web::post().to(handlers::clients::client_start_raid),
         )
@@ -742,6 +801,21 @@ pub fn configure_app(
         .route(
             "/players/{profile_id}/message",
             web::post().to(handlers::dashboard::send_player_message),
+        )
+        .route("/notes", web::get().to(handlers::notes::notes_page))
+        .route("/notes/new", web::get().to(handlers::notes::new_note_form))
+        .route("/notes", web::post().to(handlers::notes::create_note))
+        .route(
+            "/notes/{id}/edit",
+            web::get().to(handlers::notes::edit_note_form),
+        )
+        .route(
+            "/notes/{id}/update",
+            web::post().to(handlers::notes::update_note),
+        )
+        .route(
+            "/notes/{id}/delete",
+            web::post().to(handlers::notes::delete_note),
         );
 
     quma_scope = quma_scope.service(auth_scope);
@@ -812,6 +886,8 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     if svm_installed_flag {
         tracing::info!("SVM detected — web config editor enabled");
     }
+
+    let config_mgmt = crate::config_mgmt::ConfigManager::new(&spt_dir);
 
     let tls_enabled = config.tls_enabled;
     let spt_dir_for_tls = spt_dir.clone();
@@ -889,6 +965,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         fika_installed,
         svm,
         svm_installed: std::sync::atomic::AtomicBool::new(svm_installed_flag),
+        config_mgmt,
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
         game_data,
         proxy_metrics: crate::web::proxy_metrics::ProxyMetrics::new(),
@@ -898,6 +975,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         fika_client,
         fika_config_lock: parking_lot::Mutex::new(()),
         catalog_cache,
+        fika_items: Arc::new(parking_lot::Mutex::new(None)),
     });
 
     // Pre-warm mod ZIP cache in background

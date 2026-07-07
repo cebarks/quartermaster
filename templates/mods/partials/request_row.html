@@ -1,0 +1,159 @@
+{# Collapsed row #}
+<tr class="request-row" onclick="toggleRequestDetail({{ r.request.id }})">
+    <td>
+        {% if let Some(slug) = r.request.mod_slug.as_deref() %}
+        <a href="https://forge.sp-tarkov.com/mod/{{ r.request.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
+            <strong>{{ r.request.mod_name }}</strong> ↗
+        </a>
+        {% else %}
+        <strong>{{ r.request.mod_name }}</strong>
+        {% endif %}
+        <span class="text-muted text-sm" style="margin-left:0.5rem">by <a href="/quma/profiles/{{ r.requester_username }}" onclick="event.stopPropagation()">{{ r.requester_username }}</a></span>
+        {% if let Some(desc) = r.request.mod_description.as_deref() %}
+            {% if desc.contains("MOD DEPENDENCY") || desc.contains("⚠") %}
+            <span class="badge badge-warning text-sm" style="margin-left:0.5rem;font-size:0.7rem">⚠ DEP</span>
+            {% endif %}
+        {% endif %}
+    </td>
+    <td style="font-weight:700">{{ r.vote_score }}{% if r.upvote_count > 0 || r.downvote_count > 0 %}<span class="text-muted text-sm" style="font-weight:400;margin-left:0.25rem">{{ r.upvote_count }}↑{{ r.downvote_count }}↓</span>{% endif %}</td>
+    <td><time class="text-muted text-sm" title="{{ r.request.created_at }}">{{ r.request.created_at|time_ago }}</time></td>
+    <td>
+        {% if r.request.fika_compatible == "compatible" %}
+        <span class="badge badge-success" style="font-size:0.75rem">✓</span>
+        {% elif r.request.fika_compatible == "incompatible" %}
+        <span class="badge badge-danger" style="font-size:0.75rem">✗</span>
+        {% else %}
+        <span class="badge badge-muted" style="font-size:0.75rem">?</span>
+        {% endif %}
+    </td>
+</tr>
+
+{# Expanded detail (hidden by default) #}
+<tr class="request-detail" id="detail-{{ r.request.id }}" style="display:none">
+    <td colspan="4">
+        {% if let Some(desc) = r.request.mod_description.as_deref() %}
+        <p class="text-muted text-sm" style="margin:0 0 0.5rem 0">{{ desc }}</p>
+        {% endif %}
+        {% if let Some(reason) = r.request.reason.as_deref() %}
+        <p class="text-sm" style="font-style:italic;color:var(--text-muted);margin:0 0 0.5rem 0">"{{ reason }}"</p>
+        {% endif %}
+
+        {# Vote section #}
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap">
+            {% if r.request.status == "pending" %}
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/vote" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="upvote" value="true">
+                <input type="hidden" name="comment" class="vote-comment-field" value="">
+                <button type="submit" class="btn btn-sm {% if r.current_user_vote == Some(true) %}btn-success{% else %}btn-outline{% endif %}" onclick="event.stopPropagation()">▲</button>
+            </form>
+            <span style="font-weight:700;min-width:2ch;text-align:center">{{ r.vote_score }}</span>
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/vote" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="upvote" value="false">
+                <input type="hidden" name="comment" class="vote-comment-field" value="">
+                <button type="submit" class="btn btn-sm {% if r.current_user_vote == Some(false) %}btn-danger{% else %}btn-outline{% endif %}" onclick="event.stopPropagation()">▼</button>
+            </form>
+            <span class="text-muted text-sm" style="margin-left:0.25rem">{{ r.upvote_count }}↑ {{ r.downvote_count }}↓</span>
+            <button type="button" class="btn btn-sm btn-outline" onclick="event.stopPropagation(); toggleVoteComment(this, {{ r.request.id }})">💬</button>
+            {% if r.comment_count > 0 %}
+            <button class="btn btn-sm btn-outline" style="margin-left:0.25rem"
+                    hx-get="/quma/api/requests/{{ r.request.id }}/votes"
+                    hx-target="#comments-{{ r.request.id }}"
+                    hx-swap="innerHTML"
+                    onclick="event.stopPropagation()">{{ r.comment_count }} comment{% if r.comment_count != 1 %}s{% endif %}</button>
+            {% endif %}
+            {% else %}
+            <span class="text-muted" style="font-weight:700">{{ r.vote_score }}</span>
+            <span class="text-muted text-sm">{{ r.upvote_count }}↑ {{ r.downvote_count }}↓</span>
+            {% endif %}
+        </div>
+        <div class="vote-comment-input" id="vote-comment-{{ r.request.id }}" style="display:none;margin-bottom:0.5rem">
+            <input type="text" placeholder="Add a comment with your vote..." style="width:100%;font-size:0.85rem;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:0.25rem 0.5rem"
+                   oninput="updateVoteComments(this, {{ r.request.id }})">
+        </div>
+
+        {# Resolver info #}
+        {% if let Some(resolver) = r.resolver_username.as_deref() %}
+        <div class="text-sm text-muted" style="margin-bottom:0.5rem">
+            Resolved by {{ resolver }} · <time title="{{ r.request.resolved_at.as_deref().unwrap_or("") }}">{{ r.request.resolved_at|time_ago_opt }}</time>
+            {% if let Some(rc) = r.request.resolve_comment.as_deref() %}
+            — "{{ rc }}"
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {# Admin actions #}
+        {% if r.request.status == "pending" && user.can("requests.resolve") %}
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem">
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+                  style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action" value="approve">
+                <input type="text" name="comment" placeholder="Comment (optional)" style="flex:1;min-width:150px" class="text-sm resolve-form-input">
+                <label class="text-sm" style="display:flex;align-items:center;gap:0.25rem;cursor:pointer">
+                    <input type="checkbox" name="install" value="true"> Install now
+                </label>
+                <button type="submit" class="btn btn-sm btn-success" onclick="event.stopPropagation()">Approve</button>
+            </form>
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+                  style="display:flex;gap:0.5rem;align-items:center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action" value="reject">
+                <input type="text" name="comment" placeholder="Reason (optional)" style="flex:1;min-width:100px" class="text-sm resolve-form-input">
+                <button type="submit" class="btn btn-sm btn-danger" onclick="event.stopPropagation()">Reject</button>
+            </form>
+        </div>
+        {% endif %}
+
+        {% if r.request.status == "approved" && user.can("requests.resolve") %}
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem">
+            {% if user.can("mods.install") %}
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/install" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+                  style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-primary" onclick="event.stopPropagation()">Install</button>
+            </form>
+            {% endif %}
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+                  style="display:flex;gap:0.5rem;align-items:center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action" value="reject">
+                <input type="text" name="comment" placeholder="Reason (optional)" style="flex:1;min-width:100px" class="text-sm resolve-form-input">
+                <button type="submit" class="btn btn-sm btn-danger" onclick="event.stopPropagation()">Reject</button>
+            </form>
+        </div>
+        {% endif %}
+
+        {% if r.request.status == "queued" %}
+        <div style="margin-bottom:0.5rem">
+            <a href="/quma/mods#queue" class="btn btn-sm btn-outline text-sm" onclick="event.stopPropagation()">View in queue →</a>
+        </div>
+        {% endif %}
+
+        {% if r.request.status == "rejected" && user.can("requests.resolve") %}
+        <div style="margin-bottom:0.5rem">
+            <form hx-post="/quma/api/requests/{{ r.request.id }}/reopen" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+                  style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-outline" onclick="event.stopPropagation()">Reopen</button>
+            </form>
+        </div>
+        {% endif %}
+
+        {# History #}
+        <details
+             hx-get="/quma/api/requests/{{ r.request.id }}/history"
+             hx-target="#history-{{ r.request.id }}"
+             hx-swap="innerHTML"
+             hx-trigger="toggle once"
+             onclick="event.stopPropagation()">
+            <summary class="text-sm text-muted" style="cursor:pointer">History</summary>
+            <div id="history-{{ r.request.id }}" class="text-sm" style="padding:0.25rem 0">
+                <span class="text-muted">Loading…</span>
+            </div>
+        </details>
+
+        <div id="comments-{{ r.request.id }}"></div>
+    </td>
+</tr>

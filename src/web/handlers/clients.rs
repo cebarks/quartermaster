@@ -6,6 +6,7 @@ use actix_session::Session;
 use actix_web::web::{self, Data, Form, Path};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
+use jsonc_parser::cst::CstInputValue;
 
 use crate::client::{ClientHealth, ClientState};
 use crate::config::{Config, HeadlessDisplayServer, RestartPolicy};
@@ -19,6 +20,11 @@ use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
+#[allow(unused_imports)]
+mod filters {
+    pub use crate::web::template_filters::*;
+}
+
 #[derive(Clone)]
 struct PlayerInfo {
     id: String,
@@ -28,9 +34,14 @@ struct PlayerInfo {
 struct ClientView {
     state: ClientState,
     players: Vec<PlayerInfo>,
+    alias: Option<String>,
 }
 
-fn resolve_clients(clients: Vec<ClientState>, names: &HashMap<String, String>) -> Vec<ClientView> {
+fn resolve_clients(
+    clients: Vec<ClientState>,
+    names: &HashMap<String, String>,
+    aliases: &HashMap<String, String>,
+) -> Vec<ClientView> {
     clients
         .into_iter()
         .map(|state| {
@@ -42,7 +53,15 @@ fn resolve_clients(clients: Vec<ClientState>, names: &HashMap<String, String>) -
                     id: id.clone(),
                 })
                 .collect();
-            ClientView { state, players }
+            let alias = state
+                .profile_id
+                .as_ref()
+                .and_then(|pid| aliases.get(pid).cloned());
+            ClientView {
+                state,
+                players,
+                alias,
+            }
         })
         .collect()
 }
@@ -73,6 +92,7 @@ struct ClientDetailTemplate {
     csrf_token: String,
     nav: NavContext,
     client: ClientView,
+    session_stats: Vec<crate::db::headless_stats::HeadlessSessionRow>,
 }
 
 #[derive(Template)]
@@ -90,7 +110,7 @@ struct DashboardClientsStatusTemplate {
     degraded_count: usize,
     down_count: usize,
     total_count: usize,
-    clients: Vec<ClientState>,
+    clients: Vec<ClientView>,
 }
 
 fn build_profile_names(spt_dir: &std::path::Path) -> HashMap<String, String> {
@@ -99,6 +119,13 @@ fn build_profile_names(spt_dir: &std::path::Path) -> HashMap<String, String> {
         .into_iter()
         .map(|p| (p.aid, p.username))
         .collect()
+}
+
+fn build_client_aliases(spt_dir: &std::path::Path) -> HashMap<String, String> {
+    let path = crate::fika::config::fika_config_path(spt_dir);
+    crate::fika::config::read_fika_config(&path)
+        .map(|c| c.headless.profiles.aliases)
+        .unwrap_or_default()
 }
 
 fn require_container_mgr<'a>(
@@ -198,6 +225,16 @@ async fn client_lifecycle(
             &format!("Client {index} {verb_past}"),
             FlashType::Success,
         );
+        // Reset failure state on manual start/restart so GivenUp can recover
+        if action == "start" || action == "restart" {
+            if let Some(states) = &state.client_states {
+                let mut clients = states.write().await;
+                if let Some(client) = clients.iter_mut().find(|c| c.index == index) {
+                    client.consecutive_failures = 0;
+                    client.health = ClientHealth::Degraded;
+                }
+            }
+        }
     }
 
     Ok(HttpResponse::SeeOther()
@@ -285,7 +322,8 @@ pub async fn headless_page(
         .unwrap_or_else(|| ("none".to_string(), None));
 
     let profile_names = build_profile_names(&state.spt_dir);
-    let headless_clients = resolve_clients(headless_clients, &profile_names);
+    let aliases = build_client_aliases(&state.spt_dir);
+    let headless_clients = resolve_clients(headless_clients, &profile_names, &aliases);
     let tmpl = HeadlessPageTemplate {
         user,
         flash,
@@ -330,16 +368,29 @@ pub async fn client_detail(
         .ok_or(WebError::NotFound)?;
 
     let profile_names = build_profile_names(&state.spt_dir);
-    let client = resolve_clients(vec![client], &profile_names)
+    let aliases = build_client_aliases(&state.spt_dir);
+    let client = resolve_clients(vec![client], &profile_names, &aliases)
         .into_iter()
         .next()
         .ok_or(WebError::NotFound)?;
+
+    let db = state.db.clone();
+    let client_index = index;
+    let session_stats = web::block(move || {
+        let db = db.lock();
+        db.get_recent_session_stats(client_index, 20)
+    })
+    .await
+    .map_err(WebError::from)?
+    .unwrap_or_default();
+
     let tmpl = ClientDetailTemplate {
         user,
         flash,
         csrf_token,
         nav: NavContext::from_state(&state),
         client,
+        session_stats,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
 }
@@ -554,6 +605,20 @@ pub async fn client_scale(
     let target = form.count;
     let force = form.force;
 
+    if target > crate::config::MAX_HEADLESS_CLIENTS {
+        set_flash(
+            &session,
+            &format!(
+                "Maximum {} headless clients allowed",
+                crate::config::MAX_HEADLESS_CLIENTS
+            ),
+            FlashType::Error,
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/headless"))
+            .finish());
+    }
+
     // Check if we have headless clients configured
     if state.config().headless.is_none() {
         set_flash(
@@ -653,6 +718,7 @@ pub async fn client_scale(
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
     let db_clone = state.db.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         let result = crate::client::converge::converge(
@@ -674,28 +740,31 @@ pub async fn client_scale(
             tracing::info!(target_count = target, "Client scaling completed");
 
             // Persist the updated client count to config file
-            match crate::config::Config::load_with_env(&config_path) {
-                Ok(mut fresh_config) => {
-                    if let Some(ref mut headless) = fresh_config.headless {
-                        let current = headless.client_count();
-                        if target > current {
-                            for _ in 0..(target - current) {
-                                headless
-                                    .clients
-                                    .push(crate::config::HeadlessClientDef::default());
+            {
+                let _guard = state_clone.config_lock.lock();
+                match crate::config::Config::load_with_env(&config_path) {
+                    Ok(mut fresh_config) => {
+                        if let Some(ref mut headless) = fresh_config.headless {
+                            let current = headless.client_count();
+                            if target > current {
+                                for _ in 0..(target - current) {
+                                    headless
+                                        .clients
+                                        .push(crate::config::HeadlessClientDef::default());
+                                }
+                            } else if target < current {
+                                headless.clients.truncate(target as usize);
                             }
-                        } else if target < current {
-                            headless.clients.truncate(target as usize);
+                        }
+                        if let Err(e) = fresh_config.save(&config_path) {
+                            tracing::error!(err = %e, "Failed to save updated headless config");
+                        } else {
+                            *config_handle.write() = fresh_config;
                         }
                     }
-                    if let Err(e) = fresh_config.save(&config_path) {
-                        tracing::error!(err = %e, "Failed to save updated headless config");
-                    } else {
-                        *config_handle.write() = fresh_config;
+                    Err(e) => {
+                        tracing::error!(err = %e, "Failed to reload config for persisting headless changes");
                     }
-                }
-                Err(e) => {
-                    tracing::error!(err = %e, "Failed to reload config for persisting headless changes");
                 }
             }
         }
@@ -799,7 +868,8 @@ pub async fn client_status_partial(
 
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let profile_names = build_profile_names(&state.spt_dir);
-    let clients = resolve_clients(clients, &profile_names);
+    let aliases = build_client_aliases(&state.spt_dir);
+    let clients = resolve_clients(clients, &profile_names, &aliases);
     let tmpl = ClientsStatusPartialTemplate {
         clients,
         user,
@@ -836,6 +906,20 @@ pub async fn client_create(
         }
     };
 
+    if headless_config.client_count() >= crate::config::MAX_HEADLESS_CLIENTS {
+        set_flash(
+            &session,
+            &format!(
+                "Maximum {} headless clients allowed",
+                crate::config::MAX_HEADLESS_CLIENTS
+            ),
+            FlashType::Error,
+        );
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/headless"))
+            .finish());
+    }
+
     let container_mgr = match require_container_mgr(&state, &session) {
         Ok(m) => m,
         Err(resp) => return Ok(resp),
@@ -864,26 +948,30 @@ pub async fn client_create(
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
     let db_clone = state.db.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
         // Persist first
-        match crate::config::Config::load_with_env(&config_path) {
-            Ok(mut fresh_config) => {
-                if let Some(ref mut headless) = fresh_config.headless {
-                    headless
-                        .clients
-                        .push(crate::config::HeadlessClientDef::default());
+        {
+            let _guard = state_clone.config_lock.lock();
+            match crate::config::Config::load_with_env(&config_path) {
+                Ok(mut fresh_config) => {
+                    if let Some(ref mut headless) = fresh_config.headless {
+                        headless
+                            .clients
+                            .push(crate::config::HeadlessClientDef::default());
+                    }
+                    if let Err(e) = fresh_config.save(&config_path) {
+                        tracing::error!(err = %e, "Failed to save new client to config");
+                        return;
+                    } else {
+                        *config_handle.write() = fresh_config;
+                    }
                 }
-                if let Err(e) = fresh_config.save(&config_path) {
-                    tracing::error!(err = %e, "Failed to save new client to config");
+                Err(e) => {
+                    tracing::error!(err = %e, "Failed to reload config for adding client");
                     return;
-                } else {
-                    *config_handle.write() = fresh_config;
                 }
-            }
-            Err(e) => {
-                tracing::error!(err = %e, "Failed to reload config for adding client");
-                return;
             }
         }
 
@@ -1004,37 +1092,45 @@ pub async fn client_delete(
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
     let db_clone = state.db.clone();
+    let state_clone = state.clone();
 
     tokio::spawn(async move {
-        // Stop/remove the container for the deleted index
-        let container_name = crate::client::converge::client_container_name(index);
-        if let Ok(true) = mgr_clone.is_running(&container_name).await {
-            if let Err(e) = mgr_clone.stop(&container_name).await {
-                tracing::warn!(err = %e, container = %container_name, "failed to stop container before delete");
-            }
-        }
-        if let Err(e) = mgr_clone.remove_container(&container_name).await {
-            tracing::warn!(err = %e, container = %container_name, "failed to remove container (may not exist)");
+        // Remove ALL managed containers so converge recreates with correct indices
+        if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr_clone).await {
+            tracing::error!(err = %e, "Failed to remove managed containers before re-convergence");
+            return;
         }
 
         // Persist
-        match crate::config::Config::load_with_env(&config_path) {
-            Ok(mut fresh_config) => {
-                if let Some(ref mut headless) = fresh_config.headless {
-                    if (index as usize) <= headless.clients.len() && index > 0 {
-                        headless.clients.remove((index - 1) as usize);
+        {
+            let _guard = state_clone.config_lock.lock();
+            match crate::config::Config::load_with_env(&config_path) {
+                Ok(mut fresh_config) => {
+                    if let Some(ref mut headless) = fresh_config.headless {
+                        if (index as usize) <= headless.clients.len() && index > 0 {
+                            headless.clients.remove((index - 1) as usize);
+                        }
+                    }
+                    if let Err(e) = fresh_config.save(&config_path) {
+                        tracing::error!(err = %e, "Failed to save config after deleting client");
+                        return;
+                    } else {
+                        *config_handle.write() = fresh_config;
                     }
                 }
-                if let Err(e) = fresh_config.save(&config_path) {
-                    tracing::error!(err = %e, "Failed to save config after deleting client");
+                Err(e) => {
+                    tracing::error!(err = %e, "Failed to reload config for deleting client");
                     return;
-                } else {
-                    *config_handle.write() = fresh_config;
                 }
             }
-            Err(e) => {
-                tracing::error!(err = %e, "Failed to reload config for deleting client");
-                return;
+        }
+
+        // Clean up overlay for the deleted index
+        let overlay =
+            crate::client::converge::client_overlay_dir(&updated_config.install_dir, index);
+        if overlay.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&overlay) {
+                tracing::warn!(err = %e, "Failed to clean overlay dir for deleted client {index}");
             }
         }
 
@@ -1175,30 +1271,146 @@ pub async fn client_start_raid(
         .finish())
 }
 
+#[derive(serde::Deserialize)]
+pub struct RenameForm {
+    csrf_token: String,
+    name: String,
+}
+
+pub async fn client_rename(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<u32>,
+    form: Form<RenameForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let index = path.into_inner();
+
+    let profile_id = match &state.client_states {
+        Some(states) => {
+            let clients = states.read().await;
+            clients
+                .iter()
+                .find(|c| c.index == index)
+                .and_then(|c| c.profile_id.clone())
+        }
+        None => None,
+    };
+
+    let profile_id = match profile_id {
+        Some(pid) => pid,
+        None => {
+            set_flash(
+                &session,
+                "Cannot rename: client has no profile assigned yet. Start the SPT server first.",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/headless/{index}")))
+                .finish());
+        }
+    };
+
+    let spt_dir = state.spt_dir.clone();
+    let new_name = form.into_inner().name.trim().to_string();
+
+    let result = actix_web::web::block(move || {
+        let _guard = state.fika_config_lock.lock();
+        let path = crate::fika::config::fika_config_path(&spt_dir);
+
+        // Read current aliases from typed config
+        let config = crate::fika::config::read_fika_config(&path)?;
+        let mut aliases = config.headless.profiles.aliases;
+
+        if new_name.is_empty() {
+            aliases.remove(&profile_id);
+        } else {
+            aliases.insert(profile_id, new_name);
+        }
+
+        // Read CST, set aliases, write back
+        let cst = crate::fika::config::read_fika_cst(&path)?;
+        let root = cst.object_value_or_set();
+        if let Some(headless) = root.object_value("headless") {
+            if let Some(profiles) = headless.object_value("profiles") {
+                let alias_entries: Vec<(String, CstInputValue)> = aliases
+                    .into_iter()
+                    .map(|(k, v)| (k, CstInputValue::String(v)))
+                    .collect();
+                match profiles.get("aliases") {
+                    Some(prop) => prop.set_value(CstInputValue::Object(alias_entries)),
+                    None => {
+                        profiles.append("aliases", CstInputValue::Object(alias_entries));
+                    }
+                }
+            }
+        }
+        crate::fika::config::write_fika_cst(&cst, &path)?;
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => set_flash(
+            &session,
+            "Client renamed. Restart the SPT server for the in-game name to take effect.",
+            FlashType::Success,
+        ),
+        Ok(Err(e)) => {
+            tracing::warn!("failed to rename client: {e:#}");
+            set_flash(
+                &session,
+                &format!("Failed to rename: {e}"),
+                FlashType::Error,
+            );
+        }
+        Err(e) => {
+            tracing::error!(err = %e, "task failed renaming client");
+            set_flash(&session, "Failed to rename client", FlashType::Error);
+        }
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .finish())
+}
+
 pub async fn dashboard_clients_status_partial(
     state: Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<web::Html> {
     require_auth(&req)?;
 
-    let clients = match &state.client_states {
+    let raw_clients = match &state.client_states {
         Some(states) => states.read().await.clone(),
         None => vec![],
     };
 
-    let healthy_count = clients
+    let names = build_profile_names(&state.spt_dir);
+    let aliases = build_client_aliases(&state.spt_dir);
+    let clients = resolve_clients(raw_clients.clone(), &names, &aliases);
+
+    let healthy_count = raw_clients
         .iter()
         .filter(|c| c.health == ClientHealth::Healthy)
         .count();
-    let degraded_count = clients
+    let degraded_count = raw_clients
         .iter()
         .filter(|c| c.health == ClientHealth::Degraded)
         .count();
-    let down_count = clients
+    let down_count = raw_clients
         .iter()
         .filter(|c| matches!(c.health, ClientHealth::Down | ClientHealth::GivenUp))
         .count();
-    let total_count = clients.len();
+    let total_count = raw_clients.len();
 
     let tmpl = DashboardClientsStatusTemplate {
         healthy_count,

@@ -1,8 +1,6 @@
-// ponytail: Many types here unused until later tasks; allow dead_code module-wide
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub struct FikaClient {
     http: reqwest::Client,
@@ -129,19 +127,62 @@ impl FikaClient {
         Ok(())
     }
 
-    /// GET /fika/api/players — online players list
-    pub async fn players(&self) -> Result<FikaPlayersResponse> {
+    /// GET /fika/api/items — list all sendable items
+    pub async fn get_items(&self) -> Result<FikaGetItemsResponse> {
         let resp = self
             .http
-            .get(self.api_url("/fika/api/players"))
+            .get(self.api_url("/fika/api/items"))
             .bearer_auth(&self.api_key)
             .header("requestcompressed", "0")
             .send()
             .await
-            .context("failed to call Fika players API")?;
+            .context("failed to call Fika items API")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Fika items API returned {status}: {body}");
+        }
         resp.json()
             .await
-            .context("failed to parse Fika players response")
+            .context("failed to parse Fika items response")
+    }
+
+    /// POST /fika/api/senditem — send item to a player via in-game mail
+    pub async fn send_item(&self, req: &FikaSendItemRequest) -> Result<()> {
+        let resp = self
+            .http
+            .post(self.api_url("/fika/api/senditem"))
+            .bearer_auth(&self.api_key)
+            .header("requestcompressed", "0")
+            .json(req)
+            .send()
+            .await
+            .context("failed to call Fika senditem API")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Fika senditem returned {status}: {body}");
+        }
+        Ok(())
+    }
+
+    /// POST /fika/api/senditemtoall — send item to multiple players
+    pub async fn send_item_to_all(&self, req: &FikaSendItemToAllRequest) -> Result<()> {
+        let resp = self
+            .http
+            .post(self.api_url("/fika/api/senditemtoall"))
+            .bearer_auth(&self.api_key)
+            .header("requestcompressed", "0")
+            .json(req)
+            .send()
+            .await
+            .context("failed to call Fika senditemtoall API")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Fika senditemtoall returned {status}: {body}");
+        }
+        Ok(())
     }
 }
 
@@ -158,6 +199,7 @@ impl std::fmt::Debug for FikaClient {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // fields populated by serde deserialization from Fika API
 pub struct FikaPlayerPresence {
     pub profile_id: String,
     pub nickname: String,
@@ -169,26 +211,13 @@ pub struct FikaPlayerPresence {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // fields populated by serde deserialization from Fika API
 pub struct FikaRaidInfo {
     pub location: String,
     pub side: i32,
     pub time: i32,
     pub started: bool,
     pub match_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FikaPlayersResponse {
-    pub players: Vec<FikaPlayer>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FikaPlayer {
-    pub profile_id: String,
-    pub nickname: String,
-    pub level: i32,
-    pub location: u8,
 }
 
 #[derive(Debug, Serialize)]
@@ -213,7 +242,43 @@ pub struct StartHeadlessRaidRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // fields populated by serde deserialization from Fika API
 pub struct StartHeadlessRaidResponse {
     pub match_id: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FikaGetItemsResponse {
+    pub items: HashMap<String, FikaItemInfo>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FikaItemInfo {
+    pub name: String,
+    pub description: String,
+    #[serde(rename = "stackable")]
+    pub stack_amount: i32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FikaSendItemRequest {
+    pub profile_id: String,
+    pub item_tpl: String,
+    pub amount: i32,
+    pub message: String,
+    pub fir: bool,
+    pub expiration_days: i32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FikaSendItemToAllRequest {
+    pub profile_ids: Vec<String>,
+    pub item_tpl: String,
+    pub amount: i32,
+    pub message: String,
+    pub fir: bool,
+    pub expiration_days: i32,
 }

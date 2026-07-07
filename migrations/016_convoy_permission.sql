@@ -14,9 +14,11 @@ BEGIN
     SELECT RAISE(ABORT, 'role_permissions.permission must be a known permission slug')
     WHERE NEW.permission NOT IN (
         'mods.install', 'mods.update', 'mods.remove', 'mods.disable',
+        'mods.config_edit',
         'convoy.manage', 'svm.edit', 'requests.resolve',
         'server.control', 'server.logs', 'server.metrics',
-        'headless.manage', 'queue.manage', 'users.manage', 'settings.manage'
+        'headless.manage', 'queue.manage', 'users.manage', 'settings.manage',
+        'items.give', 'notes.edit', 'notes.manage'
     );
 END;
 
@@ -26,8 +28,10 @@ BEGIN
     SELECT RAISE(ABORT, 'role_permissions.permission must be a known permission slug')
     WHERE NEW.permission NOT IN (
         'mods.install', 'mods.update', 'mods.remove', 'mods.disable',
+        'mods.config_edit',
         'convoy.manage', 'svm.edit', 'requests.resolve',
         'server.control', 'server.logs', 'server.metrics',
-        'headless.manage', 'queue.manage', 'users.manage', 'settings.manage'
+        'headless.manage', 'queue.manage', 'users.manage', 'settings.manage',
+        'items.give', 'notes.edit', 'notes.manage'
     );
 END;

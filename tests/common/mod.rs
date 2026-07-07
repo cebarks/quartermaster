@@ -122,8 +122,8 @@ impl TestAppBuilder {
         };
 
         // Create ForgeClient pointing at mock server
-        let forge = ForgeClient::with_base_url(mock_server.uri(), None)
-            .expect("failed to create ForgeClient");
+        let forge =
+            ForgeClient::with_base_url(mock_server.uri()).expect("failed to create ForgeClient");
 
         // Build a test config with known session secret
         let config = Config {
@@ -183,6 +183,7 @@ impl TestAppBuilder {
             fika_installed: false,
             fika_client: None,
             fika_config_lock: parking_lot::Mutex::new(()),
+            fika_items: Arc::new(parking_lot::Mutex::new(None)),
             svm: None,
             svm_installed: std::sync::atomic::AtomicBool::new(false),
             server_transition: Arc::new(parking_lot::Mutex::new(None)),
@@ -201,6 +202,7 @@ impl TestAppBuilder {
                 db_arc.clone(),
                 config_arc.clone(),
             ),
+            config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(&spt_dir),
         });
 
         TestApp {

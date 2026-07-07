@@ -30,7 +30,7 @@ pub const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 
 /// Regex for editing UDP port in Fika client config
 static PORT_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"(?m)^(Port\s*=\s*)\d+").expect("valid regex"));
+    LazyLock::new(|| regex::Regex::new(r"(?m)^(UDP Port\s*=\s*)\d+").expect("valid regex"));
 
 /// Regex for editing Use UPnP in Fika client config
 static UPNP_RE: LazyLock<regex::Regex> =
@@ -150,24 +150,12 @@ async fn ensure_fika_headless(
     );
 
     // Query GitHub API for the latest release
-    let client = reqwest::Client::builder()
-        .user_agent("quartermaster")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let release: serde_json::Value = client
-        .get(format!(
+    let release: serde_json::Value = forge
+        .get_external_json(&format!(
             "https://api.github.com/repos/{FIKA_HEADLESS_GITHUB_REPO}/releases/latest"
         ))
-        .send()
         .await
-        .context("failed to query GitHub for Fika.Headless releases")?
-        .error_for_status()
-        .context("GitHub API returned error")?
-        .json()
-        .await
-        .context("failed to parse GitHub release response")?;
+        .context("failed to query GitHub for Fika.Headless releases")?;
 
     let tag = release["tag_name"].as_str().unwrap_or("unknown");
     let asset = release["assets"]
@@ -191,6 +179,36 @@ async fn ensure_fika_headless(
 
     info!("Fika.Headless {tag} installed to {}", install_dir.display());
     Ok(())
+}
+
+/// Remove all quartermaster-managed headless containers.
+///
+/// Returns the number of containers removed. Used before re-convergence
+/// after a middle deletion to ensure clean index renumbering.
+pub async fn remove_all_managed_containers(container_mgr: &ContainerManager) -> Result<u32> {
+    let managed = container_mgr
+        .detect_containers_by_label(MANAGED_BY_LABEL, MANAGED_BY_VALUE)
+        .await?;
+
+    let mut removed = 0u32;
+    for name in &managed {
+        if container_mgr.is_running(name).await.unwrap_or(false) {
+            container_mgr
+                .stop(name)
+                .await
+                .with_context(|| format!("failed to stop {name}"))?;
+        }
+        container_mgr
+            .remove_container(name)
+            .await
+            .with_context(|| format!("failed to remove {name}"))?;
+        removed += 1;
+    }
+
+    if removed > 0 {
+        info!("Removed {removed} managed container(s) for clean re-convergence");
+    }
+    Ok(removed)
 }
 
 /// Discover new profile IDs that appeared after a baseline snapshot.
@@ -310,16 +328,23 @@ async fn select_profiles_for_assignment(
 /// Write the UDP port into the Fika client config file in a per-client overlay.
 ///
 /// The Fika client reads its P2P port from `BepInEx/config/com.fika.core.cfg`
-/// under the `[Network]` section, `Port = <value>`. This function uses regex
+/// under the `[Network]` section, `UDP Port = <value>`. This function uses regex
 /// replacement to update the port value while preserving comments and formatting.
 ///
-/// If the config file doesn't exist yet (overlay was just created), this is a no-op —
-/// the config will be populated when Fika runs for the first time.
+/// If the config file doesn't exist yet (first boot before Fika generates it),
+/// a minimal seed config is written. BepInEx fills in defaults for missing entries.
 fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
     let cfg_path = overlay_dir.join("BepInEx/config/com.fika.core.cfg");
     if !cfg_path.exists() {
+        if let Some(parent) = cfg_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create config dir {}", parent.display()))?;
+        }
+        let seed = format!("[Network]\nUDP Port = {port}\n");
+        std::fs::write(&cfg_path, &seed)
+            .with_context(|| format!("failed to seed {}", cfg_path.display()))?;
         debug!(
-            "Fika config not found at {}, skipping UDP port write",
+            "Seeded Fika config with UDP port {port} at {}",
             cfg_path.display()
         );
         return Ok(());
@@ -329,7 +354,10 @@ fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
         .with_context(|| format!("failed to read {}", cfg_path.display()))?;
 
     if !PORT_RE.is_match(&content) {
-        debug!("No Port setting found in {}, skipping", cfg_path.display());
+        debug!(
+            "No UDP Port setting found in {}, skipping",
+            cfg_path.display()
+        );
         return Ok(());
     }
 
@@ -375,6 +403,41 @@ fn write_fika_upnp(overlay_dir: &Path, enabled: bool) -> Result<()> {
     Ok(())
 }
 
+/// Patch `Game.ini` to control EFT's CPU affinity behaviour.
+///
+/// EFT's `SetAffinityToLogicalCores` is confusingly named:
+/// `true` = restrict to physical cores only, `false` = use all cores.
+/// We map `physical_cores_only` directly to this value.
+fn write_game_ini_affinity(install_dir: &Path, physical_cores_only: bool) -> Result<()> {
+    let ini_path = install_dir.join("SPT/user/sptSettings/Game.ini");
+    if !ini_path.exists() {
+        debug!(
+            "Game.ini not found at {}, skipping affinity write",
+            ini_path.display()
+        );
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&ini_path)
+        .with_context(|| format!("failed to read {}", ini_path.display()))?;
+
+    let mut value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse {} as JSON", ini_path.display()))?;
+
+    value["SetAffinityToLogicalCores"] = serde_json::Value::Bool(physical_cores_only);
+
+    let updated = serde_json::to_string_pretty(&value)
+        .with_context(|| format!("failed to serialize {}", ini_path.display()))?;
+    std::fs::write(&ini_path, &updated)
+        .with_context(|| format!("failed to write {}", ini_path.display()))?;
+
+    debug!(
+        "Set SetAffinityToLogicalCores to {physical_cores_only} in {}",
+        ini_path.display()
+    );
+    Ok(())
+}
+
 /// Set up overlay directory for a client, copying isolated paths from the install directory.
 ///
 /// Creates `<install_dir>/.quma/clients/<index>/` and recursively copies any paths from
@@ -391,6 +454,7 @@ pub fn setup_client_overlay(
     isolated_paths: &[String],
     base_udp_port: u16,
     use_upnp: bool,
+    physical_cores_only: bool,
 ) -> Result<()> {
     let overlay_dir = client_overlay_dir(install_dir, index);
 
@@ -439,9 +503,14 @@ pub fn setup_client_overlay(
         }
     }
 
-    let port = client_port(base_udp_port, index);
+    let port = client_port(base_udp_port, index)?;
     write_fika_udp_port(&overlay_dir, port)?;
     write_fika_upnp(&overlay_dir, use_upnp)?;
+
+    // Game.ini is shared (not per-client overlay), so only patch once.
+    if index == 1 {
+        write_game_ini_affinity(install_dir, physical_cores_only)?;
+    }
 
     // Stub out GPU-specific DLLs that crash in headless (no-GPU) containers.
     // DLSSImporter.dll dereferences a null pointer when no GPU is present,
@@ -608,8 +677,11 @@ pub fn client_overlay_dir(install_dir: &Path, index: u32) -> PathBuf {
 /// - index 1 → base_udp_port
 /// - index 2 → base_udp_port + 1
 /// - index 3 → base_udp_port + 2
-pub fn client_port(base: u16, index: u32) -> u16 {
-    base + (index - 1) as u16
+pub fn client_port(base: u16, index: u32) -> Result<u16> {
+    let offset = u16::try_from(index.checked_sub(1).context("client index must be >= 1")?)
+        .context("client index too large for u16 port offset")?;
+    base.checked_add(offset)
+        .context(format!("port overflow: {base} + {offset} exceeds u16::MAX"))
 }
 
 /// Find containers that match the naming pattern but lack the managed-by label.
@@ -930,6 +1002,7 @@ pub async fn converge(
             &effective_paths,
             headless_config.base_udp_port,
             headless_config.use_upnp,
+            headless_config.physical_cores_only,
         )?;
     }
 
@@ -1010,6 +1083,29 @@ async fn restart_running_clients(container_mgr: &ContainerManager, count: u32) -
     }
 }
 
+/// Log a warning if human players are connected when the SPT server is about to restart.
+async fn warn_active_players(spt_client: &SptClient, reason: &str) {
+    match spt_client.headless_clients().await {
+        Ok(resp) => {
+            let player_count: usize = resp
+                .headlesses
+                .values()
+                .filter(|info| matches!(info.state, crate::spt::headless::EHeadlessStatus::InRaid))
+                .map(|info| info.players.len())
+                .sum();
+            if player_count > 0 {
+                warn!(
+                    "Restarting SPT server ({reason}) with {player_count} player(s) \
+                     currently in headless raids — they will be disconnected"
+                );
+            }
+        }
+        Err(_) => {
+            // Server may already be unresponsive — nothing to warn about
+        }
+    }
+}
+
 /// Ensure containers exist from current_count up to desired_count.
 #[allow(clippy::too_many_arguments)]
 async fn ensure_clients(
@@ -1041,6 +1137,7 @@ async fn ensure_clients(
         .as_deref()
         .expect("server_container validated by HeadlessConfig::validate");
 
+    warn_active_players(spt_client, "scaling up headless clients").await;
     info!("Stopping SPT server");
     container_mgr
         .stop(container)
@@ -1131,6 +1228,18 @@ async fn remove_excess_clients(
         container_mgr.remove_container(&name).await?;
     }
 
+    // Clean up overlay directories for removed clients
+    for i in (desired_count + 1)..=current_count {
+        let overlay = client_overlay_dir(&headless_config.install_dir, i);
+        if overlay.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&overlay) {
+                warn!("Failed to clean overlay dir for client {i}: {e}");
+            } else {
+                info!("Removed overlay directory for client {i}");
+            }
+        }
+    }
+
     // 2. Edit fika.jsonc to set amount
     {
         // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
@@ -1147,6 +1256,7 @@ async fn remove_excess_clients(
         .as_deref()
         .expect("server_container validated by HeadlessConfig::validate");
 
+    warn_active_players(spt_client, "scaling down headless clients").await;
     info!("Restarting SPT server to deregister removed headless clients");
     container_mgr
         .stop(container)
@@ -1254,6 +1364,7 @@ async fn create_client_container(
         effective_paths,
         headless_config.base_udp_port,
         headless_config.use_upnp,
+        headless_config.physical_cores_only,
     )?;
 
     // Build volume mounts
@@ -1311,7 +1422,7 @@ async fn create_client_container(
     // Environment variables
     let mut env = vec![(
         "UDP_PORT".to_string(),
-        client_port(headless_config.base_udp_port, index).to_string(),
+        client_port(headless_config.base_udp_port, index)?.to_string(),
     )];
 
     // Always set PROFILE_ID — the claudeoris image defaults to "test" if unset,
@@ -1376,7 +1487,7 @@ async fn create_client_container(
         ("quma.client.index".to_string(), index.to_string()),
     ];
 
-    let udp_port = client_port(headless_config.base_udp_port, index);
+    let udp_port = client_port(headless_config.base_udp_port, index)?;
     let ports = vec![PortMapping {
         host_port: udp_port,
         container_port: udp_port,
@@ -1483,6 +1594,7 @@ mod tests {
             &["BepInEx/config".to_string()],
             25565,
             false,
+            false,
         )
         .unwrap();
 
@@ -1499,8 +1611,8 @@ mod tests {
 
     #[test]
     fn client_udp_port() {
-        assert_eq!(client_port(25565, 1), 25565);
-        assert_eq!(client_port(25565, 3), 25567);
+        assert_eq!(client_port(25565, 1).unwrap(), 25565);
+        assert_eq!(client_port(25565, 3).unwrap(), 25567);
     }
 
     #[test]
@@ -1515,6 +1627,7 @@ mod tests {
             1,
             &["BepInEx/config".to_string()],
             25565,
+            false,
             false,
         )
         .unwrap();
@@ -1547,6 +1660,7 @@ mod tests {
             &["BepInEx/config".to_string()],
             25565,
             false,
+            false,
         )
         .unwrap();
 
@@ -1558,6 +1672,7 @@ mod tests {
             1,
             &["BepInEx/config".to_string(), "BepInEx/cache".to_string()],
             25565,
+            false,
             false,
         )
         .unwrap();
@@ -1638,23 +1753,27 @@ mod tests {
         let cfg_path = config_dir.join("com.fika.core.cfg");
         std::fs::write(
             &cfg_path,
-            "[Network]\n\n## Port\n# Setting type: UInt16\n# Default value: 25565\nPort = 25565\n",
+            "[Network]\n\n## UDP Port\n# Setting type: UInt16\n# Default value: 25565\nUDP Port = 25565\n",
         )
         .unwrap();
 
         write_fika_udp_port(tmp.path(), 25567).unwrap();
 
         let content = std::fs::read_to_string(&cfg_path).unwrap();
-        assert!(content.contains("Port = 25567"));
-        assert!(!content.contains("Port = 25565"));
+        assert!(content.contains("UDP Port = 25567"));
+        assert!(!content.contains("UDP Port = 25565"));
     }
 
     #[test]
-    fn write_fika_udp_port_no_config_file_is_ok() {
+    fn write_fika_udp_port_seeds_config_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        // No config file exists — should not error, just skip
         let result = write_fika_udp_port(tmp.path(), 25567);
         assert!(result.is_ok());
+
+        let cfg_path = tmp.path().join("BepInEx/config/com.fika.core.cfg");
+        assert!(cfg_path.exists());
+        let content = std::fs::read_to_string(cfg_path).unwrap();
+        assert!(content.contains("UDP Port = 25567"));
     }
 
     #[test]
@@ -1818,5 +1937,31 @@ mod tests {
         let (cpus1, mems1) = resolve_numa_cpuset(&h, 1, &topo).unwrap();
         assert_eq!(cpus1, Some("8-15".to_string()));
         assert_eq!(mems1, Some("1".to_string()));
+    }
+
+    #[test]
+    fn write_game_ini_affinity_patches_setting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_dir = tmp.path().join("SPT/user/sptSettings");
+        std::fs::create_dir_all(&settings_dir).unwrap();
+        let ini_path = settings_dir.join("Game.ini");
+        std::fs::write(
+            &ini_path,
+            r#"{"SetAffinityToLogicalCores": true, "FieldOfView": 50}"#,
+        )
+        .unwrap();
+
+        write_game_ini_affinity(tmp.path(), false).unwrap();
+
+        let result: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&ini_path).unwrap()).unwrap();
+        assert_eq!(result["SetAffinityToLogicalCores"], false);
+        assert_eq!(result["FieldOfView"], 50);
+    }
+
+    #[test]
+    fn write_game_ini_affinity_missing_file_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(write_game_ini_affinity(tmp.path(), true).is_ok());
     }
 }

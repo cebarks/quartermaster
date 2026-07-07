@@ -4,6 +4,7 @@ mod backup;
 mod cli;
 mod client;
 mod config;
+mod config_mgmt;
 mod container;
 mod convoy;
 mod db;
@@ -74,8 +75,6 @@ async fn main() -> Result<()> {
             path,
             no_fika,
             admin_password,
-            forge_token,
-            no_forge_token,
             dev,
             container_name,
         } => {
@@ -85,8 +84,6 @@ async fn main() -> Result<()> {
                     path: path.clone(),
                     no_fika: *no_fika,
                     admin_password: admin_password.clone(),
-                    forge_token: forge_token.clone(),
-                    no_forge_token: *no_forge_token,
                     dev: *dev,
                     container_name: container_name.clone(),
                 },
@@ -161,6 +158,10 @@ async fn main() -> Result<()> {
         Command::Invite { expires } => {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::invite::run(expires.as_deref(), &ctx)
+        }
+        Command::Reindex { apply } => {
+            let ctx = init_context(&cli, &reload_handles)?;
+            cli::reindex::run(!apply, &ctx).await
         }
         Command::Backup { mod_ref, list } => {
             let ctx = init_context(&cli, &reload_handles)?;

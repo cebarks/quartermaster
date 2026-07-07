@@ -112,7 +112,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         }
     };
 
-    let forge = ForgeClient::new(config.forge_token.clone())?;
+    let forge = ForgeClient::new()?;
 
     let fika_installed = is_fika_installed(&spt_dir);
     let converging = Arc::new(AtomicBool::new(false));

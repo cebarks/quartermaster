@@ -280,6 +280,21 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         "mod installed, files recorded"
     );
     maybe_sync_headless(req.config, req.spt_dir, req.db, db_id, SyncOp::Install);
+
+    // Transition matching request to installed
+    if let Some(forge_mod_id) = req.forge_mod_id {
+        let _ = req.db.transition_request_by_forge_mod_id(
+            forge_mod_id,
+            &[
+                crate::db::requests::RequestStatus::Approved,
+                crate::db::requests::RequestStatus::Queued,
+            ],
+            crate::db::requests::RequestStatus::Installed,
+            None,
+            Some("Mod installed"),
+        );
+    }
+
     Ok(db_id)
 }
 
@@ -1080,7 +1095,8 @@ pub fn remove_mod_by_id(
 
     crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_remove")?;
     let mod_info_for_disable = db.get_mod(mod_db_id)?;
-    let is_disabled = mod_info_for_disable.is_some_and(|m| m.disabled);
+    let is_disabled = mod_info_for_disable.as_ref().is_some_and(|m| m.disabled);
+    let forge_mod_id = mod_info_for_disable.and_then(|m| m.forge_mod_id);
     let files = db.get_files_for_mod(mod_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = file_paths.len(), "deleting mod files");
@@ -1095,6 +1111,19 @@ pub fn remove_mod_by_id(
     let tx = db.begin_transaction()?;
     db.delete_mod(mod_db_id)?;
     tx.commit()?;
+
+    // Group membership cleanup is implicit — deleting the mod row removes its group_id.
+
+    // Transition matching request back to approved
+    if let Some(forge_mod_id) = forge_mod_id {
+        let _ = db.transition_request_by_forge_mod_id(
+            forge_mod_id,
+            &[crate::db::requests::RequestStatus::Installed],
+            crate::db::requests::RequestStatus::Approved,
+            None,
+            Some("Mod removed"),
+        );
+    }
 
     Ok(())
 }
