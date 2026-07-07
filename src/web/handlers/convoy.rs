@@ -430,6 +430,8 @@ pub async fn save_groups(
         }
     }
 
+    let group_count = processed_groups.len();
+
     // Save to DB atomically (members are already DB ids)
     let db = state.db.clone();
     web::block(move || {
@@ -439,6 +441,12 @@ pub async fn save_groups(
     .await
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
+
+    tracing::info!(
+        user = %user.username,
+        group_count,
+        "convoy groups saved"
+    );
 
     // Regenerate catalog
     state.regenerate_convoy();
@@ -580,6 +588,7 @@ pub async fn catalog(
     state: web::Data<AppState>,
 ) -> actix_web::Result<HttpResponse> {
     let Some((path, etag)) = state.catalog_cache.get() else {
+        tracing::warn!("convoy catalog requested but cache not yet built");
         return Ok(HttpResponse::ServiceUnavailable()
             .body("Convoy catalog is being built, try again shortly"));
     };
@@ -588,6 +597,7 @@ pub async fn catalog(
     if let Some(if_none_match) = req.headers().get("if-none-match") {
         if let Ok(val) = if_none_match.to_str() {
             if val == etag {
+                tracing::debug!("convoy catalog 304 (ETag match)");
                 return Ok(HttpResponse::NotModified().finish());
             }
         }
@@ -597,6 +607,8 @@ pub async fn catalog(
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?
         .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    tracing::debug!(bytes = body.len(), "served convoy catalog");
 
     Ok(HttpResponse::Ok()
         .content_type("application/json")
@@ -616,8 +628,11 @@ pub async fn download(
     body: web::Json<DownloadRequest>,
 ) -> actix_web::Result<HttpResponse> {
     if body.mods.is_empty() {
+        tracing::warn!("convoy download requested with empty mod list");
         return Ok(HttpResponse::BadRequest().body("no mods requested"));
     }
+
+    tracing::info!(mod_ids = ?body.mods, count = body.mods.len(), "convoy batch download requested");
 
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
@@ -628,8 +643,16 @@ pub async fn download(
         crate::convoy::download::build_download_zip(&db, &spt_dir, &mod_ids)
     })
     .await
-    .map_err(actix_web::error::ErrorInternalServerError)?
-    .map_err(actix_web::error::ErrorInternalServerError)?;
+    .map_err(|e| {
+        tracing::error!(err = %e, "convoy batch download failed");
+        actix_web::error::ErrorInternalServerError(e)
+    })?
+    .map_err(|e| {
+        tracing::error!(err = %e, "convoy batch download failed");
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
+
+    tracing::info!(bytes = zip_bytes.len(), "convoy batch download served");
 
     Ok(HttpResponse::Ok()
         .content_type("application/zip")
@@ -649,13 +672,27 @@ pub async fn single_mod_archive(
     let db = state.db.clone();
     let spt_dir = state.spt_dir.clone();
 
+    tracing::info!(mod_id, "convoy single mod download requested");
+
     let zip_bytes = web::block(move || {
         let db = db.lock();
         crate::convoy::download::build_download_zip(&db, &spt_dir, &[mod_id])
     })
     .await
-    .map_err(actix_web::error::ErrorInternalServerError)?
-    .map_err(actix_web::error::ErrorInternalServerError)?;
+    .map_err(|e| {
+        tracing::error!(mod_id, err = %e, "convoy single mod download failed");
+        actix_web::error::ErrorInternalServerError(e)
+    })?
+    .map_err(|e| {
+        tracing::error!(mod_id, err = %e, "convoy single mod download failed");
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
+
+    tracing::info!(
+        mod_id,
+        bytes = zip_bytes.len(),
+        "convoy single mod download served"
+    );
 
     Ok(HttpResponse::Ok()
         .content_type("application/zip")

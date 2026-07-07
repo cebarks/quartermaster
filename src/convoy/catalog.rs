@@ -340,7 +340,7 @@ impl CatalogCacheInner {
         std::fs::write(&self.tmp_path, &json)?;
         std::fs::rename(&self.tmp_path, &self.cache_path)?;
 
-        tracing::debug!("rebuilt convoy catalog cache");
+        tracing::info!("rebuilt convoy catalog cache");
         Ok(())
     }
 }
