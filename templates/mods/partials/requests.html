@@ -27,8 +27,31 @@
     </form>
 </div>
 
-{% if !approved_requests.is_empty() && user.can("mods.install") %}
-<div style="margin-bottom:0.5rem">
+<div class="request-tabs" id="request-tab-bar">
+    <button class="tab active" data-tab="pending"
+            hx-get="/quma/api/requests/tab?status=pending"
+            hx-target="#request-table"
+            hx-swap="innerHTML"
+            onclick="requestTabSwitch(this)">Pending ({{ pending_requests.len() }})</button>
+    <button class="tab" data-tab="approved"
+            hx-get="/quma/api/requests/tab?status=approved"
+            hx-target="#request-table"
+            hx-swap="innerHTML"
+            onclick="requestTabSwitch(this)">Approved ({{ approved_requests.len() }})</button>
+    <button class="tab" data-tab="queued"
+            hx-get="/quma/api/requests/tab?status=queued"
+            hx-target="#request-table"
+            hx-swap="innerHTML"
+            onclick="requestTabSwitch(this)">Queued ({{ queued_requests.len() }})</button>
+    <button class="tab" data-tab="completed"
+            hx-get="/quma/api/requests/tab?status=completed"
+            hx-target="#request-table"
+            hx-swap="innerHTML"
+            onclick="requestTabSwitch(this)">Completed ({{ completed_requests.len() }})</button>
+</div>
+
+{% if user.can("mods.install") && !approved_requests.is_empty() %}
+<div id="request-install-all" style="margin:0.5rem 0;display:none">
     <form hx-post="/quma/api/requests/install-all" hx-target="#mods-tab-content" hx-swap="innerHTML" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-sm btn-primary">Install all approved</button>
@@ -36,70 +59,71 @@
 </div>
 {% endif %}
 
-<div class="request-kanban">
-    <div class="request-kanban-column">
-        <h3>Pending ({{ pending_requests.len() }})</h3>
-        {% if pending_requests.is_empty() %}
-        <div class="card"><div class="empty-state"><p>No pending requests.</p></div></div>
-        {% else %}
-        {% for r in &pending_requests %}
-        <div id="request-{{ r.request.id }}">
-        {% include "mods/partials/request_card_body.html" %}
-        </div>
-        {% endfor %}
-        {% endif %}
-    </div>
-
-    <div class="request-kanban-column">
-        <h3>Approved ({{ approved_requests.len() }})</h3>
-        {% if approved_requests.is_empty() %}
-        <div class="card"><div class="empty-state"><p>No approved requests.</p></div></div>
-        {% else %}
-        {% for r in &approved_requests %}
-        <div id="request-{{ r.request.id }}">
-        {% include "mods/partials/request_card_body.html" %}
-        </div>
-        {% endfor %}
-        {% endif %}
-    </div>
-
-    <div class="request-kanban-column">
-        <h3>Queued ({{ queued_requests.len() }})</h3>
-        {% if queued_requests.is_empty() %}
-        <div class="card"><div class="empty-state"><p>No queued requests.</p></div></div>
-        {% else %}
-        {% for r in &queued_requests %}
-        <div id="request-{{ r.request.id }}">
-        {% include "mods/partials/request_card_body.html" %}
-        </div>
-        {% endfor %}
-        {% endif %}
-    </div>
-</div>
-
-{% if !completed_requests.is_empty() %}
-<details class="mt-1">
-    <summary class="btn btn-sm btn-outline" style="cursor:pointer">
-        Show completed ({{ completed_requests.len() }})
-    </summary>
-    <div class="mt-1">
-    {% for r in &completed_requests %}
-    <div id="request-{{ r.request.id }}">
-    {% include "mods/partials/request_card_body.html" %}
-    </div>
+<table class="request-table" id="request-table">
+    <thead>
+        <tr>
+            <th>Mod</th>
+            <th>Votes</th>
+            <th>Requested</th>
+            <th>Fika</th>
+        </tr>
+    </thead>
+    {% for r in &pending_requests %}
+    <tbody id="request-{{ r.request.id }}">
+    {% include "mods/partials/request_row.html" %}
+    </tbody>
     {% endfor %}
-    </div>
-</details>
-{% endif %}
+    {% if pending_requests.is_empty() %}
+    <tbody><tr><td colspan="4" class="text-muted" style="text-align:center;padding:2rem">No pending requests.</td></tr></tbody>
+    {% endif %}
+</table>
 
 <script>
+function requestTabSwitch(el) {
+    document.querySelectorAll('#request-tab-bar .tab').forEach(function(t) { t.classList.remove('active'); });
+    el.classList.add('active');
+    var installAll = document.getElementById('request-install-all');
+    if (installAll) {
+        installAll.style.display = el.dataset.tab === 'approved' ? '' : 'none';
+    }
+}
+var expandedRequestId = null;
+function toggleRequestDetail(id) {
+    var detail = document.getElementById('detail-' + id);
+    var row = detail.previousElementSibling;
+    var tbody = document.getElementById('request-' + id);
+    if (detail.style.display === 'none') {
+        document.querySelectorAll('.request-detail').forEach(function(d) {
+            d.style.display = 'none';
+            d.previousElementSibling.classList.remove('expanded');
+            d.closest('tbody').classList.remove('request-expanded');
+        });
+        detail.style.display = '';
+        row.classList.add('expanded');
+        tbody.classList.add('request-expanded');
+        expandedRequestId = id;
+    } else {
+        detail.style.display = 'none';
+        row.classList.remove('expanded');
+        tbody.classList.remove('request-expanded');
+        expandedRequestId = null;
+    }
+}
+document.addEventListener('htmx:beforeSwap', function(e) {
+    if (expandedRequestId && e.detail.target.id === 'request-' + expandedRequestId) {
+        e.detail.serverResponse = e.detail.serverResponse.replace(
+            'id="request-' + expandedRequestId + '"',
+            'id="request-' + expandedRequestId + '" class="request-expanded"'
+        );
+    }
+});
 function toggleVoteComment(btn, requestId) {
     var el = document.getElementById('vote-comment-' + requestId);
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
     if (el.style.display === 'block') el.querySelector('input').focus();
 }
 function updateVoteComments(input, requestId) {
-    var card = document.getElementById('request-' + requestId);
-    card.querySelectorAll('.vote-comment-field').forEach(function(f) { f.value = input.value; });
+    var wrapper = document.getElementById('request-' + requestId);
+    if (wrapper) wrapper.querySelectorAll('.vote-comment-field').forEach(function(f) { f.value = input.value; });
 }
 </script>

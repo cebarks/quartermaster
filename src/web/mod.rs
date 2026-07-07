@@ -336,6 +336,10 @@ pub fn configure_app(
             web::get().to(handlers::requests::requests_tab),
         )
         .route(
+            "/requests/tab",
+            web::get().to(handlers::requests::request_tab_body),
+        )
+        .route(
             "/queue/content",
             web::get().to(handlers::queue::queue_content_partial),
         )
