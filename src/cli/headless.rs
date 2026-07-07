@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use futures_util::StreamExt;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -171,6 +172,12 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
         states.push(info);
     }
 
+    // Load Fika aliases for display names
+    let fika_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    let aliases: HashMap<String, String> = crate::fika::config::read_fika_config(&fika_path)
+        .map(|c| c.headless.profiles.aliases)
+        .unwrap_or_default();
+
     // Get Fika API data if server is running
     let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
     let spt_client = SptClient::new(&server_host, server_port)?;
@@ -184,10 +191,10 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
         None => {
             // Table of all clients
             println!(
-                "{:<8} {:<20} {:<15} {:<10}",
-                "CLIENT", "CONTAINER", "STATUS", "FIKA STATE"
+                "{:<8} {:<20} {:<20} {:<15} {:<10}",
+                "CLIENT", "ALIAS", "CONTAINER", "STATUS", "FIKA STATE"
             );
-            println!("{}", "-".repeat(60));
+            println!("{}", "-".repeat(80));
 
             for ci in &states {
                 let fika_state: String = if let Some(ref map) = headless_map {
@@ -212,9 +219,15 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
                     "server offline".into()
                 };
 
+                let alias = ci
+                    .profile_id
+                    .as_ref()
+                    .and_then(|pid| aliases.get(pid))
+                    .map(|s| s.as_str())
+                    .unwrap_or("-");
                 println!(
-                    "{:<8} {:<20} {:<15} {:<10}",
-                    ci.index, ci.name, ci.container_status, fika_state
+                    "{:<8} {:<20} {:<20} {:<15} {:<10}",
+                    ci.index, alias, ci.name, ci.container_status, fika_state
                 );
             }
         }
@@ -265,6 +278,9 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
 
             if let Some(ref pid) = profile_id {
                 println!("  Profile ID: {}", pid);
+                if let Some(alias) = aliases.get(pid) {
+                    println!("  Alias: {}", alias);
+                }
             }
 
             if let Some(ref map) = headless_map {
