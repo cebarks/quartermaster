@@ -1,4 +1,4 @@
-use super::Database;
+use super::{requests::RequestStatus, Database};
 
 fn test_db() -> Database {
     Database::open_in_memory().expect("failed to open in-memory database")
@@ -863,14 +863,26 @@ fn create_and_get_mod_request() {
 }
 
 #[test]
-fn has_pending_request_for_mod() {
+fn has_active_request_for_mod() {
     let db = test_db();
     let user_id = setup_user(&db);
-    assert!(!db.has_pending_request_for_mod(100).unwrap());
+    assert!(!db.has_active_request_for_mod(100).unwrap());
 
-    db.create_mod_request(user_id, 100, "Mod", None, None, "unknown", None)
+    let req_id = db
+        .create_mod_request(user_id, 100, "Mod", None, None, "unknown", None)
         .unwrap();
-    assert!(db.has_pending_request_for_mod(100).unwrap());
+    assert!(db.has_active_request_for_mod(100).unwrap());
+
+    // Approved requests should also return true (active)
+    db.transition_request_status(
+        req_id,
+        &[RequestStatus::Pending],
+        RequestStatus::Approved,
+        Some(user_id),
+        None,
+    )
+    .unwrap();
+    assert!(db.has_active_request_for_mod(100).unwrap());
 }
 
 #[test]
@@ -882,14 +894,35 @@ fn resolved_request_does_not_block_new_request() {
     let req_id = db
         .create_mod_request(user_id, 100, "Mod", None, None, "unknown", None)
         .unwrap();
-    db.resolve_mod_request(req_id, "rejected", admin_id, Some("Not now"))
-        .unwrap();
+    db.transition_request_status(
+        req_id,
+        &[RequestStatus::Pending],
+        RequestStatus::Rejected,
+        Some(admin_id),
+        Some("Not now"),
+    )
+    .unwrap();
 
-    assert!(!db.has_pending_request_for_mod(100).unwrap());
+    // Rejected requests don't block new requests
+    assert!(!db.has_active_request_for_mod(100).unwrap());
+
+    // But approved requests do block
+    let req_id2 = db
+        .create_mod_request(user_id, 200, "Mod2", None, None, "unknown", None)
+        .unwrap();
+    db.transition_request_status(
+        req_id2,
+        &[RequestStatus::Pending],
+        RequestStatus::Approved,
+        Some(admin_id),
+        None,
+    )
+    .unwrap();
+    assert!(db.has_active_request_for_mod(200).unwrap());
 }
 
 #[test]
-fn resolve_mod_request_only_pending() {
+fn transition_request_status_guards_wrong_from() {
     let db = test_db();
     let user_id = setup_user(&db);
     let admin_id = setup_admin(&db);
@@ -898,19 +931,32 @@ fn resolve_mod_request_only_pending() {
         .create_mod_request(user_id, 100, "Mod", None, None, "unknown", None)
         .unwrap();
 
-    let rows = db
-        .resolve_mod_request(req_id, "approved", admin_id, None)
+    // Transition from pending to approved should succeed
+    let ok = db
+        .transition_request_status(
+            req_id,
+            &[RequestStatus::Pending],
+            RequestStatus::Approved,
+            Some(admin_id),
+            None,
+        )
         .unwrap();
-    assert_eq!(rows, 1);
+    assert!(ok);
 
-    let rows = db
-        .resolve_mod_request(req_id, "rejected", admin_id, None)
+    // Transition from pending to rejected should fail (status is now approved)
+    let ok = db
+        .transition_request_status(
+            req_id,
+            &[RequestStatus::Pending],
+            RequestStatus::Rejected,
+            Some(admin_id),
+            None,
+        )
         .unwrap();
-    assert_eq!(rows, 0);
+    assert!(!ok);
 
     let req = db.get_mod_request(req_id).unwrap().unwrap();
     assert_eq!(req.status, "approved");
-    assert!(req.resolved_at.is_some());
 }
 
 #[test]
@@ -1298,4 +1344,149 @@ fn delete_invite_not_found() {
     let db = test_db();
     let result = db.delete_invite(99999).unwrap();
     assert!(matches!(result, DeleteInviteResult::NotFound));
+}
+
+#[test]
+fn request_status_round_trip() {
+    for status in ["pending", "approved", "queued", "installed", "rejected"] {
+        let parsed: RequestStatus = status.parse().unwrap();
+        assert_eq!(parsed.as_str(), status);
+    }
+    assert!("bogus".parse::<RequestStatus>().is_err());
+}
+
+#[test]
+fn transition_request_status_logs_change() {
+    // Create a request, transition it, verify the log entry exists
+    let db = test_db();
+    let user_id = db
+        .insert_user("admin", Some("aid"), Some("hash"), "admin", false)
+        .unwrap();
+    let req_id = db
+        .create_mod_request(user_id, 100, "TestMod", None, None, "unknown", None)
+        .unwrap();
+
+    let ok = db
+        .transition_request_status(
+            req_id,
+            &[RequestStatus::Pending],
+            RequestStatus::Approved,
+            Some(user_id),
+            Some("looks good"),
+        )
+        .unwrap();
+    assert!(ok);
+
+    let log = db.get_request_status_log(req_id).unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].from_status, "pending");
+    assert_eq!(log[0].to_status, "approved");
+    assert_eq!(log[0].comment.as_deref(), Some("looks good"));
+}
+
+#[test]
+fn transition_request_status_rejects_wrong_from() {
+    let db = test_db();
+    let user_id = db
+        .insert_user("admin", Some("aid"), Some("hash"), "admin", false)
+        .unwrap();
+    let req_id = db
+        .create_mod_request(user_id, 100, "TestMod", None, None, "unknown", None)
+        .unwrap();
+
+    // Try to transition from approved (but it's pending) — should return false
+    let ok = db
+        .transition_request_status(
+            req_id,
+            &[RequestStatus::Approved],
+            RequestStatus::Rejected,
+            Some(user_id),
+            None,
+        )
+        .unwrap();
+    assert!(!ok);
+
+    // Status should still be pending
+    let req = db.get_mod_request(req_id).unwrap().unwrap();
+    assert_eq!(req.status, "pending");
+}
+
+#[test]
+fn transition_request_by_forge_mod_id() {
+    let db = test_db();
+    let user_id = db
+        .insert_user("admin", Some("aid"), Some("hash"), "admin", false)
+        .unwrap();
+
+    // Create three requests: two for mod 100, one for mod 200
+    let req1 = db
+        .create_mod_request(user_id, 100, "Mod100", None, None, "unknown", None)
+        .unwrap();
+    let req2 = db
+        .create_mod_request(user_id, 100, "Mod100", None, None, "unknown", None)
+        .unwrap();
+    let req3 = db
+        .create_mod_request(user_id, 200, "Mod200", None, None, "unknown", None)
+        .unwrap();
+
+    // Approve req1
+    db.transition_request_status(
+        req1,
+        &[RequestStatus::Pending],
+        RequestStatus::Approved,
+        Some(user_id),
+        None,
+    )
+    .unwrap();
+
+    // Transition all mod 100 requests from approved to installed
+    let count = db
+        .transition_request_by_forge_mod_id(
+            100,
+            &[RequestStatus::Approved],
+            RequestStatus::Installed,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+
+    let r1 = db.get_mod_request(req1).unwrap().unwrap();
+    let r2 = db.get_mod_request(req2).unwrap().unwrap();
+    let r3 = db.get_mod_request(req3).unwrap().unwrap();
+
+    assert_eq!(r1.status, "installed");
+    assert_eq!(r2.status, "pending"); // not approved, so not transitioned
+    assert_eq!(r3.status, "pending"); // different mod, not transitioned
+}
+
+#[test]
+fn set_request_resolver() {
+    let db = test_db();
+    let user1 = db
+        .insert_user("user1", Some("p1"), Some("hash"), "admin", false)
+        .unwrap();
+    let user2 = db
+        .insert_user("user2", Some("p2"), Some("hash"), "admin", false)
+        .unwrap();
+
+    let req_id = db
+        .create_mod_request(user1, 100, "TestMod", None, None, "unknown", None)
+        .unwrap();
+
+    // Set resolver for first time
+    db.set_request_resolver(req_id, user2, Some("resolving"))
+        .unwrap();
+
+    let req = db.get_mod_request(req_id).unwrap().unwrap();
+    assert_eq!(req.resolved_by, Some(user2));
+    assert_eq!(req.resolve_comment.as_deref(), Some("resolving"));
+
+    // Try to set resolver again — should have no effect (already set)
+    db.set_request_resolver(req_id, user1, Some("second attempt"))
+        .unwrap();
+
+    let req = db.get_mod_request(req_id).unwrap().unwrap();
+    assert_eq!(req.resolved_by, Some(user2)); // unchanged
+    assert_eq!(req.resolve_comment.as_deref(), Some("resolving")); // unchanged
 }

@@ -21,6 +21,10 @@
             <span class="badge badge-muted">Pending</span>
             {% elif r.request.status == "approved" %}
             <span class="badge badge-success">Approved</span>
+            {% elif r.request.status == "queued" %}
+            <span class="badge badge-warning">Queued</span>
+            {% elif r.request.status == "installed" %}
+            <span class="badge badge-info">Installed</span>
             {% else %}
             <span class="badge badge-danger">Rejected</span>
             {% endif %}
@@ -74,6 +78,8 @@
         {% endif %}
     </div>
     {% endif %}
+    {# -- Per-status action buttons -- #}
+
     {% if r.request.status == "pending" && user.can("requests.resolve") %}
     <div class="mt-1 resolve-form" style="display:flex;gap:0.5rem;align-items:flex-start;flex-wrap:wrap">
         <form hx-post="/quma/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
@@ -95,18 +101,53 @@
         </form>
     </div>
     {% endif %}
-    {% if r.request.status == "approved" && !r.is_installed && user.can("mods.install") %}
-    <div class="mt-1">
+
+    {% if r.request.status == "approved" && user.can("requests.resolve") %}
+    <div class="mt-1" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+        {% if user.can("mods.install") %}
         <form hx-post="/quma/api/requests/{{ r.request.id }}/install" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
               style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-sm btn-primary">Install</button>
         </form>
-    </div>
-    {% elif r.request.status == "approved" && r.is_installed %}
-    <div class="mt-1">
-        <span class="text-sm text-muted">Installed</span>
+        {% endif %}
+        <form hx-post="/quma/api/requests/{{ r.request.id }}/resolve" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+              style="display:flex;gap:0.5rem;align-items:center">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="reject">
+            <input type="text" name="comment" placeholder="Reason (optional)" style="flex:1;min-width:100px" class="text-sm">
+            <button type="submit" class="btn btn-sm btn-danger">Reject</button>
+        </form>
     </div>
     {% endif %}
+
+    {% if r.request.status == "queued" %}
+    <div class="mt-1">
+        <a href="/quma/mods#queue" class="btn btn-sm btn-outline text-sm">View in queue →</a>
+    </div>
+    {% endif %}
+
+    {% if r.request.status == "rejected" && user.can("requests.resolve") %}
+    <div class="mt-1">
+        <form hx-post="/quma/api/requests/{{ r.request.id }}/reopen" hx-target="#request-{{ r.request.id }}" hx-swap="outerHTML"
+              style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-outline">Reopen</button>
+        </form>
+    </div>
+    {% endif %}
+
+    {# -- History toggle -- #}
+    <details class="mt-1"
+             hx-get="/quma/api/requests/{{ r.request.id }}/history"
+             hx-target="#history-{{ r.request.id }}"
+             hx-swap="innerHTML"
+             hx-trigger="toggle once">
+        <summary class="text-sm text-muted" style="cursor:pointer">History</summary>
+        <div id="history-{{ r.request.id }}" class="text-sm" style="padding:0.25rem 0">
+            <span class="text-muted">Loading…</span>
+        </div>
+    </details>
+
     <div id="comments-{{ r.request.id }}"></div>
 </div>

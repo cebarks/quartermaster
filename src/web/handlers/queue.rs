@@ -10,6 +10,12 @@ use crate::web::error::WebError;
 use crate::web::flash::{set_flash, FlashType};
 use crate::web::state::AppState;
 
+fn extract_request_id(metadata: Option<&str>) -> Option<i64> {
+    metadata
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("request_id")?.as_i64())
+}
+
 #[derive(Template)]
 #[template(path = "partials/queue_content.html")]
 struct QueueContentPartialTemplate {
@@ -42,6 +48,67 @@ pub async fn queue_content_partial(
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
+async fn cancel_op_inner(
+    state: &Data<AppState>,
+    session: &Session,
+    user: &SessionUser,
+    op_id: i64,
+    request_status: Option<crate::db::requests::RequestStatus>,
+    flash_msg: &str,
+) -> actix_web::Result<HttpResponse> {
+    let db = state.db.clone();
+
+    let op = web::block(move || {
+        let db = db.lock();
+        db.list_pending_ops()
+            .map(|ops| ops.into_iter().find(|o| o.id == op_id))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    // Save metadata before consuming op
+    let metadata = op.as_ref().and_then(|o| o.metadata.clone());
+
+    if let Some(ref op) = op {
+        crate::queue::cleanup_queued_archive(op);
+    }
+
+    let db = state.db.clone();
+    web::block(move || {
+        let db = db.lock();
+        db.delete_pending_op(op_id)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    // Transition linked request if applicable
+    if let Some(new_status) = request_status {
+        if let Some(request_id) = extract_request_id(metadata.as_deref()) {
+            let db = state.db.clone();
+            let user_id = user.user_id;
+            let comment = flash_msg.to_string();
+            let _ = web::block(move || {
+                let db = db.lock();
+                db.transition_request_status(
+                    request_id,
+                    &[crate::db::requests::RequestStatus::Queued],
+                    new_status,
+                    Some(user_id),
+                    Some(&comment),
+                )
+            })
+            .await;
+        }
+    }
+
+    set_flash(session, flash_msg, FlashType::Success);
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/mods#queue"))
+        .finish())
+}
+
 pub async fn cancel_op(
     state: Data<AppState>,
     path: Path<i64>,
@@ -54,36 +121,38 @@ pub async fn cancel_op(
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
-    let op_id = path.into_inner();
-    let db = state.db.clone();
-
-    // Fetch op to clean up its archive before deletion
-    let op = web::block(move || {
-        let db = db.lock();
-        db.list_pending_ops()
-            .map(|ops| ops.into_iter().find(|o| o.id == op_id))
-    })
+    cancel_op_inner(
+        &state,
+        &session,
+        &user,
+        path.into_inner(),
+        Some(crate::db::requests::RequestStatus::Approved),
+        "Operation cancelled",
+    )
     .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+}
 
-    if let Some(op) = op {
-        crate::queue::cleanup_queued_archive(&op);
+pub async fn cancel_and_reject_op(
+    state: Data<AppState>,
+    path: Path<i64>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::QueueManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
     }
-
-    let db = state.db.clone();
-    web::block(move || {
-        let db = db.lock();
-        db.delete_pending_op(op_id)
-    })
+    cancel_op_inner(
+        &state,
+        &session,
+        &user,
+        path.into_inner(),
+        Some(crate::db::requests::RequestStatus::Rejected),
+        "Operation cancelled and request rejected",
+    )
     .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
-
-    set_flash(&session, "Operation cancelled", FlashType::Success);
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/mods#queue"))
-        .finish())
 }
 
 pub async fn apply_queue(
@@ -184,6 +253,42 @@ pub async fn apply_queue(
                             "{}: completed but queue entry not removed: {}",
                             op.mod_name, e
                         ));
+                    }
+
+                    // Transition linked request on install
+                    if op.action == crate::db::users::QueueAction::Install {
+                        if let Some(request_id) = extract_request_id(op.metadata.as_deref()) {
+                            let db = state_clone.db.clone();
+                            let _ = web::block(move || {
+                                let db = db.lock();
+                                db.transition_request_status(
+                                    request_id,
+                                    &[crate::db::requests::RequestStatus::Queued],
+                                    crate::db::requests::RequestStatus::Installed,
+                                    None,
+                                    Some("Installed via queue"),
+                                )
+                            })
+                            .await;
+                        }
+                    }
+
+                    // Transition linked request on remove (installed → approved)
+                    if op.action == crate::db::users::QueueAction::Remove {
+                        if let Some(forge_mod_id) = op.forge_mod_id {
+                            let db = state_clone.db.clone();
+                            let _ = web::block(move || {
+                                let db = db.lock();
+                                db.transition_request_by_forge_mod_id(
+                                    forge_mod_id,
+                                    &[crate::db::requests::RequestStatus::Installed],
+                                    crate::db::requests::RequestStatus::Approved,
+                                    None,
+                                    Some("Mod removed via queue"),
+                                )
+                            })
+                            .await;
+                        }
                     }
                 }
                 Err(e) => {
