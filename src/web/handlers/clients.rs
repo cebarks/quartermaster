@@ -1344,8 +1344,11 @@ pub async fn client_rename(
                     .into_iter()
                     .map(|(k, v)| (k, CstInputValue::String(v)))
                     .collect();
-                if let Some(prop) = profiles.get("aliases") {
-                    prop.set_value(CstInputValue::Object(alias_entries));
+                match profiles.get("aliases") {
+                    Some(prop) => prop.set_value(CstInputValue::Object(alias_entries)),
+                    None => {
+                        profiles.append("aliases", CstInputValue::Object(alias_entries));
+                    }
                 }
             }
         }

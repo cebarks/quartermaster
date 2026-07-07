@@ -689,8 +689,16 @@ async fn rename(ctx: &CliContext, client: u32, name: &str) -> Result<()> {
                 .into_iter()
                 .map(|(k, v)| (k, jsonc_parser::cst::CstInputValue::String(v)))
                 .collect();
-            if let Some(prop) = profiles.get("aliases") {
-                prop.set_value(jsonc_parser::cst::CstInputValue::Object(alias_entries));
+            match profiles.get("aliases") {
+                Some(prop) => {
+                    prop.set_value(jsonc_parser::cst::CstInputValue::Object(alias_entries))
+                }
+                None => {
+                    profiles.append(
+                        "aliases",
+                        jsonc_parser::cst::CstInputValue::Object(alias_entries),
+                    );
+                }
             }
         }
     }
