@@ -370,8 +370,6 @@ main > h1 { border-bottom: 1px solid var(--border); }
 .badge-info { background: var(--info, #17a2b8); color: #fff; }
 
 /* Mod requests */
-.request-card { position: relative; }
-.request-card .vote-buttons .btn-sm { min-width: 2rem; justify-content: center; }
 .vote-score { font-size: 1.1rem; }
 
 .search-card { transition: border-color 0.15s; }
