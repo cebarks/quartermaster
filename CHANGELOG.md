@@ -2,6 +2,11 @@
 
 All notable changes to Quartermaster will be documented in this file.
 
+## [0.3.1] - 2026-07-08
+
+### Bug Fixes
+
+- *(headless)* Improve entrypoint reliability and log output (#301)([744df64](https://github.com/cebarks/quartermaster/commit/744df64b6786d9c7d09f2c5668193a59058b82e2))
 ## [0.3.0] - 2026-07-08
 
 ### Bug Fixes
@@ -31,6 +36,10 @@ All notable changes to Quartermaster will be documented in this file.
 - Close headless sync gaps in web install and disable/enable (#267)([0ec2e43](https://github.com/cebarks/quartermaster/commit/0ec2e4353798d7c9d4ca6240664152543e9ee55d))
 - Restart headless containers when Fika is updated (#269)([37cfd40](https://github.com/cebarks/quartermaster/commit/37cfd40a032747b4a1f8bd0abb30c0277d1204e6))
 - Copy Fika.Core from server directory instead of downloading from Forge (#270)([0bdcf40](https://github.com/cebarks/quartermaster/commit/0bdcf40c4c3ae821487d602c177d62c638437297))
+- *(convoy)* Suppress dead_code warnings for convoy group types([44144fe](https://github.com/cebarks/quartermaster/commit/44144fe4fb1ba34f001f7eaaf122f307bee78dc5))
+- *(convoy)* Use structured logging for catalog cache rebuild error([a607216](https://github.com/cebarks/quartermaster/commit/a607216683b035ae697e49dbd528464616f93dbb))
+- *(convoy)* Register migration 012 and fix trigger ordering([1a71cf9](https://github.com/cebarks/quartermaster/commit/1a71cf968ddaa0d8c0d052ebfad1cada4f31879d))
+- *(convoy)* Address code review findings — transaction safety, addon invalidation, test cleanup([1de797b](https://github.com/cebarks/quartermaster/commit/1de797bab8178b8ad0e62046c7bc1a0c5a36dfd4))
 - Allow clippy type_complexity on fika_items cache field([2e84397](https://github.com/cebarks/quartermaster/commit/2e84397ea38b7e4558206f5a49160505773758f0))
 - Complete fika_items cache invalidation and refresh button UX([2be6109](https://github.com/cebarks/quartermaster/commit/2be61094c19493c29f4316cc28d9ed43a5b73be0))
 - Add missing CSS classes, variables, and toast auto-dismiss([d7be605](https://github.com/cebarks/quartermaster/commit/d7be605f40c805beb8506607cfeb02b473ae8f48))
@@ -66,13 +75,21 @@ All notable changes to Quartermaster will be documented in this file.
 - /quma/files page renders blank due to HTMX target inheritance (#287)([0531907](https://github.com/cebarks/quartermaster/commit/053190776a2d6ddf532eabca48de2c94e60cdda4))
 - *(requests)* Hide install-all button on initial load (Pending tab)([6716cd0](https://github.com/cebarks/quartermaster/commit/6716cd0e0cc2630464b3c04ea2d0775747f192b6))
 - *(requests)* Keep expanded row open after vote/resolve HTMX swap([35755bd](https://github.com/cebarks/quartermaster/commit/35755bd5c6871986a33d254bb33c67948ba82be3))
+- Remove unused reprefix_addon_files to fix clippy([e344326](https://github.com/cebarks/quartermaster/commit/e344326e9288daa75b87158e9888f4973032d2f7))
+- *(convoy)* Guard catalog endpoint on enabled state + remove stale dead_code allows([5a81abd](https://github.com/cebarks/quartermaster/commit/5a81abd7c2b8627e8d6e2cb0d076e1baf625bb56))
 - *(forge)* Align Forge API client with current docs([9dfa22b](https://github.com/cebarks/quartermaster/commit/9dfa22b493fdfc3f092d7c0ddd89fb16972337a0))
 - *(forge)* Align Forge API client with current docs (#290)([04ddfd9](https://github.com/cebarks/quartermaster/commit/04ddfd9831eff61445f885430e227c9cead53dc4))
 - *(raids)* Use correct profile key for scav character snapshots([2744151](https://github.com/cebarks/quartermaster/commit/27441514345e1ee220fe153c6641f6a6baf5b4a1))
 - *(raids)* Use correct profile key for scav character snapshots (#292)([53af1fc](https://github.com/cebarks/quartermaster/commit/53af1fc16da1b46a29def8bab8289f67079bc28e))
+- *(headless)* Fully qualify Fedora registry in Containerfile (#295)([373e284](https://github.com/cebarks/quartermaster/commit/373e284cc34b129f8ac2455b31ae006a4e52c21a))
+- *(ci)* Add missing permissions for release workflow (#297)([d1b2425](https://github.com/cebarks/quartermaster/commit/d1b2425f312dc142d79bcf753e5642b3416f18f1))
+- *(ci)* Add missing contents:read permission for publish-crate job (#298)([13cb2bd](https://github.com/cebarks/quartermaster/commit/13cb2bd2b17a3b42048b17e66e7dcddadbea0fcf))
+- *(ci)* Allow-dirty for dist CI validation (#299)([df30cc5](https://github.com/cebarks/quartermaster/commit/df30cc588dcac6e2383a2c53af57ce6e161f6c86))
+- *(ci)* Remove broken git-cliff installer from release workflow (#300)([a0b487e](https://github.com/cebarks/quartermaster/commit/a0b487ecf181168d77bb4b5d04dfba5d94d3f236))
 
 ### Documentation
 
+- Update TODO.md for convoy migration([c84c326](https://github.com/cebarks/quartermaster/commit/c84c3262d8fc47d5eba21bdc1ec4838f63b36561))
 - Add AI disclosure to README and CLAUDE.md([0c87bf9](https://github.com/cebarks/quartermaster/commit/0c87bf9c5c418d8406d7d87abe7b02bc911e1b1b))
 - Add CONTRIBUTING.md and Forge API notes([f0c16a6](https://github.com/cebarks/quartermaster/commit/f0c16a6c03917b06c9a366e7d4814aef8668355c))
 - Add USAGE.md with CLI, web UI, and configuration reference([f51d110](https://github.com/cebarks/quartermaster/commit/f51d1109708d28249910f53e817d1c0b7123655a))
@@ -105,6 +122,15 @@ All notable changes to Quartermaster will be documented in this file.
 - Comprehensive Fika API integration (#261)([53b0327](https://github.com/cebarks/quartermaster/commit/53b032727925a90a0e10a5d8026d0eba207c16bc))
 - Async cached integrity checks with parallel hashing (#265)([01f10bd](https://github.com/cebarks/quartermaster/commit/01f10bd85c341484d141cec823e343a3bb74027e))
 - Install mods from URL or local file path (#266)([f7659ce](https://github.com/cebarks/quartermaster/commit/f7659ced9e2f5c2f2e736721ced9bd2fb779ca82))
+- *(convoy)* Add mod_groups table and group_id column on installed_mods([85f8c0d](https://github.com/cebarks/quartermaster/commit/85f8c0d1ff635e6de59a5d6f6a096e4c6b583dfc))
+- *(convoy)* Add ConvoyConfig type and modsync-to-convoy config migration([24fd9e3](https://github.com/cebarks/quartermaster/commit/24fd9e3a3d8dc4b8134ec13da6e9c3c8a36e3078))
+- *(convoy)* Catalog generation with cached background rebuild([bfb9e3a](https://github.com/cebarks/quartermaster/commit/bfb9e3a02e741701fad885f5274ee6b847f827b7))
+- *(convoy)* Catalog and download API endpoints([17b13fd](https://github.com/cebarks/quartermaster/commit/17b13fda97b17c2e63da29a38ce63359e4155bbd))
+- *(convoy)* Invalidate catalog cache on mod lifecycle events([fe8b99a](https://github.com/cebarks/quartermaster/commit/fe8b99a1df3b696afd8e75b4c600b63ab9369154))
+- *(convoy)* Web UI with groups management, mods view, and catalog preview([d2b281c](https://github.com/cebarks/quartermaster/commit/d2b281ce5454726044ab96b0adc5020a7bab7ed5))
+- *(convoy)* Startup migration from modsync groups to DB([645e781](https://github.com/cebarks/quartermaster/commit/645e781f310810764fafc554700c59ce1aa391b9))
+- *(convoy)* Update join flow to reference convoy instead of narconet([1dd1bf3](https://github.com/cebarks/quartermaster/commit/1dd1bf3f87931552a1ad42b442b570652db86cd7))
+- *(convoy)* Is_excluded_from_headless uses DB groups instead of config([eb8ec9b](https://github.com/cebarks/quartermaster/commit/eb8ec9bb1a2aacba95c25195959a47629d96a288))
 - *(fika)* Add senditem/senditemtoall/get_items API methods([a954ead](https://github.com/cebarks/quartermaster/commit/a954eade29c97397ef80559c724eadf853ad0b76))
 - *(rbac)* Add items.give permission for admin item-giving([d70d0fe](https://github.com/cebarks/quartermaster/commit/d70d0fefeecb3307d1db5da393da16bb9bddc0f3))
 - *(state)* Add fika_items cache with Arc<HashMap> for cheap reads([fc1e982](https://github.com/cebarks/quartermaster/commit/fc1e982fe4a84807689c39299d18c9986312d2c0))
@@ -145,9 +171,19 @@ All notable changes to Quartermaster will be documented in this file.
 - Redesign requests page from kanban to tabbed table (#288)([21a8f19](https://github.com/cebarks/quartermaster/commit/21a8f1963228280477c882540decb9db72530b81))
 - Add `quma reindex` to rebuild file tracking from Forge archives([9a80828](https://github.com/cebarks/quartermaster/commit/9a80828e217e2893bf711edc249d28226c6d75d2))
 - Add quma reindex command (#289)([82d472a](https://github.com/cebarks/quartermaster/commit/82d472a966fad3aa7e0ac6ff418397c36141811f))
+- *(convoy)* Use DB id as universal mod identifier([70a9dad](https://github.com/cebarks/quartermaster/commit/70a9dad9ddb971a28996af93073b3eb381cb5060))
+- *(convoy)* Add logging to sync handlers and catalog rebuild([6591902](https://github.com/cebarks/quartermaster/commit/65919024605229038f04fac24efec7f15440e7f2))
+- *(convoy)* Embed Convoy DLL in join bootstrap ZIP([5b138b2](https://github.com/cebarks/quartermaster/commit/5b138b25cd78f3a7063a55372fb51d00515081b2))
+- *(convoy)* Add sync tracking DB tables and queries([144a208](https://github.com/cebarks/quartermaster/commit/144a208b4f2e0f695b91bc325aaa5c6bea813a60))
+- *(convoy)* Add sync event logging and report endpoint([87c1723](https://github.com/cebarks/quartermaster/commit/87c1723347b9bfe2a7015833f8cb22b24ffb30d5))
+- *(convoy)* Add sync status dashboard tab([704286e](https://github.com/cebarks/quartermaster/commit/704286ebc4a2d5edae2ddf5c15bc35c36d0d7d73))
+- *(convoy)* Add settings tab with enable/disable and exclusions([9f8ddf5](https://github.com/cebarks/quartermaster/commit/9f8ddf59da613e240cd3da11830f54230b2286b4))
+- *(convoy)* Disk-cached mod downloads with 15-min TTL([7d3058c](https://github.com/cebarks/quartermaster/commit/7d3058cfe0c6991fcadab39258d9a006d34ef03d))
+- *(convoy)* Disk-cached mod downloads with 15-min TTL (#296)([48a517d](https://github.com/cebarks/quartermaster/commit/48a517ded2de9d6c90d9f4e14495f9e419a2a380))
 - Minimal headless container with wine-cachyos (#291)([16293d1](https://github.com/cebarks/quartermaster/commit/16293d1bbe415d9fa4545c07a6559e7c468d529f))
 - Add CI workflow for headless image builds([abce6bd](https://github.com/cebarks/quartermaster/commit/abce6bd8b17f5c56abf37ccd68b18c70ad654861))
 - Minimal headless container with wine-cachyos (#291)([5ceb076](https://github.com/cebarks/quartermaster/commit/5ceb07666ef6c32531c40e548ad2834733dc24f0))
+- Replace NarcoNet with Convoy mod delivery system (#273)([7a0d682](https://github.com/cebarks/quartermaster/commit/7a0d682f5e88451eebdd614e55b7c4d017bb0881))
 
 ### Miscellaneous
 
@@ -171,6 +207,7 @@ All notable changes to Quartermaster will be documented in this file.
 - Remove unused gix dependency, use git CLI instead([0968228](https://github.com/cebarks/quartermaster/commit/09682282a078b1d78bf514efbb1d1288cbadfee7))
 - Update TODO — mark config management done, note flash message bug([3d39a5e](https://github.com/cebarks/quartermaster/commit/3d39a5e7838f0fd3a49b29133c7e90cf08507e06))
 - *(requests)* Remove dead template and orphaned CSS from kanban layout([3daa492](https://github.com/cebarks/quartermaster/commit/3daa492f7a5f0d92c3c0d522784e8291937a9cdb))
+- Update TODO.md — mark completed convoy items([5ba2a1e](https://github.com/cebarks/quartermaster/commit/5ba2a1e2371e61f8e11448efd68d13928ee4c0be))
 
 ### Performance
 
@@ -179,6 +216,7 @@ All notable changes to Quartermaster will be documented in this file.
 ### Refactoring
 
 - Deduplicate HTMX templates and handler logic (#246)([8444b21](https://github.com/cebarks/quartermaster/commit/8444b2143824ff069ecc0c99097203155b9eaa1c))
+- Remove NarcoNet/modsync code, convoy is the sole sync system([a09698b](https://github.com/cebarks/quartermaster/commit/a09698b7eda6d16e1f5c9387b446dae508fb9f5c))
 
 ### Testing
 
@@ -191,6 +229,7 @@ All notable changes to Quartermaster will be documented in this file.
 - Resolve TODO.md conflict with main([2ab0448](https://github.com/cebarks/quartermaster/commit/2ab0448665119746d2aa61b4f2d1404feb2c633c))
 - Resolve conflict — renumber request lifecycle migration to 013([9044fc2](https://github.com/cebarks/quartermaster/commit/9044fc24dd39044abf7595eb9c402bbce39647b5))
 - Resolve conflict with main — renumber migration to 014([affb3b3](https://github.com/cebarks/quartermaster/commit/affb3b3724635e9be9329ceb54cf4e963c129858))
+- Resolve conflicts with main — renumber migrations, integrate new features([c2765f5](https://github.com/cebarks/quartermaster/commit/c2765f5cffe9d2f6df00cd0ebfee5f463d2244b5))
 
 ### Polish
 
