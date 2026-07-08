@@ -88,8 +88,6 @@
     - quests
     - items (scan for broken; remove; move)
 - MOTD
-- Convoy: build C# BepInEx client plugin (see docs/superpowers/specs/2026-07-05-convoy-design.md)
-- Convoy: embed client DLL in join flow bootstrap ZIP
 - better formatting for SVM editor: section breakdown with header toggles, field name vs subtext, default value shown, download/upload preset, preset toggle
 - discord integration:
     - use discord member list to define SVM AI PMC Names
