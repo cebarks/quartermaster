@@ -651,34 +651,52 @@ pub fn find_name_conflicts(
 
 /// Reconcile client-side mod files into the headless install directory.
 ///
-/// Reads the mod list and file lists from the database (briefly), then copies
-/// any missing or stale client-side files from the SPT server directory into
-/// the headless install directory. Only adds/updates — never removes files.
-/// Skips disabled mods, excluded mods, and Fika-managed directories.
+/// Reads the mod list and file lists from the database (briefly), then:
+/// 1. Removes client-side files belonging to excluded or disabled mods
+/// 2. Copies any missing or stale client-side files for active mods
+///
+/// Skips Fika-managed directories.
 fn reconcile_headless_mods(
     db: &Arc<Mutex<crate::db::Database>>,
     _config: &crate::config::Config,
     spt_dir: &Path,
     install_dir: &Path,
 ) -> anyhow::Result<()> {
-    // Lock briefly to read mod + file data, then drop before I/O
     let mut all_client_files: Vec<String> = Vec::new();
+    let mut excluded_client_files: Vec<String> = Vec::new();
     {
         let db = db.lock();
         let mods = db.list_mods()?;
         for m in &mods {
-            if m.disabled {
-                continue;
-            }
-            if crate::ops::is_excluded_from_headless(&db, m.id) {
-                continue;
-            }
             let files = db.get_files_for_mod(m.id)?;
-            for f in files {
-                if crate::headless_sync::is_client_file(&f.file_path) {
-                    all_client_files.push(f.file_path);
-                }
+            let client_files: Vec<String> = files
+                .into_iter()
+                .filter(|f| crate::headless_sync::is_client_file(&f.file_path))
+                .map(|f| f.file_path)
+                .collect();
+
+            if m.disabled || crate::ops::is_excluded_from_headless(&db, m.id) {
+                excluded_client_files.extend(client_files);
+            } else {
+                all_client_files.extend(client_files);
             }
+        }
+    }
+
+    if !excluded_client_files.is_empty() {
+        let report = crate::headless_sync::sync_client_files_to_headless(
+            spt_dir,
+            install_dir,
+            &excluded_client_files,
+            crate::headless_sync::SyncOp::Remove,
+        )?;
+        if report.removed > 0 {
+            info!(
+                removed = report.removed,
+                errors = report.errors,
+                "Removed {} excluded/disabled mod files from headless install",
+                report.removed
+            );
         }
     }
 
