@@ -149,3 +149,7 @@ dev-clean:
     fi
     rm -rf "{{dev_dir}}"
     echo "Dev environment removed."
+
+# Build the minimal headless container image
+build-headless:
+    podman build -t localhost/quma-headless:latest container/headless/

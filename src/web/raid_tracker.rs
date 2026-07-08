@@ -106,17 +106,8 @@ pub fn snapshot_profile(
     let contents = std::fs::read(&path).ok()?;
     let parsed: serde_json::Value = serde_json::from_slice(&contents).ok()?;
 
-    let character_key = if is_scav { "savage" } else { "pmc" };
-    let character = parsed
-        .pointer(&format!("/characters/{character_key}"))
-        .or_else(|| {
-            // Fallback: try "Savage" with capital S
-            if is_scav {
-                parsed.pointer("/characters/Savage")
-            } else {
-                None
-            }
-        })?;
+    let character_key = if is_scav { "scav" } else { "pmc" };
+    let character = parsed.pointer(&format!("/characters/{character_key}"))?;
 
     let xp = character
         .pointer("/Info/Experience")

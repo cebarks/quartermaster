@@ -1,24 +1,19 @@
 # TODO
 
 ## Top Priority
-- !!! mod requests/queue/installed lifecycle review
-    - canceling an install queue item puts it back in requests (if it was previously requested)
-- !!! Notes page
 - move groups config to tab on mods page
 
-## Triage
-- fika settings
 
 ## Bugs
 - config editor flash message displays twice after save (once in base.html layout, once in template)
-- SVM preset upload size limit too low
+- SVM preset upload size limit too low (256 KB `FormConfig` on `/svm/preset/import`)
 - SPT profile generation on account creation doesn't work
     - account creation dropdown missing SPT dev profiles (toggleable?)
-- can't remove already approved mods that haven't been installed
 - mod requests list shouldn't include already installed mods
+- server-wide stats page has no PMC/Scav raid breakdown (per-user profile already tracks both)
 
 ## Core Architecture
-- consolidate all mod management logic from all paths (web handlers bypass `ops.rs` in places; install logic duplicated between mods and requests handlers)
+- consolidate remaining mod management logic (`web/install.rs` shared helper exists, but queue apply still has its own path)
 - stop using container image for spt-server, just run it natively?
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
@@ -28,16 +23,14 @@
 - SELinux `label=disable` still applied when GPU devices are present (volumes use `:z` shared label otherwise — #232)
 - shared RW volume mount for base game dir (`converge.rs`)
 - too-many-arguments on convergence functions (clippy lint suppressed)
-- name a headless client (changes in-game profile name, also shows name in headless control panel)
 - image name should be per-client configurable
 - ensure headless + spt-server images have been pulled on startup
 - better health client detection
 - don't delete headless overlay by default, allow selection of which existing, not already in use overlay to use on new client creation (or when editing a client)
 - be able to `podman rm` and re-init the client without wiping anything else
-- persistent headless stats
 - set fika headless profiles early and use the same profiles for headless forever
-- health status gets stuck on given up
 - supervisor exit watchers cache restart policy/backoff values at spawn time — config changes require supervisor restart (`supervisor.rs`)
+- headless recent raid stats should be linked to that information to the existing raids list
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
@@ -45,14 +38,14 @@
 - no limit on concurrent SSE connections (`sse.rs`)
 - unbounded zlib decompression — potential bomb (`raid_tracker.rs`, `proxy.rs`)
 - silent cascade removal of reverse dependencies during queue apply (`queue.rs`)
-- proxy buffers entire request body with no size limit (`proxy.rs`)
+- proxy buffers entire request body in memory (global 64 MB `PayloadConfig` caps it, but no proxy-specific limit — `proxy.rs`)
 - SSE has no keepalive/heartbeat — proxies may close idle connections (`sse.rs`)
 
 ## Security
 - proxy has no authentication — unauthenticated access to SPT server API (`proxy.rs`)
 - `update_status_partial` serves privileged data to all authenticated users (`mods.rs`)
 - profile/raid data visible to all authenticated users
-- no mechanism to sync role permissions on upgrade
+- no mechanism to sync non-admin role permissions on upgrade (`sync_builtin_role_permissions` only covers admin)
 
 ## Web UI / Frontend
 
@@ -68,7 +61,6 @@
 
 ## Features
 - configurable backups
-- automatic mod config backup via git
 - custom headless instances
 - MCP server?
 - chatbot to help configure server?
@@ -81,7 +73,6 @@
 - last logged for players (both into webui and into spt)
 - display profile id on profile page
 - SVM presets list should refresh from disk on page load
-- server notes page
 - user sorting
 - better metrics: dynamic `by prefix` sorting, graphs
 - profile editor

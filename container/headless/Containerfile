@@ -1,0 +1,155 @@
+# Stage 1: Build wine-cachyos from source
+# ponytail: Hummingbird builder repos lack -devel packages; use full Fedora
+# for compilation (thrown away), Hummingbird only for runtime stage
+FROM registry.fedoraproject.org/fedora:latest AS builder
+
+# Build dependencies — Fedora equivalents of CachyOS PKGBUILD makedepends
+# Stripped to what EFT headless needs (no cups, samba, sane, gphoto, etc.)
+RUN dnf install -y --nodocs --setopt=install_weak_deps=False \
+    # Build tools
+    gcc make autoconf automake flex bison git perl python3 python3-lxml \
+    # Cross-compilers for Wine PE builds
+    mingw64-gcc mingw32-gcc \
+    # X11/display
+    libX11-devel libXcursor-devel libXext-devel libXrandr-devel \
+    libXi-devel libXcomposite-devel libXinerama-devel libXxf86vm-devel \
+    libxkbcommon-devel \
+    # Graphics
+    mesa-libGL-devel mesa-libEGL-devel vulkan-headers vulkan-loader-devel \
+    # Audio (Wine init stubs)
+    alsa-lib-devel pulseaudio-libs-devel \
+    # Media
+    ffmpeg-free-devel gstreamer1-plugins-base-devel \
+    # Fonts
+    freetype-devel fontconfig-devel \
+    # Misc
+    gnutls-devel gettext-devel glib2-devel libpcap-devel libunwind-devel \
+    SDL2-devel wayland-devel wayland-protocols-devel \
+    # Kernel headers for ntsync
+    kernel-headers \
+    # Xvfb + mesa runtime (installed here so dnf cache is available)
+    xorg-x11-server-Xvfb \
+    mesa-dri-drivers mesa-libGL mesa-libEGL mesa-vulkan-drivers \
+    vulkan-loader \
+    fontconfig liberation-sans-fonts \
+    && dnf clean all
+
+# Clone wine-cachyos source
+WORKDIR /build
+RUN git clone --depth 1 --branch cachyos-10.0-20260425-wine \
+    https://github.com/CachyOS/wine-cachyos.git wine
+
+WORKDIR /build/wine
+
+# Prepare (CachyOS PKGBUILD prepare steps)
+RUN ./tools/make_requests && \
+    ./tools/make_specfiles && \
+    ./dlls/winevulkan/make_vulkan -x vk.xml -X video.xml && \
+    autoreconf -fiv && \
+    rm -rf autom4te.cache
+
+# Configure — headless-optimized flags, skip unused subsystems
+RUN mkdir -p /build/wine-build
+WORKDIR /build/wine-build
+
+# CachyOS Proton-derived compiler flags
+ENV CFLAGS="-O2 -march=nocona -mtune=core-avx2 -mfpmath=sse -pipe \
+    -mno-avx -mno-avx2 -mno-avx512f \
+    -fvect-cost-model=cheap -fipa-pta \
+    -fwrapv -fno-strict-aliasing \
+    -D_TIME_BITS=64 -D_FILE_OFFSET_BITS=64 \
+    -ffunction-sections -fdata-sections -fno-omit-frame-pointer \
+    -mcmodel=small -s"
+ENV CXXFLAGS="${CFLAGS} -std=c++17"
+ENV LDFLAGS="-Wl,-O1,--sort-common,--as-needed"
+
+RUN /build/wine/configure \
+    --prefix=/opt/wine-cachyos \
+    --with-x \
+    --with-wayland \
+    --with-freetype \
+    --with-mingw \
+    --with-vulkan \
+    --with-gstreamer \
+    --with-alsa \
+    --with-ffmpeg \
+    --without-oss \
+    --without-cups \
+    --without-samba \
+    --without-sane \
+    --without-gphoto \
+    --without-unixodbc \
+    --without-v4l2 \
+    --without-opencl \
+    --without-pcsclite \
+    --disable-lsteamclient \
+    --disable-tests \
+    --enable-archs=x86_64,i386 \
+    --enable-build-id
+
+RUN make -j$(nproc)
+RUN make install DESTDIR=/staging
+
+# ponytail: no staging copy for Xvfb/mesa/fonts — fedora-minimal
+# runtime installs them natively via microdnf, avoiding the fragile
+# manual lib-copying that broke repeatedly with distroless
+
+# Stage 2: Minimal runtime
+# ponytail: Hummingbird distroless lacks too many system files Wine needs
+# (/etc/machine-id, fontconfig, xkb data). fedora-minimal has them and
+# is still small (~100MB). Slim down further once boot is proven.
+FROM registry.fedoraproject.org/fedora-minimal:latest
+
+# Runtime deps only — no -devel, no build tools
+RUN microdnf install -y --nodocs --setopt=install_weak_deps=False \
+    xorg-x11-server-Xvfb xkbcomp xkeyboard-config \
+    mesa-dri-drivers mesa-libGL mesa-libEGL mesa-vulkan-drivers \
+    vulkan-loader \
+    fontconfig liberation-sans-fonts \
+    && microdnf clean all \
+    # Strip unused vulkan drivers (~120MB) — keep radeon, intel, nouveau, lvp (software)
+    && rm -f /usr/lib64/libvulkan_asahi.so /usr/lib64/libvulkan_broadcom.so \
+             /usr/lib64/libvulkan_dzn.so /usr/lib64/libvulkan_freedreno.so \
+             /usr/lib64/libvulkan_panfrost.so /usr/lib64/libvulkan_powervr_mesa.so \
+             /usr/lib64/libvulkan_intel_hasvk.so /usr/lib64/libvulkan_virtio.so \
+    # Strip locale and docs
+    && rm -rf /usr/share/locale /usr/share/doc /usr/share/man /usr/share/info
+
+COPY --from=builder /staging/ /
+
+# Add wine to PATH
+ENV PATH="/opt/wine-cachyos/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/wine-cachyos/lib"
+
+# Pre-seed a wine prefix with ProxyEnable=0 (prevents Mono NullRef in
+# AutoWebProxyScriptEngine) and winhttp=native,builtin (BepInEx injection).
+# The entrypoint copies this to the runtime prefix if it doesn't exist.
+COPY seed-wine-prefix.sh /tmp/seed-wine-prefix.sh
+RUN sh /tmp/seed-wine-prefix.sh && rm /tmp/seed-wine-prefix.sh
+
+# Strip wine build tools, headers, static archives (~20MB)
+RUN rm -f /opt/wine-cachyos/bin/widl /opt/wine-cachyos/bin/winebuild \
+         /opt/wine-cachyos/bin/winecpp /opt/wine-cachyos/bin/wineg++ \
+         /opt/wine-cachyos/bin/winegcc /opt/wine-cachyos/bin/winemaker \
+         /opt/wine-cachyos/bin/wmc /opt/wine-cachyos/bin/wrc \
+         /opt/wine-cachyos/bin/winedump /opt/wine-cachyos/bin/function_grep.pl \
+    && rm -rf /opt/wine-cachyos/include /opt/wine-cachyos/share/man \
+    && find /opt/wine-cachyos/lib/wine -name '*.a' -delete 2>/dev/null || true
+
+# Default env
+ENV SERVER_URL="host.containers.internal" \
+    SERVER_PORT="6969" \
+    PROFILE_ID="" \
+    UDP_PORT="25565" \
+    ESYNC="false" \
+    FSYNC="false"
+
+COPY entrypoint.sh /entrypoint.sh
+
+VOLUME /opt/tarkov
+
+LABEL quma.image-type="headless-minimal" \
+      org.opencontainers.image.title="quma-headless" \
+      org.opencontainers.image.description="Minimal Wine headless client for SPT/Fika"
+
+ENTRYPOINT ["/entrypoint.sh"]

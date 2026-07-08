@@ -291,19 +291,13 @@ fn default_base_udp_port() -> u16 {
     25565
 }
 fn default_headless_image() -> String {
-    "localhost/fika-headless:latest".to_string()
+    "ghcr.io/cebarks/quartermaster/headless:latest".to_string()
 }
 fn default_isolated_paths() -> Vec<String> {
     vec!["BepInEx/config".to_string()]
 }
 fn default_ntsync() -> bool {
     true
-}
-fn default_save_log_on_exit() -> bool {
-    true
-}
-fn default_overwrite_fika() -> bool {
-    false
 }
 fn default_server_ready_timeout() -> u64 {
     120
@@ -526,22 +520,6 @@ pub struct HeadlessClientDef {
     pub cpuset_mems: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum HeadlessRunner {
-    #[default]
-    Umu,
-    Wine,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum HeadlessDisplayServer {
-    #[default]
-    Gamescope,
-    Xvfb,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HeadlessConfig {
     #[serde(default)]
@@ -560,22 +538,12 @@ pub struct HeadlessConfig {
     pub isolated_paths: Vec<String>,
     #[serde(default)]
     pub clients: Vec<HeadlessClientDef>,
-    #[serde(default)]
-    pub runner: HeadlessRunner,
     #[serde(default = "default_ntsync")]
     pub ntsync: bool,
     #[serde(default)]
     pub esync: bool,
     #[serde(default)]
     pub fsync: bool,
-    #[serde(default)]
-    pub display_server: HeadlessDisplayServer,
-    #[serde(default = "default_save_log_on_exit")]
-    pub save_log_on_exit: bool,
-    #[serde(default)]
-    pub enable_log_purge: bool,
-    #[serde(default = "default_overwrite_fika")]
-    pub overwrite_fika: bool,
     #[serde(default)]
     pub numa_auto: bool,
     #[serde(default)]
@@ -599,14 +567,9 @@ impl Default for HeadlessConfig {
             image: default_headless_image(),
             isolated_paths: default_isolated_paths(),
             clients: Vec::new(),
-            runner: HeadlessRunner::default(),
             ntsync: default_ntsync(),
             esync: false,
             fsync: false,
-            display_server: HeadlessDisplayServer::default(),
-            save_log_on_exit: default_save_log_on_exit(),
-            enable_log_purge: false,
-            overwrite_fika: default_overwrite_fika(),
             numa_auto: false,
             numa_node: None,
             server_ready_timeout: 120,
@@ -1561,14 +1524,9 @@ restart_backoff_cap = 600
 base_udp_port = 25565
 image = "ghcr.io/zhliau/fika-headless-docker:v2.1.0"
 isolated_paths = ["BepInEx/config", "BepInEx/cache"]
-runner = "wine"
 ntsync = false
 esync = true
 fsync = false
-display_server = "xvfb"
-save_log_on_exit = false
-enable_log_purge = true
-overwrite_fika = false
 server_ready_timeout = 300
 physical_cores_only = true
 
@@ -1595,14 +1553,9 @@ extra_isolated_paths = ["BepInEx/plugins/testing"]
             headless.clients[1].extra_isolated_paths,
             vec!["BepInEx/plugins/testing"]
         );
-        assert_eq!(headless.runner, HeadlessRunner::Wine);
         assert!(!headless.ntsync);
         assert!(headless.esync);
         assert!(!headless.fsync);
-        assert_eq!(headless.display_server, HeadlessDisplayServer::Xvfb);
-        assert!(!headless.save_log_on_exit);
-        assert!(headless.enable_log_purge);
-        assert!(!headless.overwrite_fika);
         assert!(headless.physical_cores_only);
         assert_eq!(headless.server_ready_timeout, 300);
     }
@@ -1622,7 +1575,10 @@ install_dir = "/opt/fika"
         assert_eq!(headless.max_restart_attempts, 5);
         assert_eq!(headless.restart_backoff_cap, 300);
         assert_eq!(headless.base_udp_port, 25565);
-        assert_eq!(headless.image, "localhost/fika-headless:latest");
+        assert_eq!(
+            headless.image,
+            "ghcr.io/cebarks/quartermaster/headless:latest"
+        );
         assert_eq!(headless.isolated_paths, vec!["BepInEx/config".to_string()]);
         assert_eq!(headless.server_ready_timeout, 120);
     }
@@ -1642,14 +1598,9 @@ install_dir = "/opt/fika"
     #[test]
     fn headless_config_new_field_defaults() {
         let config: HeadlessConfig = HeadlessConfig::default();
-        assert_eq!(config.runner, HeadlessRunner::Umu);
         assert!(config.ntsync);
         assert!(!config.esync);
         assert!(!config.fsync);
-        assert_eq!(config.display_server, HeadlessDisplayServer::Gamescope);
-        assert!(config.save_log_on_exit);
-        assert!(!config.enable_log_purge);
-        assert!(!config.overwrite_fika);
         assert!(!config.physical_cores_only);
         assert_eq!(config.server_ready_timeout, 120);
     }

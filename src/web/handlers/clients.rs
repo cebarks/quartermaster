@@ -9,7 +9,7 @@ use askama::Template;
 use jsonc_parser::cst::CstInputValue;
 
 use crate::client::{ClientHealth, ClientState};
-use crate::config::{Config, HeadlessDisplayServer, RestartPolicy};
+use crate::config::{Config, RestartPolicy};
 use crate::container::ContainerManager;
 use crate::db::rbac::Permission;
 use crate::numa::NumaTopology;
@@ -75,7 +75,6 @@ struct HeadlessPageTemplate {
     nav: NavContext,
     config: Config,
     restart_policy: String,
-    display_server: String,
     headless_clients: Vec<ClientView>,
     headless_converging: bool,
     headless_target_count: u32,
@@ -277,16 +276,6 @@ pub async fn headless_page(
         .map(|c| c.restart_policy.to_string())
         .unwrap_or_else(|| RestartPolicy::Auto.to_string());
 
-    let display_server = config
-        .headless
-        .as_ref()
-        .map(|c| match c.display_server {
-            HeadlessDisplayServer::Gamescope => "gamescope",
-            HeadlessDisplayServer::Xvfb => "xvfb",
-        })
-        .unwrap_or("gamescope")
-        .to_string();
-
     let headless_clients = match &state.client_states {
         Some(states) => states.read().await.clone(),
         None => vec![],
@@ -331,7 +320,6 @@ pub async fn headless_page(
         nav: NavContext::from_state(&state),
         config,
         restart_policy,
-        display_server,
         headless_clients,
         headless_converging,
         headless_target_count,

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use tokio::io::AsyncWriteExt;
 
 use super::cache::ForgeResponseCache;
@@ -51,6 +51,7 @@ impl ForgeClient {
 
         let ua = format!("quartermaster/{}", env!("CARGO_PKG_VERSION"));
         headers.insert(USER_AGENT, HeaderValue::from_str(&ua)?);
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
@@ -175,11 +176,44 @@ impl ForgeClient {
         Ok(wrapper.data)
     }
 
+    async fn fetch_all_pages<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        context: &str,
+    ) -> Result<Vec<T>> {
+        let body = self
+            .send_cached(req)
+            .await
+            .with_context(|| format!("{context} request failed"))?;
+        let page: PaginatedResponse<Vec<T>> = serde_json::from_slice(&body)
+            .with_context(|| format!("{context}: failed to parse response"))?;
+
+        let mut all_items = page.data;
+        let mut next_url = page.links.and_then(|l| l.next);
+
+        while let Some(url) = next_url {
+            let req = self.client.get(&url);
+            let body = self
+                .send_cached(req)
+                .await
+                .with_context(|| format!("{context} pagination request failed"))?;
+            let page: PaginatedResponse<Vec<T>> = serde_json::from_slice(&body)
+                .with_context(|| format!("{context}: failed to parse paginated response"))?;
+            all_items.extend(page.data);
+            next_url = page.links.and_then(|l| l.next);
+        }
+
+        Ok(all_items)
+    }
+
     /// Search mods by query string.
     pub async fn search_mods(&self, query: &str) -> Result<Vec<ForgeMod>> {
         let url = format!("{}/mods", self.base_url);
-        let req = self.client.get(&url).query(&[("query", query)]);
-        self.fetch_and_parse(req, "search_mods").await
+        let req = self
+            .client
+            .get(&url)
+            .query(&[("query", query), ("per_page", "50")]);
+        self.fetch_all_pages(req, "search_mods").await
     }
 
     /// Fetch a single mod by ID, optionally including its versions.
@@ -199,11 +233,11 @@ impl ForgeClient {
         spt_version: Option<&str>,
     ) -> Result<Vec<ForgeVersion>> {
         let url = format!("{}/mod/{}/versions", self.base_url, mod_id);
-        let mut req = self.client.get(&url).query(&[("per_page", "100")]);
+        let mut req = self.client.get(&url).query(&[("per_page", "50")]);
         if let Some(v) = spt_version {
             req = req.query(&[("filter[spt_version]", v)]);
         }
-        self.fetch_and_parse(req, "get_versions").await
+        self.fetch_all_pages(req, "get_versions").await
     }
 
     /// Resolve the dependency tree for a set of (identifier, version) pairs.
@@ -249,8 +283,11 @@ impl ForgeClient {
     #[allow(dead_code)] // used in Task 5
     pub async fn search_addons(&self, query: &str) -> Result<Vec<ForgeAddon>> {
         let url = format!("{}/addons", self.base_url);
-        let req = self.client.get(&url).query(&[("query", query)]);
-        self.fetch_and_parse(req, "search_addons").await
+        let req = self
+            .client
+            .get(&url)
+            .query(&[("query", query), ("per_page", "50")]);
+        self.fetch_all_pages(req, "search_addons").await
     }
 
     #[allow(dead_code)] // used in Task 5
@@ -266,8 +303,8 @@ impl ForgeClient {
     #[allow(dead_code)] // used in Task 5
     pub async fn get_addon_versions(&self, addon_id: i64) -> Result<Vec<ForgeAddonVersion>> {
         let url = format!("{}/addon/{}/versions", self.base_url, addon_id);
-        let req = self.client.get(&url);
-        self.fetch_and_parse(req, "get_addon_versions").await
+        let req = self.client.get(&url).query(&[("per_page", "50")]);
+        self.fetch_all_pages(req, "get_addon_versions").await
     }
 
     #[allow(dead_code)] // used in Task 4
@@ -285,8 +322,8 @@ impl ForgeClient {
     #[allow(dead_code)] // plumbing for future UI
     pub async fn get_spt_versions(&self) -> Result<Vec<SptVersion>> {
         let url = format!("{}/spt/versions", self.base_url);
-        let req = self.client.get(&url);
-        self.fetch_and_parse(req, "get_spt_versions").await
+        let req = self.client.get(&url).query(&[("per_page", "50")]);
+        self.fetch_all_pages(req, "get_spt_versions").await
     }
 
     fn is_forge_url(&self, url: &str) -> bool {
@@ -555,7 +592,7 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/mod/42/versions"))
-            .and(query_param("per_page", "100"))
+            .and(query_param("per_page", "50"))
             .and(query_param("filter[spt_version]", "3.10.0"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .expect(1)
@@ -581,7 +618,7 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/mod/42/versions"))
-            .and(query_param("per_page", "100"))
+            .and(query_param("per_page", "50"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .expect(1)
             .mount(&server)
@@ -1345,6 +1382,62 @@ mod tests {
         assert_eq!(versions[0].version, "3.11.3");
         assert_eq!(versions[0].mod_count, Some(371));
         assert_eq!(versions[1].version, "3.11.2");
+    }
+
+    #[tokio::test]
+    async fn follows_pagination_links() {
+        let server = MockServer::start().await;
+        let page2_url = format!("{}/mod/42/versions?per_page=50&page=2", server.uri());
+        let body_page1 = serde_json::json!({
+            "data": [
+                {"id": 100, "version": "1.2.0"},
+                {"id": 101, "version": "1.1.0"}
+            ],
+            "links": {
+                "first": format!("{}/mod/42/versions?per_page=50&page=1", server.uri()),
+                "last": format!("{}/mod/42/versions?per_page=50&page=2", server.uri()),
+                "prev": null,
+                "next": page2_url
+            },
+            "meta": {"current_page": 1, "last_page": 2, "per_page": 50, "total": 3}
+        });
+        let body_page2 = serde_json::json!({
+            "data": [
+                {"id": 102, "version": "1.0.0"}
+            ],
+            "links": {
+                "first": format!("{}/mod/42/versions?per_page=50&page=1", server.uri()),
+                "last": format!("{}/mod/42/versions?per_page=50&page=2", server.uri()),
+                "prev": format!("{}/mod/42/versions?per_page=50&page=1", server.uri()),
+                "next": null
+            },
+            "meta": {"current_page": 2, "last_page": 2, "per_page": 50, "total": 3}
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/mod/42/versions"))
+            .and(query_param("per_page", "50"))
+            .and(query_param_is_missing("page"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body_page1))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/mod/42/versions"))
+            .and(query_param("page", "2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body_page2))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let versions = client.get_versions(42, None).await.unwrap();
+
+        assert_eq!(versions.len(), 3);
+        assert_eq!(versions[0].id, 100);
+        assert_eq!(versions[1].id, 101);
+        assert_eq!(versions[2].id, 102);
     }
 
     #[tokio::test]
