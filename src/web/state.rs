@@ -119,6 +119,7 @@ impl AppState {
         {
             self.catalog_cache.invalidate();
             self.mod_zip_cache.invalidate();
+            crate::convoy::download::clear_convoy_cache(&self.spt_dir);
         }
     }
 
