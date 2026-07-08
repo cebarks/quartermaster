@@ -1,14 +1,28 @@
 #!/bin/sh
 set -e
 
+EFT_DIR=/opt/tarkov
+WINE_LOG="${EFT_DIR}/wine.log"
+BEPINEX_LOG="${EFT_DIR}/BepInEx/LogOutput.log"
+
 divider() { printf '\n%.0s' 1; printf '=%.0s' $(seq 1 60); printf '\n\n'; }
+
+# Forward SIGTERM to wine so shutdown is clean
+_eft_pid=""
+on_term() {
+    echo "Received SIGTERM — forwarding to EFT"
+    [ -n "$_eft_pid" ] && kill -TERM "$_eft_pid" 2>/dev/null
+    pkill -TERM -f EscapeFromTarkov.exe 2>/dev/null || true
+}
+trap on_term TERM INT
 trap 'divider; echo "entrypoint exited (code $?)"; divider' EXIT
 
 echo "quma-headless starting"
 
-# Virtual display
+# Virtual display (clean stale locks from unclean shutdown)
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 echo "Starting Xvfb..."
-Xvfb :99 -screen 0 1024x768x24 -nolisten tcp &
+Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset -nolisten tcp &
 export DISPLAY=:99
 
 # Wine prefix — /.wine when overlay-mounted by quma, /tmp/.wine otherwise
@@ -54,10 +68,20 @@ echo "Profile: ${PROFILE_ID:-(none)}"
 
 divider
 
-# Run headless client
-cd /opt/tarkov
+# Run headless client — redirect wine/Unity output to file,
+# surface BepInEx logs in podman logs instead
+cd "$EFT_DIR"
 BACKEND="https://${SERVER_URL:-host.containers.internal}:${SERVER_PORT:-6969}"
-exec /opt/wine-cachyos/bin/wine EscapeFromTarkov.exe \
+/opt/wine-cachyos/bin/wine EscapeFromTarkov.exe \
     -batchmode -nographics -noDynamicAI \
     -token="${PROFILE_ID}" \
-    -config="{\"BackendUrl\":\"${BACKEND}\"}"
+    -config="{\"BackendUrl\":\"${BACKEND}\"}" \
+    > "$WINE_LOG" 2>&1 &
+_eft_pid=$!
+echo "EFT PID is $_eft_pid"
+
+# Surface BepInEx logs in podman logs
+tail -f -n 0 "$BEPINEX_LOG" 2>/dev/null &
+
+# Block until EFT exits
+wait "$_eft_pid" || true
