@@ -2,15 +2,11 @@ use std::path::Path;
 
 use anyhow::Result;
 
-const FIKA_MANAGED_PREFIXES: &[&str] = &["BepInEx/plugins/Fika/", "BepInEx/plugins/Fika.Headless/"];
-
 /// A "client file" is anything that belongs in the game client install —
-/// everything EXCEPT server-side mods (`SPT/user/mods/`), BepInEx config
-/// (per-client overlay), and Fika-managed directories.
+/// everything EXCEPT server-side mods (`SPT/user/mods/`) and BepInEx config
+/// (per-client overlay).
 pub fn is_client_file(path: &str) -> bool {
-    !path.starts_with("SPT/")
-        && !path.starts_with("BepInEx/config/")
-        && !FIKA_MANAGED_PREFIXES.iter().any(|p| path.starts_with(p))
+    !path.starts_with("SPT/") && !path.starts_with("BepInEx/config/")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,9 +134,9 @@ mod tests {
         // Config — should NOT sync (per-client overlay)
         assert!(!is_client_file("BepInEx/config/com.fika.core.cfg"));
 
-        // Fika-managed — should NOT sync
-        assert!(!is_client_file("BepInEx/plugins/Fika/Fika.Core.dll"));
-        assert!(!is_client_file(
+        // Fika files — NOW synced normally (no longer managed separately)
+        assert!(is_client_file("BepInEx/plugins/Fika/Fika.Core.dll"));
+        assert!(is_client_file(
             "BepInEx/plugins/Fika.Headless/Fika.Headless.dll"
         ));
     }
@@ -243,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn install_skips_fika_managed_files() {
+    fn install_syncs_fika_files() {
         let spt = tempfile::tempdir().unwrap();
         let headless = tempfile::tempdir().unwrap();
 
@@ -257,7 +253,11 @@ mod tests {
             sync_client_files_to_headless(spt.path(), headless.path(), &files, SyncOp::Install)
                 .unwrap();
 
-        assert_eq!(report.copied, 0);
+        assert_eq!(report.copied, 1);
+        assert!(headless
+            .path()
+            .join("BepInEx/plugins/Fika/Fika.Core.dll")
+            .exists());
     }
 
     #[test]

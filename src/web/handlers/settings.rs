@@ -5,7 +5,7 @@ use askama::Template;
 
 use crate::config::{
     Config, ConsoleFormat, ConsoleLogConfig, FileFormat, FileLogConfig, HeadlessConfig,
-    HeadlessDisplayServer, LoggingConfig, RestartPolicy, RotationPolicy, WebLogConfig,
+    LoggingConfig, RestartPolicy, RotationPolicy, WebLogConfig,
 };
 use crate::db::rbac::Permission;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
@@ -148,7 +148,6 @@ pub struct HeadlessSettingsForm {
     base_udp_port: u16,
     image: String,
     isolated_paths: String,
-    display_server: String,
     #[serde(default)]
     numa_policy: String,
     numa_node: Option<u32>,
@@ -432,20 +431,12 @@ pub async fn save_headless_settings(
         base_udp_port: form.base_udp_port,
         image: form.image.trim().to_string(),
         isolated_paths: isolated,
-        display_server: match form.display_server.as_str() {
-            "xvfb" => HeadlessDisplayServer::Xvfb,
-            _ => HeadlessDisplayServer::Gamescope,
-        },
         numa_auto,
         numa_node,
         clients: existing.map(|h| h.clients.clone()).unwrap_or_default(),
-        runner: existing.map(|h| h.runner.clone()).unwrap_or_default(),
         ntsync: existing.map(|h| h.ntsync).unwrap_or(true),
         esync: existing.map(|h| h.esync).unwrap_or(false),
         fsync: existing.map(|h| h.fsync).unwrap_or(false),
-        save_log_on_exit: existing.map(|h| h.save_log_on_exit).unwrap_or(true),
-        enable_log_purge: existing.map(|h| h.enable_log_purge).unwrap_or(false),
-        overwrite_fika: existing.map(|h| h.overwrite_fika).unwrap_or(true),
         server_ready_timeout: form.server_ready_timeout,
         use_upnp: form.use_upnp.is_some(),
         physical_cores_only: form.physical_cores_only.is_some(),
