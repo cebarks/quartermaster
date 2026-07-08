@@ -101,16 +101,22 @@ fn build_globset(patterns: &[String]) -> Option<globset::GlobSet> {
 }
 
 /// Write a ZIP archive of mod files directly to disk (no in-memory buffer).
+/// When `client_only` is true, server-only files (`SPT/user/mods/`) are excluded.
 pub fn build_mod_zip_to_file(
     spt_dir: &Path,
     files: &[InstalledFile],
     dest: &Path,
+    client_only: bool,
 ) -> anyhow::Result<()> {
     let file = BufWriter::new(File::create(dest)?);
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for f in files {
+        if client_only && f.file_path.starts_with("SPT/user/mods/") {
+            continue;
+        }
+
         if std::path::Path::new(&f.file_path).is_absolute()
             || f.file_path.split('/').any(|c| c == "..")
             || f.file_path.split('\\').any(|c| c == "..")
@@ -261,7 +267,7 @@ impl ModZipCache {
             return Ok(());
         }
 
-        build_mod_zip_to_file(&self.inner.spt_dir, &files, &self.inner.tmp_path)?;
+        build_mod_zip_to_file(&self.inner.spt_dir, &files, &self.inner.tmp_path, false)?;
         std::fs::rename(&self.inner.tmp_path, &self.inner.cache_path)?;
 
         tracing::debug!(
@@ -320,7 +326,7 @@ mod tests {
         let files = vec![test_file(1, "SPT/user/mods/test/package.json")];
 
         let out = spt_dir.path().join("out.zip");
-        build_mod_zip_to_file(spt_dir.path(), &files, &out).unwrap();
+        build_mod_zip_to_file(spt_dir.path(), &files, &out, false).unwrap();
 
         assert!(out.exists());
         let data = std::fs::read(&out).unwrap();
@@ -334,7 +340,7 @@ mod tests {
         let files = vec![test_file(1, "SPT/user/mods/ghost/package.json")];
 
         let out = spt_dir.path().join("out.zip");
-        build_mod_zip_to_file(spt_dir.path(), &files, &out).unwrap();
+        build_mod_zip_to_file(spt_dir.path(), &files, &out, false).unwrap();
 
         let data = std::fs::read(&out).unwrap();
         let reader = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use actix_files::NamedFile;
 use actix_session::Session;
 use actix_web::{web, HttpRequest, HttpResponse};
 use askama::Template;
@@ -718,9 +719,9 @@ pub async fn download(
     let spt_dir = state.spt_dir.clone();
     let mod_ids = body.mods.clone();
 
-    let zip_bytes = web::block(move || {
+    let zip_path = web::block(move || {
         let db = db.lock();
-        crate::convoy::download::build_download_zip(&db, &spt_dir, &mod_ids)
+        crate::convoy::download::get_or_build_convoy_zip(&db, &spt_dir, &mod_ids)
     })
     .await
     .map_err(|e| {
@@ -732,12 +733,14 @@ pub async fn download(
         actix_web::error::ErrorInternalServerError(e)
     })?;
 
-    tracing::info!(bytes = zip_bytes.len(), "convoy batch download served");
+    let zip_len = std::fs::metadata(&zip_path)
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
+    tracing::info!(bytes = zip_len, "convoy batch download served");
 
     let db_log = state.db.clone();
     let ip = req.peer_addr().map(|a| a.ip().to_string());
     let mod_ids_json = serde_json::to_string(&body.mods).unwrap_or_default();
-    let zip_len = zip_bytes.len() as i64;
     tokio::task::spawn_blocking(move || {
         let db = db_log.lock();
         if let Err(e) = db.insert_sync_event(
@@ -750,17 +753,21 @@ pub async fn download(
         }
     });
 
-    Ok(HttpResponse::Ok()
-        .content_type("application/zip")
-        .insert_header((
-            "content-disposition",
-            "attachment; filename=\"convoy-mods.zip\"",
-        ))
-        .body(zip_bytes))
+    Ok(NamedFile::open_async(&zip_path)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?
+        .set_content_disposition(actix_web::http::header::ContentDisposition {
+            disposition: actix_web::http::header::DispositionType::Attachment,
+            parameters: vec![actix_web::http::header::DispositionParam::Filename(
+                "convoy-mods.zip".to_string(),
+            )],
+        })
+        .into_response(&req))
 }
 
 /// GET /quma/convoy/mod/{mod_id}/archive — single mod download
 pub async fn single_mod_archive(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<i64>,
 ) -> actix_web::Result<HttpResponse> {
@@ -770,9 +777,9 @@ pub async fn single_mod_archive(
 
     tracing::info!(mod_id, "convoy single mod download requested");
 
-    let zip_bytes = web::block(move || {
+    let zip_path = web::block(move || {
         let db = db.lock();
-        crate::convoy::download::build_download_zip(&db, &spt_dir, &[mod_id])
+        crate::convoy::download::get_or_build_convoy_zip(&db, &spt_dir, &[mod_id])
     })
     .await
     .map_err(|e| {
@@ -784,19 +791,18 @@ pub async fn single_mod_archive(
         actix_web::error::ErrorInternalServerError(e)
     })?;
 
-    tracing::info!(
-        mod_id,
-        bytes = zip_bytes.len(),
-        "convoy single mod download served"
-    );
+    tracing::info!(mod_id, path = %zip_path.display(), "convoy single mod download served");
 
-    Ok(HttpResponse::Ok()
-        .content_type("application/zip")
-        .insert_header((
-            "content-disposition",
-            format!("attachment; filename=\"mod-{mod_id}.zip\""),
-        ))
-        .body(zip_bytes))
+    Ok(NamedFile::open_async(&zip_path)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?
+        .set_content_disposition(actix_web::http::header::ContentDisposition {
+            disposition: actix_web::http::header::DispositionType::Attachment,
+            parameters: vec![actix_web::http::header::DispositionParam::Filename(
+                format!("mod-{mod_id}.zip"),
+            )],
+        })
+        .into_response(&req))
 }
 
 /// POST /quma/convoy/report — client sync report
