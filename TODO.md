@@ -2,6 +2,7 @@
 
 ## Top Priority
 - move groups config to tab on mods page
+- mod requests expansion isn't clear, add a little arrow to the row to show that it can be expanded
 
 
 ## Bugs
@@ -11,6 +12,8 @@
     - account creation dropdown missing SPT dev profiles (toggleable?)
 - mod requests list shouldn't include already installed mods
 - server-wide stats page has no PMC/Scav raid breakdown (per-user profile already tracks both)
+- rejecting an approved mod leaves behind an empty row
+- no auto-refresh when scaling/converging clients
 
 ## Core Architecture
 - consolidate remaining mod management logic (`web/install.rs` shared helper exists, but queue apply still has its own path)
@@ -31,6 +34,8 @@
 - set fika headless profiles early and use the same profiles for headless forever
 - supervisor exit watchers cache restart policy/backoff values at spawn time — config changes require supervisor restart (`supervisor.rs`)
 - headless recent raid stats should be linked to that information to the existing raids list
+- add client should add a new row to the list with the client name column editable, and a save or cancel button replacing the existing buttons in the actions column
+- `/quma/headless/N` should include the current container name and image.
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
@@ -60,6 +65,7 @@
 - no global HTMX error handling
 
 ## Features
+- windows support
 - configurable backups
 - custom headless instances
 - MCP server?
@@ -85,6 +91,9 @@
 
 ### Convoy
 - user config file sync
+- user specific mods
+- optional mod selection
+- 
 
 ## Invites
 - infinite use invite codes (no multi-use support, only single-use)
