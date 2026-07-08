@@ -151,7 +151,7 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 
 ## AI Disclosure
 
-Portions of this codebase were implemented with the assistance of LLM-based tools (Claude Code). All architecture, design decisions, and direction were done by a human — the LLM was used as an implementation aid under continuous human supervision and review.
+Portions of this codebase were implemented with the assistance of LLM-based tools (Claude Code). All architecture, design decisions, and direction were done by a human (Senior Product Security Engineer w/ 10+ years of coding experience), the LLM was used as an implementation aid under continuous human supervision and review.
 
 ## License
 
