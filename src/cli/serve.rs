@@ -115,7 +115,6 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     let forge = ForgeClient::new()?;
 
     let fika_installed = is_fika_installed(&spt_dir);
-    let modsync_installed = crate::config::is_modsync_installed(&spt_dir);
     let converging = Arc::new(AtomicBool::new(false));
     let config_arc = Arc::new(parking_lot::RwLock::new(config));
 
@@ -226,7 +225,6 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         client_states,
         converging,
         fika_installed,
-        modsync_installed,
         log_level_counts: Arc::clone(&log_level_counts),
     });
 

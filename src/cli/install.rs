@@ -485,7 +485,7 @@ pub struct ModInstallParams<'a> {
 /// Download a mod archive from Forge, extract it, and record it in the database.
 ///
 /// This is the shared core of mod installation used by both the CLI `install`
-/// command and the setup wizard's NarcoNet installer. It handles:
+/// command and the setup wizard. It handles:
 /// 1. Downloading the archive to a temp directory
 /// 2. Detecting mod type and warning on ambiguous archives
 /// 3. Extracting via `ops::install_mod_from_archive`

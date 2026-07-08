@@ -6,6 +6,7 @@ mod client;
 mod config;
 mod config_mgmt;
 mod container;
+mod convoy;
 mod db;
 mod fika;
 mod forge;
@@ -13,7 +14,6 @@ mod headless_sync;
 mod health;
 mod invite;
 mod logging;
-mod modsync;
 mod numa;
 mod ops;
 mod queue;
@@ -74,7 +74,6 @@ async fn main() -> Result<()> {
         Command::Setup {
             path,
             no_fika,
-            no_modsync,
             admin_password,
             dev,
             container_name,
@@ -84,7 +83,6 @@ async fn main() -> Result<()> {
                 cli::setup::SetupArgs {
                     path: path.clone(),
                     no_fika: *no_fika,
-                    no_modsync: *no_modsync,
                     admin_password: admin_password.clone(),
                     dev: *dev,
                     container_name: container_name.clone(),

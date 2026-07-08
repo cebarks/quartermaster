@@ -1,0 +1,28 @@
+<h2>Convoy Settings</h2>
+
+<form method="post" action="/quma/convoy/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="form-group">
+        <label class="form-label">
+            <input type="checkbox" name="enabled" value="1" {% if enabled %}checked{% endif %}>
+            Enable Convoy mod delivery
+        </label>
+        <p class="text-muted text-sm">When disabled, clients cannot fetch the mod catalog or download mods.</p>
+    </div>
+
+    <div class="form-group">
+        <label class="form-label" for="exclusions">Exclusions</label>
+        <textarea name="exclusions" id="exclusions" class="form-input" rows="6"
+                  placeholder="BepInEx/plugins/SAIN/BotTypes.json&#10;BepInEx/config/com.example.mod.cfg">{{ exclusions }}</textarea>
+        <p class="text-muted text-sm">File paths that clients should not delete during sync (one per line). Use for user-generated config files and presets.</p>
+    </div>
+
+    <div class="form-group">
+        <label class="form-label">Bootstrap Mod</label>
+        <p>Forge ID: <code>{{ bootstrap_forge_id }}</code></p>
+        <p class="text-muted text-sm">The Convoy client plugin bundled in the join page bootstrap ZIP. Players who join via the setup flow get this mod automatically.</p>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Settings</button>
+</form>

@@ -384,6 +384,24 @@ impl BackupConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConvoyConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    #[serde(default)]
+    pub exclusions: Vec<String>,
+}
+
+impl Default for ConvoyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            exclusions: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModSyncConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -426,155 +444,7 @@ impl Default for ModSyncConfig {
 }
 
 impl ModSyncConfig {
-    /// Migrate deprecated path formats in `extra_sync_paths` and `exclusions`
-    /// to gameroot-relative format. Returns `true` if any paths were changed.
-    ///
-    /// Deprecated formats:
-    /// - `../BepInEx/plugins` → `BepInEx/plugins` (strip `../` prefix)
-    /// - `user/mods` → `SPT/user/mods` (SPT-relative → gameroot-relative)
-    pub fn migrate_deprecated_paths(&mut self) -> bool {
-        let mut changed = false;
-        for path in &mut self.extra_sync_paths {
-            if let Some(stripped) = path.strip_prefix("../") {
-                *path = stripped.to_string();
-                changed = true;
-            } else if path.starts_with("user/") || *path == "user" {
-                *path = format!("SPT/{path}");
-                changed = true;
-            }
-        }
-        for path in &mut self.exclusions {
-            if let Some(stripped) = path.strip_prefix("../") {
-                *path = stripped.to_string();
-                changed = true;
-            } else if path.starts_with("user/") || *path == "user" {
-                *path = format!("SPT/{path}");
-                changed = true;
-            }
-        }
-        changed
-    }
-
-    /// Migrate per-mod overrides into groups. Each override becomes a
-    /// single-member group. If the mod already belongs to a group, the
-    /// override is merged (single-member) or the mod is split out
-    /// (multi-member). Returns `true` if any migration occurred.
-    pub fn migrate_overrides_to_groups(&mut self) -> bool {
-        if self.overrides.is_empty() {
-            return false;
-        }
-
-        // Build reverse lookup: forge_mod_id → group slug
-        let mod_to_group: std::collections::HashMap<i64, String> = self
-            .groups
-            .iter()
-            .flat_map(|(slug, g)| g.members.iter().map(move |&id| (id, slug.clone())))
-            .collect();
-
-        let overrides = std::mem::take(&mut self.overrides);
-        for (forge_id_str, ovr) in overrides {
-            let forge_id: i64 = match forge_id_str.parse() {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-
-            if let Some(group_slug) = mod_to_group.get(&forge_id) {
-                let group = match self.groups.get_mut(group_slug) {
-                    Some(g) => g,
-                    None => continue,
-                };
-
-                if group.members.len() == 1 {
-                    // Single-member group: merge override values directly
-                    if ovr.enabled.is_some() {
-                        group.enabled = ovr.enabled;
-                    }
-                    if ovr.enforced.is_some() {
-                        group.enforced = ovr.enforced;
-                    }
-                    if ovr.silent.is_some() {
-                        group.silent = ovr.silent;
-                    }
-                    if ovr.restart_required.is_some() {
-                        group.restart_required = ovr.restart_required;
-                    }
-                } else {
-                    // Multi-member group: split this mod out into its own group
-                    group.members.retain(|&id| id != forge_id);
-                    let mut new_group = ModSyncGroup {
-                        display_name: format!("Mod #{forge_id}"),
-                        members: vec![forge_id],
-                        enabled: group.enabled,
-                        enforced: group.enforced,
-                        silent: group.silent,
-                        restart_required: group.restart_required,
-                        exclude_headless: group.exclude_headless,
-                    };
-                    // Apply override on top
-                    if ovr.enabled.is_some() {
-                        new_group.enabled = ovr.enabled;
-                    }
-                    if ovr.enforced.is_some() {
-                        new_group.enforced = ovr.enforced;
-                    }
-                    if ovr.silent.is_some() {
-                        new_group.silent = ovr.silent;
-                    }
-                    if ovr.restart_required.is_some() {
-                        new_group.restart_required = ovr.restart_required;
-                    }
-                    self.groups
-                        .insert(format!("override-{forge_id}"), new_group);
-                }
-            } else {
-                // Mod not in any group: create a new single-member group
-                let group = ModSyncGroup {
-                    display_name: format!("Mod #{forge_id}"),
-                    members: vec![forge_id],
-                    enabled: ovr.enabled,
-                    enforced: ovr.enforced,
-                    silent: ovr.silent,
-                    restart_required: ovr.restart_required,
-                    exclude_headless: false,
-                };
-                self.groups.insert(format!("override-{forge_id}"), group);
-            }
-        }
-
-        true
-    }
-
-    /// Ensure predefined groups exist with correct invariants.
-    /// Seeds `no-headless` if missing; forces `exclude_headless = true` on it
-    /// if hand-edited. Returns `true` if any changes were made.
-    pub fn ensure_predefined_groups(&mut self) -> bool {
-        let mut changed = false;
-        if let Some(nh) = self.groups.get_mut("no-headless") {
-            if nh.display_name != "No Headless" {
-                nh.display_name = "No Headless".to_string();
-                changed = true;
-            }
-            if !nh.exclude_headless {
-                nh.exclude_headless = true;
-                changed = true;
-            }
-        } else {
-            self.groups.insert(
-                "no-headless".to_string(),
-                ModSyncGroup {
-                    display_name: "No Headless".to_string(),
-                    members: Vec::new(),
-                    enabled: None,
-                    enforced: None,
-                    silent: None,
-                    restart_required: None,
-                    exclude_headless: true,
-                },
-            );
-            changed = true;
-        }
-        changed
-    }
+    // No migration methods - modsync is deprecated, kept only for backward-compatible TOML deserialization
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -607,33 +477,6 @@ pub struct ModSyncGroup {
     pub restart_required: Option<bool>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub exclude_headless: bool,
-}
-
-pub fn validate_group_slug(slug: &str) -> Result<()> {
-    if slug.is_empty() {
-        bail!("Group slug cannot be empty");
-    }
-    if slug == "default" {
-        bail!("\"default\" is a reserved group slug");
-    }
-    if slug == "no-headless" {
-        bail!("\"no-headless\" is a reserved group slug");
-    }
-    if slug.len() > 64 {
-        bail!("Group slug too long (max 64 characters)");
-    }
-    if slug.starts_with('-') || slug.ends_with('-') {
-        bail!("Group slug cannot start or end with a hyphen");
-    }
-    for ch in slug.chars() {
-        if !ch.is_ascii_lowercase() && !ch.is_ascii_digit() && ch != '-' {
-            bail!(
-                "Group slug contains invalid character: '{}' (only a-z, 0-9, - allowed)",
-                ch
-            );
-        }
-    }
-    Ok(())
 }
 
 pub fn slugify(name: &str) -> String {
@@ -844,41 +687,8 @@ pub fn is_fika_installed(spt_dir: &Path) -> bool {
     spt_dir.join("SPT/user/mods/fika-server").is_dir()
 }
 
-pub const NARCONET_FORGE_MOD_ID: i64 = 2441;
 pub const FIKA_CLIENT_FORGE_ID: i64 = 2326;
 pub const FIKA_SERVER_FORGE_ID: i64 = 2357;
-
-pub fn find_narconet_dir(spt_dir: &Path) -> Option<PathBuf> {
-    let mods_dir = spt_dir.join("SPT/user/mods");
-    let entries = std::fs::read_dir(&mods_dir).ok()?;
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().ok().is_some_and(|ft| ft.is_dir()))
-        .filter(|e| {
-            let name_matches = e
-                .file_name()
-                .to_str()
-                .is_some_and(|n| n.to_lowercase().contains("narconet"));
-            name_matches && e.path().join("package.json").is_file()
-        })
-        .min_by(|a, b| {
-            a.file_name()
-                .to_str()
-                .unwrap_or_default()
-                .to_ascii_lowercase()
-                .cmp(
-                    &b.file_name()
-                        .to_str()
-                        .unwrap_or_default()
-                        .to_ascii_lowercase(),
-                )
-        })
-        .map(|e| e.path())
-}
-
-pub fn is_modsync_installed(spt_dir: &Path) -> bool {
-    find_narconet_dir(spt_dir).is_some()
-}
 
 pub fn find_svm_dir(spt_dir: &Path) -> Option<PathBuf> {
     let mods_dir = spt_dir.join("SPT/user/mods");
@@ -1070,8 +880,12 @@ pub struct Config {
     pub headless: Option<HeadlessConfig>,
 
     #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub modsync: Option<ModSyncConfig>,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub convoy: Option<ConvoyConfig>,
 
     #[serde(default)]
     #[serde(skip_serializing_if = "LoggingConfig::is_default")]
@@ -1145,6 +959,7 @@ impl Default for Config {
             forge_cache_ttl: Some(86400),
             headless: None,
             modsync: None,
+            convoy: None,
             logging: LoggingConfig::default(),
             backup: BackupConfig::default(),
             setup_zip: SetupZipConfig::default(),
@@ -1228,7 +1043,7 @@ macro_rules! env_override {
 
 impl Config {
     /// Load config from a TOML file at `path`. Returns defaults if the file doesn't exist.
-    /// Automatically migrates deprecated modsync path formats and saves back if needed.
+    /// Loads config and performs modsync->convoy migration if needed.
     pub fn load(path: &Path) -> Result<Self> {
         tracing::debug!(path = %path.display(), "loading config file");
         match std::fs::read_to_string(path) {
@@ -1236,33 +1051,22 @@ impl Config {
                 let mut config: Config =
                     toml::from_str(&contents).with_context(|| "failed to parse config TOML")?;
                 let mut save_needed = false;
-                if let Some(ref mut ms) = config.modsync {
-                    if ms.migrate_deprecated_paths() {
-                        tracing::warn!(
-                            "NarcoNet config contained deprecated path formats — \
-                             migrated to gameroot-relative format and saved to {}",
-                            path.display()
-                        );
+                // Migrate [modsync] -> [convoy]
+                if config.modsync.is_some() && config.convoy.is_none() {
+                    if let Some(ref ms) = config.modsync {
+                        if !ms.extra_sync_paths.is_empty() {
+                            tracing::warn!(
+                                "modsync extra_sync_paths ({}) not migrated to convoy — \
+                                 convoy syncs at the mod level, not arbitrary paths",
+                                ms.extra_sync_paths.join(", ")
+                            );
+                        }
+                        config.convoy = Some(ConvoyConfig {
+                            enabled: ms.enabled,
+                            exclusions: ms.exclusions.clone(),
+                        });
                         save_needed = true;
-                    }
-                    if ms.migrate_overrides_to_groups() {
-                        tracing::warn!(
-                            "migrated per-mod NarcoNet overrides to groups — \
-                             overrides are deprecated, saved to {}",
-                            path.display()
-                        );
-                        save_needed = true;
-                    }
-                    if ms.groups.remove("default").is_some() {
-                        tracing::info!(
-                            "removed reserved \"default\" group from modsync config — \
-                             ungrouped mods now use global settings automatically"
-                        );
-                        save_needed = true;
-                    }
-                    if ms.ensure_predefined_groups() {
-                        tracing::info!("seeded predefined modsync groups");
-                        save_needed = true;
+                        tracing::info!("migrated [modsync] config section to [convoy]");
                     }
                 }
                 if save_needed {
@@ -1919,66 +1723,6 @@ install_dir = "/opt/fika"
     }
 
     #[test]
-    fn modsync_config_defaults() {
-        let config: Config = toml::from_str("").expect("empty config");
-        assert!(config.modsync.is_none());
-    }
-
-    #[test]
-    fn narconet_detection_not_installed() {
-        let tmp = tempfile::tempdir().unwrap();
-        let other_mod = tmp.path().join("SPT/user/mods/some-other-mod");
-        std::fs::create_dir_all(&other_mod).unwrap();
-        // Create package.json but directory name doesn't match "narconet"
-        std::fs::write(other_mod.join("package.json"), "{}").unwrap();
-        assert!(!is_modsync_installed(tmp.path()));
-        assert!(find_narconet_dir(tmp.path()).is_none());
-    }
-
-    #[test]
-    fn narconet_detection_installed() {
-        let tmp = tempfile::tempdir().unwrap();
-        let narconet_dir = tmp.path().join("SPT/user/mods/narconet-server");
-        std::fs::create_dir_all(&narconet_dir).unwrap();
-        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
-        assert!(is_modsync_installed(tmp.path()));
-        assert_eq!(
-            find_narconet_dir(tmp.path()).unwrap(),
-            tmp.path().join("SPT/user/mods/narconet-server")
-        );
-    }
-
-    #[test]
-    fn narconet_detection_case_insensitive() {
-        let tmp = tempfile::tempdir().unwrap();
-        let narconet_dir = tmp.path().join("SPT/user/mods/MadManBeavis-NarcoNet");
-        std::fs::create_dir_all(&narconet_dir).unwrap();
-        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
-        assert!(is_modsync_installed(tmp.path()));
-        assert!(find_narconet_dir(tmp.path()).is_some());
-    }
-
-    #[test]
-    fn narconet_detection_multiple_picks_first_alphabetically() {
-        let tmp = tempfile::tempdir().unwrap();
-        let narconet_server = tmp.path().join("SPT/user/mods/narconet-server");
-        let narconet_debug = tmp.path().join("SPT/user/mods/NarcoNet-Debug");
-        std::fs::create_dir_all(&narconet_server).unwrap();
-        std::fs::create_dir_all(&narconet_debug).unwrap();
-        std::fs::write(narconet_server.join("package.json"), "{}").unwrap();
-        std::fs::write(narconet_debug.join("package.json"), "{}").unwrap();
-        let found = find_narconet_dir(tmp.path()).unwrap();
-        // "NarcoNet-Debug" sorts before "narconet-server" case-insensitively
-        assert!(found
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_lowercase()
-            .starts_with("narconet"),);
-    }
-
-    #[test]
     fn svm_detection_not_installed() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("SPT/user/mods/some-other-mod")).unwrap();
@@ -2013,92 +1757,6 @@ install_dir = "/opt/fika"
         std::fs::create_dir_all(&svm_dir).unwrap();
         // No Loader/loader.json
         assert!(find_svm_dir(tmp.path()).is_none());
-    }
-
-    #[test]
-    fn modsync_config_full_deserialization() {
-        let toml_str = r#"
-[modsync]
-enforced = false
-silent = true
-restart_required = false
-extra_sync_paths = ["BepInEx/config", "BepInEx/patchers"]
-exclusions = ["**/*.nosync", "BepInEx/plugins/spt"]
-
-[modsync.overrides.12345]
-enforced = true
-silent = false
-
-[modsync.overrides.67890]
-enabled = false
-"#;
-        let config: Config = toml::from_str(toml_str).expect("should parse");
-        let ms = config.modsync.unwrap();
-        assert!(!ms.enforced);
-        assert!(ms.silent);
-        assert!(!ms.restart_required);
-        assert_eq!(
-            ms.extra_sync_paths,
-            vec!["BepInEx/config", "BepInEx/patchers"]
-        );
-        assert_eq!(ms.exclusions, vec!["**/*.nosync", "BepInEx/plugins/spt"]);
-        assert_eq!(ms.overrides.len(), 2);
-
-        let o1 = &ms.overrides["12345"];
-        assert_eq!(o1.enforced, Some(true));
-        assert_eq!(o1.silent, Some(false));
-        assert_eq!(o1.restart_required, None);
-        assert_eq!(o1.enabled, None);
-
-        let o2 = &ms.overrides["67890"];
-        assert_eq!(o2.enabled, Some(false));
-        assert_eq!(o2.enforced, None);
-    }
-
-    #[test]
-    fn modsync_config_minimal_with_defaults() {
-        let toml_str = "[modsync]\n";
-        let config: Config = toml::from_str(toml_str).expect("should parse");
-        let ms = config.modsync.unwrap();
-        assert!(ms.enforced); // default: true
-        assert!(!ms.silent); // default: false
-        assert!(ms.restart_required); // default: true
-        assert!(ms.extra_sync_paths.is_empty());
-        assert!(ms.exclusions.is_empty());
-        assert!(ms.overrides.is_empty());
-    }
-
-    #[test]
-    fn modsync_config_skip_serializing_when_none() {
-        let config = Config::default();
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        assert!(
-            !serialized.contains("[modsync]"),
-            "None modsync should not be serialized"
-        );
-    }
-
-    #[test]
-    fn modsync_config_roundtrip() {
-        let mut config = Config::default();
-        config.modsync = Some(ModSyncConfig {
-            enforced: false,
-            silent: true,
-            ..ModSyncConfig::default()
-        });
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        let reloaded: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(config.modsync, reloaded.modsync);
-    }
-
-    #[test]
-    fn modsync_detection() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(!is_modsync_installed(tmp.path()));
-        let narconet_dir = tmp.path().join("SPT/user/mods/narconet-server");
-        std::fs::create_dir_all(&narconet_dir).unwrap();
-        std::fs::write(narconet_dir.join("package.json"), "{}").unwrap();
-        assert!(is_modsync_installed(tmp.path()));
     }
 
     #[test]
@@ -2211,150 +1869,6 @@ proxy_enabled = false
     }
 
     #[test]
-    fn modsync_group_serde_roundtrip() {
-        let group = ModSyncGroup {
-            display_name: "Optional Mods".to_string(),
-            members: vec![100, 205],
-            enabled: Some(false),
-            enforced: None,
-            silent: None,
-            restart_required: None,
-            exclude_headless: false,
-        };
-        let toml_str = toml::to_string_pretty(&group).unwrap();
-        // exclude_headless=false should NOT appear in output
-        assert!(!toml_str.contains("exclude_headless"));
-        // enabled=false SHOULD appear
-        assert!(toml_str.contains("enabled = false"));
-        let parsed: ModSyncGroup = toml::from_str(&toml_str).unwrap();
-        assert_eq!(group, parsed);
-    }
-
-    #[test]
-    fn modsync_group_exclude_headless_true_serialized() {
-        let group = ModSyncGroup {
-            display_name: "No Headless".to_string(),
-            members: vec![150],
-            enabled: None,
-            enforced: None,
-            silent: None,
-            restart_required: None,
-            exclude_headless: true,
-        };
-        let toml_str = toml::to_string_pretty(&group).unwrap();
-        assert!(toml_str.contains("exclude_headless = true"));
-    }
-
-    #[test]
-    fn modsync_config_with_groups_roundtrip() {
-        let toml_input = r#"
-[modsync]
-enforced = true
-
-[modsync.groups.optional]
-display_name = "Optional Mods"
-members = [100, 205]
-enabled = false
-
-[modsync.groups.no-headless]
-display_name = "No Headless"
-members = [150]
-exclude_headless = true
-
-[modsync.overrides.100]
-silent = true
-"#;
-        let config: Config = toml::from_str(toml_input).unwrap();
-        let ms = config.modsync.unwrap();
-        assert_eq!(ms.groups.len(), 2);
-        assert_eq!(ms.groups["optional"].display_name, "Optional Mods");
-        assert_eq!(ms.groups["optional"].members, vec![100, 205]);
-        assert_eq!(ms.groups["optional"].enabled, Some(false));
-        assert!(!ms.groups["optional"].exclude_headless);
-        assert!(ms.groups["no-headless"].exclude_headless);
-        assert!(ms.overrides.contains_key("100"));
-    }
-
-    #[test]
-    fn validate_group_slug_accepts_valid() {
-        assert!(validate_group_slug("optional").is_ok());
-        assert!(validate_group_slug("group-2").is_ok());
-        assert!(validate_group_slug("a").is_ok());
-    }
-
-    #[test]
-    fn validate_group_slug_rejects_invalid() {
-        assert!(validate_group_slug("").is_err());
-        assert!(validate_group_slug("-leading").is_err());
-        assert!(validate_group_slug("trailing-").is_err());
-        assert!(validate_group_slug("UPPER").is_err());
-        assert!(validate_group_slug("has space").is_err());
-        assert!(validate_group_slug("has.dot").is_err());
-        assert!(validate_group_slug(&"a".repeat(65)).is_err());
-        assert!(validate_group_slug("default").is_err());
-    }
-
-    #[test]
-    fn validate_group_slug_rejects_no_headless() {
-        assert!(validate_group_slug("no-headless").is_err());
-    }
-
-    #[test]
-    fn ensure_predefined_groups_seeds_no_headless() {
-        let mut ms = ModSyncConfig::default();
-        assert!(!ms.groups.contains_key("no-headless"));
-        assert!(ms.ensure_predefined_groups());
-        assert!(ms.groups.contains_key("no-headless"));
-        let nh = &ms.groups["no-headless"];
-        assert_eq!(nh.display_name, "No Headless");
-        assert!(nh.members.is_empty());
-        assert!(nh.exclude_headless);
-        assert_eq!(nh.enabled, None);
-        assert_eq!(nh.enforced, None);
-        assert_eq!(nh.silent, None);
-        assert_eq!(nh.restart_required, None);
-    }
-
-    #[test]
-    fn ensure_predefined_groups_preserves_existing_no_headless() {
-        let mut ms = ModSyncConfig::default();
-        ms.groups.insert(
-            "no-headless".to_string(),
-            ModSyncGroup {
-                display_name: "No Headless".to_string(),
-                members: vec![100, 200],
-                enabled: Some(false),
-                enforced: None,
-                silent: None,
-                restart_required: None,
-                exclude_headless: true,
-            },
-        );
-        assert!(!ms.ensure_predefined_groups());
-        assert_eq!(ms.groups["no-headless"].members, vec![100, 200]);
-        assert_eq!(ms.groups["no-headless"].enabled, Some(false));
-    }
-
-    #[test]
-    fn ensure_predefined_groups_forces_exclude_headless_true() {
-        let mut ms = ModSyncConfig::default();
-        ms.groups.insert(
-            "no-headless".to_string(),
-            ModSyncGroup {
-                display_name: "No Headless".to_string(),
-                members: vec![100],
-                enabled: None,
-                enforced: None,
-                silent: None,
-                restart_required: None,
-                exclude_headless: false, // hand-edited to false
-            },
-        );
-        assert!(ms.ensure_predefined_groups());
-        assert!(ms.groups["no-headless"].exclude_headless);
-    }
-
-    #[test]
     fn on_exit_default_is_nothing() {
         let config: Config = toml::from_str("").expect("empty config");
         assert_eq!(config.on_exit, OnExit::Nothing);
@@ -2400,95 +1914,6 @@ silent = true
     }
 
     #[test]
-    fn modsync_migrate_strips_dotdot_prefix() {
-        let mut ms = ModSyncConfig {
-            extra_sync_paths: vec!["../BepInEx/plugins".to_string()],
-            exclusions: vec!["../BepInEx/plugins/spt".to_string()],
-            ..ModSyncConfig::default()
-        };
-        assert!(ms.migrate_deprecated_paths());
-        assert_eq!(ms.extra_sync_paths, vec!["BepInEx/plugins"]);
-        assert_eq!(ms.exclusions, vec!["BepInEx/plugins/spt"]);
-    }
-
-    #[test]
-    fn modsync_migrate_converts_user_to_spt_user() {
-        let mut ms = ModSyncConfig {
-            extra_sync_paths: vec!["user/mods".to_string()],
-            ..ModSyncConfig::default()
-        };
-        assert!(ms.migrate_deprecated_paths());
-        assert_eq!(ms.extra_sync_paths, vec!["SPT/user/mods"]);
-    }
-
-    #[test]
-    fn modsync_migrate_converts_bare_user() {
-        let mut ms = ModSyncConfig {
-            exclusions: vec!["user".to_string()],
-            ..ModSyncConfig::default()
-        };
-        assert!(ms.migrate_deprecated_paths());
-        assert_eq!(ms.exclusions, vec!["SPT/user"]);
-    }
-
-    #[test]
-    fn modsync_migrate_leaves_gameroot_relative_unchanged() {
-        let mut ms = ModSyncConfig {
-            extra_sync_paths: vec!["BepInEx/plugins".to_string()],
-            exclusions: vec!["**/*.nosync".to_string(), "SPT/user/mods".to_string()],
-            ..ModSyncConfig::default()
-        };
-        assert!(!ms.migrate_deprecated_paths());
-        assert_eq!(ms.extra_sync_paths, vec!["BepInEx/plugins"]);
-        assert_eq!(ms.exclusions, vec!["**/*.nosync", "SPT/user/mods"]);
-    }
-
-    #[test]
-    fn modsync_migrate_mixed_paths() {
-        let mut ms = ModSyncConfig {
-            extra_sync_paths: vec![
-                "../BepInEx/config".to_string(),
-                "BepInEx/plugins".to_string(),
-                "user/mods".to_string(),
-            ],
-            ..ModSyncConfig::default()
-        };
-        assert!(ms.migrate_deprecated_paths());
-        assert_eq!(
-            ms.extra_sync_paths,
-            vec!["BepInEx/config", "BepInEx/plugins", "SPT/user/mods"]
-        );
-    }
-
-    #[test]
-    fn config_load_auto_migrates_modsync_paths() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let config_path = dir.path().join("quartermaster.toml");
-
-        let toml_content = r#"
-[modsync]
-extra_sync_paths = ["../BepInEx/config", "user/mods"]
-exclusions = ["../BepInEx/plugins/spt"]
-"#;
-        std::fs::write(&config_path, toml_content).expect("write");
-
-        let config = Config::load(&config_path).expect("should load and migrate");
-        let ms = config.modsync.unwrap();
-        assert_eq!(ms.extra_sync_paths, vec!["BepInEx/config", "SPT/user/mods"]);
-        assert_eq!(ms.exclusions, vec!["BepInEx/plugins/spt"]);
-
-        // Verify the file was updated on disk
-        let reloaded: Config =
-            toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-        let ms2 = reloaded.modsync.unwrap();
-        assert_eq!(
-            ms2.extra_sync_paths,
-            vec!["BepInEx/config", "SPT/user/mods"]
-        );
-        assert_eq!(ms2.exclusions, vec!["BepInEx/plugins/spt"]);
-    }
-
-    #[test]
     fn config_load_does_not_rewrite_when_no_migration_needed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let config_path = dir.path().join("quartermaster.toml");
@@ -2501,6 +1926,9 @@ extra_sync_paths = ["BepInEx/config"]
 display_name = "No Headless"
 members = []
 exclude_headless = true
+
+[convoy]
+enabled = true
 "#;
         std::fs::write(&config_path, toml_content).expect("write");
         let mtime_before = std::fs::metadata(&config_path).unwrap().modified().unwrap();
@@ -2574,108 +2002,6 @@ format = "text"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.logging.console.format, ConsoleFormat::Full);
-    }
-
-    #[test]
-    fn migrate_overrides_no_overrides_returns_false() {
-        let mut ms = ModSyncConfig::default();
-        assert!(!ms.migrate_overrides_to_groups());
-    }
-
-    #[test]
-    fn migrate_overrides_standalone_override_creates_group() {
-        let mut ms = ModSyncConfig::default();
-        ms.overrides.insert(
-            "100".to_string(),
-            ModSyncOverride {
-                enforced: Some(false),
-                silent: Some(true),
-                restart_required: None,
-                enabled: None,
-            },
-        );
-
-        assert!(ms.migrate_overrides_to_groups());
-        assert!(ms.overrides.is_empty());
-        assert_eq!(ms.groups.len(), 1);
-
-        let group = &ms.groups["override-100"];
-        assert_eq!(group.display_name, "Mod #100");
-        assert_eq!(group.members, vec![100]);
-        assert_eq!(group.enforced, Some(false));
-        assert_eq!(group.silent, Some(true));
-        assert_eq!(group.restart_required, None);
-        assert_eq!(group.enabled, None);
-    }
-
-    #[test]
-    fn migrate_overrides_single_member_group_merges() {
-        let mut ms = ModSyncConfig::default();
-        ms.groups.insert(
-            "grp".to_string(),
-            ModSyncGroup {
-                display_name: "Group".to_string(),
-                members: vec![100],
-                enabled: None,
-                enforced: Some(true),
-                silent: None,
-                restart_required: None,
-                exclude_headless: false,
-            },
-        );
-        ms.overrides.insert(
-            "100".to_string(),
-            ModSyncOverride {
-                enforced: Some(false),
-                silent: None,
-                restart_required: None,
-                enabled: None,
-            },
-        );
-
-        assert!(ms.migrate_overrides_to_groups());
-        assert!(ms.overrides.is_empty());
-        assert_eq!(ms.groups.len(), 1);
-        assert_eq!(ms.groups["grp"].enforced, Some(false));
-    }
-
-    #[test]
-    fn migrate_overrides_multi_member_group_splits() {
-        let mut ms = ModSyncConfig::default();
-        ms.groups.insert(
-            "grp".to_string(),
-            ModSyncGroup {
-                display_name: "Group".to_string(),
-                members: vec![100, 200],
-                enabled: None,
-                enforced: Some(true),
-                silent: None,
-                restart_required: None,
-                exclude_headless: false,
-            },
-        );
-        ms.overrides.insert(
-            "100".to_string(),
-            ModSyncOverride {
-                enforced: Some(false),
-                silent: None,
-                restart_required: None,
-                enabled: None,
-            },
-        );
-
-        assert!(ms.migrate_overrides_to_groups());
-        assert!(ms.overrides.is_empty());
-        assert_eq!(ms.groups.len(), 2);
-
-        // Original group keeps member 200 only
-        assert_eq!(ms.groups["grp"].members, vec![200]);
-        assert_eq!(ms.groups["grp"].enforced, Some(true));
-
-        // New group has member 100 with merged flags
-        let new_grp = &ms.groups["override-100"];
-        assert_eq!(new_grp.members, vec![100]);
-        assert_eq!(new_grp.enforced, Some(false)); // override wins
     }
 
     #[test]

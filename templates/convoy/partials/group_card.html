@@ -1,0 +1,82 @@
+<fieldset data-group-index="{{ index }}" {% if predefined != "" %}data-predefined="{{ predefined }}"{% endif %}
+          style="margin-bottom: 1rem; padding: 1rem; border: 1px solid {% if predefined == "default" %}var(--border){% else %}var(--border){% endif %}; border-radius: 4px; {% if predefined == "default" %}border-style: dashed;{% endif %}">
+    {% if predefined == "default" %}
+    <legend style="font-weight: bold; color: var(--text-muted)">{{ name }} (ungrouped)</legend>
+    <p class="text-muted text-sm">Mods not assigned to any group. Cannot be edited directly.</p>
+    <div style="margin-top: 0.5rem">
+        <strong>Members:</strong>
+        <div data-members style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem">
+            {% for member in members %}
+            <span class="badge {% if member.has_client_files %}badge-success{% else %}badge-secondary{% endif %}"
+                  data-mod-id="{{ member.id }}"
+                  style="display: inline-block; padding: 0.2rem 0.5rem; font-size: 0.8rem">
+                {{ member.name }}
+            </span>
+            {% endfor %}
+            {% if members.is_empty() %}
+            <span class="text-muted text-sm">All mods are assigned to groups</span>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <legend>
+        <input type="text" data-field="name" value="{{ name }}"
+               placeholder="Group name" style="font-weight: bold; min-width: 200px"
+               {% if predefined != "" %}readonly{% endif %}>
+        <span style="margin-left: 0.5rem; font-weight: normal; color: var(--text-muted)">
+            (<code data-field="slug">{{ slug }}</code>)
+        </span>
+    </legend>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1rem">
+        <div>
+            <label for="tier-{{ index }}" style="display: block; margin-bottom: 0.25rem; font-weight: 500">Tier</label>
+            <select id="tier-{{ index }}" data-field="tier" style="width: 100%">
+                <option value="required" {% if tier == "required" %}selected{% endif %}>Required</option>
+                <option value="optional" {% if tier == "optional" %}selected{% endif %}>Optional</option>
+            </select>
+        </div>
+
+        <div>
+            <label style="display: flex; align-items: center; cursor: pointer; margin-top: 1.5rem">
+                <input type="checkbox" data-field="exclude_headless"
+                       {% if exclude_headless %}checked{% endif %}
+                       style="margin-right: 0.5rem">
+                Exclude from headless
+            </label>
+        </div>
+    </div>
+
+    <div style="margin-bottom: 1rem">
+        <strong>Members:</strong>
+        <div data-members style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem">
+            {% for member in members %}
+            <span class="badge {% if member.has_client_files %}badge-success{% else %}badge-secondary{% endif %}"
+                  data-mod-id="{{ member.id }}"
+                  style="display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.5rem; font-size: 0.8rem">
+                {{ member.name }}
+                <button type="button" data-remove-member
+                        style="background:none;border:none;color:inherit;cursor:pointer;padding:0;font-size:1rem;line-height:1"
+                        title="Remove">×</button>
+            </span>
+            {% endfor %}
+            {% if members.is_empty() %}
+            <span class="text-muted text-sm">No mods in this group</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div style="display: flex; justify-content: space-between; align-items: center">
+        <div>
+            <label for="add-mod-{{ index }}" style="margin-right: 0.5rem; font-weight: 500">Add mod:</label>
+            <select id="add-mod-{{ index }}" data-add-mod style="min-width: 200px">
+                <option value="">-- Select --</option>
+                {% for m in available_mods %}
+                <option value="{{ m.id }}" data-mod-name="{{ m.name }}">{{ m.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="button" data-remove-group class="btn btn-sm btn-danger">Delete Group</button>
+    </div>
+    {% endif %}
+</fieldset>

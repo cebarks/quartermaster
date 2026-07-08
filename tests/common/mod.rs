@@ -184,7 +184,6 @@ impl TestAppBuilder {
             fika_client: None,
             fika_config_lock: parking_lot::Mutex::new(()),
             fika_items: Arc::new(parking_lot::Mutex::new(None)),
-            modsync_installed: std::sync::atomic::AtomicBool::new(false),
             svm: None,
             svm_installed: std::sync::atomic::AtomicBool::new(false),
             server_transition: Arc::new(parking_lot::Mutex::new(None)),
@@ -198,6 +197,11 @@ impl TestAppBuilder {
             ),
             integrity_cache: spt_quartermaster::web::integrity_cache::IntegrityCache::new(300),
             log_level_counts,
+            catalog_cache: spt_quartermaster::convoy::catalog::CatalogCache::new(
+                spt_dir.clone(),
+                db_arc.clone(),
+                config_arc.clone(),
+            ),
             config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(&spt_dir),
         });
 

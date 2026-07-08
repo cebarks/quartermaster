@@ -16,6 +16,17 @@ pub struct InstalledMod {
     pub disabled: bool,
     pub source: String,
     pub source_url: Option<String>,
+    pub group_id: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // SQL row model — fields populated by query results
+pub struct ModGroup {
+    pub id: i64,
+    pub name: String,
+    pub slug: String,
+    pub tier: String,
+    pub exclude_headless: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -92,7 +103,7 @@ impl Database {
     pub fn get_mod(&self, id: i64) -> rusqlite::Result<Option<InstalledMod>> {
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
                  FROM installed_mods WHERE id = ?1",
                 params![id],
                 row_to_installed_mod,
@@ -103,7 +114,7 @@ impl Database {
     pub fn get_mod_by_forge_id(&self, forge_mod_id: i64) -> rusqlite::Result<Option<InstalledMod>> {
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
                  FROM installed_mods WHERE forge_mod_id = ?1",
                 params![forge_mod_id],
                 row_to_installed_mod,
@@ -116,7 +127,7 @@ impl Database {
         let by_name = self
             .conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
                  FROM installed_mods WHERE LOWER(name) = LOWER(?1)",
                 params![query],
                 row_to_installed_mod,
@@ -127,7 +138,7 @@ impl Database {
         }
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
                  FROM installed_mods WHERE LOWER(slug) = LOWER(?1)",
                 params![query],
                 row_to_installed_mod,
@@ -137,7 +148,7 @@ impl Database {
 
     pub fn list_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
              FROM installed_mods ORDER BY name",
         )?;
         let rows = stmt.query_map([], row_to_installed_mod)?;
@@ -147,7 +158,7 @@ impl Database {
     pub fn list_mods_with_file_counts(&self) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
-                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url,
+                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url, m.group_id,
                     COUNT(f.id) as file_count,
                     COALESCE(SUM(f.file_size), 0) as total_size
              FROM installed_mods m
@@ -157,8 +168,8 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| {
             let m = row_to_installed_mod(row)?;
-            let count: i64 = row.get(11)?;
-            let size: i64 = row.get(12)?;
+            let count: i64 = row.get(12)?;
+            let size: i64 = row.get(13)?;
             Ok((m, count as usize, size))
         })?;
         rows.collect()
@@ -170,7 +181,7 @@ impl Database {
     ) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
         let mut sql = String::from(
             "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
-                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url,
+                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url, m.group_id,
                     COUNT(f.id) as file_count,
                     COALESCE(SUM(f.file_size), 0) as total_size
              FROM installed_mods m
@@ -223,8 +234,8 @@ impl Database {
             param_values.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_ref.as_slice(), |row| {
             let m = row_to_installed_mod(row)?;
-            let count: i64 = row.get(11)?;
-            let size: i64 = row.get(12)?;
+            let count: i64 = row.get(12)?;
+            let size: i64 = row.get(13)?;
             Ok((m, count as usize, size))
         })?;
         rows.collect()
@@ -311,6 +322,40 @@ impl Database {
         rows.collect()
     }
 
+    pub fn get_files_for_mod_ids(&self, mod_ids: &[i64]) -> rusqlite::Result<Vec<InstalledFile>> {
+        if mod_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: String = mod_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             FROM installed_files f
+             JOIN installed_mods m ON f.mod_id = m.id
+             WHERE m.id IN ({placeholders})
+             AND m.disabled = 0
+             UNION ALL
+             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             FROM installed_files f
+             JOIN installed_addons a ON f.addon_id = a.id
+             JOIN installed_mods m ON a.parent_mod_id = m.id
+             WHERE m.id IN ({placeholders})
+             AND a.disabled = 0 AND m.disabled = 0
+             ORDER BY file_path"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::types::ToSql> = mod_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        let params_copy: Vec<&dyn rusqlite::types::ToSql> = mod_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        params.extend(params_copy);
+        let rows = stmt.query_map(params.as_slice(), row_to_installed_file)?;
+        rows.collect()
+    }
+
     pub fn get_all_enabled_mod_files(&self) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
             "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
@@ -374,6 +419,15 @@ impl Database {
         Ok(count as usize)
     }
 
+    pub fn is_forge_mod_installed(&self, forge_id: i64) -> rusqlite::Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM installed_mods WHERE forge_mod_id = ?1 AND disabled = 0",
+            params![forge_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     // ── Disable/Enable ─────────────────────────────────────────────────
 
     pub fn set_mod_disabled(&self, id: i64, disabled: bool) -> rusqlite::Result<usize> {
@@ -388,25 +442,6 @@ impl Database {
         self.conn.execute(
             "UPDATE installed_files SET file_path = ?1 WHERE id = ?2",
             params![new_path, file_id],
-        )
-    }
-
-    /// Batch-update file paths for a mod, replacing `old_prefix` with `new_prefix`.
-    /// Only updates paths that start with `old_prefix/`. Returns the number of rows changed.
-    /// Uses a `/` boundary to prevent `SAIN` from matching `SAIN-Preset`.
-    pub fn reprefix_mod_files(
-        &self,
-        mod_id: i64,
-        old_prefix: &str,
-        new_prefix: &str,
-    ) -> rusqlite::Result<usize> {
-        let old_prefix_len = old_prefix.len() as i64;
-        let prefix_with_slash = format!("{old_prefix}/");
-        self.conn.execute(
-            "UPDATE installed_files
-             SET file_path = ?1 || substr(file_path, ?2 + 1)
-             WHERE mod_id = ?3 AND substr(file_path, 1, ?2 + 1) = ?4",
-            params![new_prefix, old_prefix_len, mod_id, prefix_with_slash],
         )
     }
 
@@ -514,6 +549,164 @@ impl Database {
         self.conn
             .execute("DELETE FROM pending_updates WHERE id = ?1", params![id])
     }
+
+    // ── Convoy Groups ─────────────────────────────────────────────────
+
+    #[allow(dead_code)]
+    pub fn list_groups(&self) -> rusqlite::Result<Vec<ModGroup>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, slug, tier, exclude_headless FROM mod_groups ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ModGroup {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                slug: row.get(2)?,
+                tier: row.get(3)?,
+                exclude_headless: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn get_group(&self, id: i64) -> rusqlite::Result<Option<ModGroup>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, slug, tier, exclude_headless FROM mod_groups WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(ModGroup {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        slug: row.get(2)?,
+                        tier: row.get(3)?,
+                        exclude_headless: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    #[allow(dead_code)]
+    pub fn get_group_by_slug(&self, slug: &str) -> rusqlite::Result<Option<ModGroup>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, slug, tier, exclude_headless FROM mod_groups WHERE slug = ?1",
+                params![slug],
+                |row| {
+                    Ok(ModGroup {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        slug: row.get(2)?,
+                        tier: row.get(3)?,
+                        exclude_headless: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    #[allow(dead_code)]
+    pub fn insert_group(
+        &self,
+        name: &str,
+        slug: &str,
+        tier: &str,
+        exclude_headless: bool,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO mod_groups (name, slug, tier, exclude_headless) VALUES (?1, ?2, ?3, ?4)",
+            params![name, slug, tier, exclude_headless as i64],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(dead_code)]
+    pub fn update_group(
+        &self,
+        id: i64,
+        name: &str,
+        slug: &str,
+        tier: &str,
+        exclude_headless: bool,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE mod_groups SET name = ?1, slug = ?2, tier = ?3, exclude_headless = ?4 WHERE id = ?5",
+            params![name, slug, tier, exclude_headless as i64, id],
+        )
+    }
+
+    /// Deletes a group. Explicitly NULLs group_id on all member mods first
+    /// because ALTER TABLE ADD COLUMN doesn't enforce FK constraints in SQLite.
+    #[allow(dead_code)]
+    pub fn delete_group(&self, id: i64) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE installed_mods SET group_id = NULL WHERE group_id = ?1",
+            params![id],
+        )?;
+        self.conn
+            .execute("DELETE FROM mod_groups WHERE id = ?1", params![id])
+    }
+
+    #[allow(dead_code)]
+    pub fn set_mod_group(&self, mod_id: i64, group_id: Option<i64>) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE installed_mods SET group_id = ?1 WHERE id = ?2",
+            params![group_id, mod_id],
+        )
+    }
+
+    #[allow(dead_code)]
+    pub fn get_mods_in_group(&self, group_id: i64) -> rusqlite::Result<Vec<InstalledMod>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+             FROM installed_mods WHERE group_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt.query_map(params![group_id], row_to_installed_mod)?;
+        rows.collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn get_ungrouped_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+             FROM installed_mods WHERE group_id IS NULL ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], row_to_installed_mod)?;
+        rows.collect()
+    }
+
+    /// Atomically replace all groups and their memberships.
+    /// groups: Vec<(name, slug, tier, exclude_headless, Vec<mod_db_id>)>
+    pub fn save_groups_atomic(
+        &self,
+        groups: &[(String, String, String, bool, Vec<i64>)],
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        // Clear all groups
+        tx.execute("DELETE FROM mod_groups", [])?;
+
+        // Insert new groups and assign mods
+        for (name, slug, tier, exclude_headless, member_ids) in groups {
+            tx.execute(
+                "INSERT INTO mod_groups (name, slug, tier, exclude_headless) VALUES (?1, ?2, ?3, ?4)",
+                params![name, slug, tier, exclude_headless],
+            )?;
+            let group_id = tx.last_insert_rowid();
+
+            for mod_id in member_ids {
+                tx.execute(
+                    "UPDATE installed_mods SET group_id = ?1 WHERE id = ?2",
+                    params![group_id, mod_id],
+                )?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 /// A record tracking an in-progress async mod/addon update, used for crash recovery.
@@ -545,6 +738,7 @@ fn row_to_installed_mod(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledMo
         disabled: disabled_int != 0,
         source: row.get(9)?,
         source_url: row.get(10)?,
+        group_id: row.get(11)?,
     })
 }
 
@@ -800,78 +994,6 @@ mod tests {
         let results = db.list_mods_filtered(&filter).unwrap();
         assert_eq!(results[0].0.name, "alpha");
         assert_eq!(results[1].0.name, "Beta");
-    }
-
-    #[test]
-    fn reprefix_mod_files_updates_matching_paths() {
-        let db = Database::open_in_memory().unwrap();
-        let mod_id = db
-            .insert_mod(
-                Some(100),
-                Some(200),
-                "TestMod",
-                None,
-                "1.0.0",
-                "forge",
-                None,
-            )
-            .unwrap();
-        db.insert_file(mod_id, "BepInEx/plugins/TestMod/test.dll", None, Some(100))
-            .unwrap();
-        db.insert_file(
-            mod_id,
-            "BepInEx/plugins/TestMod/config.json",
-            None,
-            Some(50),
-        )
-        .unwrap();
-        db.insert_file(mod_id, "SPT/user/mods/TestMod/package.json", None, Some(30))
-            .unwrap();
-
-        let updated = db
-            .reprefix_mod_files(
-                mod_id,
-                "BepInEx/plugins/TestMod",
-                "BepInEx/plugins/quma-optional/TestMod",
-            )
-            .unwrap();
-
-        assert_eq!(updated, 2);
-        let files = db.get_files_for_mod(mod_id).unwrap();
-        let paths: Vec<&str> = files.iter().map(|f| f.file_path.as_str()).collect();
-        assert!(paths.contains(&"BepInEx/plugins/quma-optional/TestMod/test.dll"));
-        assert!(paths.contains(&"BepInEx/plugins/quma-optional/TestMod/config.json"));
-        assert!(paths.contains(&"SPT/user/mods/TestMod/package.json"));
-    }
-
-    #[test]
-    fn reprefix_mod_files_noop_when_no_match() {
-        let db = Database::open_in_memory().unwrap();
-        let mod_id = db
-            .insert_mod(
-                Some(100),
-                Some(200),
-                "TestMod",
-                None,
-                "1.0.0",
-                "forge",
-                None,
-            )
-            .unwrap();
-        db.insert_file(mod_id, "SPT/user/mods/TestMod/package.json", None, Some(30))
-            .unwrap();
-
-        let updated = db
-            .reprefix_mod_files(
-                mod_id,
-                "BepInEx/plugins/TestMod",
-                "BepInEx/plugins/quma-optional/TestMod",
-            )
-            .unwrap();
-
-        assert_eq!(updated, 0);
-        let files = db.get_files_for_mod(mod_id).unwrap();
-        assert_eq!(files[0].file_path, "SPT/user/mods/TestMod/package.json");
     }
 
     #[test]

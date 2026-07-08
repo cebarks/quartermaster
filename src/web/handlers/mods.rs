@@ -161,12 +161,6 @@ struct ModDetailTemplate {
     flash: Option<FlashMessage>,
     csrf_token: String,
     nav: NavContext,
-    has_client_files: bool,
-    sync_enforced: Option<bool>,
-    sync_silent: Option<bool>,
-    sync_restart_required: Option<bool>,
-    sync_enabled: Option<bool>,
-    modsync_managed: bool,
     config_files: Vec<crate::config_mgmt::ConfigFile>,
 }
 
@@ -489,34 +483,30 @@ pub async fn list_mods(
     let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
 
-    let (all_unfiltered, filtered_entries, addon_counts, all_files) = web::block(move || {
-        let db = db.lock();
-        let all = db.list_mods_with_file_counts()?;
-        let filtered = db.list_mods_filtered(&filter)?;
-        let addon_counts = db.count_addons_by_mod()?;
-        let files = db.get_all_tracked_files()?;
-        Ok::<_, anyhow::Error>((all, filtered, addon_counts, files))
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    let (all_unfiltered, filtered_entries, addon_counts, all_files, excluded_mods) =
+        web::block(move || {
+            let db = db.lock();
+            let all = db.list_mods_with_file_counts()?;
+            let filtered = db.list_mods_filtered(&filter)?;
+            let addon_counts = db.count_addons_by_mod()?;
+            let files = db.get_all_tracked_files()?;
+            // build set of mod IDs excluded from headless
+            let excluded: std::collections::HashSet<i64> = all
+                .iter()
+                .filter(|(m, _, _)| crate::ops::is_excluded_from_headless(&db, m.id))
+                .filter_map(|(m, _, _)| m.forge_mod_id)
+                .collect();
+            Ok::<_, anyhow::Error>((all, filtered, addon_counts, files, excluded))
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
 
     // ponytail: build set of mod IDs with client files
     let client_file_mods: std::collections::HashSet<i64> = all_files
         .into_iter()
         .filter(|f| crate::headless_sync::is_client_file(&f.file_path))
         .filter_map(|f| f.mod_id)
-        .collect();
-
-    // ponytail: build set of forge mod IDs excluded from headless
-    let config = state.config_cloned();
-    let excluded_mods: std::collections::HashSet<i64> = all_unfiltered
-        .iter()
-        .filter(|(m, _, _)| {
-            m.forge_mod_id
-                .is_some_and(|id| crate::ops::is_excluded_from_headless(&config, id))
-        })
-        .filter_map(|(m, _, _)| m.forge_mod_id)
         .collect();
 
     let all_entries: Vec<ModListEntry> = all_unfiltered
@@ -590,12 +580,7 @@ pub async fn mod_detail(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let has_client_files = archive_files
-        .iter()
-        .any(|f| f.file_path.starts_with("BepInEx/"));
-
     let nav = NavContext::from_state(&state);
-    let modsync_managed = nav.modsync_installed && nav.modsync_enabled;
     let can_disable = user.can("mods.disable");
     let can_remove = user.can("mods.remove");
 
@@ -637,12 +622,6 @@ pub async fn mod_detail(
         flash,
         csrf_token,
         nav,
-        has_client_files,
-        sync_enforced: None,
-        sync_silent: None,
-        sync_restart_required: None,
-        sync_enabled: None,
-        modsync_managed,
         config_files,
     };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
@@ -1129,7 +1108,7 @@ async fn install_mod_from_url(
                 tracing::info!(url = url_owned, "mod installed from URL successfully");
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
-                state_clone.regenerate_modsync().await;
+                state_clone.regenerate_convoy();
                 state_clone.clear_fika_items();
                 tasks.complete(task_id, "Mod installed from URL".to_string());
             }
@@ -1392,8 +1371,8 @@ pub async fn install_mod(
             // Record dependency edges
             crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
 
-            // Regenerate NarcoNet config if enabled
-            state_clone.regenerate_modsync().await;
+            // Regenerate convoy catalog if enabled
+            state_clone.regenerate_convoy();
 
             Ok::<_, anyhow::Error>(())
         }
@@ -1405,11 +1384,6 @@ pub async fn install_mod(
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
-                // Re-check NarcoNet detection (installing NarcoNet itself changes this)
-                state_clone.modsync_installed.store(
-                    crate::config::is_modsync_installed(&spt_dir),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
                 if mod_id == crate::svm::SVM_FORGE_ID {
                     state_clone
                         .svm_installed
@@ -1573,8 +1547,8 @@ pub async fn update_mod(
 
             crate::ops::record_dep_edges(&db, mod_db_id, &dep_db_ids);
 
-            // Regenerate NarcoNet config if enabled
-            state_clone.regenerate_modsync().await;
+            // Regenerate convoy catalog if enabled
+            state_clone.regenerate_convoy();
 
             Ok::<_, anyhow::Error>(())
         }
@@ -1659,12 +1633,8 @@ pub async fn remove_mod(
     state.update_cache.invalidate();
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
+    state.regenerate_convoy();
     state.clear_fika_items();
-    // Re-check NarcoNet detection (removing NarcoNet itself changes this)
-    state.modsync_installed.store(
-        crate::config::is_modsync_installed(&state.spt_dir),
-        std::sync::atomic::Ordering::Relaxed,
-    );
     if installed.forge_mod_id == Some(crate::svm::SVM_FORGE_ID) {
         state
             .svm_installed
@@ -1721,6 +1691,7 @@ pub async fn toggle_disable(
 
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
+    state.regenerate_convoy();
     state.clear_fika_items();
 
     if was_disabled {
@@ -1894,17 +1865,12 @@ pub async fn update_all_mods(
             }
         }
 
-        // Regenerate NarcoNet config after all updates
-        state_clone.regenerate_modsync().await;
+        // Regenerate convoy catalog after all updates
+        state_clone.regenerate_convoy();
 
         update_cache.invalidate();
         mod_zip_cache.invalidate();
         integrity_cache.invalidate();
-        // Re-check NarcoNet detection (updating mods might affect NarcoNet state)
-        state_clone.modsync_installed.store(
-            crate::config::is_modsync_installed(&spt_dir),
-            std::sync::atomic::Ordering::Relaxed,
-        );
 
         if success_count == total {
             state_clone.clear_fika_items();
@@ -1938,13 +1904,19 @@ pub async fn list_body_partial(
     let sd = sort_dir_str(filter.sort_dir).to_string();
     let db = state.db.clone();
 
-    let (filtered_entries, addon_counts, all_files, all_mods) = web::block(move || {
+    let (filtered_entries, addon_counts, all_files, excluded_mods) = web::block(move || {
         let db = db.lock();
         let filtered = db.list_mods_filtered(&filter)?;
         let addon_counts = db.count_addons_by_mod()?;
         let files = db.get_all_tracked_files()?;
         let mods = db.list_mods_with_file_counts()?;
-        Ok::<_, anyhow::Error>((filtered, addon_counts, files, mods))
+        // build set of mod IDs excluded from headless
+        let excluded: std::collections::HashSet<i64> = mods
+            .iter()
+            .filter(|(m, _, _)| crate::ops::is_excluded_from_headless(&db, m.id))
+            .filter_map(|(m, _, _)| m.forge_mod_id)
+            .collect();
+        Ok::<_, anyhow::Error>((filtered, addon_counts, files, excluded))
     })
     .await
     .map_err(WebError::from)?
@@ -1954,16 +1926,6 @@ pub async fn list_body_partial(
         .into_iter()
         .filter(|f| crate::headless_sync::is_client_file(&f.file_path))
         .filter_map(|f| f.mod_id)
-        .collect();
-
-    let config = state.config_cloned();
-    let excluded_mods: std::collections::HashSet<i64> = all_mods
-        .iter()
-        .filter(|(m, _, _)| {
-            m.forge_mod_id
-                .is_some_and(|id| crate::ops::is_excluded_from_headless(&config, id))
-        })
-        .filter_map(|(m, _, _)| m.forge_mod_id)
         .collect();
 
     let mods: Vec<ModListEntry> = filtered_entries
@@ -2449,6 +2411,7 @@ pub async fn install_addon(
                 tasks.complete(task_id, "Addon installed successfully".to_string());
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
+                state_clone.regenerate_convoy();
             }
             Err(e) => {
                 tracing::error!(task_id, err = %e, "addon install failed");
@@ -2633,6 +2596,7 @@ pub async fn update_addon(
                 tasks.complete(task_id, "Addon updated successfully".to_string());
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
+                state_clone.regenerate_convoy();
             }
             Err(e) => {
                 tracing::error!(task_id, addon = %addon_name, parent_mod_id, err = %e, "addon update failed");
@@ -2689,7 +2653,7 @@ pub async fn remove_addon(
 
     let result = web::block(move || {
         let db = db2.lock();
-        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon_db_id, false)
+        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon_db_id)
     })
     .await
     .map_err(WebError::from)?;
@@ -2699,6 +2663,7 @@ pub async fn remove_addon(
             set_flash(&session, "Addon removed successfully", FlashType::Success);
             state.mod_zip_cache.invalidate();
             state.integrity_cache.invalidate();
+            state.regenerate_convoy();
             state.clear_fika_items();
         }
         Err(e) => {
@@ -2783,6 +2748,7 @@ pub async fn toggle_addon_disable(
             set_flash(&session, msg, FlashType::Success);
             state.mod_zip_cache.invalidate();
             state.integrity_cache.invalidate();
+            state.regenerate_convoy();
             state.clear_fika_items();
         }
         Err(e) => {

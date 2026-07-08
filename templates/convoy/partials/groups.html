@@ -5,7 +5,7 @@
         <h2 style="margin: 0">Mod Groups</h2>
         <div style="display: flex; gap: 0.5rem">
             <button type="button" id="add-group-btn" class="btn btn-sm btn-outline"
-                    hx-get="/quma/api/modsync/groups/new?index={{ next_index }}"
+                    hx-get="/quma/api/convoy/groups/new?index={{ next_index }}"
                     hx-target="#groups-container"
                     hx-swap="beforeend">
                 + Add Group
@@ -15,7 +15,7 @@
     </div>
 
     <p class="text-muted text-sm" style="margin-bottom: 1rem">
-        Groups let you apply shared settings to sets of mods. Group settings override globals; per-mod overrides still win.
+        Groups organize mods by tier and headless exclusion. Required groups are always downloaded; optional groups let clients choose.
     </p>
 
     <div id="groups-container">
@@ -30,20 +30,16 @@
     var form = document.getElementById('groups-form');
     if (!form) return;
 
-    // ── Serialize all group cards to JSON ──────────────────────────
     function serializeGroups() {
         var cards = form.querySelectorAll('fieldset[data-group-index]:not([data-predefined="default"])');
         var groups = [];
         cards.forEach(function(card) {
-            var nameInput = card.querySelector('[data-field="display_name"]');
+            var nameInput = card.querySelector('[data-field="name"]');
             var slugSpan = card.querySelector('[data-field="slug"]');
             var group = {
-                display_name: nameInput ? nameInput.value.trim() : '',
+                name: nameInput ? nameInput.value.trim() : '',
                 slug: slugSpan ? slugSpan.textContent.trim() : '',
-                enabled: card.querySelector('[data-field="enabled"]').value,
-                enforced: card.querySelector('[data-field="enforced"]').value,
-                silent: card.querySelector('[data-field="silent"]').value,
-                restart_required: card.querySelector('[data-field="restart_required"]').value,
+                tier: card.querySelector('[data-field="tier"]').value,
                 exclude_headless: card.querySelector('[data-field="exclude_headless"]').checked,
                 members: []
             };
@@ -55,7 +51,6 @@
         return groups;
     }
 
-    // ── Auto-generate slug from display name ──────────────────────
     function slugify(name) {
         return name.toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
@@ -64,7 +59,6 @@
             .replace(/-+$/, '');
     }
 
-    // ── Save button ───────────────────────────────────────────────
     var saveBtn = document.getElementById('save-groups-btn');
     if (saveBtn) {
         saveBtn.addEventListener('click', function() {
@@ -73,7 +67,7 @@
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving...';
 
-            fetch('/quma/modsync/groups', {
+            fetch('/quma/convoy/groups', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ csrf_token: csrf, groups: groups })
@@ -96,17 +90,13 @@
         });
     }
 
-    // ── Event delegation on the form ──────────────────────────────
     form.addEventListener('click', function(e) {
-        // Handle remove-member badge clicks
         var removeBtn = e.target.closest('[data-remove-member]');
         if (removeBtn) {
             var badge = removeBtn.closest('[data-mod-id]');
             if (badge) {
                 var modId = badge.getAttribute('data-mod-id');
-                var modName = badge.textContent.replace(/×/g, '').trim();
                 badge.remove();
-                // Un-hide the mod in this card's and all cards' add-mod dropdowns
                 form.querySelectorAll('[data-add-mod] option[value="' + modId + '"]').forEach(function(opt) {
                     opt.disabled = false;
                     opt.style.display = '';
@@ -115,12 +105,10 @@
             return;
         }
 
-        // Handle remove-group button clicks
         var removeGroup = e.target.closest('[data-remove-group]');
         if (removeGroup) {
             var card = removeGroup.closest('fieldset[data-group-index]');
             if (card && !card.hasAttribute('data-predefined')) {
-                // Re-enable all member mods in other dropdowns
                 card.querySelectorAll('[data-members] [data-mod-id]').forEach(function(badge) {
                     var modId = badge.getAttribute('data-mod-id');
                     form.querySelectorAll('[data-add-mod] option[value="' + modId + '"]').forEach(function(opt) {
@@ -134,7 +122,6 @@
         }
     });
 
-    // Handle add-mod dropdown changes
     form.addEventListener('change', function(e) {
         var dropdown = e.target.closest('[data-add-mod]');
         if (!dropdown) return;
@@ -144,7 +131,6 @@
         var opt = dropdown.querySelector('option[value="' + val + '"]');
         var modName = opt ? opt.getAttribute('data-mod-name') : ('Mod #' + val);
 
-        // Add badge to this card's members area
         var card = dropdown.closest('fieldset[data-group-index]');
         var members = card.querySelector('[data-members]');
         var badge = document.createElement('span');
@@ -161,13 +147,11 @@
         badge.appendChild(removeBtn);
         members.appendChild(badge);
 
-        // Hide this mod from ALL cards' dropdowns (a mod can only be in one group)
         form.querySelectorAll('[data-add-mod] option[value="' + val + '"]').forEach(function(opt) {
             opt.disabled = true;
             opt.style.display = 'none';
         });
 
-        // Remove stale badge from the virtual default card
         var defaultCard = form.querySelector('[data-predefined="default"]');
         if (defaultCard) {
             var staleBadge = defaultCard.querySelector('[data-mod-id="' + val + '"]');
@@ -176,16 +160,14 @@
 
         dropdown.value = '';
 
-        // Auto-slug from name input
-        var nameInput = card.querySelector('[data-field="display_name"]');
+        var nameInput = card.querySelector('[data-field="name"]');
         if (nameInput) {
             nameInput.dispatchEvent(new Event('input'));
         }
     });
 
-    // Auto-slug on name input
     form.addEventListener('input', function(e) {
-        if (e.target.getAttribute('data-field') !== 'display_name') return;
+        if (e.target.getAttribute('data-field') !== 'name') return;
         var card = e.target.closest('fieldset[data-group-index]');
         if (!card) return;
         var slugEl = card.querySelector('[data-field="slug"]');
@@ -194,7 +176,6 @@
         }
     });
 
-    // ── After HTMX swap: update add-group button index + hide assigned mods ──
     document.body.addEventListener('htmx:afterSwap', function(e) {
         if (e.target.id !== 'groups-container') return;
         updateNextIndex();
@@ -210,19 +191,17 @@
         });
         var addBtn = document.getElementById('add-group-btn');
         if (addBtn) {
-            var url = '/quma/api/modsync/groups/new?index=' + (maxIdx + 1);
+            var url = '/quma/api/convoy/groups/new?index=' + (maxIdx + 1);
             addBtn.setAttribute('hx-get', url);
             if (typeof htmx !== 'undefined') htmx.process(addBtn);
         }
     }
 
     function hideAssignedMods() {
-        // Collect mod IDs assigned to real groups (exclude virtual default card)
         var assigned = {};
         form.querySelectorAll('fieldset:not([data-predefined="default"]) [data-members] [data-mod-id]').forEach(function(badge) {
             assigned[badge.getAttribute('data-mod-id')] = true;
         });
-        // Hide assigned mods from all dropdowns
         form.querySelectorAll('[data-add-mod] option').forEach(function(opt) {
             if (opt.value && assigned[opt.value]) {
                 opt.disabled = true;
@@ -231,10 +210,8 @@
         });
     }
 
-    // Initial pass: hide assigned mods from dropdowns
     hideAssignedMods();
 
-    // ── Dirty-state guard on tab switch ──────────────────────────
     var initialSnapshot = JSON.stringify(serializeGroups());
 
     document.querySelector('.tabs').addEventListener('htmx:beforeRequest', function(evt) {

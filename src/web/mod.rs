@@ -87,7 +87,6 @@ pub struct ServerContext {
     pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<std::sync::atomic::AtomicBool>,
     pub fika_installed: bool,
-    pub modsync_installed: bool,
     pub log_level_counts: crate::logging::writer::LogLevelCounts,
 }
 
@@ -177,7 +176,17 @@ pub fn configure_app(
                 web::resource("/setup/mods.zip")
                     .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::setup::setup_mods_zip)),
-            );
+            )
+            .route("/convoy/catalog", web::get().to(handlers::convoy::catalog))
+            .route(
+                "/convoy/download",
+                web::post().to(handlers::convoy::download),
+            )
+            .route(
+                "/convoy/mod/{mod_id}/archive",
+                web::get().to(handlers::convoy::single_mod_archive),
+            )
+            .route("/convoy/report", web::post().to(handlers::convoy::report));
     } else {
         // Same routes without rate limiting (for tests)
         quma_scope = quma_scope
@@ -204,7 +213,17 @@ pub fn configure_app(
             .route(
                 "/setup/mods.zip",
                 web::get().to(handlers::setup::setup_mods_zip),
-            );
+            )
+            .route("/convoy/catalog", web::get().to(handlers::convoy::catalog))
+            .route(
+                "/convoy/download",
+                web::post().to(handlers::convoy::download),
+            )
+            .route(
+                "/convoy/mod/{mod_id}/archive",
+                web::get().to(handlers::convoy::single_mod_archive),
+            )
+            .route("/convoy/report", web::post().to(handlers::convoy::report));
     }
 
     // Build the API scope
@@ -388,26 +407,30 @@ pub fn configure_app(
             "/svm/edit/{section}",
             web::post().to(handlers::svm::save_section),
         )
-        // ModSync API routes
+        // Convoy API routes
         .route(
-            "/modsync/settings",
-            web::get().to(handlers::modsync::settings_partial),
+            "/convoy/groups",
+            web::get().to(handlers::convoy::groups_partial),
         )
         .route(
-            "/modsync/groups",
-            web::get().to(handlers::modsync::groups_partial),
+            "/convoy/groups/new",
+            web::get().to(handlers::convoy::new_group_card),
         )
         .route(
-            "/modsync/groups/new",
-            web::get().to(handlers::modsync::new_group_card),
+            "/convoy/mods",
+            web::get().to(handlers::convoy::mods_partial),
         )
         .route(
-            "/modsync/mods",
-            web::get().to(handlers::modsync::mods_partial),
+            "/convoy/preview",
+            web::get().to(handlers::convoy::preview_partial),
         )
         .route(
-            "/modsync/preview",
-            web::get().to(handlers::modsync::preview_partial),
+            "/convoy/status",
+            web::get().to(handlers::convoy::status_partial),
+        )
+        .route(
+            "/convoy/settings",
+            web::get().to(handlers::convoy::settings_partial),
         )
         .route(
             "/give-items/search",
@@ -548,14 +571,14 @@ pub fn configure_app(
         )
         .route("/mods", web::get().to(handlers::mods::list_mods))
         .route("/files", web::get().to(handlers::mods::file_tracking_page))
-        .route("/modsync", web::get().to(handlers::modsync::modsync_page))
+        .route("/convoy", web::get().to(handlers::convoy::convoy_page))
         .route(
-            "/modsync/settings",
-            web::post().to(handlers::modsync::save_settings),
+            "/convoy/groups",
+            web::post().to(handlers::convoy::save_groups),
         )
         .route(
-            "/modsync/groups",
-            web::post().to(handlers::modsync::save_groups),
+            "/convoy/settings",
+            web::post().to(handlers::convoy::save_settings),
         )
         .route("/svm", web::get().to(handlers::svm::manager_page))
         .route("/svm/view", web::get().to(handlers::svm::player_view))
@@ -840,7 +863,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         client_states,
         converging,
         fika_installed,
-        modsync_installed,
         log_level_counts,
     } = ctx;
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
@@ -871,20 +893,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
 
     // Remove orphaned queued archives (no matching pending operation)
     crate::queue::sweep_orphaned_archives(&spt_dir, &db_arc.lock());
-
-    // Regenerate NarcoNet config on startup to ensure consistency
-    if modsync_installed && config.modsync.is_some() {
-        if let Err(e) = crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db_arc.lock()) {
-            tracing::warn!(err = %e, "failed to regenerate NarcoNet config on startup");
-        }
-        if let Some(ref ms_config) = config.modsync {
-            if let Err(e) =
-                crate::modsync::ensure_all_mod_layouts(&spt_dir, ms_config, &db_arc.lock())
-            {
-                tracing::warn!(err = %e, "failed to reconcile mod layouts on startup");
-            }
-        }
-    }
 
     let svm =
         crate::svm::SvmManager::detect(&spt_dir).map(|mgr| Arc::new(parking_lot::RwLock::new(mgr)));
@@ -945,6 +953,12 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         None
     };
 
+    let catalog_cache = crate::convoy::catalog::CatalogCache::new(
+        spt_dir.clone(),
+        db_arc.clone(),
+        config_handle.clone(),
+    );
+
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
@@ -963,7 +977,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         client_states,
         converging,
         fika_installed,
-        modsync_installed: std::sync::atomic::AtomicBool::new(modsync_installed),
         svm,
         svm_installed: std::sync::atomic::AtomicBool::new(svm_installed_flag),
         config_mgmt,
@@ -975,11 +988,47 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         log_level_counts,
         fika_client,
         fika_config_lock: parking_lot::Mutex::new(()),
+        catalog_cache,
         fika_items: Arc::new(parking_lot::Mutex::new(None)),
     });
 
     // Pre-warm mod ZIP cache in background
     app_state.mod_zip_cache.invalidate();
+
+    // One-time modsync-to-convoy migration
+    {
+        let config = app_state.config.read();
+        let db = app_state.db.lock();
+        if let Err(e) =
+            crate::convoy::migrate::migrate_modsync_to_convoy(&config, &db, &app_state.spt_dir)
+        {
+            tracing::error!("failed to migrate modsync groups to convoy: {e}");
+        }
+    }
+
+    // Invalidate convoy catalog on startup if enabled
+    if app_state
+        .config
+        .read()
+        .convoy
+        .as_ref()
+        .is_some_and(|c| c.enabled)
+    {
+        app_state.catalog_cache.invalidate();
+    }
+
+    // Clean up old convoy sync data (30 day retention)
+    {
+        let db = app_state.db.lock();
+        match db.cleanup_old_sync_data(30) {
+            Ok((events, reports)) => {
+                if events > 0 || reports > 0 {
+                    tracing::info!(events, reports, "cleaned up old convoy sync data");
+                }
+            }
+            Err(e) => tracing::warn!(err = %e, "failed to clean up old convoy sync data"),
+        }
+    }
 
     let governor_conf = GovernorConfigBuilder::default()
         .seconds_per_request(12)

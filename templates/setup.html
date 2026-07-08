@@ -20,12 +20,8 @@
 {% if external_url_configured %}
 <div class="card" style="margin-bottom: 1.5rem">
     <h3>Step 2: Install Server Mods</h3>
-    {% if modsync_installed %}
-    <p>Download the mod archive and extract it into your SPT installation directory. This installs NarcoNet, which will automatically sync remaining client mods from the server.</p>
+    <p>Download the mod archive and extract it into your SPT installation directory.</p>
     <a href="/quma/setup/mods.zip" class="btn btn-sm">{% call icons::download() %}{% endcall %} Download Mods</a>
-    {% else %}
-    <p class="text-muted">NarcoNet is not installed on this server. Contact the server admin for mod installation instructions.</p>
-    {% endif %}
 </div>
 
 <div class="card" style="margin-bottom: 1.5rem">

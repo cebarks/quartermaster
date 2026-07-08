@@ -56,9 +56,6 @@ pub enum Command {
         /// Skip Fika installation
         #[arg(long)]
         no_fika: bool,
-        /// Skip NarcoNet installation
-        #[arg(long)]
-        no_modsync: bool,
         /// Set admin password non-interactively (min 8 chars)
         #[arg(long)]
         admin_password: Option<String>,

@@ -17,7 +17,6 @@
 - stop using container image for spt-server, just run it natively?
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
-- refactor mod group implementation to be its own system outside of narconet. narconet uses app-wide groups
 - build simpler, lighterweight container for headless, run spt server natively
 
 ## Headless Client
@@ -80,6 +79,7 @@
     - quests
     - items (scan for broken; remove; move)
 - MOTD
+- better formatting for SVM editor: section breakdown with header toggles, field name vs subtext, default value shown, download/upload preset, preset toggle
 - discord integration:
     - use discord member list to define SVM AI PMC Names
 

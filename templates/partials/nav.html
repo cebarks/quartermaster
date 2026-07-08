@@ -12,7 +12,7 @@
     {% endif %}
     {% if user.can("server.control") || user.can("server.logs") || user.can("server.metrics") || user.can("users.manage") || user.can("settings.manage") || user.can("items.give") %}
     <div class="nav-dropdown" id="admin-dropdown">
-        <button class="nav-dropdown-toggle{% if active == "logs" || active == "metrics" || active == "settings" || active == "admin" || active == "backups" || active == "modsync" || active == "svm" || active == "headless" || active == "give_items" %} active{% endif %}"
+        <button class="nav-dropdown-toggle{% if active == "logs" || active == "metrics" || active == "settings" || active == "admin" || active == "backups" || active == "convoy" || active == "svm" || active == "headless" || active == "give_items" %} active{% endif %}"
                 onclick="event.stopPropagation(); document.getElementById('admin-dropdown').classList.toggle('open')">
             {% call icons::shield() %}{% endcall %} Admin ▾
         </button>
@@ -32,8 +32,8 @@
             {% if user.can("settings.manage") %}
             <a href="/quma/admin/backups"{% if active == "backups" %} class="active"{% endif %}>Backups</a>
             {% endif %}
-            {% if nav.modsync_installed && user.can("settings.manage") %}
-            <a href="/quma/modsync"{% if active == "modsync" %} class="active"{% endif %}>NarcoNet</a>
+            {% if nav.convoy_enabled && user.can("convoy.manage") %}
+            <a href="/quma/convoy"{% if active == "convoy" %} class="active"{% endif %}>Convoy</a>
             {% endif %}
             {% if nav.svm_installed && user.can("settings.manage") %}
             <a href="/quma/svm"{% if active == "svm" %} class="active"{% endif %}>Server Config</a>

@@ -211,7 +211,7 @@ fn remove_single_addon(
 ) -> Result<()> {
     let file_count = ctx.db.get_files_for_addon(installed.id)?.len();
 
-    crate::ops::remove_addon_by_id(&ctx.db, &ctx.spt_dir, &ctx.config, installed.id, false)?;
+    crate::ops::remove_addon_by_id(&ctx.db, &ctx.spt_dir, &ctx.config, installed.id)?;
 
     if file_count > 0 {
         println!("  Deleted {} files for {}", file_count, installed.name);

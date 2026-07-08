@@ -188,22 +188,6 @@ impl Database {
             params![addon_id],
         )
     }
-
-    pub fn reprefix_addon_files(
-        &self,
-        addon_id: i64,
-        old_prefix: &str,
-        new_prefix: &str,
-    ) -> rusqlite::Result<usize> {
-        let old_prefix_len = old_prefix.len() as i64;
-        let prefix_with_slash = format!("{old_prefix}/");
-        self.conn.execute(
-            "UPDATE installed_files
-             SET file_path = ?1 || substr(file_path, ?2 + 1)
-             WHERE addon_id = ?3 AND substr(file_path, 1, ?2 + 1) = ?4",
-            params![new_prefix, old_prefix_len, addon_id, prefix_with_slash],
-        )
-    }
 }
 
 fn row_to_installed_addon(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledAddon> {

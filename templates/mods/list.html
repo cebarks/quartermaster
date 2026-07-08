@@ -32,7 +32,7 @@
         </span>
         <a href="https://forge.sp-tarkov.com" class="btn btn-sm btn-outline" target="_blank" rel="noopener">SPT Forge ↗</a>
     </div>
-    {% if !infrastructure.is_empty() || nav.modsync_installed %}
+    {% if !infrastructure.is_empty() %}
     <hr style="margin: 0.5rem 0">
     <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center">
         {% for m in &infrastructure %}
@@ -47,12 +47,6 @@
             {% endif %}
         </div>
         {% endfor %}
-        {% if nav.modsync_installed %}
-        <div style="display: flex; align-items: center; gap: 0.5rem">
-            <strong>NarcoNet</strong>
-            <span class="text-muted text-sm">installed</span>
-        </div>
-        {% endif %}
     </div>
     {% endif %}
 </div>

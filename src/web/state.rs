@@ -41,7 +41,6 @@ pub struct AppState {
     pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
-    pub modsync_installed: AtomicBool,
     pub svm: Option<Arc<parking_lot::RwLock<SvmManager>>>,
     pub svm_installed: AtomicBool,
     pub config_mgmt: ConfigManager,
@@ -55,6 +54,7 @@ pub struct AppState {
     pub fika_client: Option<Arc<crate::fika::client::FikaClient>>,
     #[allow(dead_code)] // ponytail: used in later tasks
     pub fika_config_lock: parking_lot::Mutex<()>,
+    pub catalog_cache: crate::convoy::catalog::CatalogCache,
     #[allow(clippy::type_complexity)]
     pub fika_items:
         Arc<parking_lot::Mutex<Option<Arc<HashMap<String, crate::fika::client::FikaItemInfo>>>>>,
@@ -104,63 +104,22 @@ impl AppState {
         *self.server_transition.lock() = transition.map(|s| s.to_string());
     }
 
-    pub fn is_modsync_installed(&self) -> bool {
-        self.modsync_installed
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
     pub fn is_svm_installed(&self) -> bool {
         self.svm_installed
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub async fn ensure_modsync_layout(&self) {
-        if !self.is_modsync_installed() {
-            return;
-        }
-        let db = self.db.clone();
-        let spt_dir = self.spt_dir.clone();
-        let config = self.config_cloned();
-        let result = actix_web::web::block(move || {
-            let db = db.lock();
-            if let Some(ref ms) = config.modsync {
-                crate::modsync::ensure_all_mod_layouts(&spt_dir, ms, &db)
-            } else {
-                Ok(0)
-            }
-        })
-        .await;
-        match result {
-            Ok(Ok(count)) if count > 0 => {
-                tracing::info!(count, "reconciled mod file layouts for NarcoNet groups");
-            }
-            Ok(Err(e)) => {
-                tracing::warn!(err = %e, "failed to ensure mod file layouts");
-            }
-            Err(e) => {
-                tracing::warn!(err = %e, "mod layout task failed");
-            }
-            _ => {}
-        }
-    }
-
-    pub async fn regenerate_modsync(&self) {
-        if !self.is_modsync_installed() {
-            return;
-        }
-        // Ensure file layout is correct before regenerating config
-        self.ensure_modsync_layout().await;
-
-        let db = self.db.clone();
-        let spt_dir = self.spt_dir.clone();
-        let config = self.config_cloned();
-        let result = actix_web::web::block(move || {
-            let db = db.lock();
-            crate::modsync::regenerate_if_enabled(&spt_dir, &config, &db)
-        })
-        .await;
-        if let Err(e) = result {
-            tracing::warn!(err = %e, "failed to regenerate NarcoNet config");
+    pub fn regenerate_convoy(&self) {
+        if self
+            .config
+            .read()
+            .convoy
+            .as_ref()
+            .is_some_and(|c| c.enabled)
+        {
+            self.catalog_cache.invalidate();
+            self.mod_zip_cache.invalidate();
+            crate::convoy::download::clear_convoy_cache(&self.spt_dir);
         }
     }
 
