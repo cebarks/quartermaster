@@ -1,7 +1,7 @@
 # Stage 1: Build wine-cachyos from source
 # ponytail: Hummingbird builder repos lack -devel packages; use full Fedora
 # for compilation (thrown away), Hummingbird only for runtime stage
-FROM fedora:latest AS builder
+FROM registry.fedoraproject.org/fedora:latest AS builder
 
 # Build dependencies — Fedora equivalents of CachyOS PKGBUILD makedepends
 # Stripped to what EFT headless needs (no cups, samba, sane, gphoto, etc.)
@@ -98,7 +98,7 @@ RUN make install DESTDIR=/staging
 # ponytail: Hummingbird distroless lacks too many system files Wine needs
 # (/etc/machine-id, fontconfig, xkb data). fedora-minimal has them and
 # is still small (~100MB). Slim down further once boot is proven.
-FROM fedora-minimal:latest
+FROM registry.fedoraproject.org/fedora-minimal:latest
 
 # Runtime deps only — no -devel, no build tools
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=False \
