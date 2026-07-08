@@ -23,6 +23,10 @@ Built for Linux hosts running SPT in a Podman container.
 - **Backup/restore** — Per-mod and full snapshots of mod files, profiles, and config with CLI and web UI support
 - **Join page** — Client bootstrapping with mod archive download and setup scripts
 - **Give Items** — Admin tool to send items to players via the Fika API
+- **Fika settings** — Edit Fika server configuration (fika.jsonc) from the web UI
+- **Mod config management** — Git-backed config history with diff viewer
+- **Notes** — Shared admin/player notes with pinning and visibility controls
+- **Reindex** — Rebuild file tracking from Forge archives when tracking gets out of sync
 - **RBAC** — Role-based access control with admin and player roles
 - **Container lifecycle** — Start, stop, restart the SPT server container via Podman
 - **Systemd integration** — Generate and install a systemd service for the web UI
@@ -52,6 +56,7 @@ Commands:
   remove      Remove an installed mod
   list        List installed mods
   check       Check all installed mods for updates
+  reindex     Rebuild file tracking index by re-downloading archives from Forge
   status      Run health checks against SPT server and mod integrity
   server      Manage the SPT server container
   headless    Manage Fika headless clients
@@ -134,10 +139,12 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 | `src/cli/` | One file per CLI subcommand (clap derive) |
 | `src/web/` | actix-web server, HTMX templates (Askama), SSE, HTTPS/WSS proxy |
 | `src/db/` | SQLite via rusqlite (WAL mode), RBAC, backup metadata |
-| `src/forge/` | HTTP client for SPT Forge API |
+| `src/forge/` | HTTP client for SPT Forge API, response cache |
+| `src/fika/` | Fika API client, fika.jsonc config, headless session stats |
 | `src/spt/` | SPT directory interaction, archive extraction, profiles, game data |
 | `src/client/` | Fika headless client supervisor and convergence |
 | `src/svm/` | Server Value Modifier browsing and configuration |
+| `src/config_mgmt/` | Git-backed mod config history and diffing |
 | `src/ops.rs` | Core mod operations (install/update/remove) |
 | `src/backup.rs` | Mod backup/restore (per-mod and full snapshots) |
 | `src/health.rs` | Health check system |
