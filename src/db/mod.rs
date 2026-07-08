@@ -1,5 +1,6 @@
 pub mod addons;
 pub mod backups;
+pub mod convoy;
 pub mod headless_stats;
 pub mod logs;
 pub mod mods;

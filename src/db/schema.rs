@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/014_config_edit_permission.sql"),
     include_str!("../../migrations/015_convoy_groups.sql"),
     include_str!("../../migrations/016_convoy_permission.sql"),
+    include_str!("../../migrations/017_convoy_sync_tracking.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
