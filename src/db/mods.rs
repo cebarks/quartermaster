@@ -419,6 +419,15 @@ impl Database {
         Ok(count as usize)
     }
 
+    pub fn is_forge_mod_installed(&self, forge_id: i64) -> rusqlite::Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM installed_mods WHERE forge_mod_id = ?1 AND disabled = 0",
+            params![forge_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     // ── Disable/Enable ─────────────────────────────────────────────────
 
     pub fn set_mod_disabled(&self, id: i64, disabled: bool) -> rusqlite::Result<usize> {

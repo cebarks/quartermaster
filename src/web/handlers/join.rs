@@ -13,8 +13,7 @@ pub(crate) const DEFAULT_SERVER_NAME: &str = "SPT Server";
 pub(crate) const FIKA_INSTALLER_URL: &str =
     "https://github.com/project-fika/Fika-Installer/releases/latest/download/Fika-Installer.exe";
 
-// ponytail: Convoy client plugin will be embedded here once the C# project is built.
-pub(crate) const BOOTSTRAP_FORGE_IDS: &[i64] = &[];
+pub(crate) const BOOTSTRAP_FORGE_IDS: &[i64] = &[2806];
 
 const SPT_EDITIONS: &[&str] = &[
     "Standard",
@@ -50,6 +49,7 @@ struct JoinTemplate {
     error: Option<String>,
     csrf_token: String,
     editions: &'static [&'static str],
+    convoy_installed: bool,
 }
 
 fn referrer_policy(resp: HttpResponse) -> HttpResponse {
@@ -59,6 +59,16 @@ fn referrer_policy(resp: HttpResponse) -> HttpResponse {
         actix_web::http::header::HeaderValue::from_static("no-referrer"),
     );
     resp
+}
+
+struct JoinErrorContext {
+    code: String,
+    server_name: String,
+    spt_version: String,
+    fika_installed: bool,
+    mod_count: usize,
+    csrf_token: String,
+    convoy_installed: bool,
 }
 
 pub async fn join_page(
@@ -89,6 +99,7 @@ pub async fn join_page(
             error: Some(e.to_string()),
             csrf_token,
             editions: SPT_EDITIONS,
+            convoy_installed: false,
         };
         return Ok(referrer_policy(
             HttpResponse::BadRequest()
@@ -115,6 +126,15 @@ pub async fn join_page(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let db = state.db.clone();
+    let convoy_installed = web::block(move || {
+        let db = db.lock();
+        db.is_forge_mod_installed(2806)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
     let tmpl = JoinTemplate {
         server_name,
         spt_version: state.spt_info.spt_version.clone(),
@@ -124,6 +144,7 @@ pub async fn join_page(
         error: None,
         csrf_token,
         editions: SPT_EDITIONS,
+        convoy_installed,
     };
 
     Ok(referrer_policy(
@@ -133,24 +154,17 @@ pub async fn join_page(
     ))
 }
 
-fn render_join_error(
-    msg: &str,
-    code: String,
-    server_name: &str,
-    spt_version: &str,
-    fika_installed: bool,
-    mod_count: usize,
-    csrf_token: String,
-) -> actix_web::Result<HttpResponse> {
+fn render_join_error(msg: &str, ctx: JoinErrorContext) -> actix_web::Result<HttpResponse> {
     let tmpl = JoinTemplate {
-        server_name: server_name.to_string(),
-        spt_version: spt_version.to_string(),
-        fika_installed,
-        mod_count,
-        code,
+        server_name: ctx.server_name,
+        spt_version: ctx.spt_version,
+        fika_installed: ctx.fika_installed,
+        mod_count: ctx.mod_count,
+        code: ctx.code,
         error: Some(msg.to_string()),
-        csrf_token,
+        csrf_token: ctx.csrf_token,
         editions: SPT_EDITIONS,
+        convoy_installed: ctx.convoy_installed,
     };
     Ok(referrer_policy(
         HttpResponse::BadRequest()
@@ -192,16 +206,28 @@ pub async fn join_submit(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
+    let db = state.db.clone();
+    let convoy_installed = web::block(move || {
+        let db = db.lock();
+        db.is_forge_mod_installed(2806)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
     let code = form.code.clone();
     let render_err = |msg: &str| {
         render_join_error(
             msg,
-            code.clone(),
-            &server_name,
-            &spt_version,
-            fika_installed,
-            mod_count,
-            csrf_token.clone(),
+            JoinErrorContext {
+                code: code.clone(),
+                server_name: server_name.clone(),
+                spt_version: spt_version.clone(),
+                fika_installed,
+                mod_count,
+                csrf_token: csrf_token.clone(),
+                convoy_installed,
+            },
         )
     };
 

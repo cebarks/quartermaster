@@ -9,6 +9,11 @@
         {% if fika_installed %} · Fika{% endif %}
         {% if mod_count > 0 %} · {{ mod_count }} synced mod{% if mod_count != 1 %}s{% endif %}{% endif %}
     </p>
+    {% if !convoy_installed %}
+    <div class="card" style="border-left: 3px solid var(--warning); margin-bottom: 1rem">
+        <p><strong>Note:</strong> The Convoy mod sync plugin is not installed on this server. New players will need to install mods manually.</p>
+    </div>
+    {% endif %}
     {% if let Some(error) = error %}
     <div class="alert alert-error">{{ error }}</div>
     {% endif %}
