@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use actix_session::Session;
 use actix_web::{web, HttpRequest, HttpResponse};
 use askama::Template;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::slugify;
 use crate::db::rbac::Permission;
@@ -598,6 +598,15 @@ pub async fn catalog(
         if let Ok(val) = if_none_match.to_str() {
             if val == etag {
                 tracing::debug!("convoy catalog 304 (ETag match)");
+                // Log catalog 304 event (fire-and-forget)
+                let db = state.db.clone();
+                let ip = req.peer_addr().map(|a| a.ip().to_string());
+                tokio::task::spawn_blocking(move || {
+                    let db = db.lock();
+                    if let Err(e) = db.insert_sync_event("catalog_304", ip.as_deref(), None, None) {
+                        tracing::warn!(err = %e, "failed to log convoy catalog 304 event");
+                    }
+                });
                 return Ok(HttpResponse::NotModified().finish());
             }
         }
@@ -609,6 +618,16 @@ pub async fn catalog(
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
     tracing::debug!(bytes = body.len(), "served convoy catalog");
+
+    let db_log = state.db.clone();
+    let ip = req.peer_addr().map(|a| a.ip().to_string());
+    let body_len = body.len() as i64;
+    tokio::task::spawn_blocking(move || {
+        let db = db_log.lock();
+        if let Err(e) = db.insert_sync_event("catalog_fetch", ip.as_deref(), None, Some(body_len)) {
+            tracing::warn!(err = %e, "failed to log convoy catalog fetch event");
+        }
+    });
 
     Ok(HttpResponse::Ok()
         .content_type("application/json")
@@ -622,8 +641,24 @@ pub struct DownloadRequest {
     pub mods: Vec<i64>,
 }
 
+#[derive(Deserialize)]
+pub struct SyncReportRequest {
+    pub aid: String,
+    pub result: String,
+    pub mods: Option<Vec<SyncReportMod>>,
+    pub client_version: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct SyncReportMod {
+    pub id: i64,
+    pub version: String,
+}
+
 /// POST /quma/convoy/download — batched mod archive download
 pub async fn download(
+    req: HttpRequest,
     state: web::Data<AppState>,
     body: web::Json<DownloadRequest>,
 ) -> actix_web::Result<HttpResponse> {
@@ -653,6 +688,22 @@ pub async fn download(
     })?;
 
     tracing::info!(bytes = zip_bytes.len(), "convoy batch download served");
+
+    let db_log = state.db.clone();
+    let ip = req.peer_addr().map(|a| a.ip().to_string());
+    let mod_ids_json = serde_json::to_string(&body.mods).unwrap_or_default();
+    let zip_len = zip_bytes.len() as i64;
+    tokio::task::spawn_blocking(move || {
+        let db = db_log.lock();
+        if let Err(e) = db.insert_sync_event(
+            "download",
+            ip.as_deref(),
+            Some(&mod_ids_json),
+            Some(zip_len),
+        ) {
+            tracing::warn!(err = %e, "failed to log convoy download event");
+        }
+    });
 
     Ok(HttpResponse::Ok()
         .content_type("application/zip")
@@ -701,4 +752,61 @@ pub async fn single_mod_archive(
             format!("attachment; filename=\"mod-{mod_id}.zip\""),
         ))
         .body(zip_bytes))
+}
+
+/// POST /quma/convoy/report — client sync report
+pub async fn report(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Json<SyncReportRequest>,
+) -> actix_web::Result<HttpResponse> {
+    let valid_results = ["up_to_date", "updated", "failed"];
+    if !valid_results.contains(&body.result.as_str()) {
+        return Ok(HttpResponse::BadRequest().body("invalid result value"));
+    }
+
+    if body.aid.is_empty() || body.aid.len() > 128 {
+        return Ok(HttpResponse::BadRequest().body("invalid aid"));
+    }
+
+    let ip = req.peer_addr().map(|a| a.ip().to_string());
+    let mods_snapshot = body
+        .mods
+        .as_ref()
+        .and_then(|m| serde_json::to_string(m).ok());
+    let aid = body.aid.clone();
+    let result = body.result.clone();
+    let client_version = body.client_version.clone();
+    let error = body.error.clone();
+
+    let db = state.db.clone();
+    web::block(move || {
+        let db = db.lock();
+        db.insert_sync_report(
+            &aid,
+            &result,
+            mods_snapshot.as_deref(),
+            client_version.as_deref(),
+            error.as_deref(),
+            ip.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!(err = %e, "failed to store convoy sync report");
+        actix_web::error::ErrorInternalServerError(e)
+    })?
+    .map_err(|e| {
+        tracing::error!(err = %e, "failed to store convoy sync report");
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
+
+    tracing::info!(
+        aid = %body.aid,
+        result = %body.result,
+        client_version = body.client_version.as_deref().unwrap_or("unknown"),
+        "convoy sync report received"
+    );
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({"ok": true})))
 }

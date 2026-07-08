@@ -185,7 +185,8 @@ pub fn configure_app(
             .route(
                 "/convoy/mod/{mod_id}/archive",
                 web::get().to(handlers::convoy::single_mod_archive),
-            );
+            )
+            .route("/convoy/report", web::post().to(handlers::convoy::report));
     } else {
         // Same routes without rate limiting (for tests)
         quma_scope = quma_scope
@@ -221,7 +222,8 @@ pub fn configure_app(
             .route(
                 "/convoy/mod/{mod_id}/archive",
                 web::get().to(handlers::convoy::single_mod_archive),
-            );
+            )
+            .route("/convoy/report", web::post().to(handlers::convoy::report));
     }
 
     // Build the API scope
