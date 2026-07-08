@@ -2,8 +2,6 @@ use rusqlite::{params, OptionalExtension};
 
 use super::Database;
 
-// ponytail: dead_code allowed for incremental implementation (used in later tasks)
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SyncReportSummary {
     pub aid: String,
@@ -14,7 +12,6 @@ pub struct SyncReportSummary {
     pub last_sync: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SyncActivity {
     pub created_at: String,
@@ -24,7 +21,6 @@ pub struct SyncActivity {
 }
 
 impl Database {
-    #[allow(dead_code)]
     pub fn insert_sync_event(
         &self,
         event_type: &str,
@@ -39,7 +35,6 @@ impl Database {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn insert_sync_report(
         &self,
         aid: &str,
@@ -66,7 +61,6 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    #[allow(dead_code)]
     pub fn get_latest_sync_reports(&self) -> rusqlite::Result<Vec<SyncReportSummary>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.aid, u.username, r.result, r.client_version, r.mods_snapshot, r.created_at
@@ -96,7 +90,6 @@ impl Database {
         rows.collect()
     }
 
-    #[allow(dead_code)]
     pub fn get_recent_sync_activity(&self, limit: i64) -> rusqlite::Result<Vec<SyncActivity>> {
         let mut stmt = self.conn.prepare(
             "SELECT created_at, source, event_type, detail FROM (
@@ -123,7 +116,6 @@ impl Database {
         rows.collect()
     }
 
-    #[allow(dead_code)]
     pub fn cleanup_old_sync_data(&self, days: i64) -> rusqlite::Result<(usize, usize)> {
         let events = self.conn.execute(
             "DELETE FROM convoy_sync_events WHERE created_at < datetime('now', ?1)",

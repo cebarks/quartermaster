@@ -628,6 +628,10 @@ pub async fn catalog(
     req: HttpRequest,
     state: web::Data<AppState>,
 ) -> actix_web::Result<HttpResponse> {
+    if !state.config().convoy.as_ref().is_some_and(|c| c.enabled) {
+        return Ok(HttpResponse::ServiceUnavailable().body("Convoy is not enabled"));
+    }
+
     let Some((path, etag)) = state.catalog_cache.get() else {
         tracing::warn!("convoy catalog requested but cache not yet built");
         return Ok(HttpResponse::ServiceUnavailable()
