@@ -6,7 +6,8 @@ trap 'divider; echo "entrypoint exited (code $?)"; divider' EXIT
 
 echo "quma-headless starting"
 
-# Virtual display
+# Virtual display (clean stale locks from unclean shutdown)
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 echo "Starting Xvfb..."
 Xvfb :99 -screen 0 1024x768x24 -nolisten tcp &
 export DISPLAY=:99
