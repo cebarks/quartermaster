@@ -296,6 +296,10 @@ impl CatalogCache {
         }
     }
 
+    pub fn clear(&self) {
+        let _ = std::fs::remove_file(&self.inner.cache_path);
+    }
+
     /// Synchronous rebuild for tests. Guarded by compare_exchange.
     #[cfg(test)]
     pub fn rebuild_sync(&self) {

@@ -429,6 +429,10 @@ pub fn configure_app(
             web::get().to(handlers::convoy::status_partial),
         )
         .route(
+            "/convoy/settings",
+            web::get().to(handlers::convoy::settings_partial),
+        )
+        .route(
             "/give-items/search",
             web::get().to(handlers::give_items::give_items_search),
         )
@@ -571,6 +575,10 @@ pub fn configure_app(
         .route(
             "/convoy/groups",
             web::post().to(handlers::convoy::save_groups),
+        )
+        .route(
+            "/convoy/settings",
+            web::post().to(handlers::convoy::save_settings),
         )
         .route("/svm", web::get().to(handlers::svm::manager_page))
         .route("/svm/view", web::get().to(handlers::svm::player_view))

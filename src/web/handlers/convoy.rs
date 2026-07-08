@@ -57,12 +57,12 @@ pub async fn convoy_page(
     let convoy_enabled = nav.convoy_enabled;
 
     let mut active_tab = query.tab.as_str();
-    let valid_tabs = ["groups", "mods", "preview", "status"];
+    let valid_tabs = ["groups", "mods", "preview", "status", "settings"];
     if !valid_tabs.contains(&active_tab) {
         active_tab = "groups";
     }
-    if !convoy_enabled && active_tab != "groups" {
-        active_tab = "groups";
+    if !convoy_enabled && active_tab != "settings" {
+        active_tab = "settings";
     }
 
     let tab_content = match active_tab {
@@ -70,6 +70,7 @@ pub async fn convoy_page(
         "mods" => render_mods_tab(&state).await?,
         "preview" => render_preview_tab(&state).await?,
         "status" => render_status_tab(&state).await?,
+        "settings" => render_settings_tab(&state, &csrf_token).await?,
         _ => "<p>Unknown tab</p>".to_string(),
     };
 
@@ -849,4 +850,99 @@ pub async fn report(
     );
 
     Ok(HttpResponse::Ok().json(serde_json::json!({"ok": true})))
+}
+
+// ── Settings Tab ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ConvoySettingsForm {
+    csrf_token: String,
+    enabled: Option<String>,
+    exclusions: String,
+}
+
+#[derive(Template)]
+#[template(path = "convoy/partials/settings.html")]
+struct SettingsPartialTemplate {
+    csrf_token: String,
+    enabled: bool,
+    exclusions: String,
+    bootstrap_forge_id: i64,
+}
+
+async fn render_settings_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
+    let config = state.config();
+    let convoy = config.convoy.clone().unwrap_or_default();
+
+    let tmpl = SettingsPartialTemplate {
+        csrf_token: csrf_token.to_string(),
+        enabled: convoy.enabled,
+        exclusions: convoy.exclusions.join("\n"),
+        bootstrap_forge_id: 2806,
+    };
+    tmpl.render().map_err(WebError::from)
+}
+
+pub async fn settings_partial(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ConvoyManage)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let html = render_settings_tab(&state, &csrf_token).await?;
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(html))
+}
+
+pub async fn save_settings(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: web::Form<ConvoySettingsForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ConvoyManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let enabled = form.enabled.is_some();
+    let exclusions: Vec<String> = form
+        .exclusions
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let was_enabled = state.config().convoy.as_ref().is_some_and(|c| c.enabled);
+
+    {
+        let _guard = state.config_lock.lock();
+        let mut config = crate::config::Config::load(&state.config_path).map_err(WebError::from)?;
+        let convoy = config
+            .convoy
+            .get_or_insert_with(crate::config::ConvoyConfig::default);
+        convoy.enabled = enabled;
+        convoy.exclusions = exclusions;
+        state.persist_config(&config)?;
+    }
+
+    if enabled && !was_enabled {
+        tracing::info!(user = %user.username, "convoy enabled via settings");
+        state.catalog_cache.invalidate();
+    } else if !enabled && was_enabled {
+        tracing::info!(user = %user.username, "convoy disabled via settings");
+        state.catalog_cache.clear();
+    } else if enabled {
+        state.regenerate_convoy();
+    }
+
+    set_flash(&session, "Convoy settings saved", FlashType::Success);
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/convoy?tab=settings"))
+        .finish())
 }

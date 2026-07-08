@@ -9,9 +9,10 @@
 <div class="card" style="border-left: 3px solid var(--warning)">
     <p><strong>Convoy is not enabled.</strong> Enable it in settings to activate client mod delivery.</p>
 </div>
-{% else %}
+{% endif %}
 
 <div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
+    {% if convoy_enabled %}
     <a href="/quma/convoy?tab=groups"
        class="btn btn-sm {% if active_tab == "groups" %}btn-primary{% else %}btn-outline{% endif %}"
        hx-get="/quma/api/convoy/groups"
@@ -44,11 +45,19 @@
        hx-push-url="/quma/convoy?tab=status">
         Status
     </a>
+    {% endif %}
+    <a href="/quma/convoy?tab=settings"
+       class="btn btn-sm {% if active_tab == "settings" %}btn-primary{% else %}btn-outline{% endif %}"
+       hx-get="/quma/api/convoy/settings"
+       hx-target="#tab-content"
+       hx-swap="innerHTML"
+       hx-push-url="/quma/convoy?tab=settings">
+        Settings
+    </a>
 </div>
 
 <div id="tab-content">
     {{ tab_content|safe }}
 </div>
 
-{% endif %}
 {% endblock %}
