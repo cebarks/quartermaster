@@ -1,0 +1,71 @@
+<h2>Player Sync Status</h2>
+
+{% if reports.is_empty() %}
+<p class="text-muted">No sync reports received yet. Reports appear here once players launch their game with the Convoy plugin installed.</p>
+{% else %}
+<div class="table-responsive">
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Status</th>
+                <th>Last Sync</th>
+                <th>Client Version</th>
+                <th>Mods</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in reports %}
+            <tr>
+                <td>{{ r.username.as_deref().unwrap_or(&r.aid) }}</td>
+                <td>
+                    {% if r.result == "up_to_date" %}
+                    <span class="badge badge-success">Up to date</span>
+                    {% else if r.result == "updated" %}
+                    <span class="badge badge-warning">Updated</span>
+                    {% else %}
+                    <span class="badge badge-error">Failed</span>
+                    {% endif %}
+                </td>
+                <td>{{ r.last_sync }}</td>
+                <td>{{ r.client_version.as_deref().unwrap_or("—") }}</td>
+                <td>{{ r.mod_count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<h2 style="margin-top: 2rem">Recent Activity</h2>
+
+{% if activity.is_empty() %}
+<p class="text-muted">No sync activity recorded yet.</p>
+{% else %}
+<div class="table-responsive">
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Type</th>
+                <th>Detail</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in activity %}
+            <tr>
+                <td style="white-space: nowrap">{{ a.created_at }}</td>
+                <td>
+                    {% if a.source == "report" %}
+                    <span class="badge badge-info">{{ a.event_type }}</span>
+                    {% else %}
+                    <span class="badge badge-outline">{{ a.event_type }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ a.detail }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}

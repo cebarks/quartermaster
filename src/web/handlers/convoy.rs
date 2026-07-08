@@ -57,7 +57,7 @@ pub async fn convoy_page(
     let convoy_enabled = nav.convoy_enabled;
 
     let mut active_tab = query.tab.as_str();
-    let valid_tabs = ["groups", "mods", "preview"];
+    let valid_tabs = ["groups", "mods", "preview", "status"];
     if !valid_tabs.contains(&active_tab) {
         active_tab = "groups";
     }
@@ -69,6 +69,7 @@ pub async fn convoy_page(
         "groups" => render_groups_tab(&state, &csrf_token).await?,
         "mods" => render_mods_tab(&state).await?,
         "preview" => render_preview_tab(&state).await?,
+        "status" => render_status_tab(&state).await?,
         _ => "<p>Unknown tab</p>".to_string(),
     };
 
@@ -552,6 +553,15 @@ struct PreviewPartialTemplate {
     json: String,
 }
 
+// ── Status Tab ────────────────────────────────────────────────────────────
+
+#[derive(Template)]
+#[template(path = "convoy/partials/status.html")]
+struct StatusPartialTemplate {
+    reports: Vec<crate::db::convoy::SyncReportSummary>,
+    activity: Vec<crate::db::convoy::SyncActivity>,
+}
+
 async fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
     let Some((path, _etag)) = state.catalog_cache.get() else {
         return Ok("<p class=\"text-muted\">Catalog is being built...</p>".to_string());
@@ -575,6 +585,36 @@ pub async fn preview_partial(
     require_permission(&user, Permission::ConvoyManage)?;
 
     let html = render_preview_tab(&state).await?;
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(html))
+}
+
+async fn render_status_tab(state: &AppState) -> Result<String, WebError> {
+    let db = state.db.clone();
+    let (reports, activity) = web::block(move || {
+        let db = db.lock();
+        let reports = db.get_latest_sync_reports()?;
+        let activity = db.get_recent_sync_activity(50)?;
+        Ok::<_, anyhow::Error>((reports, activity))
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let tmpl = StatusPartialTemplate { reports, activity };
+    tmpl.render().map_err(WebError::from)
+}
+
+pub async fn status_partial(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    _session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ConvoyManage)?;
+
+    let html = render_status_tab(&state).await?;
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(html))

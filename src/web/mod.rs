@@ -425,6 +425,10 @@ pub fn configure_app(
             web::get().to(handlers::convoy::preview_partial),
         )
         .route(
+            "/convoy/status",
+            web::get().to(handlers::convoy::status_partial),
+        )
+        .route(
             "/give-items/search",
             web::get().to(handlers::give_items::give_items_search),
         )
@@ -1003,6 +1007,19 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         .is_some_and(|c| c.enabled)
     {
         app_state.catalog_cache.invalidate();
+    }
+
+    // Clean up old convoy sync data (30 day retention)
+    {
+        let db = app_state.db.lock();
+        match db.cleanup_old_sync_data(30) {
+            Ok((events, reports)) => {
+                if events > 0 || reports > 0 {
+                    tracing::info!(events, reports, "cleaned up old convoy sync data");
+                }
+            }
+            Err(e) => tracing::warn!(err = %e, "failed to clean up old convoy sync data"),
+        }
     }
 
     let governor_conf = GovernorConfigBuilder::default()

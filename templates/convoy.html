@@ -36,6 +36,14 @@
        hx-push-url="/quma/convoy?tab=preview">
         Preview
     </a>
+    <a href="/quma/convoy?tab=status"
+       class="btn btn-sm {% if active_tab == "status" %}btn-primary{% else %}btn-outline{% endif %}"
+       hx-get="/quma/api/convoy/status"
+       hx-target="#tab-content"
+       hx-swap="innerHTML"
+       hx-push-url="/quma/convoy?tab=status">
+        Status
+    </a>
 </div>
 
 <div id="tab-content">
