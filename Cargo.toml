@@ -138,5 +138,7 @@ installers = []
 targets = ["x86_64-unknown-linux-gnu"]
 # Custom publish jobs
 publish-jobs = ["./publish-crate"]
+# Use .zip for release archives (consumed by quma setup)
+unix-archive = ".zip"
 # Allow our customizations to release.yml (git-cliff notes, permissions fix)
 allow-dirty = ["ci"]
