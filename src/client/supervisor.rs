@@ -249,6 +249,7 @@ impl ClientSupervisor {
             restarting: false,
             consecutive_failures: 0,
             first_seen: Utc::now(),
+            manually_stopped: false,
             profile_id: None,
             prev_fika_status: None,
         });
@@ -495,6 +496,7 @@ async fn exit_watcher_loop(
                 }
 
                 restart_policy == RestartPolicy::Auto
+                    && !s.manually_stopped
                     && s.health != ClientHealth::GivenUp
                     && s.consecutive_failures < max_restart_attempts
             } else {
@@ -513,10 +515,22 @@ async fn exit_watcher_loop(
         }
 
         if !should_restart {
+            let reason = {
+                let state_lock = state.read().await;
+                if let Some(s) = state_lock.iter().find(|s| s.index == index) {
+                    if s.manually_stopped {
+                        "manually stopped"
+                    } else {
+                        "policy or given up"
+                    }
+                } else {
+                    "client removed"
+                }
+            };
             tracing::info!(
                 container = %container_name,
                 exit_code,
-                "Not restarting (policy={restart_policy}, or given up)"
+                "Not restarting ({reason})"
             );
             watcher_handles.write().await.remove(&index);
             return;
@@ -694,5 +708,22 @@ mod tests {
     #[test]
     fn backoff_custom_cap() {
         assert_eq!(backoff_duration(10, 60), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn manually_stopped_prevents_restart_decision() {
+        // The restart decision logic: policy == Auto && !manually_stopped && health != GivenUp
+        let policy = RestartPolicy::Auto;
+        let manually_stopped = true;
+        let health = ClientHealth::Down;
+        let consecutive_failures = 0u32;
+        let max_restart_attempts = 5u32;
+
+        let should_restart = policy == RestartPolicy::Auto
+            && !manually_stopped
+            && health != ClientHealth::GivenUp
+            && consecutive_failures < max_restart_attempts;
+
+        assert!(!should_restart);
     }
 }

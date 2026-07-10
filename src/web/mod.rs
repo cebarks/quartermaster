@@ -809,6 +809,10 @@ pub fn configure_app(
             web::post().to(handlers::clients::client_rename),
         )
         .route(
+            "/headless/{n}/image",
+            web::post().to(handlers::clients::client_set_image),
+        )
+        .route(
             "/headless/{n}/start-raid",
             web::post().to(handlers::clients::client_start_raid),
         )
