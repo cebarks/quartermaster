@@ -12,6 +12,7 @@ pub mod proxy;
 pub mod proxy_metrics;
 pub mod proxy_ws;
 pub mod raid_tracker;
+pub mod scanner_guard;
 pub mod sse;
 pub mod state;
 pub mod tasks;
@@ -1042,12 +1043,32 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         .finish()
         .expect("invalid search governor config");
 
+    let scanner_guard_data = if config.scanner_guard.enabled {
+        let guard = scanner_guard::ScannerGuard::new(
+            config.scanner_guard.threshold,
+            std::time::Duration::from_secs(config.scanner_guard.ban_duration),
+        );
+        Some(web::Data::new(guard))
+    } else {
+        None
+    };
+
     let server_builder = HttpServer::new(move || {
         let gov = governor_conf.clone();
         let search_gov = search_governor_conf.clone();
-        App::new()
+        let mut app = App::new()
             .app_data(app_state.clone())
-            .app_data(web::PayloadConfig::new(64 * 1024 * 1024))
+            .app_data(web::PayloadConfig::new(64 * 1024 * 1024));
+
+        if let Some(ref guard) = scanner_guard_data {
+            app = app.app_data(guard.clone());
+        }
+
+        // Scanner guard is first .wrap() (innermost), so it sees BoxBody
+        // from handlers. Ban checks happen before the handler; TracingLogger
+        // (outer) still logs blocked requests. When ScannerGuard is not in
+        // app_data, the middleware is a no-op.
+        app.wrap(from_fn(scanner_guard::scanner_guard_middleware))
             .wrap(middleware::NormalizePath::new(
                 middleware::TrailingSlash::MergeOnly,
             ))

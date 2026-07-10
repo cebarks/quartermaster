@@ -307,6 +307,49 @@ fn default_container_stop_timeout() -> u64 {
     10
 }
 
+fn default_scanner_guard_enabled() -> bool {
+    true
+}
+
+fn default_scanner_guard_threshold() -> u32 {
+    20
+}
+
+fn default_scanner_guard_ban_duration() -> u64 {
+    3600
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScannerGuardConfig {
+    /// Enable scanner guard (ban IPs with excessive consecutive unhandled requests)
+    #[serde(default = "default_scanner_guard_enabled")]
+    pub enabled: bool,
+
+    /// Number of consecutive 404/405 responses before banning an IP
+    #[serde(default = "default_scanner_guard_threshold")]
+    pub threshold: u32,
+
+    /// Ban duration in seconds
+    #[serde(default = "default_scanner_guard_ban_duration")]
+    pub ban_duration: u64,
+}
+
+impl Default for ScannerGuardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold: 20,
+            ban_duration: 3600,
+        }
+    }
+}
+
+impl ScannerGuardConfig {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 fn default_enforced() -> bool {
     true
 }
@@ -899,6 +942,10 @@ pub struct Config {
     #[serde(skip_serializing_if = "SetupZipConfig::is_default")]
     pub setup_zip: SetupZipConfig,
 
+    #[serde(default)]
+    #[serde(skip_serializing_if = "ScannerGuardConfig::is_default")]
+    pub scanner_guard: ScannerGuardConfig,
+
     #[serde(default = "default_tls_enabled")]
     pub tls_enabled: bool,
 
@@ -963,6 +1010,7 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             backup: BackupConfig::default(),
             setup_zip: SetupZipConfig::default(),
+            scanner_guard: ScannerGuardConfig::default(),
             tls_enabled: true,
             tls_cert: None,
             tls_key: None,
@@ -1160,6 +1208,9 @@ impl Config {
         env_override!(bool: self.backup.require_backup, "QUMA_REQUIRE_BACKUP");
         env_override!(opt_str: self.external_url, "QUMA_EXTERNAL_URL");
         env_override!(opt_str: self.server_name, "QUMA_SERVER_NAME");
+        env_override!(bool: self.scanner_guard.enabled, "QUMA_SCANNER_GUARD_ENABLED");
+        env_override!(parse: self.scanner_guard.threshold, "QUMA_SCANNER_GUARD_THRESHOLD", u32);
+        env_override!(parse: self.scanner_guard.ban_duration, "QUMA_SCANNER_GUARD_BAN_DURATION", u64);
     }
 
     /// If `session_secret` is empty, generate a random 48-character alphanumeric secret.
