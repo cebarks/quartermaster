@@ -695,9 +695,8 @@ pub async fn update_status_partial(
     req: HttpRequest,
     session: Session,
 ) -> actix_web::Result<Html> {
-    let _user = require_auth(&req)?;
-    // No capability check — the OOB swap targets only exist in admin columns,
-    // so the response is silently ignored for Players.
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsUpdate)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let installed = list_installed_mods(state.db.clone()).await?;
@@ -788,6 +787,7 @@ pub async fn updates_carousel_partial(
     query: Query<CarouselQuery>,
 ) -> actix_web::Result<Html> {
     let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsUpdate)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let index = query.index.unwrap_or(0);
 
@@ -2034,7 +2034,8 @@ pub async fn integrity_recheck(
     session: Session,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
@@ -2141,7 +2142,8 @@ pub async fn search_addons(
     session: Session,
     query: Query<AddonSearchQuery>,
 ) -> actix_web::Result<Html> {
-    let _user = require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let parent_mod_db_id = query.parent;
 
