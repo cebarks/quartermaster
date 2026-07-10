@@ -4,6 +4,7 @@
   "threshold": 8,
   "reporters": ["console", "threshold"],
   "ignore": [
+    "**/.git/**",
     "**/target/**",
     "**/.dev-server/**",
     "**/node_modules/**",
