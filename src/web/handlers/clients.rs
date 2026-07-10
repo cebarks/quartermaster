@@ -92,6 +92,7 @@ struct ClientDetailTemplate {
     nav: NavContext,
     client: ClientView,
     session_stats: Vec<crate::db::headless_stats::HeadlessSessionRow>,
+    headless_image: String,
 }
 
 #[derive(Template)]
@@ -372,6 +373,13 @@ pub async fn client_detail(
     .map_err(WebError::from)?
     .unwrap_or_default();
 
+    let headless_image = state
+        .config()
+        .headless
+        .as_ref()
+        .map(|h| h.image.clone())
+        .unwrap_or_default();
+
     let tmpl = ClientDetailTemplate {
         user,
         flash,
@@ -379,6 +387,7 @@ pub async fn client_detail(
         nav: NavContext::from_state(&state),
         client,
         session_stats,
+        headless_image,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
 }
