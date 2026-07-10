@@ -377,7 +377,7 @@ pub async fn client_detail(
         .config()
         .headless
         .as_ref()
-        .map(|h| h.image.clone())
+        .map(|h| h.resolve_image((index - 1) as usize).to_string())
         .unwrap_or_default();
 
     let tmpl = ClientDetailTemplate {
@@ -1375,6 +1375,67 @@ pub async fn client_rename(
         }
     }
 
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .finish())
+}
+
+#[derive(serde::Deserialize)]
+pub struct SetImageForm {
+    csrf_token: String,
+    image: String,
+}
+
+pub async fn client_set_image(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    path: Path<u32>,
+    form: Form<SetImageForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let index = path.into_inner();
+    let new_image = form.into_inner().image.trim().to_string();
+
+    let _guard = state.config_lock.lock();
+    let mut config =
+        crate::config::Config::load_with_env(&state.config_path).map_err(WebError::from)?;
+
+    let headless = match config.headless.as_mut() {
+        Some(h) => h,
+        None => {
+            set_flash(&session, "No headless config", FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/headless/{index}")))
+                .finish());
+        }
+    };
+
+    let client_index = (index as usize).checked_sub(1).ok_or(WebError::NotFound)?;
+    let client_def = headless
+        .clients
+        .get_mut(client_index)
+        .ok_or(WebError::NotFound)?;
+
+    client_def.image = if new_image.is_empty() || new_image == headless.image {
+        None
+    } else {
+        Some(new_image)
+    };
+
+    state.persist_config(&config)?;
+
+    set_flash(
+        &session,
+        "Client image updated. Re-converge to apply.",
+        FlashType::Success,
+    );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", format!("/quma/headless/{index}")))
         .finish())

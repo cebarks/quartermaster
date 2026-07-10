@@ -15,6 +15,13 @@
             <button type="submit" class="btn btn-sm">Rename</button>
         </form>
         {% endif %}
+        {% if user.can("headless.manage") %}
+        <form method="post" action="/quma/headless/{{ client.state.index }}/image" class="flex gap-1 align-center" style="margin-bottom: 0.5rem">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="image" value="{{ headless_image }}" placeholder="Container image (leave empty for global default)" class="form-control" style="max-width: 400px">
+            <button type="submit" class="btn btn-sm">Set Image</button>
+        </form>
+        {% endif %}
     </div>
     {% if user.can("headless.manage") %}
     <div class="flex gap-1">

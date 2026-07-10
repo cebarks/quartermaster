@@ -1444,7 +1444,7 @@ async fn create_client_container(
     // Create the container
     let opts = CreateContainerOpts {
         name: name.clone(),
-        image: headless_config.image.clone(),
+        image: headless_config.resolve_image(client_index).to_string(),
         env,
         volumes,
         ports,

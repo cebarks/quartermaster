@@ -511,6 +511,8 @@ pub fn slugify(name: &str) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct HeadlessClientDef {
     #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
     pub extra_isolated_paths: Vec<String>,
     #[serde(default)]
     pub numa_node: Option<u32>,
@@ -592,6 +594,13 @@ impl HeadlessConfig {
             paths.extend(client.extra_isolated_paths.clone());
         }
         paths
+    }
+
+    pub fn resolve_image(&self, client_index: usize) -> &str {
+        self.clients
+            .get(client_index)
+            .and_then(|c| c.image.as_deref())
+            .unwrap_or(&self.image)
     }
 
     pub fn validate(&self, config: &Config, spt_dir: &Path) -> Result<()> {
@@ -2180,5 +2189,23 @@ extra_isolated_paths = ["BepInEx/plugins"]
         };
         // validate() should succeed (warn, not bail)
         assert!(h.validate(&config, &spt_dir).is_ok());
+    }
+
+    #[test]
+    fn resolve_image_per_client_override() {
+        let config = HeadlessConfig {
+            image: "global:latest".to_string(),
+            clients: vec![
+                HeadlessClientDef {
+                    image: Some("custom:v1".to_string()),
+                    ..Default::default()
+                },
+                HeadlessClientDef::default(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(config.resolve_image(0), "custom:v1");
+        assert_eq!(config.resolve_image(1), "global:latest");
+        assert_eq!(config.resolve_image(99), "global:latest");
     }
 }
