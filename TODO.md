@@ -26,7 +26,6 @@
 - SELinux `label=disable` still applied when GPU devices are present (volumes use `:z` shared label otherwise — #232)
 - shared RW volume mount for base game dir (`converge.rs`)
 - too-many-arguments on convergence functions (clippy lint suppressed)
-- image name should be per-client configurable
 - ensure headless + spt-server images have been pulled on startup
 - better health client detection
 - don't delete headless overlay by default, allow selection of which existing, not already in use overlay to use on new client creation (or when editing a client)
@@ -35,7 +34,6 @@
 - supervisor exit watchers cache restart policy/backoff values at spawn time — config changes require supervisor restart (`supervisor.rs`)
 - headless recent raid stats should be linked to that information to the existing raids list
 - add client should add a new row to the list with the client name column editable, and a save or cancel button replacing the existing buttons in the actions column
-- `/quma/headless/N` should include the current container name and image.
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
