@@ -89,7 +89,7 @@ impl ClientSupervisor {
                     tracing::info!("ClientSupervisor shutting down");
                     // Cancel all exit watchers
                     let handles = self.watcher_handles.read().await;
-                    for (_, token) in handles.iter() {
+                    for token in handles.values() {
                         token.cancel();
                     }
                     break;
