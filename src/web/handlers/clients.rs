@@ -232,6 +232,15 @@ async fn client_lifecycle(
                 if let Some(client) = clients.iter_mut().find(|c| c.index == index) {
                     client.consecutive_failures = 0;
                     client.health = ClientHealth::Degraded;
+                    client.manually_stopped = false;
+                }
+            }
+        }
+        if action == "stop" {
+            if let Some(states) = &state.client_states {
+                let mut clients = states.write().await;
+                if let Some(client) = clients.iter_mut().find(|c| c.index == index) {
+                    client.manually_stopped = true;
                 }
             }
         }

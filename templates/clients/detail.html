@@ -75,6 +75,12 @@
                 <th>Fika Status</th>
                 <td>{% call badges::fika_status(client.state.fika_status) %}{% endcall %}</td>
             </tr>
+            {% if client.state.manually_stopped %}
+            <tr>
+                <th>Manual Stop</th>
+                <td><span class="badge badge-warning">Stopped by user — will not auto-restart</span></td>
+            </tr>
+            {% endif %}
             <tr>
                 <th>Connected Players</th>
                 <td>
