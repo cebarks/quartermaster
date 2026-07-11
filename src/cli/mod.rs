@@ -213,7 +213,7 @@ pub enum Command {
 
     /// Migrate from legacy directory layout to new layout
     Migrate {
-        #[arg(long)]
+        #[arg(long, help = "Show migration plan without making changes")]
         dry_run: bool,
     },
 }
