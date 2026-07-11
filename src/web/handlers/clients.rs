@@ -1012,6 +1012,7 @@ pub async fn client_create(
         .finish())
 }
 
+#[allow(deprecated)]
 pub async fn client_delete(
     state: Data<AppState>,
     req: HttpRequest,

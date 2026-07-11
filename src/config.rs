@@ -6,6 +6,8 @@ use rand::distr::Alphanumeric;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
+use crate::dirs::QumaDirs;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum OnExit {
@@ -567,6 +569,9 @@ pub struct HeadlessClientDef {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HeadlessConfig {
+    /// Deprecated: headless directory is derived from quma_dir.
+    /// For legacy configs, this will be populated from TOML; for new configs, use dirs.headless.
+    #[deprecated(note = "use QumaDirs.headless instead")]
     #[serde(default)]
     pub install_dir: PathBuf,
     #[serde(default = "default_restart_policy")]
@@ -602,6 +607,7 @@ pub struct HeadlessConfig {
 }
 
 impl Default for HeadlessConfig {
+    #[allow(deprecated)]
     fn default() -> Self {
         Self {
             install_dir: PathBuf::new(),
@@ -646,7 +652,7 @@ impl HeadlessConfig {
             .unwrap_or(&self.image)
     }
 
-    pub fn validate(&self, config: &Config, spt_dir: &Path) -> Result<()> {
+    pub fn validate(&self, config: &Config, dirs: &QumaDirs) -> Result<()> {
         if self.clients.is_empty() {
             return Ok(());
         }
@@ -684,31 +690,30 @@ impl HeadlessConfig {
             }
         }
 
-        if !is_fika_installed(spt_dir) {
+        if !is_fika_installed(&dirs.spt_server) {
             bail!(
                 "Fika server mod not found at {}. Dedicated client management requires Fika.",
-                spt_dir.join("SPT/user/mods/fika-server").display()
+                dirs.spt_server.join("SPT/user/mods/fika-server").display()
             );
         }
-        if self.install_dir.as_os_str().is_empty() || !self.install_dir.exists() {
-            bail!(
-                "headless.install_dir '{}' does not exist",
-                self.install_dir.display()
-            );
-        }
-        // ponytail: canonicalize to handle symlinks/.. — starts_with on raw paths is unreliable
-        if let (Ok(canon_install), Ok(canon_spt)) =
-            (self.install_dir.canonicalize(), spt_dir.canonicalize())
-        {
-            if canon_install.starts_with(&canon_spt) {
-                bail!(
-                    "headless.install_dir ('{}') must not be inside spt_dir ('{}') — \
-                     the SPT server container mounts spt_dir and its entrypoint chowns the \
-                     entire tree, which fails on wine-prefix dirs relabeled by headless \
-                     containers (SELinux MCS conflict). Move install_dir outside spt_dir.",
-                    self.install_dir.display(),
-                    spt_dir.display()
-                );
+        // In legacy mode, headless install_dir must not be inside spt_server
+        #[allow(deprecated)]
+        if dirs.is_legacy() && !self.install_dir.as_os_str().is_empty() {
+            // ponytail: canonicalize to handle symlinks/.. — starts_with on raw paths is unreliable
+            if let (Ok(canon_install), Ok(canon_spt)) = (
+                self.install_dir.canonicalize(),
+                dirs.spt_server.canonicalize(),
+            ) {
+                if canon_install.starts_with(&canon_spt) {
+                    bail!(
+                        "headless directory ('{}') must not be inside spt_server ('{}') — \
+                         the SPT server container mounts spt_server and its entrypoint chowns the \
+                         entire tree, which fails on wine-prefix dirs relabeled by headless \
+                         containers (SELinux MCS conflict). Move headless directory outside spt_server.",
+                        self.install_dir.display(),
+                        dirs.spt_server.display()
+                    );
+                }
             }
         }
         let count = self.client_count();
@@ -878,8 +883,8 @@ impl LoggingConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
-    #[serde(default)]
-    pub spt_dir: Option<PathBuf>,
+    #[serde(default, alias = "spt_dir")]
+    pub quma_dir: Option<PathBuf>,
 
     #[serde(default = "default_queue_changes")]
     pub queue_changes: bool,
@@ -997,7 +1002,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            spt_dir: None,
+            quma_dir: None,
             queue_changes: true,
             auto_drain_on_lifecycle: false,
             auto_start_server: true,
@@ -1168,7 +1173,7 @@ impl Config {
         config.apply_env_overrides();
         tracing::debug!("applied environment variable overrides to config");
         tracing::trace!(
-            spt_dir = ?config.spt_dir,
+            quma_dir = ?config.quma_dir,
             queue_changes = config.queue_changes,
             auto_drain_on_lifecycle = config.auto_drain_on_lifecycle,
             session_secret = "<redacted>",
@@ -1181,7 +1186,15 @@ impl Config {
 
     /// Override config fields from `QUMA_*` environment variables.
     pub fn apply_env_overrides(&mut self) {
-        env_override!(opt_path: self.spt_dir, "QUMA_SPT_DIR");
+        env_override!(opt_path: self.quma_dir, "QUMA_DIR");
+        if self.quma_dir.is_none() {
+            if let Ok(val) = std::env::var("QUMA_SPT_DIR") {
+                tracing::warn!("QUMA_SPT_DIR is deprecated, use QUMA_DIR instead");
+                let path = std::path::absolute(PathBuf::from(&val))
+                    .unwrap_or_else(|_| PathBuf::from(&val));
+                self.quma_dir = Some(path);
+            }
+        }
         env_override!(str: self.web_bind, "QUMA_WEB_BIND");
         env_override!(parse: self.web_port, "QUMA_WEB_PORT", u16);
         env_override!(opt_parse: self.web_workers, "QUMA_WEB_WORKERS", usize);
@@ -1203,7 +1216,9 @@ impl Config {
             }
         }
         env_override!(parse: self.headless.get_or_insert_with(HeadlessConfig::default).restart_policy, "QUMA_HEADLESS_RESTART_POLICY", RestartPolicy);
-        env_override!(path: self.headless.get_or_insert_with(HeadlessConfig::default).install_dir, "QUMA_HEADLESS_INSTALL_DIR");
+        if std::env::var("QUMA_HEADLESS_INSTALL_DIR").is_ok() {
+            tracing::warn!("QUMA_HEADLESS_INSTALL_DIR is deprecated and ignored — headless directory is derived from quma_dir");
+        }
         env_override!(parse: self.headless.get_or_insert_with(HeadlessConfig::default).server_ready_timeout, "QUMA_HEADLESS_SERVER_READY_TIMEOUT", u64);
         env_override!(bool: self.tls_enabled, "QUMA_TLS_ENABLED");
         env_override!(opt_path: self.tls_cert, "QUMA_TLS_CERT");
@@ -1236,9 +1251,9 @@ impl Config {
     /// Resolve the config file path using this priority:
     /// 1. Explicit CLI flag (`cli_config`)
     /// 2. `QUMA_CONFIG` environment variable
-    /// 3. `<spt_dir>/quartermaster.toml`
+    /// 3. `<quma_dir>/quartermaster.toml`
     /// 4. `quartermaster.toml` (current directory)
-    pub fn resolve_path(cli_config: Option<&Path>, spt_dir: Option<&Path>) -> PathBuf {
+    pub fn resolve_path(cli_config: Option<&Path>, quma_dir: Option<&Path>) -> PathBuf {
         if let Some(path) = cli_config {
             return path.to_path_buf();
         }
@@ -1247,7 +1262,7 @@ impl Config {
             return PathBuf::from(env_path);
         }
 
-        if let Some(dir) = spt_dir {
+        if let Some(dir) = quma_dir {
             return dir.join("quartermaster.toml");
         }
 
@@ -1278,7 +1293,7 @@ update_check_interval = 600
 
         let config: Config = toml::from_str(toml_str).expect("should parse full TOML");
 
-        assert_eq!(config.spt_dir, Some(PathBuf::from("/opt/spt")));
+        assert_eq!(config.quma_dir, Some(PathBuf::from("/opt/spt")));
         assert!(!config.queue_changes);
         assert!(config.auto_drain_on_lifecycle);
         assert!(!config.auto_start_server);
@@ -1295,7 +1310,7 @@ update_check_interval = 600
     fn deserialize_minimal_config() {
         let config: Config = toml::from_str("").expect("should parse empty TOML");
 
-        assert_eq!(config.spt_dir, None);
+        assert_eq!(config.quma_dir, None);
         assert!(config.queue_changes); // default: true
         assert!(!config.auto_drain_on_lifecycle); // default: false
         assert!(config.auto_start_server); // default: true
@@ -1321,7 +1336,7 @@ web_port = 3000
 
         let config = Config::load(&config_path).expect("should load from file");
 
-        assert_eq!(config.spt_dir, Some(PathBuf::from("/srv/spt")));
+        assert_eq!(config.quma_dir, Some(PathBuf::from("/srv/spt")));
         assert_eq!(config.web_port, 3000);
         // Defaults for unspecified fields
         assert!(config.queue_changes);
@@ -1343,7 +1358,7 @@ web_port = 3000
         let config_path = dir.path().join("nested/dir/quartermaster.toml");
 
         let mut config = Config::default();
-        config.spt_dir = Some(PathBuf::from("/opt/game"));
+        config.quma_dir = Some(PathBuf::from("/opt/game"));
         config.web_port = 7777;
         config.update_check_interval = 120;
 
@@ -1368,7 +1383,7 @@ web_port = 3000
                 let mut config = Config::default();
                 config.apply_env_overrides();
 
-                assert_eq!(config.spt_dir, Some(PathBuf::from("/env/spt")));
+                assert_eq!(config.quma_dir, Some(PathBuf::from("/env/spt")));
                 assert_eq!(config.web_port, 4000);
                 assert_eq!(config.web_bind, "10.0.0.1");
                 assert_eq!(config.server_container, Some("env-container".to_string()));
@@ -1712,7 +1727,8 @@ install_dir = "/opt/fika"
             server_container: Some("spt".to_string()),
             ..Config::default()
         };
-        let result = headless.validate(&config, spt_dir);
+        let dirs = QumaDirs::from_legacy(spt_dir.to_path_buf());
+        let result = headless.validate(&config, &dirs);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("port"));
     }
@@ -1729,7 +1745,8 @@ install_dir = "/opt/fika"
             ..Config::default()
         };
         let tmp = tempfile::tempdir().unwrap();
-        let result = headless.validate(&config, tmp.path());
+        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
+        let result = headless.validate(&config, &dirs);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Fika"));
     }
@@ -1750,7 +1767,8 @@ install_dir = "/opt/fika"
             server_container: Some("spt".to_string()),
             ..Config::default()
         };
-        let result = headless.validate(&config, spt_dir);
+        let dirs = QumaDirs::from_legacy(spt_dir.to_path_buf());
+        let result = headless.validate(&config, &dirs);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -2194,7 +2212,8 @@ numa_node = 1
 
         let mut h_mut = h;
         h_mut.install_dir = install_dir;
-        let result = h_mut.validate(&full_config, &spt_dir);
+        let dirs = QumaDirs::from_legacy(spt_dir);
+        let result = h_mut.validate(&full_config, &dirs);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("numa_auto"));
     }
@@ -2239,7 +2258,8 @@ extra_isolated_paths = ["BepInEx/plugins"]
             ..Default::default()
         };
         // validate() should succeed (warn, not bail)
-        assert!(h.validate(&config, &spt_dir).is_ok());
+        let dirs = QumaDirs::from_legacy(spt_dir);
+        assert!(h.validate(&config, &dirs).is_ok());
     }
 
     #[test]

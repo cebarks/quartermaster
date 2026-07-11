@@ -70,6 +70,7 @@ pub fn is_excluded_from_headless(db: &Database, mod_id: i64) -> bool {
 
 /// Best-effort sync of client-side files to the headless install directory.
 /// No-op if headless is not configured or the mod is in an exclude_headless group.
+#[allow(deprecated)]
 fn maybe_sync_headless(
     config: &crate::config::Config,
     spt_dir: &Path,
@@ -105,6 +106,7 @@ fn maybe_sync_headless(
 
 /// Sync with a pre-read file list. Used when the file list is already available
 /// or when the DB record is about to be deleted (remove paths).
+#[allow(deprecated)]
 fn maybe_sync_headless_with_files(
     config: &crate::config::Config,
     spt_dir: &Path,

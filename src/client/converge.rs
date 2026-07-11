@@ -737,6 +737,7 @@ fn reconcile_headless_mods(
 /// The `converging` flag is an Arc<AtomicBool> that prevents concurrent convergence
 /// operations and signals to the supervisor that state is in flux.
 #[allow(clippy::too_many_arguments)]
+#[allow(deprecated)]
 pub async fn converge(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
@@ -1138,6 +1139,7 @@ async fn ensure_clients(
 ///
 /// In-raid checks are now handled by the CLI `headless delete` command before calling
 /// converge, so this function simply stops and removes excess containers.
+#[allow(deprecated)]
 async fn remove_excess_clients(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
@@ -1278,6 +1280,7 @@ fn resolve_numa_cpuset(
 /// `effective_paths` is the merged list of global `isolated_paths` + per-client
 /// `extra_isolated_paths`, computed by the caller via `HeadlessConfig::effective_isolated_paths`.
 #[allow(clippy::too_many_arguments)]
+#[allow(deprecated)]
 async fn create_client_container(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,

@@ -386,6 +386,7 @@ pub async fn save_logging_settings(
         .finish())
 }
 
+#[allow(deprecated)]
 pub async fn save_headless_settings(
     state: Data<AppState>,
     req: HttpRequest,

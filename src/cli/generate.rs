@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
+#[allow(deprecated)]
 use crate::spt::detect::detect_spt_dir;
 
 use super::{Cli, GenerateTarget};
@@ -41,8 +42,9 @@ WantedBy=multi-user.target
     )
 }
 
+#[allow(deprecated)]
 fn generate_systemd(install: bool, cli: &Cli) -> Result<()> {
-    let spt_dir = detect_spt_dir(cli.spt_dir.as_deref(), None)?;
+    let spt_dir = detect_spt_dir(cli.effective_quma_dir(), None)?;
     let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
     let config = Config::load(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;

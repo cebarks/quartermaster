@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
@@ -23,8 +23,12 @@ pub mod update;
 #[derive(Parser)]
 #[command(name = "quma", version, about = "Quartermaster — SPT/Fika mod manager")]
 pub struct Cli {
-    /// Explicit SPT server directory
+    /// Explicit Quartermaster data directory
     #[arg(long, global = true)]
+    pub quma_dir: Option<PathBuf>,
+
+    /// Deprecated: use --quma-dir instead
+    #[arg(long, global = true, hide = true)]
     pub spt_dir: Option<PathBuf>,
 
     /// Config file path override
@@ -45,6 +49,17 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Command,
+}
+
+impl Cli {
+    pub fn effective_quma_dir(&self) -> Option<&Path> {
+        self.quma_dir.as_deref().or_else(|| {
+            if self.spt_dir.is_some() {
+                tracing::warn!("--spt-dir is deprecated, use --quma-dir instead");
+            }
+            self.spt_dir.as_deref()
+        })
+    }
 }
 
 #[derive(Subcommand)]

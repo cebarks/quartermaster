@@ -366,6 +366,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
     Ok(())
 }
 
+#[allow(deprecated)]
 async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
     let headless_config = require_headless_config(&ctx.config)?;
     let container_mgr = require_container_manager(ctx)?;

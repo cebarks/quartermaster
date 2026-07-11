@@ -8,12 +8,15 @@ use tokio::sync::mpsc;
 use super::Cli;
 use crate::config::{self, is_fika_installed, Config};
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
 use crate::logging;
+#[allow(deprecated)]
 use crate::spt::detect::{detect_spt_dir, read_spt_version};
 
+#[allow(deprecated)]
 pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()> {
-    let spt_dir = detect_spt_dir(cli.spt_dir.as_deref(), None)?;
+    let spt_dir = detect_spt_dir(cli.effective_quma_dir(), None)?;
     let spt_info = read_spt_version(&spt_dir)?;
 
     let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
@@ -130,7 +133,9 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                     // Run initial convergence if clients are already configured
                     if let Some(ref headless_config) = config.headless {
                         if headless_config.client_count() > 0 {
-                            if let Err(e) = headless_config.validate(&config, &spt_dir) {
+                            // ponytail: temporary until Tasks 4-6 refactor callers to use QumaDirs
+                            let temp_dirs = QumaDirs::from_legacy(spt_dir.clone());
+                            if let Err(e) = headless_config.validate(&config, &temp_dirs) {
                                 tracing::error!(err = %e, "Invalid headless configuration — skipping initial convergence");
                             } else {
                                 tracing::info!(

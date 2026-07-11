@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::container::ContainerManager;
 use crate::db::Database;
 use crate::forge::client::ForgeClient;
+#[allow(deprecated)]
 use crate::spt::detect::{detect_spt_dir, read_spt_version, SptInfo};
 
 use super::Cli;
@@ -20,8 +21,9 @@ pub struct CliContext {
     pub container_mgr: Option<ContainerManager>,
 }
 
+#[allow(deprecated)]
 pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
-    let spt_dir = detect_spt_dir(cli.spt_dir.as_deref(), None)?;
+    let spt_dir = detect_spt_dir(cli.effective_quma_dir(), None)?;
     tracing::debug!(spt_dir = %spt_dir.display(), "resolved SPT directory");
     let spt_info = read_spt_version(&spt_dir)?;
 

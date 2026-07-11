@@ -359,7 +359,7 @@ fn create_config(data_dir: &Path, container_name: &str, cli: &Cli) -> Result<(Co
     } else {
         Config::default()
     };
-    config.spt_dir = Some(data_dir.to_path_buf());
+    config.quma_dir = Some(data_dir.to_path_buf());
     config.server_container = Some(container_name.to_string());
     config.server_host = Some("0.0.0.0".to_string());
     config.server_port = Some(DEFAULT_SPT_PORT);
