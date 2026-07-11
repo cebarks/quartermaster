@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Command::Setup {
+            quma_dir,
             path,
             no_fika,
             admin_password,
@@ -82,6 +83,7 @@ async fn main() -> Result<()> {
             init_early_logging(&cli, &reload_handles);
             cli::setup::run(
                 cli::setup::SetupArgs {
+                    quma_dir: quma_dir.clone(),
                     path: path.clone(),
                     no_fika: *no_fika,
                     admin_password: admin_password.clone(),

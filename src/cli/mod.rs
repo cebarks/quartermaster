@@ -66,7 +66,11 @@ impl Cli {
 pub enum Command {
     /// Bootstrap or initialize Quartermaster for an SPT server
     Setup {
-        /// Data directory path (default: ~/spt-server)
+        /// Quartermaster data directory (default: ~/spt-server)
+        #[arg(long)]
+        quma_dir: Option<PathBuf>,
+        /// Deprecated: use --quma-dir instead
+        #[arg(long, hide = true)]
         path: Option<PathBuf>,
         /// Skip Fika installation
         #[arg(long)]
