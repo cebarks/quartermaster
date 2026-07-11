@@ -38,6 +38,7 @@ use actix_web::middleware::from_fn;
 
 use crate::config::Config;
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
 use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::SptInfo;
@@ -80,7 +81,7 @@ pub struct ServerContext {
     pub config_path: std::path::PathBuf,
     pub db: Arc<Mutex<Database>>,
     pub forge: ForgeClient,
-    pub spt_dir: std::path::PathBuf,
+    pub dirs: QumaDirs,
     pub spt_info: SptInfo,
     pub log_broadcast: Arc<LogBroadcast>,
     pub reload_handles: Arc<ReloadHandles>,
@@ -864,7 +865,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         config_path,
         db,
         forge,
-        spt_dir,
+        dirs,
         spt_info,
         log_broadcast,
         reload_handles,
@@ -880,7 +881,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
-    let game_data = Arc::new(GameData::load(&spt_dir).unwrap_or_else(|e| {
+    let game_data = Arc::new(GameData::load(&dirs).unwrap_or_else(|e| {
         tracing::warn!(err = %e, "failed to load SPT game data, lookups will return raw IDs");
         GameData::load_empty()
     }));
@@ -889,31 +890,30 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     let db_arc = db;
 
     // Migrate disabled mods from old .disabled suffix scheme to stash directory
-    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db_arc.lock(), &spt_dir) {
+    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db_arc.lock(), &dirs) {
         tracing::error!(err = %e, "failed to migrate disabled mods to stash");
     }
 
-    crate::ops::cleanup_staging(&spt_dir);
+    crate::ops::cleanup_staging(&dirs);
 
     // Recover any interrupted async mod updates from a previous crash
-    if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &spt_dir) {
+    if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &dirs) {
         tracing::error!(err = %e, "failed to recover pending updates on startup");
     }
 
     // Remove orphaned queued archives (no matching pending operation)
-    crate::queue::sweep_orphaned_archives(&spt_dir, &db_arc.lock());
+    crate::queue::sweep_orphaned_archives(&dirs, &db_arc.lock());
 
-    let svm =
-        crate::svm::SvmManager::detect(&spt_dir).map(|mgr| Arc::new(parking_lot::RwLock::new(mgr)));
+    let svm = crate::svm::SvmManager::detect(&dirs.spt_server)
+        .map(|mgr| Arc::new(parking_lot::RwLock::new(mgr)));
     let svm_installed_flag = svm.is_some();
     if svm_installed_flag {
         tracing::info!("SVM detected — web config editor enabled");
     }
 
-    let config_mgmt = crate::config_mgmt::ConfigManager::new(&spt_dir);
+    let config_mgmt = crate::config_mgmt::ConfigManager::new(&dirs);
 
     let tls_enabled = config.tls_enabled;
-    let spt_dir_for_tls = spt_dir.clone();
 
     let proxy_client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -923,14 +923,14 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         .expect("failed to build proxy HTTP client");
 
     let mod_zip_cache = crate::web::mod_zip_cache::ModZipCache::new(
-        spt_dir.clone(),
+        dirs.spt_server.clone(),
         db_arc.clone(),
         config_handle.clone(),
     );
 
     // Initialize FikaClient if fika.jsonc exists and has an API key
     let fika_client = if fika_installed {
-        let fika_config_path = crate::fika::config::fika_config_path(&spt_dir);
+        let fika_config_path = crate::fika::config::fika_config_path(&dirs.spt_server);
         match crate::fika::config::read_fika_config(&fika_config_path) {
             Ok(fika_config) if !fika_config.server.api_key.is_empty() => {
                 let base_url = format!(
@@ -963,10 +963,12 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     };
 
     let catalog_cache = crate::convoy::catalog::CatalogCache::new(
-        spt_dir.clone(),
+        dirs.spt_server.clone(),
         db_arc.clone(),
         config_handle.clone(),
     );
+
+    let dirs = Arc::new(dirs);
 
     let app_state = web::Data::new(AppState {
         db: db_arc,
@@ -974,7 +976,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         config: config_handle,
         config_path,
         config_lock: parking_lot::Mutex::new(()),
-        spt_dir,
+        dirs: Arc::clone(&dirs),
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(events_tx.clone()),
         update_cache: crate::web::update_cache::UpdateCache::new(config.update_check_interval),
@@ -1008,9 +1010,11 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     {
         let config = app_state.config.read();
         let db = app_state.db.lock();
-        if let Err(e) =
-            crate::convoy::migrate::migrate_modsync_to_convoy(&config, &db, &app_state.spt_dir)
-        {
+        if let Err(e) = crate::convoy::migrate::migrate_modsync_to_convoy(
+            &config,
+            &db,
+            &app_state.dirs.spt_server,
+        ) {
             tracing::error!("failed to migrate modsync groups to convoy: {e}");
         }
     }
@@ -1106,7 +1110,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     };
 
     let server = if config.tls_enabled {
-        let tls_config = crate::tls::load_or_generate_tls_config(&config, &spt_dir_for_tls)
+        let tls_config = crate::tls::load_or_generate_tls_config(&config, &dirs)
             .context("failed to configure TLS")?;
         tracing::info!("Quartermaster starting on https://{bind_addr}");
         server_builder

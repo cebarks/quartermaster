@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::config_mgmt::ConfigManager;
 use crate::container::ContainerManager;
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
 use crate::logging::writer::LogLevelCounts;
 use crate::logging::{LogBroadcast, ReloadHandles};
@@ -29,7 +30,7 @@ pub struct AppState {
     pub config: Arc<parking_lot::RwLock<Config>>,
     pub config_path: PathBuf,
     pub config_lock: parking_lot::Mutex<()>,
-    pub spt_dir: PathBuf,
+    pub dirs: Arc<QumaDirs>,
     pub spt_info: SptInfo,
     pub tasks: TaskTracker,
     pub update_cache: UpdateCache,
@@ -119,7 +120,7 @@ impl AppState {
         {
             self.catalog_cache.invalidate();
             self.mod_zip_cache.invalidate();
-            crate::convoy::download::clear_convoy_cache(&self.spt_dir);
+            crate::convoy::download::clear_convoy_cache(&self.dirs.spt_server);
         }
     }
 

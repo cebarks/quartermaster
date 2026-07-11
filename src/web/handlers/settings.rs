@@ -374,7 +374,7 @@ pub async fn save_logging_settings(
     let filter = crate::logging::resolve_log_filter(&config.logging, 0, None);
     state
         .reload_handles
-        .reconfigure(&config.logging, &filter, Some(&state.spt_dir));
+        .reconfigure(&config.logging, &filter, Some(&state.dirs));
 
     set_flash(
         &session,
@@ -386,6 +386,7 @@ pub async fn save_logging_settings(
         .finish())
 }
 
+#[allow(deprecated)]
 pub async fn save_headless_settings(
     state: Data<AppState>,
     req: HttpRequest,

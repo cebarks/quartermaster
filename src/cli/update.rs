@@ -19,7 +19,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
     if !pending.is_empty() {
         let running = crate::server_detect::is_server_running(
             &ctx.config,
-            &ctx.spt_dir,
+            &ctx.dirs,
             ctx.container_mgr.as_ref(),
         )
         .await?;
@@ -77,8 +77,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
         return Ok(());
     }
 
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
-        .await?
+    if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
         for update in &results.updates {
             let installed = mods_to_check
@@ -197,7 +196,7 @@ pub async fn apply_update_by_version(
 
     crate::ops::update_mod_from_archive(
         &ctx.db,
-        &ctx.spt_dir,
+        &ctx.dirs,
         &ctx.config,
         installed.id,
         target_version_id,
@@ -286,8 +285,7 @@ async fn run_addon_update(addon_ref: &str, force: bool, ctx: &CliContext) -> Res
         return Ok(());
     }
 
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
-        .await?
+    if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
         ctx.db.insert_pending_addon_op(
             crate::db::users::QueueAction::Update,
@@ -318,7 +316,7 @@ async fn run_addon_update(addon_ref: &str, force: bool, ctx: &CliContext) -> Res
 
     crate::ops::update_addon_from_archive(
         &ctx.db,
-        &ctx.spt_dir,
+        &ctx.dirs,
         &ctx.config,
         installed.id,
         latest.id,

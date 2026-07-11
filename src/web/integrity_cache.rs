@@ -6,6 +6,7 @@ use parking_lot::RwLock;
 use tokio::sync::broadcast;
 
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::health::{check_integrity_parallel, IntegrityHealth};
 use crate::web::sse::ServerEvent;
 
@@ -69,7 +70,7 @@ impl IntegrityCache {
     pub fn start_check(
         &self,
         db: Arc<parking_lot::Mutex<Database>>,
-        spt_dir: std::path::PathBuf,
+        dirs: QumaDirs,
         events: broadcast::Sender<ServerEvent>,
     ) {
         if self
@@ -98,8 +99,7 @@ impl IntegrityCache {
                 }
             };
 
-            match check_integrity_parallel(&tracked_files, &spt_dir, &cache.progress, &cache.total)
-            {
+            match check_integrity_parallel(&tracked_files, &dirs, &cache.progress, &cache.total) {
                 Ok(result) => {
                     cache.complete_check(result, generation_at_start);
                     let _ = events.send(ServerEvent::IntegrityChanged);

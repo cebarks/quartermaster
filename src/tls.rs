@@ -5,9 +5,11 @@ use anyhow::{bail, Context, Result};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
+use crate::dirs::QumaDirs;
+
 pub fn load_or_generate_tls_config(
     config: &crate::config::Config,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
 ) -> Result<rustls::ServerConfig> {
     let (cert_chain, key) = match (&config.tls_cert, &config.tls_key) {
         (Some(cert_path), Some(key_path)) => load_pem_files(cert_path, key_path)?,
@@ -15,8 +17,8 @@ pub fn load_or_generate_tls_config(
             bail!("tls_cert and tls_key must both be set, or both omitted");
         }
         (None, None) => {
-            let cert_path = spt_dir.join("quma-cert.pem");
-            let key_path = spt_dir.join("quma-key.pem");
+            let cert_path = dirs.tls_cert();
+            let key_path = dirs.tls_key();
             if cert_path.exists() && key_path.exists() {
                 tracing::info!(
                     "loading existing self-signed TLS certificate; \
@@ -147,12 +149,14 @@ fn generate_self_signed(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::dirs::QumaDirs;
 
     #[test]
     fn auto_generates_self_signed_cert() {
         let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
         let config = crate::config::Config::default();
-        let tls_config = load_or_generate_tls_config(&config, tmp.path()).unwrap();
+        let tls_config = load_or_generate_tls_config(&config, &dirs).unwrap();
         // Cert files should have been created
         assert!(tmp.path().join("quma-cert.pem").exists());
         assert!(tmp.path().join("quma-key.pem").exists());
@@ -163,12 +167,13 @@ mod tests {
     #[test]
     fn reuses_existing_cert() {
         let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
         let config = crate::config::Config::default();
         // First call generates
-        load_or_generate_tls_config(&config, tmp.path()).unwrap();
+        load_or_generate_tls_config(&config, &dirs).unwrap();
         let cert1 = std::fs::read(tmp.path().join("quma-cert.pem")).unwrap();
         // Second call reuses
-        load_or_generate_tls_config(&config, tmp.path()).unwrap();
+        load_or_generate_tls_config(&config, &dirs).unwrap();
         let cert2 = std::fs::read(tmp.path().join("quma-cert.pem")).unwrap();
         assert_eq!(cert1, cert2);
     }
@@ -176,35 +181,38 @@ mod tests {
     #[test]
     fn loads_user_provided_cert() {
         let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
         // Generate a cert first so we have valid PEM files
         let config = crate::config::Config::default();
-        load_or_generate_tls_config(&config, tmp.path()).unwrap();
+        load_or_generate_tls_config(&config, &dirs).unwrap();
 
         // Now configure to use those generated files as "user-provided"
         let mut config = crate::config::Config::default();
         config.tls_cert = Some(tmp.path().join("quma-cert.pem"));
         config.tls_key = Some(tmp.path().join("quma-key.pem"));
-        let tls_config = load_or_generate_tls_config(&config, tmp.path()).unwrap();
+        let tls_config = load_or_generate_tls_config(&config, &dirs).unwrap();
         drop(tls_config);
     }
 
     #[test]
     fn errors_on_missing_user_cert() {
         let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
         let mut config = crate::config::Config::default();
         config.tls_cert = Some(tmp.path().join("nonexistent.pem"));
         config.tls_key = Some(tmp.path().join("nonexistent-key.pem"));
-        let result = load_or_generate_tls_config(&config, tmp.path());
+        let result = load_or_generate_tls_config(&config, &dirs);
         assert!(result.is_err());
     }
 
     #[test]
     fn errors_on_cert_without_key() {
         let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
         let mut config = crate::config::Config::default();
         config.tls_cert = Some(tmp.path().join("cert.pem"));
         // tls_key is None
-        let result = load_or_generate_tls_config(&config, tmp.path());
+        let result = load_or_generate_tls_config(&config, &dirs);
         assert!(result.is_err());
     }
 

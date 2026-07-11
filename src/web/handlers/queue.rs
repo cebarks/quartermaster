@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path};
 use actix_web::{HttpRequest, HttpResponse};
@@ -169,7 +171,7 @@ pub async fn apply_queue(
     let config = state.config_cloned();
     let server_running = crate::server_detect::is_server_running(
         &config,
-        &state.spt_dir,
+        &state.dirs,
         state.container_mgr.as_deref(),
     )
     .await
@@ -372,7 +374,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
             crate::ops::ModSource::parse(&op.source).unwrap_or(crate::ops::ModSource::Forge);
 
         let db = state.db.clone();
-        let spt_dir = state.spt_dir.clone();
+        let dirs = Arc::clone(&state.dirs);
         let config = state.config_cloned();
         let mod_name = op.mod_name.clone();
         let source_url = op.source_url.clone();
@@ -382,7 +384,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
             let db = db.lock();
             crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
                 db: &db,
-                spt_dir: &spt_dir,
+                dirs: &dirs,
                 config: &config,
                 forge_mod_id: None,
                 version_id: None,
@@ -419,10 +421,11 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let (link, version_str, full_version) =
         resolve_version_link(state, forge_mod_id, version_id).await?;
 
+    let dirs = Arc::clone(&state.dirs);
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
-        &state.spt_dir,
+        &dirs,
         &state.config_cloned(),
         forge_mod_id,
         &full_version,
@@ -433,7 +436,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let archive_path = tmp_dir.path().join("mod.zip");
 
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
     let mod_name = op.mod_name.clone();
 
@@ -444,7 +447,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
         }
         let id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
             db: &db,
-            spt_dir: &spt_dir,
+            dirs: &dirs,
             config: &config,
             forge_mod_id: Some(forge_mod_id),
             version_id: Some(version_id),
@@ -480,10 +483,11 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let (link, version_str, full_version) =
         resolve_version_link(state, forge_mod_id, version_id).await?;
 
+    let dirs = Arc::clone(&state.dirs);
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
-        &state.spt_dir,
+        &dirs,
         &state.config_cloned(),
         forge_mod_id,
         &full_version,
@@ -494,7 +498,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let archive_path = tmp_dir.path().join("mod.zip");
 
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     let mod_db_id = web::block(move || {
@@ -505,7 +509,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
         let db_id = installed.id;
         crate::ops::update_mod_from_archive(
             &db,
-            &spt_dir,
+            &dirs,
             &config,
             db_id,
             version_id,
@@ -530,7 +534,7 @@ pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> any
         .forge_mod_id
         .expect("mod operation must have forge_mod_id");
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     web::block(move || {
@@ -542,10 +546,10 @@ pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> any
         // Collect and remove reverse dependencies (same as CLI drain_all)
         let reverse_deps = crate::ops::collect_all_reverse_deps(&db, installed.id)?;
         for dep in reverse_deps.iter().rev() {
-            crate::ops::remove_mod_by_id(&db, &spt_dir, &config, dep.id)?;
+            crate::ops::remove_mod_by_id(&db, &dirs, &config, dep.id)?;
         }
 
-        crate::ops::remove_mod_by_id(&db, &spt_dir, &config, installed.id)
+        crate::ops::remove_mod_by_id(&db, &dirs, &config, installed.id)
     })
     .await??;
 
@@ -601,7 +605,7 @@ async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow:
 
     // Install
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
     let addon_name = op.mod_name.clone();
     let addon_slug = addon_info.slug.clone();
@@ -612,7 +616,7 @@ async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow:
         let db = db.lock();
         let req = crate::ops::InstallAddonRequest {
             db: &db,
-            spt_dir: &spt_dir,
+            dirs: &dirs,
             config: &config,
             forge_addon_id: Some(forge_addon_id),
             parent_mod_id: parent_mod_db_id,
@@ -667,10 +671,10 @@ async fn apply_addon_update(op: &PendingOperation, state: &AppState) -> anyhow::
     let archive_path = tmp_dir.path().join("addon.zip");
     state.forge.download_file(link, &archive_path).await?;
 
-    let staging_dir = crate::ops::staging_tempdir(&state.spt_dir)?;
+    let dirs = Arc::clone(&state.dirs);
+    let staging_dir = crate::ops::staging_tempdir(&dirs)?;
     let staging_path = staging_dir.path().to_path_buf();
 
-    let spt_dir = state.spt_dir.clone();
     let config = state.config_cloned();
     let version_str = version.version.clone();
     let mod_version_constraint = version.mod_version_constraint.clone();
@@ -687,7 +691,7 @@ async fn apply_addon_update(op: &PendingOperation, state: &AppState) -> anyhow::
     // Update
     crate::ops::apply_addon_update(
         state.db.clone(),
-        spt_dir,
+        dirs.as_ref().clone(),
         config,
         staging_path,
         extracted,
@@ -708,7 +712,7 @@ async fn apply_addon_remove(op: &PendingOperation, state: &AppState) -> anyhow::
         .ok_or_else(|| anyhow::anyhow!("addon operation missing forge_addon_id"))?;
 
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     web::block(move || {
@@ -716,7 +720,7 @@ async fn apply_addon_remove(op: &PendingOperation, state: &AppState) -> anyhow::
         let addon = db
             .get_addon_by_forge_id(forge_addon_id)?
             .ok_or_else(|| anyhow::anyhow!("addon not found for forge_id {forge_addon_id}"))?;
-        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon.id)
+        crate::ops::remove_addon_by_id(&db, &dirs, &config, addon.id)
     })
     .await??;
 

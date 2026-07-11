@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Html, Path, Query};
 use actix_web::HttpRequest;
@@ -120,7 +122,7 @@ pub async fn profile_page(
     let profile_username = path.into_inner();
 
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let lookup_username = profile_username.clone();
 
     let (user_found, spt_profile_id) = web::block(move || {
@@ -146,12 +148,10 @@ pub async fn profile_page(
             Some("No SPT profile linked to this account.".to_string()),
         ),
         Some(profile_id) => {
-            let spt_dir2 = spt_dir.clone();
+            let dirs2 = dirs.clone();
             let game_data = state.game_data.clone();
-            match web::block(move || {
-                load_profile_detail(&spt_dir2, &profile_id, game_data.prices())
-            })
-            .await
+            match web::block(move || load_profile_detail(&dirs2, &profile_id, game_data.prices()))
+                .await
             {
                 Ok(Ok(Some(d))) => (Some(d), None),
                 Ok(Ok(None)) => (
@@ -368,7 +368,7 @@ async fn load_detail_for_user(
     username: &str,
 ) -> Result<ProfileDetail, WebError> {
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let username = username.to_string();
 
     let spt_profile_id = web::block(move || {
@@ -386,7 +386,7 @@ async fn load_detail_for_user(
     let profile_id = spt_profile_id.ok_or(WebError::NotFound)?;
 
     let game_data = state.game_data.clone();
-    let detail = web::block(move || load_profile_detail(&spt_dir, &profile_id, game_data.prices()))
+    let detail = web::block(move || load_profile_detail(&dirs, &profile_id, game_data.prices()))
         .await
         .map_err(WebError::from)?
         .map_err(WebError::from)?;
@@ -435,8 +435,8 @@ pub async fn stash_partial(
         }
     };
 
-    let spt_dir = state.spt_dir.clone();
-    let raw_items = web::block(move || load_stash_items(&spt_dir, &profile_id))
+    let dirs = Arc::clone(&state.dirs);
+    let raw_items = web::block(move || load_stash_items(&dirs, &profile_id))
         .await
         .map_err(WebError::from)?
         .map_err(WebError::from)?;

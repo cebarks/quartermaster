@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path, Query};
 use actix_web::HttpRequest;
@@ -231,14 +233,10 @@ async fn trigger_install_for_request(
     }
 
     let config = state.config_cloned();
-    let should_queue = crate::queue::should_queue(
-        &config,
-        false,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
-    )
-    .await
-    .unwrap_or(false);
+    let should_queue =
+        crate::queue::should_queue(&config, false, &state.dirs, state.container_mgr.as_deref())
+            .await
+            .unwrap_or(false);
 
     if should_queue {
         let db = state.db.clone();
@@ -290,7 +288,8 @@ async fn trigger_install_for_request(
         let request_id = request.id;
         let tasks = state.tasks.clone();
         let forge = state.forge.clone();
-        let spt_dir = state.spt_dir.clone();
+        let dirs = Arc::clone(&state.dirs);
+        let spt_dir = state.dirs.spt_server.clone();
         let db = state.db.clone();
         let db_edges = db.clone();
         let version = version.clone();
@@ -307,7 +306,7 @@ async fn trigger_install_for_request(
                 let dep_db_ids = crate::ops::resolve_and_install_deps(
                     &forge,
                     &db,
-                    &spt_dir,
+                    &dirs,
                     &config,
                     forge_mod_id,
                     &version,
@@ -319,7 +318,7 @@ async fn trigger_install_for_request(
                 let db_id = crate::web::install::web_download_extract_and_record(
                     &forge,
                     &db,
-                    &spt_dir,
+                    &dirs,
                     &config,
                     forge_mod_id,
                     &mod_name,

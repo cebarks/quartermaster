@@ -5,13 +5,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 
 pub use git::{ConfigHistoryRepo, HistoryEntry};
 
 #[derive(Clone)]
 pub struct ConfigManager {
     pub history: ConfigHistoryRepo,
-    spt_dir: PathBuf,
+    spt_server: PathBuf,
 }
 
 pub struct ModConfigSet {
@@ -33,11 +34,10 @@ pub struct ConfigFile {
 }
 
 impl ConfigManager {
-    pub fn new(spt_dir: &Path) -> Self {
-        let history_path = spt_dir.join("quartermaster/config-history");
+    pub fn new(dirs: &QumaDirs) -> Self {
         Self {
-            history: ConfigHistoryRepo::new(history_path),
-            spt_dir: spt_dir.to_path_buf(),
+            history: ConfigHistoryRepo::new(dirs.config_history_dir()),
+            spt_server: dirs.spt_server.clone(),
         }
     }
 
@@ -53,7 +53,7 @@ impl ConfigManager {
                 continue;
             };
             let config_dir = self
-                .spt_dir
+                .spt_server
                 .join("SPT/user/mods")
                 .join(&mod_dir_name)
                 .join("config");
@@ -107,7 +107,7 @@ impl ConfigManager {
     /// Find the actual directory name for a mod under SPT/user/mods/.
     /// Mod names in the DB may not match the directory name exactly.
     pub fn find_mod_dir(&self, mod_name: &str) -> Result<Option<String>> {
-        let mods_dir = self.spt_dir.join("SPT/user/mods");
+        let mods_dir = self.spt_server.join("SPT/user/mods");
         if !mods_dir.is_dir() {
             return Ok(None);
         }
@@ -266,7 +266,7 @@ impl ConfigManager {
 
     #[allow(dead_code)] // ponytail: used in later tasks
     fn config_path(&self, mod_dir: &str, config_rel_path: &Path) -> PathBuf {
-        self.spt_dir
+        self.spt_server
             .join("SPT/user/mods")
             .join(mod_dir)
             .join("config")
@@ -283,6 +283,7 @@ fn strip_bom(s: &str) -> &str {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::dirs::QumaDirs;
 
     #[test]
     fn strip_bom_removes_bom() {
@@ -323,7 +324,7 @@ mod tests {
         let spt_dir = tmp.path();
         std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
 
-        let mgr = ConfigManager::new(spt_dir);
+        let mgr = ConfigManager::new(&QumaDirs::from_legacy(spt_dir.to_path_buf()));
         let db = crate::db::Database::open_in_memory().unwrap();
         let configs = mgr.discover_configs(&db).unwrap();
         assert!(configs.is_empty());
@@ -340,7 +341,7 @@ mod tests {
         // Non-json file should be ignored
         std::fs::write(config_dir.join("readme.txt"), "ignore me").unwrap();
 
-        let mgr = ConfigManager::new(spt_dir);
+        let mgr = ConfigManager::new(&QumaDirs::from_legacy(spt_dir.to_path_buf()));
         let db = crate::db::Database::open_in_memory().unwrap();
         // Insert a mod matching the directory name
         db.insert_mod(None, None, "TestMod", None, "1.0.0", "manual", None)
@@ -361,7 +362,7 @@ mod tests {
         let original = r#"{"key": "original"}"#;
         std::fs::write(config_dir.join("config.json"), original).unwrap();
 
-        let mgr = ConfigManager::new(spt_dir);
+        let mgr = ConfigManager::new(&QumaDirs::from_legacy(spt_dir.to_path_buf()));
         let content = mgr
             .read_config("TestMod", Path::new("config.json"))
             .unwrap();
@@ -388,7 +389,7 @@ mod tests {
         let content = r#"{"key": "value"}"#;
         std::fs::write(config_dir.join("config.json"), content).unwrap();
 
-        let mgr = ConfigManager::new(spt_dir);
+        let mgr = ConfigManager::new(&QumaDirs::from_legacy(spt_dir.to_path_buf()));
         let changed = mgr
             .save_config("TestMod", Path::new("config.json"), content, "testuser")
             .unwrap();
@@ -403,7 +404,7 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(config_dir.join("config.json"), "{}").unwrap();
 
-        let mgr = ConfigManager::new(spt_dir);
+        let mgr = ConfigManager::new(&QumaDirs::from_legacy(spt_dir.to_path_buf()));
         let result = mgr.save_config(
             "TestMod",
             Path::new("config.json"),
@@ -421,7 +422,7 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(config_dir.join("config.json"), r#"{"v": 1}"#).unwrap();
 
-        let mgr = ConfigManager::new(spt_dir);
+        let mgr = ConfigManager::new(&QumaDirs::from_legacy(spt_dir.to_path_buf()));
 
         // Save twice to create history
         mgr.save_config("TestMod", Path::new("config.json"), r#"{"v": 2}"#, "user1")

@@ -1,9 +1,8 @@
-use std::path::Path;
-
 use anyhow::{bail, Result};
 
 use crate::config::Config;
 use crate::container::ContainerManager;
+use crate::dirs::QumaDirs;
 use crate::spt::detect::read_http_config;
 use crate::spt::server::SptClient;
 
@@ -15,7 +14,7 @@ use crate::spt::server::SptClient;
 /// 3. If ping fails (connection refused, timeout), assume server is stopped
 pub async fn is_server_running(
     config: &Config,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     container_mgr: Option<&ContainerManager>,
 ) -> Result<bool> {
     if let Some(ref container) = config.server_container {
@@ -25,16 +24,16 @@ pub async fn is_server_running(
         bail!("Podman socket not available — cannot check container status");
     }
 
-    let (host, port) = resolve_server_addr(config, spt_dir);
+    let (host, port) = resolve_server_addr(config, dirs);
     let spt_client = SptClient::new(&host, port)?;
     let ping = spt_client.ping().await?;
     Ok(ping.ok)
 }
 
 /// Resolve the SPT server address from config, falling back to http.json, then defaults.
-pub fn resolve_server_addr(config: &Config, spt_dir: &Path) -> (String, u16) {
+pub fn resolve_server_addr(config: &Config, dirs: &QumaDirs) -> (String, u16) {
     // Read http.json once, reuse for both host and port fallback
-    let http_config = read_http_config(spt_dir);
+    let http_config = read_http_config(&dirs.spt_server);
 
     let host = config
         .server_host
@@ -62,6 +61,7 @@ pub fn resolve_server_addr(config: &Config, spt_dir: &Path) -> (String, u16) {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn resolve_addr_from_config() {
@@ -69,7 +69,8 @@ mod tests {
         config.server_host = Some("10.0.0.5".to_string());
         config.server_port = Some(7070);
 
-        let (host, port) = resolve_server_addr(&config, Path::new("/nonexistent"));
+        let dirs = QumaDirs::from_legacy(PathBuf::from("/nonexistent"));
+        let (host, port) = resolve_server_addr(&config, &dirs);
         assert_eq!(host, "10.0.0.5");
         assert_eq!(port, 7070);
     }
@@ -77,7 +78,8 @@ mod tests {
     #[test]
     fn resolve_addr_defaults_without_http_json() {
         let config = Config::default();
-        let (host, port) = resolve_server_addr(&config, Path::new("/nonexistent"));
+        let dirs = QumaDirs::from_legacy(PathBuf::from("/nonexistent"));
+        let (host, port) = resolve_server_addr(&config, &dirs);
         assert_eq!(host, "127.0.0.1");
         assert_eq!(port, 6969);
     }
@@ -95,7 +97,8 @@ mod tests {
         .unwrap();
 
         let config = Config::default();
-        let (host, port) = resolve_server_addr(&config, spt);
+        let dirs = QumaDirs::from_legacy(spt.to_path_buf());
+        let (host, port) = resolve_server_addr(&config, &dirs);
         assert_eq!(host, "127.0.0.1");
         assert_eq!(port, 6970);
     }
@@ -113,7 +116,8 @@ mod tests {
         .unwrap();
 
         let config = Config::default();
-        let (host, _) = resolve_server_addr(&config, spt);
+        let dirs = QumaDirs::from_legacy(spt.to_path_buf());
+        let (host, _) = resolve_server_addr(&config, &dirs);
         assert_eq!(host, "127.0.0.1");
     }
 
@@ -130,7 +134,8 @@ mod tests {
         .unwrap();
 
         let config = Config::default();
-        let (host, port) = resolve_server_addr(&config, spt);
+        let dirs = QumaDirs::from_legacy(spt.to_path_buf());
+        let (host, port) = resolve_server_addr(&config, &dirs);
         assert_eq!(host, "192.168.1.50");
         assert_eq!(port, 6970);
     }
@@ -151,7 +156,8 @@ mod tests {
         config.server_host = Some("custom-host".to_string());
         // port not set in config — should fall back to http.json
 
-        let (host, port) = resolve_server_addr(&config, spt);
+        let dirs = QumaDirs::from_legacy(spt.to_path_buf());
+        let (host, port) = resolve_server_addr(&config, &dirs);
         assert_eq!(host, "custom-host");
         assert_eq!(port, 6970);
     }

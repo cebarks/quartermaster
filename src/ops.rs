@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::db::mods::InstalledMod;
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::headless_sync::{sync_client_files_to_headless, SyncOp};
 use crate::spt::mods::ExtractedFile;
 
@@ -36,8 +37,8 @@ pub fn derive_name_from_path(path: &Path) -> String {
 
 /// Create a staging tempdir on the same filesystem as `spt_dir` so that
 /// `rename()` works instead of falling back to a byte-by-byte copy.
-pub fn staging_tempdir(spt_dir: &Path) -> Result<tempfile::TempDir> {
-    let staging_root = spt_dir.join("quartermaster/.staging");
+pub fn staging_tempdir(dirs: &QumaDirs) -> Result<tempfile::TempDir> {
+    let staging_root = dirs.staging_dir();
     std::fs::create_dir_all(&staging_root)
         .with_context(|| format!("failed to create staging dir: {}", staging_root.display()))?;
     tempfile::tempdir_in(&staging_root).context("failed to create staging tempdir")
@@ -45,8 +46,8 @@ pub fn staging_tempdir(spt_dir: &Path) -> Result<tempfile::TempDir> {
 
 /// Remove leftover staging tempdirs from a previous crash.
 /// Safe to call on startup — nothing should be actively staging yet.
-pub fn cleanup_staging(spt_dir: &Path) {
-    let staging_root = spt_dir.join("quartermaster/.staging");
+pub fn cleanup_staging(dirs: &QumaDirs) {
+    let staging_root = dirs.staging_dir();
     if let Ok(entries) = std::fs::read_dir(&staging_root) {
         for entry in entries.flatten() {
             let _ = std::fs::remove_dir_all(entry.path());
@@ -70,9 +71,10 @@ pub fn is_excluded_from_headless(db: &Database, mod_id: i64) -> bool {
 
 /// Best-effort sync of client-side files to the headless install directory.
 /// No-op if headless is not configured or the mod is in an exclude_headless group.
+#[allow(deprecated)]
 fn maybe_sync_headless(
     config: &crate::config::Config,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     db: &Database,
     mod_db_id: i64,
     op: SyncOp,
@@ -98,16 +100,17 @@ fn maybe_sync_headless(
         }
     };
 
-    if let Err(e) = sync_client_files_to_headless(spt_dir, install_dir, &files, op) {
+    if let Err(e) = sync_client_files_to_headless(&dirs.spt_server, install_dir, &files, op) {
         tracing::warn!(mod_db_id, err = %e, "headless sync failed");
     }
 }
 
 /// Sync with a pre-read file list. Used when the file list is already available
 /// or when the DB record is about to be deleted (remove paths).
+#[allow(deprecated)]
 fn maybe_sync_headless_with_files(
     config: &crate::config::Config,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     files: &[String],
     op: SyncOp,
 ) {
@@ -115,7 +118,7 @@ fn maybe_sync_headless_with_files(
         Some(dir) => dir,
         None => return,
     };
-    if let Err(e) = sync_client_files_to_headless(spt_dir, install_dir, files, op) {
+    if let Err(e) = sync_client_files_to_headless(&dirs.spt_server, install_dir, files, op) {
         tracing::warn!(err = %e, "headless sync failed");
     }
 }
@@ -152,10 +155,10 @@ fn record_extracted_addon_files(
 ///
 /// For each file, attempts `rename` first (fast, same-filesystem move), falling
 /// back to `copy` if the staging dir is on a different mount.
-fn move_staged_files(staging_dir: &Path, spt_dir: &Path, files: &[ExtractedFile]) -> Result<()> {
+fn move_staged_files(staging_dir: &Path, dest_root: &Path, files: &[ExtractedFile]) -> Result<()> {
     for file in files {
         let src = staging_dir.join(&file.path);
-        let dst = spt_dir.join(&file.path);
+        let dst = dest_root.join(&file.path);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -167,7 +170,7 @@ fn move_staged_files(staging_dir: &Path, spt_dir: &Path, files: &[ExtractedFile]
 /// Compute which files from `old_paths` are not present in `new_files`, delete
 /// them from `spt_dir`, and log the count.
 fn remove_stale_files(
-    spt_dir: &Path,
+    root: &Path,
     old_paths: Vec<String>,
     new_files: &[ExtractedFile],
 ) -> Result<()> {
@@ -179,7 +182,7 @@ fn remove_stale_files(
         .collect();
     if !stale_paths.is_empty() {
         tracing::debug!(stale_count = stale_paths.len(), "removing stale files");
-        crate::spt::mods::delete_mod_files(spt_dir, &stale_paths)?;
+        crate::spt::mods::delete_mod_files(root, &stale_paths)?;
     }
     Ok(())
 }
@@ -214,7 +217,7 @@ impl ModSource {
 /// Parameters for installing a mod from a downloaded archive.
 pub struct InstallRequest<'a> {
     pub db: &'a Database,
-    pub spt_dir: &'a Path,
+    pub dirs: &'a QumaDirs,
     pub config: &'a crate::config::Config,
     pub forge_mod_id: Option<i64>,
     pub version_id: Option<i64>,
@@ -230,7 +233,7 @@ pub struct InstallRequest<'a> {
 #[allow(dead_code)] // Used in Task 5
 pub struct InstallAddonRequest<'a> {
     pub db: &'a Database,
-    pub spt_dir: &'a Path,
+    pub dirs: &'a QumaDirs,
     pub config: &'a crate::config::Config,
     pub forge_addon_id: Option<i64>,
     pub parent_mod_id: i64,
@@ -255,7 +258,7 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
 
     // Extract to a staging directory on the same filesystem as spt_dir so
     // rename() works instead of cross-device copy.
-    let staging_dir = staging_tempdir(req.spt_dir)?;
+    let staging_dir = staging_tempdir(req.dirs)?;
     let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
 
     let tx = req.db.begin_transaction()?;
@@ -272,14 +275,14 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     tx.commit()?;
 
     // DB committed — now move files from staging to the live directory.
-    move_staged_files(staging_dir.path(), req.spt_dir, &extracted)?;
+    move_staged_files(staging_dir.path(), &req.dirs.spt_server, &extracted)?;
 
     tracing::debug!(
         db_id,
         file_count = extracted.len(),
         "mod installed, files recorded"
     );
-    maybe_sync_headless(req.config, req.spt_dir, req.db, db_id, SyncOp::Install);
+    maybe_sync_headless(req.config, req.dirs, req.db, db_id, SyncOp::Install);
 
     // Transition matching request to installed
     if let Some(forge_mod_id) = req.forge_mod_id {
@@ -309,7 +312,7 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
         "installing addon from archive"
     );
 
-    let staging_dir = staging_tempdir(req.spt_dir)?;
+    let staging_dir = staging_tempdir(req.dirs)?;
     let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
 
     // ponytail: addon source tracking deferred to Task 5, for now only Forge addons exist
@@ -334,7 +337,7 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
     tx.commit()?;
 
     // DB committed — now move files from staging to the live directory.
-    move_staged_files(staging_dir.path(), req.spt_dir, &extracted)?;
+    move_staged_files(staging_dir.path(), &req.dirs.spt_server, &extracted)?;
 
     tracing::debug!(
         db_id,
@@ -350,14 +353,14 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
             .into_iter()
             .map(|f| f.file_path)
             .collect();
-        maybe_sync_headless_with_files(req.config, req.spt_dir, &files, SyncOp::Install);
+        maybe_sync_headless_with_files(req.config, req.dirs, &files, SyncOp::Install);
     }
     Ok(db_id)
 }
 
 pub fn update_mod_from_archive(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     mod_db_id: i64,
     version_id: i64,
@@ -369,7 +372,7 @@ pub fn update_mod_from_archive(
         version = version_str,
         "updating mod from archive"
     );
-    let staging_dir = staging_tempdir(spt_dir)?;
+    let staging_dir = staging_tempdir(dirs)?;
     let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
 
     let old_files = db.get_files_for_mod(mod_db_id)?;
@@ -379,12 +382,12 @@ pub fn update_mod_from_archive(
         new_file_count = extracted.len(),
         "replacing mod files"
     );
-    crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_update")?;
+    crate::backup::auto_backup_mod(db, dirs, config, mod_db_id, "auto_update")?;
 
     let mod_info = db
         .get_mod(mod_db_id)?
         .ok_or_else(|| anyhow::anyhow!("mod not found for update"))?;
-    let effective_root = resolve_mod_root(spt_dir, mod_info.disabled);
+    let effective_root = resolve_mod_root(dirs, mod_info.disabled);
 
     // Compute stale paths for headless sync before remove_stale_files consumes old_paths
     let new_paths_set: std::collections::HashSet<&str> =
@@ -407,8 +410,8 @@ pub fn update_mod_from_archive(
     db.update_mod(mod_db_id, version_id, version_str)?;
     tx.commit()?;
     // Remove stale files from headless, then copy new files
-    maybe_sync_headless_with_files(config, spt_dir, &stale_paths_for_headless, SyncOp::Remove);
-    maybe_sync_headless(config, spt_dir, db, mod_db_id, SyncOp::Install);
+    maybe_sync_headless_with_files(config, dirs, &stale_paths_for_headless, SyncOp::Remove);
+    maybe_sync_headless(config, dirs, db, mod_db_id, SyncOp::Install);
     Ok(())
 }
 
@@ -416,7 +419,7 @@ pub fn update_mod_from_archive(
 #[allow(clippy::too_many_arguments)]
 pub fn update_addon_from_archive(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     addon_db_id: i64,
     version_id: i64,
@@ -429,7 +432,7 @@ pub fn update_addon_from_archive(
         version = version_str,
         "updating addon from archive"
     );
-    let staging_dir = staging_tempdir(spt_dir)?;
+    let staging_dir = staging_tempdir(dirs)?;
     let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
 
     let old_files = db.get_files_for_addon(addon_db_id)?;
@@ -444,15 +447,9 @@ pub fn update_addon_from_archive(
     let addon = db
         .get_addon(addon_db_id)?
         .ok_or_else(|| anyhow::anyhow!("addon not found"))?;
-    crate::backup::auto_backup_mod(
-        db,
-        spt_dir,
-        config,
-        addon.parent_mod_id,
-        "auto_update_addon",
-    )?;
+    crate::backup::auto_backup_mod(db, dirs, config, addon.parent_mod_id, "auto_update_addon")?;
 
-    let effective_root = resolve_mod_root(spt_dir, addon.disabled);
+    let effective_root = resolve_mod_root(dirs, addon.disabled);
 
     // Compute stale paths for headless sync before remove_stale_files consumes old_paths
     let new_paths_set: std::collections::HashSet<&str> =
@@ -476,14 +473,14 @@ pub fn update_addon_from_archive(
     tx.commit()?;
     // Addons inherit parent mod's exclude_headless status
     if !is_excluded_from_headless(db, addon.parent_mod_id) {
-        maybe_sync_headless_with_files(config, spt_dir, &stale_addon_paths, SyncOp::Remove);
+        maybe_sync_headless_with_files(config, dirs, &stale_addon_paths, SyncOp::Remove);
         let new_files: Vec<String> = db
             .get_files_for_addon(addon_db_id)
             .unwrap_or_default()
             .into_iter()
             .map(|f| f.file_path)
             .collect();
-        maybe_sync_headless_with_files(config, spt_dir, &new_files, SyncOp::Install);
+        maybe_sync_headless_with_files(config, dirs, &new_files, SyncOp::Install);
     }
     Ok(())
 }
@@ -505,7 +502,7 @@ pub fn update_addon_from_archive(
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_mod_update(
     db: Arc<parking_lot::Mutex<Database>>,
-    spt_dir: PathBuf,
+    dirs: QumaDirs,
     config: crate::config::Config,
     staging_path: PathBuf,
     extracted: Vec<ExtractedFile>,
@@ -517,14 +514,14 @@ pub async fn apply_mod_update(
     let new_files_json =
         serde_json::to_string(&extracted).context("failed to serialize new file paths")?;
 
-    // Clone db, config, spt_dir for headless sync step (step 4) before they're moved
+    // Clone db, config, dirs for headless sync step (step 4) before they're moved
     let db_sync = db.clone();
     let config_sync = config.clone();
-    let spt_dir_sync = spt_dir.clone();
+    let dirs_sync = dirs.clone();
 
     // Step 1: Read old file paths, auto-backup, and write pending marker (brief DB lock)
     let db_step1 = db.clone();
-    let spt_dir_backup = spt_dir.clone();
+    let dirs_backup = dirs.clone();
     let config_backup = config;
     let version_str_step1 = version_str.clone();
     let new_files_json_step1 = new_files_json;
@@ -532,7 +529,7 @@ pub async fn apply_mod_update(
         let db = db_step1.lock();
         crate::backup::auto_backup_mod(
             &db,
-            &spt_dir_backup,
+            &dirs_backup,
             &config_backup,
             mod_db_id,
             "auto_update",
@@ -563,10 +560,10 @@ pub async fn apply_mod_update(
     // Step 2: Filesystem swap (no DB lock held)
     // Copy new files first, then delete stale-only old files. If copying
     // fails partway, old files that weren't overwritten remain intact.
-    let spt_dir_fs = spt_dir.clone();
+    let dirs_fs = dirs.clone();
     let old_paths_fs = old_paths.clone();
     let (extracted, stale_paths) = actix_web::web::block(move || {
-        let effective_root = resolve_mod_root(&spt_dir_fs, is_disabled);
+        let effective_root = resolve_mod_root(&dirs_fs, is_disabled);
         move_staged_files(&staging_path, &effective_root, &extracted)?;
         // Compute stale paths before remove_stale_files consumes old_paths_fs
         let new_paths_set: std::collections::HashSet<&str> =
@@ -611,13 +608,8 @@ pub async fn apply_mod_update(
         let _ = actix_web::web::block(move || {
             let db = db_sync.lock();
             // Remove stale files, then install new files
-            maybe_sync_headless_with_files(
-                &config_sync,
-                &spt_dir_sync,
-                &stale_paths,
-                SyncOp::Remove,
-            );
-            maybe_sync_headless(&config_sync, &spt_dir_sync, &db, mod_db_id, SyncOp::Install);
+            maybe_sync_headless_with_files(&config_sync, &dirs_sync, &stale_paths, SyncOp::Remove);
+            maybe_sync_headless(&config_sync, &dirs_sync, &db, mod_db_id, SyncOp::Install);
             Ok::<_, anyhow::Error>(())
         })
         .await;
@@ -643,7 +635,7 @@ pub async fn apply_mod_update(
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_addon_update(
     db: Arc<parking_lot::Mutex<Database>>,
-    spt_dir: PathBuf,
+    dirs: QumaDirs,
     config: crate::config::Config,
     staging_path: PathBuf,
     extracted: Vec<ExtractedFile>,
@@ -657,14 +649,14 @@ pub async fn apply_addon_update(
     let new_files_json =
         serde_json::to_string(&extracted).context("failed to serialize new file paths")?;
 
-    // Clone db, config, spt_dir for headless sync step (step 4) before they're moved
+    // Clone db, config, dirs for headless sync step (step 4) before they're moved
     let db_sync = db.clone();
     let config_sync = config.clone();
-    let spt_dir_sync = spt_dir.clone();
+    let dirs_sync = dirs.clone();
 
     // Step 1: Read old file paths, auto-backup, and write pending marker (brief DB lock)
     let db_step1 = db.clone();
-    let spt_dir_backup = spt_dir.clone();
+    let dirs_backup = dirs.clone();
     let config_backup = config;
     let version_str_step1 = version_str.clone();
     let new_files_json_step1 = new_files_json;
@@ -676,7 +668,7 @@ pub async fn apply_addon_update(
         let is_disabled = addon.disabled;
         crate::backup::auto_backup_mod(
             &db,
-            &spt_dir_backup,
+            &dirs_backup,
             &config_backup,
             addon.parent_mod_id,
             "auto_update_addon",
@@ -708,10 +700,10 @@ pub async fn apply_addon_update(
     // Step 2: Filesystem swap (no DB lock held)
     // Copy new files first, then delete stale-only old files. If copying
     // fails partway, old files that weren't overwritten remain intact.
-    let spt_dir_fs = spt_dir.clone();
+    let dirs_fs = dirs;
     let old_paths_fs = old_paths.clone();
     let (extracted, stale_paths) = actix_web::web::block(move || {
-        let effective_root = resolve_mod_root(&spt_dir_fs, is_disabled);
+        let effective_root = resolve_mod_root(&dirs_fs, is_disabled);
         move_staged_files(&staging_path, &effective_root, &extracted)?;
         // Compute stale paths before remove_stale_files consumes old_paths_fs
         let new_paths_set: std::collections::HashSet<&str> =
@@ -777,7 +769,7 @@ pub async fn apply_addon_update(
                 // Remove stale files, then install new files
                 maybe_sync_headless_with_files(
                     &config_sync,
-                    &spt_dir_sync,
+                    &dirs_sync,
                     &stale_paths,
                     SyncOp::Remove,
                 );
@@ -787,12 +779,7 @@ pub async fn apply_addon_update(
                     .into_iter()
                     .map(|f| f.file_path)
                     .collect();
-                maybe_sync_headless_with_files(
-                    &config_sync,
-                    &spt_dir_sync,
-                    &files,
-                    SyncOp::Install,
-                );
+                maybe_sync_headless_with_files(&config_sync, &dirs_sync, &files, SyncOp::Install);
             }
             Ok::<_, anyhow::Error>(())
         })
@@ -811,7 +798,7 @@ pub async fn apply_addon_update(
 ///
 /// This should be called once during server startup, before the HTTP server begins
 /// accepting requests.
-pub fn recover_pending_updates(db: &Database, spt_dir: &Path) -> Result<()> {
+pub fn recover_pending_updates(db: &Database, dirs: &QumaDirs) -> Result<()> {
     let pending = db.list_pending_updates()?;
     if pending.is_empty() {
         return Ok(());
@@ -823,7 +810,7 @@ pub fn recover_pending_updates(db: &Database, spt_dir: &Path) -> Result<()> {
     );
 
     for record in &pending {
-        if let Err(e) = recover_single_update(db, spt_dir, record) {
+        if let Err(e) = recover_single_update(db, dirs, record) {
             tracing::error!(
                 pending_id = record.id,
                 mod_db_id = record.mod_db_id,
@@ -838,10 +825,10 @@ pub fn recover_pending_updates(db: &Database, spt_dir: &Path) -> Result<()> {
 
 /// Count how many files from `new_files` exist on disk under `spt_dir` with
 /// correct SHA256 hashes. Used by recovery to determine update completion state.
-fn count_verified_files(spt_dir: &Path, new_files: &[ExtractedFile]) -> usize {
+fn count_verified_files(root: &Path, new_files: &[ExtractedFile]) -> usize {
     let mut verified = 0usize;
     for file in new_files {
-        let path = spt_dir.join(&file.path);
+        let path = root.join(&file.path);
         if path.exists() {
             match crate::spt::mods::compute_file_hash(&path) {
                 Ok(hash) => {
@@ -864,11 +851,11 @@ fn count_verified_files(spt_dir: &Path, new_files: &[ExtractedFile]) -> usize {
 
 /// Remove partially-copied new files that don't overlap with old files.
 /// Used during recovery rollback of interrupted updates.
-fn cleanup_partial_copy(spt_dir: &Path, new_files: &[ExtractedFile], old_paths: &[String]) {
+fn cleanup_partial_copy(root: &Path, new_files: &[ExtractedFile], old_paths: &[String]) {
     let old_set: std::collections::HashSet<&str> = old_paths.iter().map(|p| p.as_str()).collect();
     for file in new_files {
         if !old_set.contains(file.path.as_str()) {
-            let path = spt_dir.join(&file.path);
+            let path = root.join(&file.path);
             if path.exists() {
                 if let Err(e) = std::fs::remove_file(&path) {
                     tracing::warn!(
@@ -896,15 +883,12 @@ enum RecoveryOutcome {
 
 /// Assess what state disk is in for a pending update recovery.
 fn assess_recovery_state(
-    spt_dir: &Path,
+    root: &Path,
     new_files: &[ExtractedFile],
     old_paths: &[String],
 ) -> RecoveryOutcome {
-    let new_files_ok = count_verified_files(spt_dir, new_files);
-    let old_files_exist = old_paths
-        .iter()
-        .filter(|p| spt_dir.join(p).exists())
-        .count();
+    let new_files_ok = count_verified_files(root, new_files);
+    let old_files_exist = old_paths.iter().filter(|p| root.join(p).exists()).count();
 
     if new_files_ok == new_files.len() {
         RecoveryOutcome::AllNewPresent
@@ -922,12 +906,12 @@ fn assess_recovery_state(
 
 fn recover_single_update(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     record: &crate::db::mods::PendingUpdate,
 ) -> Result<()> {
     // Route to addon or mod recovery based on item_type
     if record.item_type == "addon" {
-        return recover_single_addon_update(db, spt_dir, record);
+        return recover_single_addon_update(db, dirs, record);
     }
 
     // Check if the mod row still exists
@@ -943,7 +927,7 @@ fn recover_single_update(
     }
 
     // Determine effective root: stash if disabled, canonical otherwise
-    let effective_root = resolve_mod_root(spt_dir, mod_info.as_ref().is_some_and(|m| m.disabled));
+    let effective_root = resolve_mod_root(dirs, mod_info.as_ref().is_some_and(|m| m.disabled));
 
     let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
         .context("failed to parse new_file_paths JSON from pending_updates")?;
@@ -1001,7 +985,7 @@ fn recover_single_update(
 
 fn recover_single_addon_update(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     record: &crate::db::mods::PendingUpdate,
 ) -> Result<()> {
     let addon_info = db.get_addon(record.mod_db_id)?;
@@ -1016,7 +1000,7 @@ fn recover_single_addon_update(
     }
 
     // Determine effective root: stash if disabled, canonical otherwise
-    let effective_root = resolve_mod_root(spt_dir, addon_info.as_ref().is_some_and(|a| a.disabled));
+    let effective_root = resolve_mod_root(dirs, addon_info.as_ref().is_some_and(|a| a.disabled));
 
     let new_files: Vec<ExtractedFile> = serde_json::from_str(&record.new_file_paths)
         .context("failed to parse new_file_paths JSON from pending_updates")?;
@@ -1080,7 +1064,7 @@ fn recover_single_addon_update(
 
 pub fn remove_mod_by_id(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     mod_db_id: i64,
 ) -> Result<()> {
@@ -1090,22 +1074,22 @@ pub fn remove_mod_by_id(
     let child_addons = db.list_addons_for_mod(mod_db_id)?;
     for addon in &child_addons {
         tracing::info!(addon_name = %addon.name, "removing child addon before parent mod removal");
-        remove_addon_by_id(db, spt_dir, config, addon.id)?;
+        remove_addon_by_id(db, dirs, config, addon.id)?;
     }
 
-    crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_remove")?;
+    crate::backup::auto_backup_mod(db, dirs, config, mod_db_id, "auto_remove")?;
     let mod_info_for_disable = db.get_mod(mod_db_id)?;
     let is_disabled = mod_info_for_disable.as_ref().is_some_and(|m| m.disabled);
     let forge_mod_id = mod_info_for_disable.and_then(|m| m.forge_mod_id);
     let files = db.get_files_for_mod(mod_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = file_paths.len(), "deleting mod files");
-    let delete_root = resolve_mod_root(spt_dir, is_disabled);
+    let delete_root = resolve_mod_root(dirs, is_disabled);
     crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
     // Remove client files from headless before DB delete loses the file list
     if !is_excluded_from_headless(db, mod_db_id) {
-        maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
+        maybe_sync_headless_with_files(config, dirs, &file_paths, SyncOp::Remove);
     }
 
     let tx = db.begin_transaction()?;
@@ -1134,7 +1118,7 @@ pub fn remove_mod_by_id(
 /// the database record.
 pub fn remove_addon_by_id(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     addon_db_id: i64,
 ) -> Result<()> {
@@ -1144,23 +1128,17 @@ pub fn remove_addon_by_id(
     tracing::info!(addon_db_id, addon_name = %addon.name, "removing addon");
 
     // Back up addon files (via parent mod backup for simplicity)
-    crate::backup::auto_backup_mod(
-        db,
-        spt_dir,
-        config,
-        addon.parent_mod_id,
-        "auto_remove_addon",
-    )?;
+    crate::backup::auto_backup_mod(db, dirs, config, addon.parent_mod_id, "auto_remove_addon")?;
 
     let files = db.get_files_for_addon(addon_db_id)?;
     let file_paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
     tracing::debug!(file_count = file_paths.len(), "deleting addon files");
-    let delete_root = resolve_mod_root(spt_dir, addon.disabled);
+    let delete_root = resolve_mod_root(dirs, addon.disabled);
     crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
     // Remove client files from headless before DB delete loses the file list
     if !is_excluded_from_headless(db, addon.parent_mod_id) {
-        maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
+        maybe_sync_headless_with_files(config, dirs, &file_paths, SyncOp::Remove);
     }
 
     let tx = db.begin_transaction()?;
@@ -1205,32 +1183,27 @@ fn find_loose_files<'a>(file_paths: &'a [String], top_dirs: &[String]) -> Vec<&'
         .collect()
 }
 
-/// Root of the disabled-mod stash: `<spt_dir>/quartermaster/disabled/`.
-pub fn disabled_stash_dir(spt_dir: &Path) -> PathBuf {
-    spt_dir.join("quartermaster/disabled")
-}
-
 /// Resolve the filesystem root for a mod/addon based on disabled state.
-/// Enabled: files at `spt_dir/<path>`. Disabled: files at `spt_dir/quartermaster/disabled/<path>`.
-pub fn resolve_mod_root(spt_dir: &Path, disabled: bool) -> PathBuf {
+/// Enabled: files at `spt_server/<path>`. Disabled: files at the disabled stash.
+pub fn resolve_mod_root(dirs: &QumaDirs, disabled: bool) -> PathBuf {
     if disabled {
-        disabled_stash_dir(spt_dir)
+        dirs.disabled_dir()
     } else {
-        spt_dir.to_path_buf()
+        dirs.spt_server.clone()
     }
 }
 
 /// One-time migration: convert mods disabled under the old `.disabled` suffix
 /// scheme to the new stash-directory scheme. Idempotent — safe to call on
 /// every startup.
-pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
+pub fn migrate_disabled_to_stash(db: &Database, dirs: &QumaDirs) -> Result<()> {
     let all_mods = db.list_mods()?;
     let disabled_mods: Vec<_> = all_mods.into_iter().filter(|m| m.disabled).collect();
     if disabled_mods.is_empty() {
         return Ok(());
     }
 
-    let stash = disabled_stash_dir(spt_dir);
+    let stash = dirs.disabled_dir();
 
     for m in &disabled_mods {
         let files = db.get_files_for_mod(m.id)?;
@@ -1257,7 +1230,7 @@ pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
             db.rename_file_path(file.id, &canonical)?;
 
             // Move file on disk: old location → stash
-            let old_on_disk = spt_dir.join(&file.file_path);
+            let old_on_disk = dirs.spt_server.join(&file.file_path);
             let new_in_stash = stash.join(&canonical);
 
             if new_in_stash.exists() {
@@ -1290,7 +1263,7 @@ pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
             })
             .collect();
         for dir in &old_dirs {
-            let dir_path = spt_dir.join(dir);
+            let dir_path = dirs.spt_server.join(dir);
             if dir_path.is_dir() {
                 if let Ok(mut entries) = std::fs::read_dir(&dir_path) {
                     if entries.next().is_none() {
@@ -1326,7 +1299,7 @@ pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
 
             db.rename_file_path(file.id, &canonical)?;
 
-            let old_on_disk = spt_dir.join(&file.file_path);
+            let old_on_disk = dirs.spt_server.join(&file.file_path);
             let new_in_stash = stash.join(&canonical);
 
             if new_in_stash.exists() {
@@ -1358,7 +1331,7 @@ pub fn migrate_disabled_to_stash(db: &Database, spt_dir: &Path) -> Result<()> {
             })
             .collect();
         for dir in &old_dirs {
-            let dir_path = spt_dir.join(dir);
+            let dir_path = dirs.spt_server.join(dir);
             if dir_path.is_dir() {
                 if let Ok(mut entries) = std::fs::read_dir(&dir_path) {
                     if entries.next().is_none() {
@@ -1423,8 +1396,8 @@ fn filter_shared_dirs(
 
 /// Remove empty directories in the stash, walking upward from moved paths.
 /// Stops at (never removes) the `quartermaster/disabled/` root.
-fn cleanup_empty_stash_dirs(spt_dir: &Path, paths: &[String]) {
-    let stash_root = disabled_stash_dir(spt_dir);
+fn cleanup_empty_stash_dirs(dirs: &QumaDirs, paths: &[String]) {
+    let stash_root = dirs.disabled_dir();
     for rel_path in paths {
         let mut dir = stash_root.join(rel_path);
         // Start from the parent of the moved item
@@ -1483,7 +1456,7 @@ fn rename_batch(renames: &[(PathBuf, PathBuf)]) -> Result<Vec<(PathBuf, PathBuf)
 /// DB file paths are not modified — they always store the canonical location.
 pub fn disable_mod(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     mod_db_id: i64,
 ) -> Result<()> {
@@ -1502,7 +1475,7 @@ pub fn disable_mod(
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "disabling mod");
 
     // Backup runs before the move — files are still at canonical paths
-    crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_disable")?;
+    crate::backup::auto_backup_mod(db, dirs, config, mod_db_id, "auto_disable")?;
 
     // Detect shared directories — move individual files instead of whole dirs
     let (exclusive_dirs, shared_dirs) = filter_shared_dirs(db, mod_db_id, &top_dirs);
@@ -1519,16 +1492,16 @@ pub fn disable_mod(
         .collect();
 
     // Build rename list: exclusive dirs as whole dirs, shared as individual files
-    let stash = disabled_stash_dir(spt_dir);
+    let stash = dirs.disabled_dir();
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for dir in &exclusive_dirs {
-        renames.push((spt_dir.join(dir), stash.join(dir)));
+        renames.push((dirs.spt_server.join(dir), stash.join(dir)));
     }
     for loose_path in &loose {
-        renames.push((spt_dir.join(loose_path), stash.join(loose_path)));
+        renames.push((dirs.spt_server.join(loose_path), stash.join(loose_path)));
     }
     for file_path in &shared_files {
-        renames.push((spt_dir.join(file_path), stash.join(file_path)));
+        renames.push((dirs.spt_server.join(file_path), stash.join(file_path)));
     }
 
     // Handle stash collisions: remove stale stash entries before moving
@@ -1561,7 +1534,7 @@ pub fn disable_mod(
     }
 
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod disabled");
-    maybe_sync_headless(config, spt_dir, db, mod_db_id, SyncOp::Remove);
+    maybe_sync_headless(config, dirs, db, mod_db_id, SyncOp::Remove);
     Ok(())
 }
 
@@ -1574,7 +1547,7 @@ pub fn disable_mod(
 /// moving individual files.
 pub fn enable_mod(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     mod_db_id: i64,
 ) -> Result<()> {
@@ -1592,9 +1565,9 @@ pub fn enable_mod(
 
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "enabling mod");
 
-    crate::backup::auto_backup_mod(db, spt_dir, config, mod_db_id, "auto_enable")?;
+    crate::backup::auto_backup_mod(db, dirs, config, mod_db_id, "auto_enable")?;
 
-    let stash = disabled_stash_dir(spt_dir);
+    let stash = dirs.disabled_dir();
 
     // Build renames: try whole-dir for top_dirs, fall back to per-file
     // if the stash doesn't have a whole directory (was disabled per-file)
@@ -1602,21 +1575,21 @@ pub fn enable_mod(
     for dir in &top_dirs {
         let stash_dir = stash.join(dir);
         if stash_dir.is_dir() {
-            renames.push((stash_dir, spt_dir.join(dir)));
+            renames.push((stash_dir, dirs.spt_server.join(dir)));
         } else {
             // Per-file fallback: move individual files that belong to this dir
             for file in &files {
                 if file.file_path.starts_with(dir.as_str()) {
                     let src = stash.join(&file.file_path);
                     if src.exists() {
-                        renames.push((src, spt_dir.join(&file.file_path)));
+                        renames.push((src, dirs.spt_server.join(&file.file_path)));
                     }
                 }
             }
         }
     }
     for loose_path in &loose {
-        renames.push((stash.join(loose_path), spt_dir.join(loose_path)));
+        renames.push((stash.join(loose_path), dirs.spt_server.join(loose_path)));
     }
 
     // Create parent directories at canonical locations
@@ -1642,11 +1615,11 @@ pub fn enable_mod(
         .cloned()
         .chain(loose.iter().map(|s| s.to_string()))
         .collect();
-    cleanup_empty_stash_dirs(spt_dir, &all_paths);
+    cleanup_empty_stash_dirs(dirs, &all_paths);
 
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod enabled");
 
-    maybe_sync_headless(config, spt_dir, db, mod_db_id, SyncOp::Install);
+    maybe_sync_headless(config, dirs, db, mod_db_id, SyncOp::Install);
     Ok(())
 }
 
@@ -1654,7 +1627,7 @@ pub fn enable_mod(
 /// DB file paths are not modified.
 pub fn disable_addon(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     addon_db_id: i64,
 ) -> Result<()> {
@@ -1671,7 +1644,7 @@ pub fn disable_addon(
 
     crate::backup::auto_backup_mod(
         db,
-        spt_dir,
+        dirs,
         config,
         addon_info.parent_mod_id,
         "auto_disable_addon",
@@ -1679,10 +1652,10 @@ pub fn disable_addon(
 
     // For addons, always move individual files since the parent mod likely
     // shares the same top-level directory
-    let stash = disabled_stash_dir(spt_dir);
+    let stash = dirs.disabled_dir();
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file in &files {
-        let src = spt_dir.join(&file.file_path);
+        let src = dirs.spt_server.join(&file.file_path);
         let dst = stash.join(&file.file_path);
         renames.push((src, dst));
     }
@@ -1718,7 +1691,7 @@ pub fn disable_addon(
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon disabled");
     if !is_excluded_from_headless(db, addon_info.parent_mod_id) {
         let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
-        maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Remove);
+        maybe_sync_headless_with_files(config, dirs, &file_paths, SyncOp::Remove);
     }
     Ok(())
 }
@@ -1726,7 +1699,7 @@ pub fn disable_addon(
 /// Enable a previously disabled addon by moving files from stash back to canonical location.
 pub fn enable_addon(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     addon_db_id: i64,
 ) -> Result<()> {
@@ -1744,17 +1717,17 @@ pub fn enable_addon(
 
     crate::backup::auto_backup_mod(
         db,
-        spt_dir,
+        dirs,
         config,
         addon_info.parent_mod_id,
         "auto_enable_addon",
     )?;
 
-    let stash = disabled_stash_dir(spt_dir);
+    let stash = dirs.disabled_dir();
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file in &files {
         let src = stash.join(&file.file_path);
-        let dst = spt_dir.join(&file.file_path);
+        let dst = dirs.spt_server.join(&file.file_path);
         renames.push((src, dst));
     }
 
@@ -1774,11 +1747,11 @@ pub fn enable_addon(
         return Err(e.into());
     }
 
-    cleanup_empty_stash_dirs(spt_dir, &file_paths);
+    cleanup_empty_stash_dirs(dirs, &file_paths);
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon enabled");
     if !is_excluded_from_headless(db, addon_info.parent_mod_id) {
-        maybe_sync_headless_with_files(config, spt_dir, &file_paths, SyncOp::Install);
+        maybe_sync_headless_with_files(config, dirs, &file_paths, SyncOp::Install);
     }
     Ok(())
 }
@@ -1815,7 +1788,7 @@ pub fn collect_all_reverse_deps(db: &Database, mod_db_id: i64) -> Result<Vec<Ins
 pub async fn resolve_and_install_deps(
     forge: &crate::forge::client::ForgeClient,
     db: &Arc<parking_lot::Mutex<crate::db::Database>>,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     forge_mod_id: i64,
     selected_version: &crate::forge::models::ForgeVersion,
@@ -1873,7 +1846,7 @@ pub async fn resolve_and_install_deps(
         let db_id = crate::cli::install::download_and_install_with_arc(
             forge,
             db,
-            spt_dir,
+            dirs,
             config,
             &crate::cli::install::ModInstallParams {
                 forge_mod_id: dep.mod_id,
@@ -1994,6 +1967,7 @@ mod tests {
     #[test]
     fn install_extracts_files_and_records_in_db() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[
             ("SPT/user/mods/TestMod/package.json", b"{\"name\":\"test\"}"),
@@ -2002,7 +1976,7 @@ mod tests {
 
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2035,13 +2009,14 @@ mod tests {
     #[test]
     fn install_does_not_leave_orphan_files_on_db_failure() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // First install succeeds
         let zip1 = create_test_zip(&[("SPT/user/mods/ModA/package.json", b"{\"name\":\"a\"}")]);
         install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2058,7 +2033,7 @@ mod tests {
         let zip2 = create_test_zip(&[("SPT/user/mods/ModB/package.json", b"{\"name\":\"b\"}")]);
         let result = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100), // same ID — triggers UNIQUE constraint
             version_id: Some(300),
@@ -2090,13 +2065,14 @@ mod tests {
     #[test]
     fn update_uses_staging_so_failure_preserves_old_files() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Install v1
         let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2116,7 +2092,7 @@ mod tests {
         ]);
         update_mod_from_archive(
             &db,
-            spt_dir.path(),
+            &dirs,
             &Config::default(),
             db_id,
             300,
@@ -2140,6 +2116,7 @@ mod tests {
     #[test]
     fn update_removes_stale_overwrites_shared_adds_new() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Install v1 with files: old_only.ts (will be stale) and shared.json (will be overwritten)
@@ -2149,7 +2126,7 @@ mod tests {
         ]);
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2179,7 +2156,7 @@ mod tests {
         ]);
         update_mod_from_archive(
             &db,
-            spt_dir.path(),
+            &dirs,
             &Config::default(),
             db_id,
             300,
@@ -2226,12 +2203,13 @@ mod tests {
     #[test]
     fn remove_deletes_files_and_db_records() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2249,7 +2227,7 @@ mod tests {
             .join("SPT/user/mods/TestMod/package.json")
             .exists());
 
-        remove_mod_by_id(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        remove_mod_by_id(&db, &dirs, &Config::default(), db_id).unwrap();
 
         assert!(!spt_dir
             .path()
@@ -2285,10 +2263,10 @@ mod tests {
     }
 
     #[test]
-    fn disabled_stash_dir_path() {
-        let spt_dir = PathBuf::from("/spt");
+    fn disabled_dir_path() {
+        let dirs = QumaDirs::from_legacy(PathBuf::from("/spt"));
         assert_eq!(
-            disabled_stash_dir(&spt_dir),
+            dirs.disabled_dir(),
             PathBuf::from("/spt/quartermaster/disabled")
         );
     }
@@ -2362,6 +2340,7 @@ mod tests {
     #[test]
     fn disable_and_enable_mod_moves_to_stash() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[
             ("SPT/user/mods/TestMod/package.json", b"{\"name\":\"test\"}"),
@@ -2370,7 +2349,7 @@ mod tests {
 
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2390,7 +2369,7 @@ mod tests {
         assert!(!db.get_mod(db_id).unwrap().unwrap().disabled);
 
         // Disable
-        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        disable_mod(&db, &dirs, &Config::default(), db_id).unwrap();
 
         // Files moved to stash
         assert!(!spt_dir.path().join("SPT/user/mods/TestMod").exists());
@@ -2411,7 +2390,7 @@ mod tests {
         assert!(files.iter().all(|f| !f.file_path.contains(".disabled")));
 
         // Enable
-        enable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        enable_mod(&db, &dirs, &Config::default(), db_id).unwrap();
 
         // Files restored to canonical location
         assert!(spt_dir
@@ -2430,12 +2409,13 @@ mod tests {
     #[test]
     fn disable_mod_handles_loose_files() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[("BepInEx/plugins/loose.dll", b"dll content")]);
 
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2450,7 +2430,7 @@ mod tests {
 
         assert!(spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
 
-        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        disable_mod(&db, &dirs, &Config::default(), db_id).unwrap();
 
         assert!(!spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
         assert!(spt_dir
@@ -2462,7 +2442,7 @@ mod tests {
         let files = db.get_files_for_mod(db_id).unwrap();
         assert_eq!(files[0].file_path, "BepInEx/plugins/loose.dll");
 
-        enable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        enable_mod(&db, &dirs, &Config::default(), db_id).unwrap();
 
         assert!(spt_dir.path().join("BepInEx/plugins/loose.dll").exists());
         assert!(!spt_dir
@@ -2474,12 +2454,13 @@ mod tests {
     #[test]
     fn disable_already_disabled_mod_errors() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
 
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2492,8 +2473,8 @@ mod tests {
         })
         .unwrap();
 
-        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
-        let result = disable_mod(&db, spt_dir.path(), &Config::default(), db_id);
+        disable_mod(&db, &dirs, &Config::default(), db_id).unwrap();
+        let result = disable_mod(&db, &dirs, &Config::default(), db_id);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already disabled"));
     }
@@ -2501,13 +2482,14 @@ mod tests {
     #[test]
     fn disable_mod_shared_dir_moves_only_own_files() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Install mod A with files under BepInEx/plugins/SharedDir/
         let zip_a = create_test_zip(&[("BepInEx/plugins/SharedDir/a.dll", b"mod a")]);
         let id_a = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2524,7 +2506,7 @@ mod tests {
         let zip_b = create_test_zip(&[("BepInEx/plugins/SharedDir/b.dll", b"mod b")]);
         let _id_b = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(101),
             version_id: Some(201),
@@ -2538,7 +2520,7 @@ mod tests {
         .unwrap();
 
         // Disable mod A — should not move mod B's file
-        disable_mod(&db, spt_dir.path(), &Config::default(), id_a).unwrap();
+        disable_mod(&db, &dirs, &Config::default(), id_a).unwrap();
 
         // Mod A's file in stash
         assert!(spt_dir
@@ -2562,13 +2544,14 @@ mod tests {
     #[test]
     fn recover_completes_update_when_new_files_exist() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Install v1
         let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2606,7 +2589,7 @@ mod tests {
         .unwrap();
 
         // Run recovery
-        recover_pending_updates(&db, spt_dir.path()).unwrap();
+        recover_pending_updates(&db, &dirs).unwrap();
 
         // DB should now reflect v2
         let m = db.get_mod(db_id).unwrap().unwrap();
@@ -2628,13 +2611,14 @@ mod tests {
     #[test]
     fn recover_clears_marker_when_no_new_files() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Install v1
         let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2665,7 +2649,7 @@ mod tests {
         .unwrap();
 
         // Run recovery
-        recover_pending_updates(&db, spt_dir.path()).unwrap();
+        recover_pending_updates(&db, &dirs).unwrap();
 
         // DB should still say v1
         let m = db.get_mod(db_id).unwrap().unwrap();
@@ -2678,6 +2662,7 @@ mod tests {
     #[test]
     fn recover_handles_orphaned_pending_update() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Insert a pending update for a mod that doesn't exist (id=999)
@@ -2685,7 +2670,7 @@ mod tests {
             .unwrap();
 
         // Run recovery — should not error
-        recover_pending_updates(&db, spt_dir.path()).unwrap();
+        recover_pending_updates(&db, &dirs).unwrap();
 
         // Marker should be cleared
         assert!(db.list_pending_updates().unwrap().is_empty());
@@ -2694,13 +2679,14 @@ mod tests {
     #[test]
     fn recover_rolls_back_partial_copy() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Install v1
         let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2746,7 +2732,7 @@ mod tests {
         .unwrap();
 
         // Run recovery
-        recover_pending_updates(&db, spt_dir.path()).unwrap();
+        recover_pending_updates(&db, &dirs).unwrap();
 
         // The partially-copied new_a.ts (not in old set) should be deleted
         assert!(!spt_dir.path().join(new_file_a_path).exists());
@@ -2762,10 +2748,11 @@ mod tests {
     #[test]
     fn recover_noop_when_no_pending_updates() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Should succeed with nothing to do
-        recover_pending_updates(&db, spt_dir.path()).unwrap();
+        recover_pending_updates(&db, &dirs).unwrap();
         assert!(db.list_pending_updates().unwrap().is_empty());
     }
 
@@ -2799,12 +2786,13 @@ mod tests {
     #[test]
     fn remove_disabled_mod_deletes_from_stash() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
 
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2817,13 +2805,13 @@ mod tests {
         })
         .unwrap();
 
-        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        disable_mod(&db, &dirs, &Config::default(), db_id).unwrap();
         assert!(spt_dir
             .path()
             .join("quartermaster/disabled/SPT/user/mods/TestMod/package.json")
             .exists());
 
-        remove_mod_by_id(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        remove_mod_by_id(&db, &dirs, &Config::default(), db_id).unwrap();
 
         // Files should be gone from stash
         assert!(!spt_dir
@@ -2837,6 +2825,7 @@ mod tests {
     #[test]
     fn migrate_disabled_to_stash_moves_old_scheme_files() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Simulate old-scheme disabled mod: .disabled suffix in DB paths and on disk
@@ -2865,7 +2854,7 @@ mod tests {
         std::fs::create_dir_all(&old_dir).unwrap();
         std::fs::write(old_dir.join("package.json"), b"{}").unwrap();
 
-        migrate_disabled_to_stash(&db, spt_dir.path()).unwrap();
+        migrate_disabled_to_stash(&db, &dirs).unwrap();
 
         // DB paths should be canonical (stripped .disabled)
         let files = db.get_files_for_mod(mod_id).unwrap();
@@ -2886,12 +2875,13 @@ mod tests {
     #[test]
     fn disable_mod_handles_stash_collision() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
 
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2912,7 +2902,7 @@ mod tests {
         std::fs::write(stale.join("old_file.txt"), b"stale").unwrap();
 
         // Disable should succeed despite collision
-        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        disable_mod(&db, &dirs, &Config::default(), db_id).unwrap();
 
         // Stale file should be gone, current file should be in stash
         assert!(!spt_dir
@@ -2928,12 +2918,13 @@ mod tests {
     #[test]
     fn update_disabled_mod_updates_in_stash() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
         let zip_v1 = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{\"v\":\"1\"}")]);
 
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: Some(100),
             version_id: Some(200),
@@ -2946,7 +2937,7 @@ mod tests {
         })
         .unwrap();
 
-        disable_mod(&db, spt_dir.path(), &Config::default(), db_id).unwrap();
+        disable_mod(&db, &dirs, &Config::default(), db_id).unwrap();
 
         // Update while disabled
         let zip_v2 = create_test_zip(&[
@@ -2955,7 +2946,7 @@ mod tests {
         ]);
         update_mod_from_archive(
             &db,
-            spt_dir.path(),
+            &dirs,
             &Config::default(),
             db_id,
             201,
@@ -2984,6 +2975,7 @@ mod tests {
     #[test]
     fn migrate_disabled_to_stash_noop_when_already_migrated() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
 
         // Already-migrated mod: canonical DB paths, files in stash
@@ -3014,7 +3006,7 @@ mod tests {
         std::fs::write(stash_path.join("package.json"), b"{}").unwrap();
 
         // Should be a no-op — no .disabled in DB paths
-        migrate_disabled_to_stash(&db, spt_dir.path()).unwrap();
+        migrate_disabled_to_stash(&db, &dirs).unwrap();
 
         // Everything still in place
         assert!(spt_dir
@@ -3028,12 +3020,13 @@ mod tests {
     #[test]
     fn install_from_file_no_forge_id() {
         let spt_dir = setup_spt_dir();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = Database::open_in_memory().unwrap();
         let zip = create_test_zip(&[("BepInEx/plugins/TestMod/test.dll", b"fake dll content")]);
 
         let db_id = install_mod_from_archive(&InstallRequest {
             db: &db,
-            spt_dir: spt_dir.path(),
+            dirs: &dirs,
             config: &Config::default(),
             forge_mod_id: None,
             version_id: None,

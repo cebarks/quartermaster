@@ -112,38 +112,6 @@ fn read_spt_version_from_deps(spt_dir: &Path) -> Result<String> {
 /// 3. Walking up from `cwd` (or the process CWD) looking for the SPT root
 ///
 /// Returns an error if none of the strategies succeed.
-pub fn detect_spt_dir(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<PathBuf> {
-    // 1. Explicit path
-    if let Some(p) = explicit {
-        validate_spt_dir(p)?;
-        return Ok(p.to_path_buf());
-    }
-
-    // 2. QUMA_SPT_DIR env — if set, it must be valid (don't silently fall through)
-    if let Ok(env_val) = std::env::var("QUMA_SPT_DIR") {
-        let env_path = PathBuf::from(&env_val);
-        validate_spt_dir(&env_path)
-            .with_context(|| format!("QUMA_SPT_DIR={env_val} is not a valid SPT directory"))?;
-        return Ok(env_path);
-    }
-
-    // 3. Walk up from cwd
-    let start = match cwd {
-        Some(p) => p.to_path_buf(),
-        None => std::env::current_dir().context("failed to determine current directory")?,
-    };
-
-    let mut candidate = Some(start.as_path());
-    while let Some(dir) = candidate {
-        if validate_spt_dir(dir).is_ok() {
-            return Ok(dir.to_path_buf());
-        }
-        candidate = dir.parent();
-    }
-
-    anyhow::bail!("SPT directory not found — run `quma setup` or pass --spt-dir")
-}
-
 /// Parse `http.json` from the SPT installation for the server's IP and port.
 ///
 /// Returns `None` on any failure (missing file, bad JSON, missing fields).
@@ -155,6 +123,7 @@ pub fn read_http_config(spt_dir: &Path) -> Option<(String, u16)> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
@@ -262,8 +231,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let spt = create_fake_spt_dir(tmp.path());
 
-        let result = detect_spt_dir(Some(&spt), None).unwrap();
-        assert_eq!(result, spt);
+        let dirs = crate::dirs::QumaDirs::detect(Some(&spt), None).unwrap();
+        assert_eq!(dirs.spt_server, spt);
     }
 
     #[test]
@@ -273,18 +242,17 @@ mod tests {
 
         // Simulate being inside SPT/user/mods/ — walkup should find the root.
         let deep = spt.join("SPT/user/mods");
-        let result = detect_spt_dir(None, Some(&deep)).unwrap();
-        assert_eq!(result, spt);
+        let dirs = crate::dirs::QumaDirs::detect(None, Some(&deep)).unwrap();
+        assert_eq!(dirs.spt_server, spt);
     }
 
     #[test]
     fn detect_fails_when_not_found() {
-        temp_env::with_vars_unset(["QUMA_SPT_DIR"], || {
+        temp_env::with_vars_unset(["QUMA_SPT_DIR", "QUMA_DIR"], || {
             let tmp = TempDir::new().unwrap();
-            // Empty dir — no SPT markers anywhere up the tree.
-            let err = detect_spt_dir(None, Some(tmp.path())).unwrap_err();
+            let err = crate::dirs::QumaDirs::detect(None, Some(tmp.path())).unwrap_err();
             assert!(
-                err.to_string().contains("SPT directory not found"),
+                err.to_string().contains("not found"),
                 "unexpected error: {err}"
             );
         });
@@ -316,14 +284,20 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let bad_dir = tmp.path().join("nonexistent");
 
-        temp_env::with_vars([("QUMA_SPT_DIR", Some(bad_dir.to_str().unwrap()))], || {
-            let result = detect_spt_dir(None, Some(tmp.path()));
-            assert!(result.is_err(), "should error when QUMA_SPT_DIR is invalid");
-            let err_msg = format!("{:#}", result.unwrap_err());
-            assert!(
-                err_msg.contains("QUMA_SPT_DIR"),
-                "error should mention QUMA_SPT_DIR: {err_msg}"
-            );
-        });
+        temp_env::with_vars(
+            [
+                ("QUMA_SPT_DIR", Some(bad_dir.to_str().unwrap())),
+                ("QUMA_DIR", None),
+            ],
+            || {
+                let result = crate::dirs::QumaDirs::detect(None, Some(tmp.path()));
+                assert!(result.is_err(), "should error when QUMA_SPT_DIR is invalid");
+                let err_msg = format!("{:#}", result.unwrap_err());
+                assert!(
+                    err_msg.contains("QUMA_SPT_DIR"),
+                    "error should mention QUMA_SPT_DIR: {err_msg}"
+                );
+            },
+        );
     }
 }

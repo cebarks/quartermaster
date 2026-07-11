@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path};
 use actix_web::{HttpRequest, HttpResponse};
@@ -76,12 +78,12 @@ pub async fn create_mod_backup(
     }
     let mod_db_id = path.into_inner();
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     web::block(move || {
         let db = db.lock();
-        crate::backup::backup_mod(&db, &spt_dir, &config, mod_db_id, "manual")
+        crate::backup::backup_mod(&db, &dirs, &config, mod_db_id, "manual")
     })
     .await
     .map_err(WebError::from)?
@@ -127,13 +129,11 @@ pub async fn restore_backup(
 
     // Check server status
     let config = state.config_cloned();
-    let running = crate::server_detect::is_server_running(
-        &config,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
-    )
-    .await
-    .unwrap_or(false);
+    let dirs = Arc::clone(&state.dirs);
+    let running =
+        crate::server_detect::is_server_running(&config, &dirs, state.container_mgr.as_deref())
+            .await
+            .unwrap_or(false);
     if running {
         set_flash(
             &session,
@@ -147,13 +147,12 @@ pub async fn restore_backup(
 
     let is_full = backup_type == "full";
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
 
     web::block(move || {
         let db = db.lock();
         match backup_type.as_str() {
-            "mod" => crate::backup::restore_mod_backup(&db, &spt_dir, &config, backup_db_id)?,
-            "full" => crate::backup::restore_full_backup(&db, &spt_dir, &config, backup_db_id)?,
+            "mod" => crate::backup::restore_mod_backup(&db, &dirs, &config, backup_db_id)?,
+            "full" => crate::backup::restore_full_backup(&db, &dirs, &config, backup_db_id)?,
             _ => anyhow::bail!("unknown backup type: {backup_type}"),
         }
         Ok::<_, anyhow::Error>(())
@@ -233,12 +232,12 @@ pub async fn create_full_backup(
     }
 
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     web::block(move || {
         let db = db.lock();
-        crate::backup::backup_full(&db, &spt_dir, &config)
+        crate::backup::backup_full(&db, &dirs, &config)
     })
     .await
     .map_err(WebError::from)?

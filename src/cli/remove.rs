@@ -21,8 +21,7 @@ pub async fn run(
     let installed = resolve_installed_mod(mod_ref, ctx)?;
 
     // Check if we should queue instead of applying
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
-        .await?
+    if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
         // URL/file mods can't be queued (no forge_mod_id), must use --force
         if installed.forge_mod_id.is_none() {
@@ -141,7 +140,7 @@ pub fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<
 pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
     let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
 
-    crate::ops::remove_mod_by_id(&ctx.db, &ctx.spt_dir, &ctx.config, installed.id)?;
+    crate::ops::remove_mod_by_id(&ctx.db, &ctx.dirs, &ctx.config, installed.id)?;
 
     if file_count > 0 {
         println!("  Deleted {} files for {}", file_count, installed.name);
@@ -156,8 +155,7 @@ async fn run_addon_remove(addon_ref: &str, force: bool, yes: bool, ctx: &CliCont
     let installed = resolve_installed_addon(addon_ref, ctx)?;
 
     // Check if we should queue instead of applying
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
-        .await?
+    if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
         if !yes {
             let file_count = ctx.db.get_files_for_addon(installed.id)?.len();
@@ -211,7 +209,7 @@ fn remove_single_addon(
 ) -> Result<()> {
     let file_count = ctx.db.get_files_for_addon(installed.id)?.len();
 
-    crate::ops::remove_addon_by_id(&ctx.db, &ctx.spt_dir, &ctx.config, installed.id)?;
+    crate::ops::remove_addon_by_id(&ctx.db, &ctx.dirs, &ctx.config, installed.id)?;
 
     if file_count > 0 {
         println!("  Deleted {} files for {}", file_count, installed.name);
@@ -232,14 +230,15 @@ mod tests {
     use tempfile::TempDir;
 
     fn make_test_ctx(tmp: &TempDir) -> CliContext {
-        let spt_dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
+        let root = tmp.path().to_path_buf();
+        let dirs = crate::dirs::QumaDirs::from_root(root.clone());
+        std::fs::create_dir_all(dirs.server_mods_dir()).unwrap();
+        std::fs::create_dir_all(dirs.client_mods_dir()).unwrap();
 
         CliContext {
-            spt_dir: spt_dir.clone(),
+            dirs,
             spt_info: SptInfo {
-                root: spt_dir,
+                root: root.clone(),
                 spt_version: "4.0.13".to_string(),
                 tarkov_version: "0.16.9-40087".to_string(),
             },
@@ -325,7 +324,7 @@ mod tests {
         let ctx = make_test_ctx(&tmp);
 
         // Create mod files on disk
-        let mod_dir = ctx.spt_dir.join("SPT/user/mods/TestMod");
+        let mod_dir = ctx.dirs.spt_server.join("SPT/user/mods/TestMod");
         std::fs::create_dir_all(&mod_dir).unwrap();
         std::fs::write(mod_dir.join("package.json"), b"{}").unwrap();
 

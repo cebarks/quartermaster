@@ -166,7 +166,9 @@ impl TestAppBuilder {
             config: config_arc.clone(),
             config_path,
             config_lock: parking_lot::Mutex::new(()),
-            spt_dir: spt_dir.clone(),
+            dirs: Arc::new(spt_quartermaster::dirs::QumaDirs::from_legacy(
+                spt_dir.clone(),
+            )),
             spt_info: SptInfo {
                 root: spt_dir.clone(),
                 spt_version: "3.10.0".to_string(),
@@ -202,7 +204,9 @@ impl TestAppBuilder {
                 db_arc.clone(),
                 config_arc.clone(),
             ),
-            config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(&spt_dir),
+            config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(
+                &spt_quartermaster::dirs::QumaDirs::from_legacy(spt_dir.clone()),
+            ),
         });
 
         TestApp {

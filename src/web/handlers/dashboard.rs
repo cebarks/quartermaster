@@ -67,7 +67,7 @@ pub async fn server_partial(
     let user = require_auth(&req)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let (host, port) = resolve_server_addr(&state.config(), &state.spt_dir);
+    let (host, port) = resolve_server_addr(&state.config(), &state.dirs);
     let spt_client = SptClient::new(&host, port).map_err(WebError::from)?;
     let address = spt_client.base_url().to_string();
 
@@ -107,7 +107,7 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let (host, port) = resolve_server_addr(&state.config(), &state.spt_dir);
+    let (host, port) = resolve_server_addr(&state.config(), &state.dirs);
     let loaded_mods = if let Ok(spt_client) = SptClient::new(&host, port) {
         spt_client.loaded_server_mods().await.ok()
     } else {

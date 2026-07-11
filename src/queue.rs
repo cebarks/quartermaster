@@ -1,10 +1,10 @@
 use std::collections::HashSet;
-use std::path::Path;
 
 use anyhow::Result;
 
 use crate::config::Config;
 use crate::container::ContainerManager;
+use crate::dirs::QumaDirs;
 
 /// Determine whether a mod operation should be queued instead of applied immediately.
 ///
@@ -12,14 +12,14 @@ use crate::container::ContainerManager;
 pub async fn should_queue(
     config: &Config,
     force: bool,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     container_mgr: Option<&ContainerManager>,
 ) -> Result<bool> {
     if !config.queue_changes || force {
         return Ok(false);
     }
 
-    crate::server_detect::is_server_running(config, spt_dir, container_mgr).await
+    crate::server_detect::is_server_running(config, dirs, container_mgr).await
 }
 
 /// Clean up a queued archive file associated with a pending operation.
@@ -36,8 +36,8 @@ pub fn cleanup_queued_archive(op: &crate::db::users::PendingOperation) {
 
 /// Remove orphaned archive files from the queue directory.
 /// An archive is orphaned if no pending operation references it.
-pub fn sweep_orphaned_archives(spt_dir: &Path, db: &crate::db::Database) {
-    let queue_dir = spt_dir.join(".quartermaster").join("queued");
+pub fn sweep_orphaned_archives(dirs: &QumaDirs, db: &crate::db::Database) {
+    let queue_dir = dirs.queue_dir();
     if !queue_dir.exists() {
         return;
     }
@@ -67,32 +67,30 @@ pub fn sweep_orphaned_archives(spt_dir: &Path, db: &crate::db::Database) {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn should_queue_disabled_in_config() {
         let mut config = Config::default();
         config.queue_changes = false;
+        let dirs = QumaDirs::from_legacy(PathBuf::from("/nonexistent"));
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let result = rt.block_on(should_queue(
-            &config,
-            false,
-            Path::new("/nonexistent"),
-            None,
-        ));
+        let result = rt.block_on(should_queue(&config, false, &dirs, None));
         assert!(!result.unwrap());
     }
 
     #[test]
     fn should_queue_force_overrides() {
         let config = Config::default();
+        let dirs = QumaDirs::from_legacy(PathBuf::from("/nonexistent"));
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let result = rt.block_on(should_queue(&config, true, Path::new("/nonexistent"), None));
+        let result = rt.block_on(should_queue(&config, true, &dirs, None));
         assert!(!result.unwrap());
     }
 }

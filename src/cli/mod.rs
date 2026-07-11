@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
@@ -11,6 +11,7 @@ pub mod headless;
 pub mod install;
 pub mod invite;
 pub mod list;
+pub mod migrate;
 pub mod reindex;
 pub mod remove;
 pub mod restore;
@@ -23,8 +24,12 @@ pub mod update;
 #[derive(Parser)]
 #[command(name = "quma", version, about = "Quartermaster — SPT/Fika mod manager")]
 pub struct Cli {
-    /// Explicit SPT server directory
+    /// Explicit Quartermaster data directory
     #[arg(long, global = true)]
+    pub quma_dir: Option<PathBuf>,
+
+    /// Deprecated: use --quma-dir instead
+    #[arg(long, global = true, hide = true)]
     pub spt_dir: Option<PathBuf>,
 
     /// Config file path override
@@ -47,11 +52,26 @@ pub struct Cli {
     pub command: Command,
 }
 
+impl Cli {
+    pub fn effective_quma_dir(&self) -> Option<&Path> {
+        self.quma_dir.as_deref().or_else(|| {
+            if self.spt_dir.is_some() {
+                tracing::warn!("--spt-dir is deprecated, use --quma-dir instead");
+            }
+            self.spt_dir.as_deref()
+        })
+    }
+}
+
 #[derive(Subcommand)]
 pub enum Command {
     /// Bootstrap or initialize Quartermaster for an SPT server
     Setup {
-        /// Data directory path (default: ~/spt-server)
+        /// Quartermaster data directory (default: ~/spt-server)
+        #[arg(long)]
+        quma_dir: Option<PathBuf>,
+        /// Deprecated: use --quma-dir instead
+        #[arg(long, hide = true)]
         path: Option<PathBuf>,
         /// Skip Fika installation
         #[arg(long)]
@@ -189,6 +209,12 @@ pub enum Command {
         /// Skip confirmation prompt
         #[arg(long, short)]
         force: bool,
+    },
+
+    /// Migrate from legacy directory layout to new layout
+    Migrate {
+        #[arg(long, help = "Show migration plan without making changes")]
+        dry_run: bool,
     },
 }
 

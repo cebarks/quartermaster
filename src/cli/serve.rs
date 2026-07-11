@@ -8,15 +8,16 @@ use tokio::sync::mpsc;
 use super::Cli;
 use crate::config::{self, is_fika_installed, Config};
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
 use crate::logging;
-use crate::spt::detect::{detect_spt_dir, read_spt_version};
+use crate::spt::detect::read_spt_version;
 
 pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()> {
-    let spt_dir = detect_spt_dir(cli.spt_dir.as_deref(), None)?;
-    let spt_info = read_spt_version(&spt_dir)?;
+    let dirs = QumaDirs::detect(cli.effective_quma_dir(), None)?;
+    let spt_info = read_spt_version(&dirs.spt_server)?;
 
-    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
+    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&dirs.root));
     let mut config = Config::load_with_env(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
 
@@ -47,14 +48,14 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         }
     }
 
-    reload_handles.reconfigure(&logging_config, &filter, Some(&spt_dir));
+    reload_handles.reconfigure(&logging_config, &filter, Some(&dirs));
 
     config.ensure_session_secret();
     config
         .save(&config_path)
         .context("failed to save config with session secret")?;
 
-    let db_path = spt_dir.join("quartermaster.db");
+    let db_path = dirs.db_path();
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
 
@@ -114,7 +115,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     let forge = ForgeClient::new()?;
 
-    let fika_installed = is_fika_installed(&spt_dir);
+    let fika_installed = is_fika_installed(&dirs.spt_server);
     let converging = Arc::new(AtomicBool::new(false));
     let config_arc = Arc::new(parking_lot::RwLock::new(config));
 
@@ -124,13 +125,13 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     let config = config_arc.read().clone();
     let client_states = if fika_installed {
         if let Some(ref container_mgr_arc) = container_mgr {
-            let (host, port) = crate::server_detect::resolve_server_addr(&config, &spt_dir);
+            let (host, port) = crate::server_detect::resolve_server_addr(&config, &dirs);
             match crate::spt::server::SptClient::new(&host, port) {
                 Ok(spt_client) => {
                     // Run initial convergence if clients are already configured
                     if let Some(ref headless_config) = config.headless {
                         if headless_config.client_count() > 0 {
-                            if let Err(e) = headless_config.validate(&config, &spt_dir) {
+                            if let Err(e) = headless_config.validate(&config, &dirs) {
                                 tracing::error!(err = %e, "Invalid headless configuration — skipping initial convergence");
                             } else {
                                 tracing::info!(
@@ -141,7 +142,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                                     container_mgr_arc,
                                     headless_config,
                                     &config,
-                                    &spt_dir,
+                                    &dirs,
                                     &spt_client,
                                     &forge,
                                     &spt_info.spt_version,
@@ -217,7 +218,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         config_path,
         db: db_arc,
         forge,
-        spt_dir,
+        dirs,
         spt_info,
         log_broadcast: Arc::clone(&log_broadcast),
         reload_handles: Arc::new(reload_handles),

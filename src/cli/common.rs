@@ -1,18 +1,18 @@
 use std::io::Write;
-use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
 use crate::container::ContainerManager;
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
-use crate::spt::detect::{detect_spt_dir, read_spt_version, SptInfo};
+use crate::spt::detect::{read_spt_version, SptInfo};
 
 use super::Cli;
 
 pub struct CliContext {
-    pub spt_dir: PathBuf,
+    pub dirs: QumaDirs,
     pub spt_info: SptInfo,
     pub config: Config,
     pub db: Database,
@@ -21,22 +21,35 @@ pub struct CliContext {
 }
 
 pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
-    let spt_dir = detect_spt_dir(cli.spt_dir.as_deref(), None)?;
-    tracing::debug!(spt_dir = %spt_dir.display(), "resolved SPT directory");
-    let spt_info = read_spt_version(&spt_dir)?;
+    let dirs = QumaDirs::detect(cli.effective_quma_dir(), None)?;
+    tracing::debug!(quma_dir = %dirs.root.display(), "resolved quma directory");
 
-    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
+    // Check for incomplete migration
+    let marker = dirs.root.join(".migration-in-progress");
+    if marker.exists() {
+        bail!(
+            "A previous `quma migrate` did not complete. \
+             Inspect the directory at {} and re-run `quma migrate`, \
+             or remove {} to skip this check.",
+            dirs.root.display(),
+            marker.display()
+        );
+    }
+
+    let spt_info = read_spt_version(&dirs.spt_server)?;
+
+    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&dirs.root));
     tracing::debug!(config_path = %config_path.display(), "resolved config path");
     let config = Config::load_with_env(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
 
-    let db_path = spt_dir.join("quartermaster.db");
+    let db_path = dirs.db_path();
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
 
-    crate::ops::cleanup_staging(&spt_dir);
+    crate::ops::cleanup_staging(&dirs);
 
-    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db, &spt_dir) {
+    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db, &dirs) {
         tracing::error!(err = %e, "failed to migrate disabled mods to stash");
     }
 
@@ -45,7 +58,7 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
     let container_mgr = ContainerManager::new(config.container_stop_timeout).ok();
 
     Ok(CliContext {
-        spt_dir,
+        dirs,
         spt_info,
         config,
         db,
@@ -277,12 +290,12 @@ pub fn group_untracked_by_mod_dir(
 
 /// Scan for unmanaged mod files (on disk but not in DB) and group by top-level mod directory.
 pub fn find_unmanaged_mod_dirs(
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     db: &Database,
 ) -> Result<(std::collections::BTreeMap<String, usize>, usize)> {
     use crate::spt::mods::scan_mod_directories;
 
-    let all_files_on_disk = scan_mod_directories(spt_dir)?;
+    let all_files_on_disk = scan_mod_directories(dirs)?;
     let tracked_files = db.get_all_tracked_files()?;
     let tracked_paths: std::collections::HashSet<&str> =
         tracked_files.iter().map(|f| f.file_path.as_str()).collect();
@@ -294,7 +307,7 @@ pub fn find_unmanaged_mod_dirs(
         .collect();
 
     let total = unmanaged.len();
-    let mut dirs = group_untracked_by_mod_dir(&unmanaged);
+    let mut dirs_map = group_untracked_by_mod_dir(&unmanaged);
 
     // Build set of mod directories that have any tracked files
     let managed_dirs = group_untracked_by_mod_dir(
@@ -306,12 +319,12 @@ pub fn find_unmanaged_mod_dirs(
 
     // Exclude directories that belong to tracked mods (they have runtime-generated
     // files but the mod itself is managed by quartermaster)
-    dirs.retain(|dir, _| !managed_dirs.contains_key(dir));
+    dirs_map.retain(|dir, _| !managed_dirs.contains_key(dir));
 
     // Exclude core SPT directories — these ship with the server, not from mods
-    dirs.remove("BepInEx/plugins/spt");
+    dirs_map.remove("BepInEx/plugins/spt");
 
-    Ok((dirs, total))
+    Ok((dirs_map, total))
 }
 
 /// Warn the user if `--force` is being used while the server is running.
@@ -319,7 +332,7 @@ pub async fn warn_if_forcing_while_running(force: bool, ctx: &CliContext) -> Res
     if force {
         let running = crate::server_detect::is_server_running(
             &ctx.config,
-            &ctx.spt_dir,
+            &ctx.dirs,
             ctx.container_mgr.as_ref(),
         )
         .await?;

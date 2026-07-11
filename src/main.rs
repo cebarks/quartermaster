@@ -8,6 +8,7 @@ mod config_mgmt;
 mod container;
 mod convoy;
 mod db;
+mod dirs;
 mod fika;
 mod forge;
 mod headless_sync;
@@ -44,7 +45,7 @@ fn init_context(cli: &Cli, handles: &logging::ReloadHandles) -> Result<cli::comm
 
     let filter =
         logging::resolve_log_filter(&logging_config, cli.verbose, cli.log_level.as_deref());
-    handles.reconfigure(&logging_config, &filter, Some(&ctx.spt_dir));
+    handles.reconfigure(&logging_config, &filter, Some(&ctx.dirs));
     Ok(ctx)
 }
 
@@ -72,6 +73,7 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Command::Setup {
+            quma_dir,
             path,
             no_fika,
             admin_password,
@@ -81,6 +83,7 @@ async fn main() -> Result<()> {
             init_early_logging(&cli, &reload_handles);
             cli::setup::run(
                 cli::setup::SetupArgs {
+                    quma_dir: quma_dir.clone(),
                     path: path.clone(),
                     no_fika: *no_fika,
                     admin_password: admin_password.clone(),
@@ -174,6 +177,10 @@ async fn main() -> Result<()> {
         } => {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::restore::run(*backup_id, latest.as_deref(), *force, &ctx).await
+        }
+        Command::Migrate { dry_run } => {
+            init_early_logging(&cli, &reload_handles);
+            cli::migrate::run(*dry_run, &cli).await
         }
         Command::Serve { .. } => unreachable!(),
     }

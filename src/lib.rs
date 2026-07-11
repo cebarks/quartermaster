@@ -8,6 +8,7 @@ pub mod config_mgmt;
 pub mod container;
 pub mod convoy;
 pub mod db;
+pub mod dirs;
 pub mod fika;
 pub mod forge;
 pub mod headless_sync;

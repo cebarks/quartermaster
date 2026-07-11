@@ -20,6 +20,7 @@ use super::Cli;
 const DEV_CONTAINER_NAME: &str = "spt-server-dev";
 
 pub struct SetupArgs {
+    pub quma_dir: Option<PathBuf>,
     pub path: Option<PathBuf>,
     pub no_fika: bool,
     pub admin_password: Option<String>,
@@ -27,11 +28,22 @@ pub struct SetupArgs {
     pub container_name: Option<String>,
 }
 
+impl SetupArgs {
+    pub fn effective_dir(&self) -> Option<&Path> {
+        self.quma_dir.as_deref().or_else(|| {
+            if self.path.is_some() {
+                tracing::warn!("--path is deprecated, use --quma-dir instead");
+            }
+            self.path.as_deref()
+        })
+    }
+}
+
 pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
     println!("=== Quartermaster Setup ===\n");
 
     // --- Collect input ---
-    let data_dir = resolve_data_dir(args.path)?;
+    let data_dir = resolve_data_dir(args.effective_dir())?;
     let install_fika = if args.no_fika { false } else { prompt_fika()? };
     let admin_password = match args.admin_password {
         Some(pw) => {
@@ -66,7 +78,9 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
 
     match dir_state {
         DirState::Empty => bootstrap(&mgr, params, cli).await,
-        DirState::ExistingSpt => wrap_existing(&mgr, params, cli).await,
+        DirState::ExistingSptNew | DirState::ExistingSptLegacy => {
+            wrap_existing(&mgr, params, dir_state, cli).await
+        }
     }
 }
 
@@ -80,7 +94,8 @@ struct ResolvedSetup {
 #[derive(Debug)]
 enum DirState {
     Empty,
-    ExistingSpt,
+    ExistingSptNew,
+    ExistingSptLegacy,
 }
 
 fn classify_directory(path: &Path) -> Result<DirState> {
@@ -100,27 +115,35 @@ fn classify_directory(path: &Path) -> Result<DirState> {
         return Ok(DirState::Empty);
     }
 
-    // Non-empty — check if it's a valid SPT install
+    // New layout: has spt-server/ subdir with valid SPT install
+    if validate_spt_dir(&path.join("spt-server")).is_ok() {
+        return Ok(DirState::ExistingSptNew);
+    }
+
+    // Legacy layout: SPT markers at root
     if validate_spt_dir(path).is_ok() {
-        return Ok(DirState::ExistingSpt);
+        return Ok(DirState::ExistingSptLegacy);
     }
 
     bail!(
-        "Directory {} exists and contains files but is not a valid SPT installation.\n\
-         Use an empty directory for a fresh setup, or point at an existing SPT install.",
+        "Directory {} exists and contains files but is not a valid Quartermaster or SPT installation.\n\
+         Use an empty directory for a fresh setup, or point at an existing install.",
         path.display()
     );
 }
 
-fn resolve_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf> {
+fn resolve_data_dir(explicit: Option<&Path>) -> Result<PathBuf> {
     let path = if let Some(p) = explicit {
-        p
+        p.to_path_buf()
     } else {
         let default = std::env::var_os("HOME")
             .map(|h| PathBuf::from(h).join("spt-server"))
             .unwrap_or_else(|| PathBuf::from("./spt-server"));
 
-        print!("Where should server data live? [{}]: ", default.display());
+        print!(
+            "Where should Quartermaster data live? [{}]: ",
+            default.display()
+        );
         std::io::stdout().flush()?;
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -152,7 +175,7 @@ fn prompt_fika() -> Result<bool> {
 // TODO(debt): duplicates install_single_mod logic from install.rs — extract a context-free helper
 async fn install_from_forge(
     forge: &crate::forge::client::ForgeClient,
-    spt_dir: &Path,
+    dirs: &crate::dirs::QumaDirs,
     db: &Database,
     config: &Config,
     forge_mod_id: i64,
@@ -188,7 +211,7 @@ async fn install_from_forge(
     super::install::download_and_install(
         forge,
         db,
-        spt_dir,
+        dirs,
         config,
         &super::install::ModInstallParams {
             forge_mod_id,
@@ -205,7 +228,7 @@ async fn install_from_forge(
 }
 
 async fn install_infrastructure_from_forge(
-    spt_dir: &Path,
+    dirs: &crate::dirs::QumaDirs,
     db: &Database,
     config: &Config,
     install_fika: bool,
@@ -222,7 +245,7 @@ async fn install_infrastructure_from_forge(
     println!("\nInstalling Fika...");
     install_from_forge(
         &forge,
-        spt_dir,
+        dirs,
         db,
         config,
         FIKA_SERVER_FORGE_ID,
@@ -231,7 +254,7 @@ async fn install_infrastructure_from_forge(
     .await?;
     install_from_forge(
         &forge,
-        spt_dir,
+        dirs,
         db,
         config,
         FIKA_CLIENT_FORGE_ID,
@@ -267,7 +290,7 @@ fn prompt_admin_password() -> Result<String> {
 
 // TODO(debt): server container NUMA pinning deferred — bootstrap creates the container
 // before Config exists. Needs a `quma server recreate` command or setup refactor.
-fn create_container_opts(data_dir: &Path, container_name: &str) -> CreateContainerOpts {
+fn create_container_opts(spt_server_dir: &Path, container_name: &str) -> CreateContainerOpts {
     CreateContainerOpts {
         name: container_name.to_string(),
         image: SPT_SERVER_IMAGE.to_string(),
@@ -276,7 +299,7 @@ fn create_container_opts(data_dir: &Path, container_name: &str) -> CreateContain
             ("OVERWRITE_FIKA".to_string(), "false".to_string()),
         ],
         volumes: vec![VolumeMount {
-            host_path: data_dir.to_path_buf(),
+            host_path: spt_server_dir.to_path_buf(),
             container_path: "/opt/server".to_string(),
             read_only: false,
             selinux: SelinuxLabel::Private,
@@ -320,8 +343,12 @@ async fn check_container_name_available(
     }
 }
 
-async fn wait_for_server(config: &Config, spt_dir: &Path, container_name: &str) -> Result<()> {
-    let (host, port) = crate::server_detect::resolve_server_addr(config, spt_dir);
+async fn wait_for_server(
+    config: &Config,
+    dirs: &crate::dirs::QumaDirs,
+    container_name: &str,
+) -> Result<()> {
+    let (host, port) = crate::server_detect::resolve_server_addr(config, dirs);
     let spt_client = crate::spt::server::SptClient::new(&host, port)?;
 
     println!("Waiting for server to start (timeout: 180s)...");
@@ -352,14 +379,14 @@ async fn wait_for_server(config: &Config, spt_dir: &Path, container_name: &str) 
     }
 }
 
-fn create_config(data_dir: &Path, container_name: &str, cli: &Cli) -> Result<(Config, PathBuf)> {
-    let config_path = Config::resolve_path(cli.config.as_deref(), Some(data_dir));
+fn create_config(dirs: &crate::dirs::QumaDirs, container_name: &str) -> Result<(Config, PathBuf)> {
+    let config_path = dirs.config_path();
     let mut config = if config_path.exists() {
         Config::load(&config_path)?
     } else {
         Config::default()
     };
-    config.spt_dir = Some(data_dir.to_path_buf());
+    config.quma_dir = Some(dirs.root.clone());
     config.server_container = Some(container_name.to_string());
     config.server_host = Some("0.0.0.0".to_string());
     config.server_port = Some(DEFAULT_SPT_PORT);
@@ -369,8 +396,8 @@ fn create_config(data_dir: &Path, container_name: &str, cli: &Cli) -> Result<(Co
     Ok((config, config_path))
 }
 
-fn create_db_and_admin(data_dir: &Path, admin_password: &str) -> Result<Database> {
-    let db_path = data_dir.join("quartermaster.db");
+fn create_db_and_admin(dirs: &crate::dirs::QumaDirs, admin_password: &str) -> Result<Database> {
+    let db_path = dirs.db_path();
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to create database at {}", db_path.display()))?;
     println!("Database initialized at {}", db_path.display());
@@ -415,12 +442,17 @@ fn print_summary(config: &Config, data_dir: &Path, install_fika: bool) {
 
 // --- Path A: Bootstrap ---
 
-async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Result<()> {
+async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, _cli: &Cli) -> Result<()> {
     println!("\nNo existing SPT installation found. Bootstrapping from scratch...\n");
 
-    // 1. Create data directory
-    std::fs::create_dir_all(&p.data_dir)
-        .with_context(|| format!("failed to create directory {}", p.data_dir.display()))?;
+    // 1. Create QumaDirs and full directory tree
+    let dirs = crate::dirs::QumaDirs::from_root(p.data_dir.clone());
+    std::fs::create_dir_all(&dirs.spt_server)
+        .with_context(|| format!("failed to create directory {}", dirs.spt_server.display()))?;
+    std::fs::create_dir_all(&dirs.headless)
+        .with_context(|| format!("failed to create directory {}", dirs.headless.display()))?;
+    std::fs::create_dir_all(&dirs.overlay)
+        .with_context(|| format!("failed to create directory {}", dirs.overlay.display()))?;
     println!("Created {}", p.data_dir.display());
 
     // 2. Check container name available
@@ -431,8 +463,8 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     mgr.pull_image(SPT_SERVER_IMAGE).await?;
     println!("Image pulled.");
 
-    // 4. Create container
-    let opts = create_container_opts(&p.data_dir, &p.container_name);
+    // 4. Create container (mounts spt-server/ subdir, not root)
+    let opts = create_container_opts(&dirs.spt_server, &p.container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", p.container_name);
 
@@ -441,10 +473,10 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     mgr.start(&p.container_name).await?;
 
     // 6. Create config (needed for wait_for_server to resolve address)
-    let (config, _config_path) = create_config(&p.data_dir, &p.container_name, cli)?;
+    let (config, _config_path) = create_config(&dirs, &p.container_name)?;
 
     // 7. Wait for server
-    wait_for_server(&config, &p.data_dir, &p.container_name).await?;
+    wait_for_server(&config, &dirs, &p.container_name).await?;
 
     // 8. Stop server
     println!("\nStopping server after first boot...");
@@ -452,10 +484,10 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     println!("Server stopped.");
 
     // 9. Create DB and admin
-    let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
+    let db = create_db_and_admin(&dirs, &p.admin_password)?;
 
     // 10. Install infrastructure mods from Forge
-    install_infrastructure_from_forge(&p.data_dir, &db, &config, p.install_fika).await?;
+    install_infrastructure_from_forge(&dirs, &db, &config, p.install_fika).await?;
 
     // 11. Summary
     print_summary(&config, &p.data_dir, p.install_fika);
@@ -465,27 +497,38 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
 
 // --- Path B: Wrap Existing ---
 
-async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Result<()> {
-    let spt_info = read_spt_version(&p.data_dir)?;
+async fn wrap_existing(
+    mgr: &ContainerManager,
+    p: ResolvedSetup,
+    dir_state: DirState,
+    _cli: &Cli,
+) -> Result<()> {
+    // Create QumaDirs based on layout
+    let dirs = match dir_state {
+        DirState::ExistingSptNew => crate::dirs::QumaDirs::from_root(p.data_dir.clone()),
+        DirState::ExistingSptLegacy => crate::dirs::QumaDirs::from_legacy(p.data_dir.clone()),
+        DirState::Empty => unreachable!("Empty state handled by bootstrap"),
+    };
+
+    let spt_info = read_spt_version(&dirs.spt_server)?;
     println!(
         "\nExisting SPT {} (EFT {}) detected.\n",
         spt_info.spt_version, spt_info.tarkov_version
     );
 
     // 1. Detect or create container
-    let resolved_container =
-        detect_or_create_container(mgr, &p.data_dir, &p.container_name).await?;
+    let resolved_container = detect_or_create_container(mgr, &dirs, &p.container_name).await?;
 
     // 2. Create config
-    let (mut config, config_path) = create_config(&p.data_dir, &p.container_name, cli)?;
+    let (mut config, config_path) = create_config(&dirs, &p.container_name)?;
     config.server_container = Some(resolved_container);
     config.save(&config_path)?;
 
     // 3. Create DB and admin
-    let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
+    let db = create_db_and_admin(&dirs, &p.admin_password)?;
 
     // 4. Scan unmanaged mods
-    let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(&p.data_dir, &db)?;
+    let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(&dirs, &db)?;
     if unmanaged_dirs.is_empty() {
         println!("No unmanaged mod files found.");
     } else {
@@ -506,7 +549,7 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
     }
 
     // 5. Install infrastructure mods from Forge
-    install_infrastructure_from_forge(&p.data_dir, &db, &config, p.install_fika).await?;
+    install_infrastructure_from_forge(&dirs, &db, &config, p.install_fika).await?;
 
     // 6. Summary
     print_summary(&config, &p.data_dir, p.install_fika);
@@ -516,10 +559,10 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
 
 async fn detect_or_create_container(
     mgr: &ContainerManager,
-    data_dir: &Path,
+    dirs: &crate::dirs::QumaDirs,
     container_name: &str,
 ) -> Result<String> {
-    let detected = mgr.detect_spt_containers(data_dir).await?;
+    let detected = mgr.detect_spt_containers(dirs).await?;
 
     if detected.len() == 1 {
         println!("Detected existing container: {}", detected[0]);
@@ -550,7 +593,7 @@ async fn detect_or_create_container(
     println!("Pulling {}...", SPT_SERVER_IMAGE);
     mgr.pull_image(SPT_SERVER_IMAGE).await?;
 
-    let opts = create_container_opts(data_dir, container_name);
+    let opts = create_container_opts(&dirs.spt_server, container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", container_name);
 
@@ -578,11 +621,11 @@ mod tests {
     }
 
     #[test]
-    fn classify_valid_spt_dir() {
+    fn classify_valid_spt_dir_legacy() {
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path();
 
-        // Create minimum SPT structure
+        // Create minimum SPT structure at root (legacy layout)
         std::fs::create_dir_all(spt_dir.join("SPT")).unwrap();
         std::fs::write(spt_dir.join("SPT/SPT.Server.exe"), b"").unwrap();
         let configs_dir = spt_dir.join("SPT/SPT_Data/configs");
@@ -596,7 +639,69 @@ mod tests {
         std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
         let state = classify_directory(spt_dir).unwrap();
-        assert!(matches!(state, DirState::ExistingSpt));
+        assert!(matches!(state, DirState::ExistingSptLegacy));
+    }
+
+    #[test]
+    fn classify_new_layout_with_spt_server_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let quma_root = tmp.path();
+        let spt_dir = quma_root.join("spt-server");
+
+        // Create minimum SPT structure in spt-server/ subdir (new layout)
+        std::fs::create_dir_all(spt_dir.join("SPT")).unwrap();
+        std::fs::write(spt_dir.join("SPT/SPT.Server.exe"), b"").unwrap();
+        let configs_dir = spt_dir.join("SPT/SPT_Data/configs");
+        std::fs::create_dir_all(&configs_dir).unwrap();
+        std::fs::write(
+            configs_dir.join("core.json"),
+            r#"{"compatibleTarkovVersion": "0.16.9-40087"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
+
+        let state = classify_directory(quma_root).unwrap();
+        assert!(matches!(state, DirState::ExistingSptNew));
+    }
+
+    #[test]
+    fn setup_args_effective_dir_prefers_quma_dir() {
+        let args = SetupArgs {
+            quma_dir: Some(PathBuf::from("/quma")),
+            path: Some(PathBuf::from("/path")),
+            no_fika: false,
+            admin_password: None,
+            dev: false,
+            container_name: None,
+        };
+        assert_eq!(args.effective_dir(), Some(Path::new("/quma")));
+    }
+
+    #[test]
+    fn setup_args_effective_dir_falls_back_to_path() {
+        let args = SetupArgs {
+            quma_dir: None,
+            path: Some(PathBuf::from("/path")),
+            no_fika: false,
+            admin_password: None,
+            dev: false,
+            container_name: None,
+        };
+        assert_eq!(args.effective_dir(), Some(Path::new("/path")));
+    }
+
+    #[test]
+    fn setup_args_effective_dir_none_when_both_none() {
+        let args = SetupArgs {
+            quma_dir: None,
+            path: None,
+            no_fika: false,
+            admin_password: None,
+            dev: false,
+            container_name: None,
+        };
+        assert_eq!(args.effective_dir(), None);
     }
 
     #[test]
@@ -608,7 +713,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("not a valid SPT installation"));
+            .contains("not a valid Quartermaster or SPT installation"));
     }
 
     #[test]

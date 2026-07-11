@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path, Query};
 use actix_web::{HttpRequest, HttpResponse};
@@ -328,14 +330,9 @@ async fn get_or_fetch_updates(
 /// Check if a mod operation should be queued (server running + queue enabled).
 async fn should_queue_operation(state: &Data<AppState>) -> bool {
     let config = state.config_cloned();
-    crate::queue::should_queue(
-        &config,
-        false,
-        &state.spt_dir,
-        state.container_mgr.as_deref(),
-    )
-    .await
-    .unwrap_or(false)
+    crate::queue::should_queue(&config, false, &state.dirs, state.container_mgr.as_deref())
+        .await
+        .unwrap_or(false)
 }
 
 /// Try to queue a mod operation. Returns Ok(Some(response)) if queued (caller should return),
@@ -590,11 +587,7 @@ pub async fn mod_detail(
         .ok()
         .flatten()
         .and_then(|dir| {
-            let config_dir = state
-                .spt_dir
-                .join("SPT/user/mods")
-                .join(&dir)
-                .join("config");
+            let config_dir = state.dirs.server_mods_dir().join(&dir).join("config");
             if config_dir.is_dir() {
                 let mut files = Vec::new();
                 crate::config_mgmt::ConfigManager::scan_config_dir(
@@ -1027,7 +1020,7 @@ async fn install_mod_from_url(
 
     // Queue if server running
     if should_queue_operation(state).await {
-        let queue_dir = state.spt_dir.join(".quartermaster").join("queued");
+        let queue_dir = state.dirs.queue_dir();
         let _ = std::fs::create_dir_all(&queue_dir);
 
         let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
@@ -1077,7 +1070,7 @@ async fn install_mod_from_url(
 
     // Direct install via background task
     let forge = state.forge.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let url_owned = url.to_string();
@@ -1105,7 +1098,7 @@ async fn install_mod_from_url(
         let result = crate::web::install::web_install_from_url(
             &forge,
             &db,
-            &spt_dir,
+            &dirs,
             &config,
             &url_owned,
             &mod_name_task,
@@ -1343,7 +1336,7 @@ pub async fn install_mod(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let db_edges = db.clone();
     let config = state.config_cloned();
@@ -1358,17 +1351,16 @@ pub async fn install_mod(
     tokio::spawn(async move {
         let result = async {
             // Install dependencies first
-            let dep_db_ids = crate::ops::resolve_and_install_deps(
-                &forge, &db, &spt_dir, &config, mod_id, &version,
-            )
-            .await?;
+            let dep_db_ids =
+                crate::ops::resolve_and_install_deps(&forge, &db, &dirs, &config, mod_id, &version)
+                    .await?;
 
             tasks.update_message(task_id, format!("Downloading {mod_name}…"));
 
             let db_id = crate::web::install::web_download_extract_and_record(
                 &forge,
                 &db,
-                &spt_dir,
+                &dirs,
                 &config,
                 mod_id,
                 &mod_name,
@@ -1398,7 +1390,7 @@ pub async fn install_mod(
                         .svm_installed
                         .store(true, std::sync::atomic::Ordering::Relaxed);
                     if let Some(ref svm_lock) = state_clone.svm {
-                        if let Some(mgr) = crate::svm::SvmManager::detect(&spt_dir) {
+                        if let Some(mgr) = crate::svm::SvmManager::detect(&dirs.spt_server) {
                             *svm_lock.write() = mgr;
                         }
                     }
@@ -1500,7 +1492,7 @@ pub async fn update_mod(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = version.clone();
@@ -1514,7 +1506,7 @@ pub async fn update_mod(
             let dep_db_ids = crate::ops::resolve_and_install_deps(
                 &forge,
                 &db,
-                &spt_dir,
+                &dirs,
                 &config,
                 forge_mod_id,
                 &version,
@@ -1534,7 +1526,7 @@ pub async fn update_mod(
             tasks.update_message(task_id, "Extracting update…".to_string());
 
             // Extract to staging on the same filesystem so rename() works
-            let staging_dir = crate::ops::staging_tempdir(&spt_dir)?;
+            let staging_dir = crate::ops::staging_tempdir(&dirs)?;
             let staging_path = staging_dir.path().to_path_buf();
             let archive = archive_path.clone();
             let extracted = actix_web::web::block(move || {
@@ -1544,7 +1536,7 @@ pub async fn update_mod(
 
             crate::ops::apply_mod_update(
                 db.clone(),
-                spt_dir.clone(),
+                dirs.as_ref().clone(),
                 config.clone(),
                 staging_dir.path().to_path_buf(),
                 extracted,
@@ -1626,14 +1618,14 @@ pub async fn remove_mod(
         }
     }
 
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
 
     tracing::info!(mod_db_id, mod_name = %installed.name, "removing mod");
     web::block(move || {
         let db = db.lock();
-        crate::ops::remove_mod_by_id(&db, &spt_dir, &config, mod_db_id)
+        crate::ops::remove_mod_by_id(&db, &dirs, &config, mod_db_id)
     })
     .await
     .map_err(WebError::from)?
@@ -1680,7 +1672,7 @@ pub async fn toggle_disable(
     .map_err(WebError::from)?
     .ok_or(WebError::NotFound)?;
 
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let was_disabled = installed.disabled;
@@ -1689,9 +1681,9 @@ pub async fn toggle_disable(
     web::block(move || {
         let db = db.lock();
         if was_disabled {
-            crate::ops::enable_mod(&db, &spt_dir, &config, mod_db_id)
+            crate::ops::enable_mod(&db, &dirs, &config, mod_db_id)
         } else {
-            crate::ops::disable_mod(&db, &spt_dir, &config, mod_db_id)
+            crate::ops::disable_mod(&db, &dirs, &config, mod_db_id)
         }
     })
     .await
@@ -1800,7 +1792,7 @@ pub async fn update_all_mods(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let installed = installed.clone();
@@ -1845,7 +1837,7 @@ pub async fn update_all_mods(
                     format!("Extracting {} ({}/{})…", mod_db.name, i + 1, total),
                 );
 
-                let staging_dir = crate::ops::staging_tempdir(&spt_dir)?;
+                let staging_dir = crate::ops::staging_tempdir(&dirs)?;
                 let staging_path = staging_dir.path().to_path_buf();
                 let archive = archive_path.clone();
                 let extracted = actix_web::web::block(move || {
@@ -1855,7 +1847,7 @@ pub async fn update_all_mods(
 
                 crate::ops::apply_mod_update(
                     db.clone(),
-                    spt_dir.clone(),
+                    dirs.as_ref().clone(),
                     config.clone(),
                     staging_dir.path().to_path_buf(),
                     extracted,
@@ -1974,7 +1966,7 @@ pub async fn integrity_partial(
     if state.integrity_cache.is_stale() {
         state.integrity_cache.start_check(
             state.db.clone(),
-            state.spt_dir.clone(),
+            state.dirs.as_ref().clone(),
             state.events.clone(),
         );
     }
@@ -2015,7 +2007,7 @@ pub async fn file_tracking_page(
     if state.integrity_cache.is_stale() {
         state.integrity_cache.start_check(
             state.db.clone(),
-            state.spt_dir.clone(),
+            state.dirs.as_ref().clone(),
             state.events.clone(),
         );
     }
@@ -2051,7 +2043,7 @@ pub async fn integrity_recheck(
     state.integrity_cache.invalidate();
     state.integrity_cache.start_check(
         state.db.clone(),
-        state.spt_dir.clone(),
+        state.dirs.as_ref().clone(),
         state.events.clone(),
     );
     Ok(HttpResponse::NoContent().finish())
@@ -2370,7 +2362,7 @@ pub async fn install_addon(
 
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = version.clone();
@@ -2397,7 +2389,7 @@ pub async fn install_addon(
             let db_ref = &db.lock();
             let req = crate::ops::InstallAddonRequest {
                 db: db_ref,
-                spt_dir: &spt_dir,
+                dirs: &dirs,
                 config: &config,
                 forge_addon_id: Some(addon_forge_id),
                 parent_mod_id: parent_mod_db_id,
@@ -2551,7 +2543,7 @@ pub async fn update_addon(
 
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = latest_version.clone();
@@ -2575,7 +2567,7 @@ pub async fn update_addon(
 
             tasks.update_message(task_id, format!("Extracting {addon_name} update…"));
 
-            let staging_dir = crate::ops::staging_tempdir(&spt_dir)?;
+            let staging_dir = crate::ops::staging_tempdir(&dirs)?;
             let staging_path = staging_dir.path().to_path_buf();
             let archive = archive_path.clone();
             let staging_path_clone = staging_path.clone();
@@ -2586,7 +2578,7 @@ pub async fn update_addon(
 
             crate::ops::apply_addon_update(
                 db,
-                spt_dir,
+                dirs.as_ref().clone(),
                 config,
                 staging_path,
                 extracted,
@@ -2659,12 +2651,12 @@ pub async fn remove_addon(
     };
 
     let parent_mod_id = addon.parent_mod_id;
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     let result = web::block(move || {
         let db = db2.lock();
-        crate::ops::remove_addon_by_id(&db, &spt_dir, &config, addon_db_id)
+        crate::ops::remove_addon_by_id(&db, &dirs, &config, addon_db_id)
     })
     .await
     .map_err(WebError::from)?;
@@ -2729,21 +2721,21 @@ pub async fn toggle_addon_disable(
 
     let parent_mod_id = addon.parent_mod_id;
     let is_disabled = addon.disabled;
-    let spt_dir = state.spt_dir.clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
     let db2 = state.db.clone();
 
     let result = if is_disabled {
         web::block(move || {
             let db = db2.lock();
-            crate::ops::enable_addon(&db, &spt_dir, &config, addon_db_id)
+            crate::ops::enable_addon(&db, &dirs, &config, addon_db_id)
         })
         .await
         .map_err(WebError::from)?
     } else {
         web::block(move || {
             let db = db2.lock();
-            crate::ops::disable_addon(&db, &spt_dir, &config, addon_db_id)
+            crate::ops::disable_addon(&db, &dirs, &config, addon_db_id)
         })
         .await
         .map_err(WebError::from)?
