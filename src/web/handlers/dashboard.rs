@@ -3,7 +3,6 @@ use actix_web::web::{self, Data, Html};
 use actix_web::HttpRequest;
 use askama::Template;
 
-use crate::dirs::QumaDirs;
 use crate::health::{self, ModsHealth, ServerHealth};
 use crate::server_detect::resolve_server_addr;
 use crate::spt::server::SptClient;
@@ -68,8 +67,7 @@ pub async fn server_partial(
     let user = require_auth(&req)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
-    let (host, port) = resolve_server_addr(&state.config(), &dirs);
+    let (host, port) = resolve_server_addr(&state.config(), &state.dirs);
     let spt_client = SptClient::new(&host, port).map_err(WebError::from)?;
     let address = spt_client.base_url().to_string();
 
@@ -109,8 +107,7 @@ pub async fn mods_partial(state: Data<AppState>, req: HttpRequest) -> actix_web:
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
-    let (host, port) = resolve_server_addr(&state.config(), &dirs);
+    let (host, port) = resolve_server_addr(&state.config(), &state.dirs);
     let loaded_mods = if let Ok(spt_client) = SptClient::new(&host, port) {
         spt_client.loaded_server_mods().await.ok()
     } else {

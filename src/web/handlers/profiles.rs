@@ -4,7 +4,6 @@ use actix_web::HttpRequest;
 use askama::Template;
 use serde::Deserialize;
 
-use crate::dirs::QumaDirs;
 use crate::spt::profiles::{load_profile_detail, load_stash_items, ProfileDetail, QuestState};
 use crate::web::auth::require_auth;
 use crate::web::csrf;
@@ -121,7 +120,7 @@ pub async fn profile_page(
     let profile_username = path.into_inner();
 
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let lookup_username = profile_username.clone();
 
     let (user_found, spt_profile_id) = web::block(move || {
@@ -367,7 +366,7 @@ async fn load_detail_for_user(
     username: &str,
 ) -> Result<ProfileDetail, WebError> {
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let username = username.to_string();
 
     let spt_profile_id = web::block(move || {
@@ -434,7 +433,7 @@ pub async fn stash_partial(
         }
     };
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let raw_items = web::block(move || load_stash_items(&dirs, &profile_id))
         .await
         .map_err(WebError::from)?

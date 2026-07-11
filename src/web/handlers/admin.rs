@@ -74,7 +74,7 @@ async fn load_users_with_profiles(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let dirs_block = dirs.clone();
     let profile_stats = web::block(move || load_all_profile_stats(&dirs_block))
         .await
@@ -551,13 +551,11 @@ pub async fn link_profile(
             return Err(WebError::BadRequest("Invalid profile AID format".to_string()).into());
         }
 
-        let spt_dir = state.spt_dir.clone();
+        let dirs_check = (*state.dirs).clone();
         let aid_check = aid.clone();
         let db_check = state.db.clone();
         let (exists, already_linked) = web::block(move || {
-            let profile_path = spt_dir
-                .join("SPT/user/profiles")
-                .join(format!("{aid_check}.json"));
+            let profile_path = dirs_check.profiles_dir().join(format!("{aid_check}.json"));
             let exists = profile_path.exists();
             let db = db_check.lock();
             let already_linked = db
@@ -993,7 +991,7 @@ async fn render_user_row(
     .map_err(WebError::from)?;
     let user = user.ok_or(WebError::NotFound)?;
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let aid = user.spt_profile_id.clone().unwrap_or_default();
     let profile = if aid.is_empty() {
         ProfileStatus::NotFound

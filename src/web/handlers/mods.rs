@@ -10,7 +10,6 @@ use crate::db::mods::{
 };
 use crate::db::rbac::Permission;
 use crate::db::users::QueueAction;
-use crate::dirs::QumaDirs;
 use crate::forge::models::{DependencyNode, FikaCompat};
 use crate::health::IntegrityHealth;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
@@ -329,8 +328,7 @@ async fn get_or_fetch_updates(
 /// Check if a mod operation should be queued (server running + queue enabled).
 async fn should_queue_operation(state: &Data<AppState>) -> bool {
     let config = state.config_cloned();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
-    crate::queue::should_queue(&config, false, &dirs, state.container_mgr.as_deref())
+    crate::queue::should_queue(&config, false, &state.dirs, state.container_mgr.as_deref())
         .await
         .unwrap_or(false)
 }
@@ -587,11 +585,7 @@ pub async fn mod_detail(
         .ok()
         .flatten()
         .and_then(|dir| {
-            let config_dir = state
-                .spt_dir
-                .join("SPT/user/mods")
-                .join(&dir)
-                .join("config");
+            let config_dir = state.dirs.server_mods_dir().join(&dir).join("config");
             if config_dir.is_dir() {
                 let mut files = Vec::new();
                 crate::config_mgmt::ConfigManager::scan_config_dir(
@@ -1015,7 +1009,7 @@ async fn install_mod_from_url(
 
     // Queue if server running
     if should_queue_operation(state).await {
-        let queue_dir = QumaDirs::from_legacy(state.spt_dir.clone()).queue_dir();
+        let queue_dir = (*state.dirs).clone().queue_dir();
         let _ = std::fs::create_dir_all(&queue_dir);
 
         let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
@@ -1065,7 +1059,7 @@ async fn install_mod_from_url(
 
     // Direct install via background task
     let forge = state.forge.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let db = state.db.clone();
     let config = state.config_cloned();
     let url_owned = url.to_string();
@@ -1331,7 +1325,7 @@ pub async fn install_mod(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let db = state.db.clone();
     let db_edges = db.clone();
     let config = state.config_cloned();
@@ -1487,7 +1481,7 @@ pub async fn update_mod(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = version.clone();
@@ -1613,7 +1607,7 @@ pub async fn remove_mod(
         }
     }
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let db = state.db.clone();
     let config = state.config_cloned();
 
@@ -1667,7 +1661,7 @@ pub async fn toggle_disable(
     .map_err(WebError::from)?
     .ok_or(WebError::NotFound)?;
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let db = state.db.clone();
     let config = state.config_cloned();
     let was_disabled = installed.disabled;
@@ -1787,7 +1781,7 @@ pub async fn update_all_mods(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let db = state.db.clone();
     let config = state.config_cloned();
     let installed = installed.clone();
@@ -1961,7 +1955,7 @@ pub async fn integrity_partial(
     if state.integrity_cache.is_stale() {
         state.integrity_cache.start_check(
             state.db.clone(),
-            QumaDirs::from_legacy(state.spt_dir.clone()),
+            (*state.dirs).clone(),
             state.events.clone(),
         );
     }
@@ -2002,7 +1996,7 @@ pub async fn file_tracking_page(
     if state.integrity_cache.is_stale() {
         state.integrity_cache.start_check(
             state.db.clone(),
-            QumaDirs::from_legacy(state.spt_dir.clone()),
+            (*state.dirs).clone(),
             state.events.clone(),
         );
     }
@@ -2038,7 +2032,7 @@ pub async fn integrity_recheck(
     state.integrity_cache.invalidate();
     state.integrity_cache.start_check(
         state.db.clone(),
-        QumaDirs::from_legacy(state.spt_dir.clone()),
+        (*state.dirs).clone(),
         state.events.clone(),
     );
     Ok(HttpResponse::NoContent().finish())
@@ -2357,7 +2351,7 @@ pub async fn install_addon(
 
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = version.clone();
@@ -2538,7 +2532,7 @@ pub async fn update_addon(
 
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = latest_version.clone();
@@ -2646,7 +2640,7 @@ pub async fn remove_addon(
     };
 
     let parent_mod_id = addon.parent_mod_id;
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
 
     let result = web::block(move || {
@@ -2716,7 +2710,7 @@ pub async fn toggle_addon_disable(
 
     let parent_mod_id = addon.parent_mod_id;
     let is_disabled = addon.disabled;
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
     let db2 = state.db.clone();
 

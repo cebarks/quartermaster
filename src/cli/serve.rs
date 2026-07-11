@@ -11,15 +11,13 @@ use crate::db::Database;
 use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
 use crate::logging;
-#[allow(deprecated)]
-use crate::spt::detect::{detect_spt_dir, read_spt_version};
+use crate::spt::detect::read_spt_version;
 
-#[allow(deprecated)]
 pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()> {
-    let spt_dir = detect_spt_dir(cli.effective_quma_dir(), None)?;
-    let spt_info = read_spt_version(&spt_dir)?;
+    let dirs = QumaDirs::detect(cli.effective_quma_dir(), None)?;
+    let spt_info = read_spt_version(&dirs.spt_server)?;
 
-    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
+    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&dirs.root));
     let mut config = Config::load_with_env(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
 
@@ -50,8 +48,6 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         }
     }
 
-    // ponytail: temporary QumaDirs until serve.rs fully migrates to QumaDirs (Task 6)
-    let dirs = QumaDirs::from_legacy(spt_dir.clone());
     reload_handles.reconfigure(&logging_config, &filter, Some(&dirs));
 
     config.ensure_session_secret();
@@ -59,7 +55,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         .save(&config_path)
         .context("failed to save config with session secret")?;
 
-    let db_path = spt_dir.join("quartermaster.db");
+    let db_path = dirs.db_path();
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
 
@@ -119,7 +115,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     let forge = ForgeClient::new()?;
 
-    let fika_installed = is_fika_installed(&spt_dir);
+    let fika_installed = is_fika_installed(&dirs.spt_server);
     let converging = Arc::new(AtomicBool::new(false));
     let config_arc = Arc::new(parking_lot::RwLock::new(config));
 
@@ -222,7 +218,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         config_path,
         db: db_arc,
         forge,
-        spt_dir,
+        dirs,
         spt_info,
         log_broadcast: Arc::clone(&log_broadcast),
         reload_handles: Arc::new(reload_handles),

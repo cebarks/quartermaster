@@ -5,7 +5,6 @@ use askama::Template;
 use std::sync::Arc;
 
 use crate::db::rbac::Permission;
-use crate::dirs::QumaDirs;
 use crate::fika::client::{FikaItemInfo, FikaSendItemRequest, FikaSendItemToAllRequest};
 use crate::spt::profiles::{list_profiles, SptProfile};
 use crate::web::auth::{require_auth, require_permission, SessionUser};
@@ -93,7 +92,7 @@ pub async fn give_items_page(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let nav = NavContext::from_state(&state);
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let profiles = web::block(move || list_profiles(&dirs))
         .await
         .map_err(WebError::from)?
@@ -175,7 +174,7 @@ pub async fn give_items_send(
     };
 
     let result = if form.profile_id == "all" {
-        let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+        let dirs = (*state.dirs).clone();
         let profiles = web::block(move || list_profiles(&dirs))
             .await
             .map_err(WebError::from)?

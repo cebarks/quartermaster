@@ -5,7 +5,6 @@ use askama::Template;
 
 use crate::db::backups::BackupRecord;
 use crate::db::rbac::Permission;
-use crate::dirs::QumaDirs;
 use crate::web::auth::{require_auth, require_permission};
 use crate::web::csrf;
 use crate::web::error::WebError;
@@ -77,7 +76,7 @@ pub async fn create_mod_backup(
     }
     let mod_db_id = path.into_inner();
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
 
     web::block(move || {
@@ -128,7 +127,7 @@ pub async fn restore_backup(
 
     // Check server status
     let config = state.config_cloned();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let running =
         crate::server_detect::is_server_running(&config, &dirs, state.container_mgr.as_deref())
             .await
@@ -231,7 +230,7 @@ pub async fn create_full_backup(
     }
 
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
 
     web::block(move || {

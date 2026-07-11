@@ -286,8 +286,7 @@ pub async fn join_submit(
     }
 
     // Create SPT profile via server API
-    let dirs = crate::dirs::QumaDirs::from_legacy(state.spt_dir.clone());
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &dirs);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.dirs);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(c) => c,
         Err(_) => {
@@ -332,7 +331,7 @@ pub async fn join_submit(
     let profile_aid = match profile_aid {
         Some(aid) => Some(aid),
         None => {
-            let spt_dir = state.spt_dir.clone();
+            let spt_dir = state.dirs.spt_server.clone();
             let username_for_scan = username.clone();
             web::block(move || {
                 for attempt in 0..5 {
@@ -554,7 +553,7 @@ pub async fn mod_archive(
     }
 
     // Build ZIP archive in memory
-    let spt_dir = state.spt_dir.clone();
+    let spt_dir = state.dirs.spt_server.clone();
     let zip_bytes = web::block(move || build_mod_zip(&spt_dir, &files))
         .await
         .map_err(WebError::from)?

@@ -61,8 +61,7 @@ pub async fn proxy_handler(
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or(req.path());
-    let dirs = crate::dirs::QumaDirs::from_legacy(state.spt_dir.clone());
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &dirs);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.dirs);
     let upstream_url = format!("https://{host}:{port}{path}");
 
     let mut headers = HeaderMap::new();
@@ -120,7 +119,7 @@ pub async fn proxy_handler(
                 && status.is_success();
 
             if is_register {
-                let spt_dir = state.spt_dir.clone();
+                let spt_dir = state.dirs.spt_server.clone();
                 let db = state.db.clone();
                 let events = state.events.clone();
                 tokio::task::spawn_blocking(move || {
@@ -139,7 +138,7 @@ pub async fn proxy_handler(
             if is_raid_start || is_raid_end {
                 if let Some(profile_id) = crate::web::raid_tracker::extract_session_id(&req) {
                     if let Some(body_clone) = raid_body {
-                        let spt_dir = state.spt_dir.clone();
+                        let spt_dir = state.dirs.spt_server.clone();
                         let db = state.db.clone();
                         let events = state.events.clone();
                         let snapshots_enabled = state.config().snapshots_enabled;

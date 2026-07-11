@@ -6,7 +6,6 @@ use askama::Template;
 use crate::config::FIKA_CLIENT_FORGE_ID;
 use crate::db::rbac::Permission;
 use crate::db::requests::{ModRequest, ModRequestView, RequestStatus, VoteComment};
-use crate::dirs::QumaDirs;
 use crate::forge::models::FikaCompat;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::csrf;
@@ -232,9 +231,8 @@ async fn trigger_install_for_request(
     }
 
     let config = state.config_cloned();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
     let should_queue =
-        crate::queue::should_queue(&config, false, &dirs, state.container_mgr.as_deref())
+        crate::queue::should_queue(&config, false, &state.dirs, state.container_mgr.as_deref())
             .await
             .unwrap_or(false);
 
@@ -288,8 +286,8 @@ async fn trigger_install_for_request(
         let request_id = request.id;
         let tasks = state.tasks.clone();
         let forge = state.forge.clone();
-        let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
-        let spt_dir = state.spt_dir.clone();
+        let dirs = (*state.dirs).clone();
+        let spt_dir = state.dirs.spt_server.clone();
         let db = state.db.clone();
         let db_edges = db.clone();
         let version = version.clone();

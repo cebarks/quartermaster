@@ -256,8 +256,7 @@ fn create_spt_client(
     state: &AppState,
     session: &Session,
 ) -> Result<crate::spt::server::SptClient, HttpResponse> {
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &dirs);
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.dirs);
     crate::spt::server::SptClient::new(&host, port).map_err(|e| {
         set_flash(
             session,
@@ -322,9 +321,9 @@ pub async fn headless_page(
         })
         .unwrap_or_else(|| ("none".to_string(), None));
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let profile_names = build_profile_names(&dirs);
-    let aliases = build_client_aliases(&state.spt_dir);
+    let aliases = build_client_aliases(&state.dirs.spt_server);
     let headless_clients = resolve_clients(headless_clients, &profile_names, &aliases);
     let tmpl = HeadlessPageTemplate {
         user,
@@ -368,9 +367,9 @@ pub async fn client_detail(
         .find(|c| c.index == index)
         .ok_or(WebError::NotFound)?;
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let profile_names = build_profile_names(&dirs);
-    let aliases = build_client_aliases(&state.spt_dir);
+    let aliases = build_client_aliases(&state.dirs.spt_server);
     let client = resolve_clients(vec![client], &profile_names, &aliases)
         .into_iter()
         .next()
@@ -723,7 +722,7 @@ pub async fn client_scale(
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let config_handle = state.config_handle();
-    let dirs_clone = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs_clone = (*state.dirs).clone();
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
@@ -830,7 +829,7 @@ pub async fn client_converge(
 
     let mgr_clone = mgr.clone();
     let config_clone = state.config_cloned();
-    let dirs_clone = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs_clone = (*state.dirs).clone();
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
@@ -877,9 +876,9 @@ pub async fn client_status_partial(
     };
 
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let profile_names = build_profile_names(&dirs);
-    let aliases = build_client_aliases(&state.spt_dir);
+    let aliases = build_client_aliases(&state.dirs.spt_server);
     let clients = resolve_clients(clients, &profile_names, &aliases);
     let tmpl = ClientsStatusPartialTemplate {
         clients,
@@ -954,7 +953,7 @@ pub async fn client_create(
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let config_handle = state.config_handle();
-    let dirs_clone = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs_clone = (*state.dirs).clone();
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
@@ -1099,7 +1098,7 @@ pub async fn client_delete(
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let config_handle = state.config_handle();
-    let dirs_clone = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs_clone = (*state.dirs).clone();
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
@@ -1330,7 +1329,7 @@ pub async fn client_rename(
         }
     };
 
-    let spt_dir = state.spt_dir.clone();
+    let spt_dir = state.dirs.spt_server.clone();
     let new_name = form.into_inner().name.trim().to_string();
 
     let result = actix_web::web::block(move || {
@@ -1467,9 +1466,9 @@ pub async fn dashboard_clients_status_partial(
         None => vec![],
     };
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let names = build_profile_names(&dirs);
-    let aliases = build_client_aliases(&state.spt_dir);
+    let aliases = build_client_aliases(&state.dirs.spt_server);
     let clients = resolve_clients(raw_clients.clone(), &names, &aliases);
 
     let healthy_count = raw_clients

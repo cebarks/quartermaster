@@ -188,7 +188,7 @@ pub async fn setup_mods_zip(
             .body("No mods are installed on this server"));
     }
 
-    let spt_dir = state.spt_dir.clone();
+    let spt_dir = state.dirs.spt_server.clone();
     let zip_bytes = web::block(move || build_mod_zip(&spt_dir, &files))
         .await
         .map_err(WebError::from)?

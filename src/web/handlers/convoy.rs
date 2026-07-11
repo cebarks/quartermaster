@@ -716,7 +716,7 @@ pub async fn download(
     tracing::info!(mod_ids = ?body.mods, count = body.mods.len(), "convoy batch download requested");
 
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let spt_dir = state.dirs.spt_server.clone();
     let mod_ids = body.mods.clone();
 
     let zip_path = web::block(move || {
@@ -773,7 +773,7 @@ pub async fn single_mod_archive(
 ) -> actix_web::Result<HttpResponse> {
     let mod_id = path.into_inner();
     let db = state.db.clone();
-    let spt_dir = state.spt_dir.clone();
+    let spt_dir = state.dirs.spt_server.clone();
 
     tracing::info!(mod_id, "convoy single mod download requested");
 

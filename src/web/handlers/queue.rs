@@ -5,7 +5,6 @@ use askama::Template;
 
 use crate::db::rbac::Permission;
 use crate::db::users::PendingOperation;
-use crate::dirs::QumaDirs;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, FlashType};
@@ -168,11 +167,13 @@ pub async fn apply_queue(
         return Err(WebError::Forbidden.into());
     }
     let config = state.config_cloned();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
-    let server_running =
-        crate::server_detect::is_server_running(&config, &dirs, state.container_mgr.as_deref())
-            .await
-            .unwrap_or(false);
+    let server_running = crate::server_detect::is_server_running(
+        &config,
+        &state.dirs,
+        state.container_mgr.as_deref(),
+    )
+    .await
+    .unwrap_or(false);
 
     if server_running {
         set_flash(
@@ -371,7 +372,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
             crate::ops::ModSource::parse(&op.source).unwrap_or(crate::ops::ModSource::Forge);
 
         let db = state.db.clone();
-        let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+        let dirs = (*state.dirs).clone();
         let config = state.config_cloned();
         let mod_name = op.mod_name.clone();
         let source_url = op.source_url.clone();
@@ -418,7 +419,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let (link, version_str, full_version) =
         resolve_version_link(state, forge_mod_id, version_id).await?;
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
@@ -433,7 +434,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let archive_path = tmp_dir.path().join("mod.zip");
 
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
     let mod_name = op.mod_name.clone();
 
@@ -480,7 +481,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let (link, version_str, full_version) =
         resolve_version_link(state, forge_mod_id, version_id).await?;
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let dep_db_ids = crate::ops::resolve_and_install_deps(
         &state.forge,
         &state.db,
@@ -495,7 +496,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     let archive_path = tmp_dir.path().join("mod.zip");
 
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
 
     let mod_db_id = web::block(move || {
@@ -531,7 +532,7 @@ pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> any
         .forge_mod_id
         .expect("mod operation must have forge_mod_id");
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
 
     web::block(move || {
@@ -602,7 +603,7 @@ async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow:
 
     // Install
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
     let addon_name = op.mod_name.clone();
     let addon_slug = addon_info.slug.clone();
@@ -668,7 +669,7 @@ async fn apply_addon_update(op: &PendingOperation, state: &AppState) -> anyhow::
     let archive_path = tmp_dir.path().join("addon.zip");
     state.forge.download_file(link, &archive_path).await?;
 
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let staging_dir = crate::ops::staging_tempdir(&dirs)?;
     let staging_path = staging_dir.path().to_path_buf();
 
@@ -709,7 +710,7 @@ async fn apply_addon_remove(op: &PendingOperation, state: &AppState) -> anyhow::
         .ok_or_else(|| anyhow::anyhow!("addon operation missing forge_addon_id"))?;
 
     let db = state.db.clone();
-    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs = (*state.dirs).clone();
     let config = state.config_cloned();
 
     web::block(move || {
