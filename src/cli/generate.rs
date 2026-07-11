@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
-#[allow(deprecated)]
-use crate::spt::detect::detect_spt_dir;
+use crate::dirs::QumaDirs;
 
 use super::{Cli, GenerateTarget};
 
@@ -26,7 +25,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory={working_dir}
-ExecStart={exec} serve --bind {bind} --port {port} --spt-dir {spt_dir} --config {config}
+ExecStart={exec} serve --bind {bind} --port {port} --quma-dir {spt_dir} --config {config}
 Restart=on-failure
 RestartSec=5
 
@@ -42,14 +41,13 @@ WantedBy=multi-user.target
     )
 }
 
-#[allow(deprecated)]
 fn generate_systemd(install: bool, cli: &Cli) -> Result<()> {
-    let spt_dir = detect_spt_dir(cli.effective_quma_dir(), None)?;
-    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&spt_dir));
+    let dirs = QumaDirs::detect(cli.effective_quma_dir(), None)?;
+    let config_path = Config::resolve_path(cli.config.as_deref(), Some(&dirs.root));
     let config = Config::load(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
 
-    let unit = generate_systemd_unit(&spt_dir, &config_path, &config);
+    let unit = generate_systemd_unit(&dirs.root, &config_path, &config);
 
     if install {
         let service_path = Path::new("/etc/systemd/system/quartermaster.service");
@@ -110,7 +108,7 @@ mod tests {
         assert!(unit.contains("WorkingDirectory=/opt/spt"));
         assert!(unit.contains("--bind 0.0.0.0"));
         assert!(unit.contains("--port 9190"));
-        assert!(unit.contains("--spt-dir /opt/spt"));
+        assert!(unit.contains("--quma-dir /opt/spt"));
         assert!(unit.contains("--config /opt/spt/quartermaster.toml"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("After=network.target"));
