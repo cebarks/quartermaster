@@ -48,6 +48,9 @@
     {% if let Some(reg) = registration_date %}
     <div class="text-muted text-sm" style="margin-top:0.75rem">Registered: {{ reg }}</div>
     {% endif %}
+    {% if let Some(pid) = spt_profile_id %}
+    <div class="text-muted text-sm" style="margin-top:0.25rem">Profile ID: <code>{{ pid }}</code></div>
+    {% endif %}
 </div>
 
 <div class="tab-bar">

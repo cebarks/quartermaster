@@ -6,10 +6,6 @@
 {% block content %}
 <h1>{{ mod_name }} / {{ filename }}</h1>
 
-{% if let Some(flash) = flash %}
-<div class="alert alert-{{ flash.flash_type }}">{{ flash.message }}</div>
-{% endif %}
-
 {% if server_running %}
 <div class="alert alert-warning">Server is running. Config changes will take effect after a restart.</div>
 {% endif %}

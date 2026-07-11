@@ -96,6 +96,9 @@ pub async fn manager_page(
     }
 
     let svm = require_svm(&state)?;
+    {
+        let _ = svm.write().reload_from_disk();
+    }
     let svm = svm.read();
 
     let tmpl = SvmManagerTemplate {

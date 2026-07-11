@@ -6,13 +6,10 @@
 
 
 ## Bugs
-- config editor flash message displays twice after save (once in base.html layout, once in template)
-- SVM preset upload size limit too low (256 KB `FormConfig` on `/svm/preset/import`)
 - SPT profile generation on account creation doesn't work
     - account creation dropdown missing SPT dev profiles (toggleable?)
 - mod requests list shouldn't include already installed mods
 - server-wide stats page has no PMC/Scav raid breakdown (per-user profile already tracks both)
-- rejecting an approved mod leaves behind an empty row
 - no auto-refresh when scaling/converging clients
 
 ## Core Architecture
@@ -46,7 +43,6 @@
 
 ## Security
 - proxy has no authentication — unauthenticated access to SPT server API (`proxy.rs`)
-- `update_status_partial` serves privileged data to all authenticated users (`mods.rs`)
 - profile/raid data visible to all authenticated users
 - no mechanism to sync non-admin role permissions on upgrade (`sync_builtin_role_permissions` only covers admin)
 
@@ -75,8 +71,6 @@
     - expose config ui for `SPT/user/mods/fika-server/assets/configs/fika.jsonc`
 - stand up server from predefined server config (storing settings in github without database)
 - last logged for players (both into webui and into spt)
-- display profile id on profile page
-- SVM presets list should refresh from disk on page load
 - user sorting
 - better metrics: dynamic `by prefix` sorting, graphs
 - profile editor

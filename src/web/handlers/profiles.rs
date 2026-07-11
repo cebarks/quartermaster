@@ -62,6 +62,7 @@ struct ProfilePageTemplate {
     csrf_token: String,
     nav: NavContext,
     profile_username: String,
+    spt_profile_id: Option<String>,
     detail: Option<ProfileDetail>,
     empty_reason: Option<String>,
     quests_html: String,
@@ -138,6 +139,7 @@ pub async fn profile_page(
         return Err(WebError::NotFound.into());
     }
 
+    let spt_profile_id_display = spt_profile_id.clone();
     let (detail, empty_reason) = match spt_profile_id {
         None => (
             None,
@@ -202,6 +204,7 @@ pub async fn profile_page(
         csrf_token,
         nav: NavContext::from_state(&state),
         profile_username,
+        spt_profile_id: spt_profile_id_display,
         detail,
         empty_reason,
         quests_html,
