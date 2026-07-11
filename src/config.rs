@@ -108,7 +108,7 @@ fn default_auto_backup() -> bool {
 }
 
 fn default_backup_dir() -> String {
-    "quartermaster/backups".to_string()
+    "backups".to_string()
 }
 
 fn default_max_backups() -> u32 {
@@ -419,7 +419,7 @@ impl Default for BackupConfig {
     fn default() -> Self {
         Self {
             auto_backup: true,
-            backup_dir: "quartermaster/backups".to_string(),
+            backup_dir: "backups".to_string(),
             max_backups: 3,
             require_backup: false,
         }
@@ -1927,7 +1927,7 @@ proxy_enabled = false
     fn backup_config_defaults() {
         let config = Config::default();
         assert!(config.backup.auto_backup);
-        assert_eq!(config.backup.backup_dir, "quartermaster/backups");
+        assert_eq!(config.backup.backup_dir, "backups");
         assert_eq!(config.backup.max_backups, 3);
         assert!(!config.backup.require_backup);
     }

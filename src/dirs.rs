@@ -324,6 +324,19 @@ mod tests {
     }
 
     #[test]
+    fn validate_spt_dir_works_with_spt_server_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        std::fs::create_dir_all(dirs.spt_server.join("SPT/SPT_Data/configs")).unwrap();
+        std::fs::create_dir_all(dirs.spt_server.join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(dirs.spt_server.join("BepInEx/plugins")).unwrap();
+        std::fs::write(dirs.spt_server.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(dirs.spt_server.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
+
+        assert!(crate::spt::detect::validate_spt_dir(&dirs.spt_server).is_ok());
+    }
+
+    #[test]
     fn detect_new_layout() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
