@@ -1,6 +1,8 @@
 <tbody id="request-{{ r.request.id }}">
 {% if let Some(msg) = message.as_deref() %}
 <tr><td colspan="4"><div class="toast toast-success" style="margin-bottom:0">{{ msg }}</div></td></tr>
-{% endif %}
+<tr><td colspan="4" style="padding:0"><script>setTimeout(function(){var el=document.getElementById('request-{{ r.request.id }}');if(el)el.remove()},4500)</script></td></tr>
+{% else %}
 {% include "mods/partials/request_row.html" %}
+{% endif %}
 </tbody>

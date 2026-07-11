@@ -606,7 +606,7 @@ pub fn configure_app(
         )
         .service(
             web::resource("/svm/preset/import")
-                .app_data(web::FormConfig::default().limit(256 * 1024))
+                .app_data(web::FormConfig::default().limit(1024 * 1024))
                 .route(web::post().to(handlers::svm::import_preset)),
         )
         .route(
