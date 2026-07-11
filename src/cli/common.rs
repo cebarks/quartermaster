@@ -47,9 +47,9 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
 
-    crate::ops::cleanup_staging(&dirs.root);
+    crate::ops::cleanup_staging(&dirs);
 
-    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db, &dirs.root) {
+    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db, &dirs) {
         tracing::error!(err = %e, "failed to migrate disabled mods to stash");
     }
 
@@ -295,7 +295,7 @@ pub fn find_unmanaged_mod_dirs(
 ) -> Result<(std::collections::BTreeMap<String, usize>, usize)> {
     use crate::spt::mods::scan_mod_directories;
 
-    let all_files_on_disk = scan_mod_directories(&dirs.spt_server)?;
+    let all_files_on_disk = scan_mod_directories(dirs)?;
     let tracked_files = db.get_all_tracked_files()?;
     let tracked_paths: std::collections::HashSet<&str> =
         tracked_files.iter().map(|f| f.file_path.as_str()).collect();
@@ -332,7 +332,7 @@ pub async fn warn_if_forcing_while_running(force: bool, ctx: &CliContext) -> Res
     if force {
         let running = crate::server_detect::is_server_running(
             &ctx.config,
-            &ctx.dirs.root,
+            &ctx.dirs,
             ctx.container_mgr.as_ref(),
         )
         .await?;

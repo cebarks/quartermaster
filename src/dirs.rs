@@ -2,18 +2,17 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-// ponytail: unused until Task 2+ consume it
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct QumaDirs {
     pub root: PathBuf,
     pub spt_server: PathBuf,
+    #[allow(dead_code)] // ponytail: used once converge.rs migrates to new layout
     pub headless: PathBuf,
+    #[allow(dead_code)] // ponytail: used once converge.rs migrates to new layout
     pub overlay: PathBuf,
     legacy: bool,
 }
 
-#[allow(dead_code)]
 impl QumaDirs {
     pub fn from_root(root: PathBuf) -> Self {
         Self {
@@ -147,6 +146,7 @@ impl QumaDirs {
         }
     }
 
+    #[allow(dead_code)] // ponytail: used once cache module migrates
     pub fn cache_dir(&self) -> PathBuf {
         if self.legacy {
             self.root.join("quartermaster-cache")
@@ -155,6 +155,7 @@ impl QumaDirs {
         }
     }
 
+    #[allow(dead_code)] // ponytail: used once file logging migrates
     pub fn log_dir(&self) -> PathBuf {
         self.root.join("logs")
     }
@@ -189,14 +190,17 @@ impl QumaDirs {
         self.spt_server.join("SPT/user/profiles")
     }
 
+    #[allow(dead_code)] // ponytail: used once spt/detect migrates
     pub fn core_json(&self) -> PathBuf {
         self.spt_server.join("SPT/SPT_Data/configs/core.json")
     }
 
+    #[allow(dead_code)] // ponytail: used once server_detect migrates fully
     pub fn http_json(&self) -> PathBuf {
         self.spt_server.join("SPT/SPT_Data/configs/http.json")
     }
 
+    #[allow(dead_code)] // ponytail: used once fika module migrates
     pub fn fika_config(&self) -> PathBuf {
         self.spt_server
             .join("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
@@ -204,6 +208,7 @@ impl QumaDirs {
 
     // -- Headless paths --
 
+    #[allow(dead_code)] // ponytail: used once converge.rs migrates to new layout
     pub fn client_overlay(&self, index: u32) -> PathBuf {
         self.overlay.join(format!("client-{index}"))
     }

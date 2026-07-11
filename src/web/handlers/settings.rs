@@ -372,9 +372,10 @@ pub async fn save_logging_settings(
     state.persist_config(&config)?;
 
     let filter = crate::logging::resolve_log_filter(&config.logging, 0, None);
+    let dirs = crate::dirs::QumaDirs::from_legacy(state.spt_dir.clone());
     state
         .reload_handles
-        .reconfigure(&config.logging, &filter, Some(&state.spt_dir));
+        .reconfigure(&config.logging, &filter, Some(&dirs));
 
     set_flash(
         &session,

@@ -202,7 +202,9 @@ impl TestAppBuilder {
                 db_arc.clone(),
                 config_arc.clone(),
             ),
-            config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(&spt_dir),
+            config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(
+                &spt_quartermaster::dirs::QumaDirs::from_legacy(spt_dir.clone()),
+            ),
         });
 
         TestApp {

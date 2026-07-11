@@ -16,6 +16,7 @@ use tracing_subscriber::reload;
 use tracing_subscriber::Layer;
 
 use crate::config::{ConsoleFormat, FileFormat, LoggingConfig, RotationPolicy};
+use crate::dirs::QumaDirs;
 
 mod compact;
 pub mod writer;
@@ -320,7 +321,7 @@ pub struct ReloadHandles {
 }
 
 impl ReloadHandles {
-    pub fn reconfigure(&self, config: &LoggingConfig, filter_str: &str, spt_dir: Option<&Path>) {
+    pub fn reconfigure(&self, config: &LoggingConfig, filter_str: &str, dirs: Option<&QumaDirs>) {
         // Update global floor filter to the most permissive level any layer needs
         let floor = compute_floor_filter(config, filter_str);
         let _ = self.filter_handle.reload(floor);
@@ -362,7 +363,7 @@ impl ReloadHandles {
 
         // Update file layer (with per-layer level filtering)
         if config.file.enabled {
-            let file_path = resolve_file_path(&config.file.path, spt_dir);
+            let file_path = resolve_file_path(&config.file.path, dirs);
             let file_level = parse_level_str(&config.file.level).unwrap_or(tracing::Level::DEBUG);
             let (file_layer, guard) = build_file_layer(&config.file, &file_path);
             let filtered: BoxedFile = Some(Box::new(LevelFilterLayer {
@@ -380,12 +381,11 @@ impl ReloadHandles {
     }
 }
 
-fn resolve_file_path(path: &str, spt_dir: Option<&Path>) -> std::path::PathBuf {
+fn resolve_file_path(path: &str, dirs: Option<&QumaDirs>) -> std::path::PathBuf {
     if Path::new(path).is_absolute() {
         std::path::PathBuf::from(path)
     } else {
-        spt_dir
-            .map(|d| d.join(path))
+        dirs.map(|d| d.root.join(path))
             .unwrap_or_else(|| std::path::PathBuf::from(path))
     }
 }

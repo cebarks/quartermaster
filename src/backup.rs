@@ -5,6 +5,7 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 use crate::db::mods::InstalledFile;
+use crate::dirs::QumaDirs;
 
 /// Manifest entry for a single mod in a full backup.
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,11 +62,11 @@ fn unique_backup_id(base_dir: &Path) -> String {
     format!("{id}_{}", rand::rng().random::<u16>())
 }
 
-/// Resolve the backup directory path from the SPT dir and config.
+/// Resolve the backup directory path from dirs and config.
 ///
-/// Validates that the resolved path is within `spt_dir` to prevent path
+/// Validates that the resolved path is safe to prevent path
 /// traversal via crafted `backup_dir` config values.
-pub fn resolve_backup_dir(spt_dir: &Path, config: &crate::config::Config) -> Result<PathBuf> {
+pub fn resolve_backup_dir(dirs: &QumaDirs, config: &crate::config::Config) -> Result<PathBuf> {
     let backup_dir = &config.backup.backup_dir;
     if Path::new(backup_dir).is_absolute() {
         anyhow::bail!("backup_dir must be a relative path (got absolute: {backup_dir})");
@@ -75,7 +76,7 @@ pub fn resolve_backup_dir(spt_dir: &Path, config: &crate::config::Config) -> Res
             anyhow::bail!("backup_dir must not contain '..' components");
         }
     }
-    Ok(spt_dir.join(backup_dir))
+    Ok(dirs.backup_dir(backup_dir))
 }
 
 /// Copy a list of tracked files from `base_dir` into a backup `dest` directory,
@@ -124,12 +125,12 @@ fn copy_files_for_manifest(
     Ok((total_size, file_paths))
 }
 
-/// Restore files from a backup manifest entry into `spt_dir`, computing hashes
+/// Restore files from a backup manifest entry into `dst_root`, computing hashes
 /// and recording each file via the provided `record_file` callback.
 fn restore_manifest_files(
     rel_paths: &[String],
     src_dir: &Path,
-    spt_dir: &Path,
+    dst_root: &Path,
     mut record_file: impl FnMut(&str, &str, i64) -> Result<()>,
 ) -> Result<()> {
     for rel_path in rel_paths {
@@ -138,7 +139,7 @@ fn restore_manifest_files(
             tracing::warn!(path = %rel_path, "manifest file missing from backup, skipping");
             continue;
         }
-        let dst = spt_dir.join(rel_path);
+        let dst = dst_root.join(rel_path);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -160,7 +161,7 @@ fn restore_manifest_files(
 /// Returns the database ID of the new backup record.
 pub fn backup_mod(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     mod_db_id: i64,
     trigger: &str,
@@ -174,7 +175,7 @@ pub fn backup_mod(
     // Also get addon files for this mod
     let addons = db.list_addons_for_mod(mod_db_id)?;
 
-    let backup_dir = resolve_backup_dir(spt_dir, config)?;
+    let backup_dir = resolve_backup_dir(dirs, config)?;
     let mod_backup_dir = backup_dir.join("mods").join(
         mod_info
             .forge_mod_id
@@ -187,14 +188,14 @@ pub fn backup_mod(
     let bid = unique_backup_id(&mod_backup_dir);
     let dest = mod_backup_dir.join(&bid);
 
-    let base_dir = crate::ops::resolve_mod_root(spt_dir, mod_info.disabled);
+    let base_dir = crate::ops::resolve_mod_root(dirs, mod_info.disabled);
     let mut total_size = copy_files_to_backup(&files, &base_dir, &dest)?;
     // For addon files, only use stash if the addon itself is disabled.
     // Disabling a parent mod does NOT move addon files — they stay at
     // canonical paths unless the addon is independently disabled.
     for addon in &addons {
         let addon_files = db.get_files_for_addon(addon.id)?;
-        let addon_base = crate::ops::resolve_mod_root(spt_dir, addon.disabled);
+        let addon_base = crate::ops::resolve_mod_root(dirs, addon.disabled);
         total_size += copy_files_to_backup(&addon_files, &addon_base, &dest)?;
     }
 
@@ -231,7 +232,7 @@ pub fn backup_mod(
     );
 
     if let Some(forge_mod_id) = mod_info.forge_mod_id {
-        enforce_retention_mod(db, spt_dir, config, forge_mod_id)?;
+        enforce_retention_mod(db, dirs, config, forge_mod_id)?;
     }
 
     Ok(backup_db_id)
@@ -248,10 +249,10 @@ pub fn backup_mod(
 /// Returns the database ID of the new backup record.
 pub fn backup_full(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
 ) -> Result<i64> {
-    let backup_dir = resolve_backup_dir(spt_dir, config)?;
+    let backup_dir = resolve_backup_dir(dirs, config)?;
     let full_dir = backup_dir.join("full");
     std::fs::create_dir_all(&full_dir)?;
     let bid = unique_backup_id(&full_dir);
@@ -267,7 +268,7 @@ pub fn backup_full(
     let mods = db.list_mods()?;
     for m in &mods {
         let files = db.get_files_for_mod(m.id)?;
-        let base = crate::ops::resolve_mod_root(spt_dir, m.disabled);
+        let base = crate::ops::resolve_mod_root(dirs, m.disabled);
         let (size, file_paths) = copy_files_for_manifest(&files, &base, &mods_dest)?;
         total_size += size;
         manifest_mods.push(ManifestMod {
@@ -289,7 +290,7 @@ pub fn backup_full(
             .ok_or_else(|| anyhow::anyhow!("addon parent mod {} not found", addon.parent_mod_id))?;
 
         let addon_files = db.get_files_for_addon(addon.id)?;
-        let addon_base = crate::ops::resolve_mod_root(spt_dir, addon.disabled);
+        let addon_base = crate::ops::resolve_mod_root(dirs, addon.disabled);
         let (size, file_paths) = copy_files_for_manifest(&addon_files, &addon_base, &mods_dest)?;
         total_size += size;
         manifest_addons.push(ManifestAddon {
@@ -315,7 +316,7 @@ pub fn backup_full(
         .context("failed to write backup manifest")?;
 
     // 3. Copy profiles
-    let profiles_src = spt_dir.join("user/profiles");
+    let profiles_src = dirs.spt_server.join("user/profiles");
     if profiles_src.is_dir() {
         let profiles_dst = dest.join("profiles");
         std::fs::create_dir_all(&profiles_dst)?;
@@ -333,7 +334,7 @@ pub fn backup_full(
     }
 
     // 4. Copy config
-    let config_src = spt_dir.join("quartermaster.toml");
+    let config_src = dirs.config_path();
     if config_src.exists() {
         std::fs::copy(&config_src, dest.join("quartermaster.toml"))?;
     }
@@ -355,7 +356,7 @@ pub fn backup_full(
 
     tracing::info!(backup_id = %bid, mod_count = mods.len(), total_size, "full backup created");
 
-    enforce_retention_full(db, spt_dir, config)?;
+    enforce_retention_full(db, dirs, config)?;
 
     Ok(backup_db_id)
 }
@@ -368,7 +369,7 @@ pub fn backup_full(
 /// swallowed so the operation can proceed.
 pub fn auto_backup_mod(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     mod_db_id: i64,
     trigger: &str,
@@ -376,7 +377,7 @@ pub fn auto_backup_mod(
     if !config.backup.auto_backup {
         return Ok(());
     }
-    match backup_mod(db, spt_dir, config, mod_db_id, trigger) {
+    match backup_mod(db, dirs, config, mod_db_id, trigger) {
         Ok(_) => Ok(()),
         Err(e) => {
             if config.backup.require_backup {
@@ -399,7 +400,7 @@ pub fn auto_backup_mod(
 /// If the mod was previously removed, re-inserts it from the backup metadata.
 pub fn restore_mod_backup(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     _config: &crate::config::Config,
     backup_db_id: i64,
 ) -> Result<()> {
@@ -415,7 +416,7 @@ pub fn restore_mod_backup(
         .forge_mod_id
         .ok_or_else(|| anyhow::anyhow!("mod backup missing forge_mod_id"))?;
 
-    let backup_files_dir = spt_dir.join(&backup.backup_path);
+    let backup_files_dir = dirs.root.join(&backup.backup_path);
     if !backup_files_dir.exists() {
         anyhow::bail!("backup directory missing: {}", backup_files_dir.display());
     }
@@ -429,7 +430,7 @@ pub fn restore_mod_backup(
             // Delete current files from disk and DB
             let current_files = db.get_files_for_mod(existing.id)?;
             let paths: Vec<String> = current_files.into_iter().map(|f| f.file_path).collect();
-            let delete_root = crate::ops::resolve_mod_root(spt_dir, existing.disabled);
+            let delete_root = crate::ops::resolve_mod_root(dirs, existing.disabled);
             crate::spt::mods::delete_mod_files(&delete_root, &paths)?;
             db.delete_files_for_mod(existing.id)?;
             existing.id
@@ -459,11 +460,11 @@ pub fn restore_mod_backup(
         }
     };
 
-    // Copy backup files to spt_dir and record them
+    // Copy backup files to spt_server and record them
     let mut restored_count = 0u64;
     copy_backup_tree_and_record(
         db,
-        spt_dir,
+        &dirs.spt_server,
         &backup_files_dir,
         &backup_files_dir,
         mod_db_id,
@@ -502,7 +503,7 @@ pub fn restore_mod_backup(
 /// config file if present in the backup.
 pub fn restore_full_backup(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     _config: &crate::config::Config,
     backup_db_id: i64,
 ) -> Result<()> {
@@ -514,7 +515,7 @@ pub fn restore_full_backup(
         anyhow::bail!("backup {} is not a full backup", backup_db_id);
     }
 
-    let backup_dir = spt_dir.join(&backup.backup_path);
+    let backup_dir = dirs.root.join(&backup.backup_path);
     if !backup_dir.exists() {
         anyhow::bail!("backup directory missing: {}", backup_dir.display());
     }
@@ -530,7 +531,7 @@ pub fn restore_full_backup(
         for m in &all_mods {
             let files = db.get_files_for_mod(m.id)?;
             let paths: Vec<String> = files.into_iter().map(|f| f.file_path).collect();
-            let delete_root = crate::ops::resolve_mod_root(spt_dir, m.disabled);
+            let delete_root = crate::ops::resolve_mod_root(dirs, m.disabled);
             crate::spt::mods::delete_mod_files(&delete_root, &paths)?;
             db.delete_files_for_mod(m.id)?;
             db.delete_mod(m.id)?;
@@ -547,7 +548,7 @@ pub fn restore_full_backup(
             // mods/ tree without DB file records. This is lossy but avoids
             // a hard failure on old backups.
             tracing::warn!("full backup has no manifest.json — file-to-mod mapping will be lost");
-            copy_backup_subtree(&mods_dir, spt_dir)?;
+            copy_backup_subtree(&mods_dir, &dirs.spt_server)?;
             BackupManifest {
                 mods: vec![],
                 addons: vec![],
@@ -570,7 +571,7 @@ pub fn restore_full_backup(
             restore_manifest_files(
                 &mm.file_paths,
                 &mods_dir,
-                spt_dir,
+                &dirs.spt_server,
                 |rel_path, hash, size| {
                     db.insert_file(mod_db_id, rel_path, Some(hash), Some(size))?;
                     Ok(())
@@ -617,7 +618,7 @@ pub fn restore_full_backup(
             restore_manifest_files(
                 &ma.file_paths,
                 &mods_dir,
-                spt_dir,
+                &dirs.spt_server,
                 |rel_path, hash, size| {
                     db.insert_addon_file(addon_db_id, rel_path, Some(hash), Some(size))?;
                     Ok(())
@@ -629,7 +630,7 @@ pub fn restore_full_backup(
     // Restore profiles
     let profiles_dir = backup_dir.join("profiles");
     if profiles_dir.is_dir() {
-        let profiles_dst = spt_dir.join("user/profiles");
+        let profiles_dst = dirs.spt_server.join("user/profiles");
         std::fs::create_dir_all(&profiles_dst)?;
         for entry in std::fs::read_dir(&profiles_dir)? {
             let entry = entry?;
@@ -641,7 +642,7 @@ pub fn restore_full_backup(
     // Restore config
     let config_src = backup_dir.join("quartermaster.toml");
     if config_src.exists() {
-        let config_dst = spt_dir.join("quartermaster.toml");
+        let config_dst = dirs.config_path();
         std::fs::copy(&config_src, &config_dst)?;
         tracing::warn!("quartermaster.toml restored — restart the web server to reload config");
     }
@@ -698,13 +699,13 @@ fn copy_backup_subtree(src_root: &Path, dst_root: &Path) -> Result<()> {
 /// recording each file in the database.
 fn copy_backup_tree_and_record(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dst_root: &Path,
     current_dir: &Path,
     backup_root: &Path,
     mod_db_id: i64,
     count: &mut u64,
 ) -> Result<()> {
-    walk_backup_tree(current_dir, backup_root, spt_dir, &mut |relative, dst| {
+    walk_backup_tree(current_dir, backup_root, dst_root, &mut |relative, dst| {
         let content = std::fs::read(dst)?;
         let hash = crate::spt::mods::compute_hash_public(&content);
         let size = content.len() as i64;
@@ -722,7 +723,7 @@ fn copy_backup_tree_and_record(
 /// (per-mod or full).
 fn enforce_retention(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     max_backups: u32,
     mut count_fn: impl FnMut() -> Result<i64>,
     mut oldest_fn: impl FnMut() -> Result<Option<crate::db::backups::BackupRecord>>,
@@ -732,7 +733,7 @@ fn enforce_retention(
     }
     while count_fn()? > max_backups as i64 {
         if let Some(oldest) = oldest_fn()? {
-            let dir = spt_dir.join(&oldest.backup_path);
+            let dir = dirs.root.join(&oldest.backup_path);
             if dir.exists() {
                 std::fs::remove_dir_all(&dir).ok();
             }
@@ -748,13 +749,13 @@ fn enforce_retention(
 /// Prune per-mod backups that exceed the retention limit.
 fn enforce_retention_mod(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     forge_mod_id: i64,
 ) -> Result<()> {
     enforce_retention(
         db,
-        spt_dir,
+        dirs,
         config.backup.max_backups,
         || Ok(db.count_backups_for_mod(forge_mod_id)?),
         || Ok(db.oldest_backup_for_mod(forge_mod_id)?),
@@ -764,12 +765,12 @@ fn enforce_retention_mod(
 /// Prune full backups that exceed the retention limit.
 fn enforce_retention_full(
     db: &crate::db::Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
 ) -> Result<()> {
     enforce_retention(
         db,
-        spt_dir,
+        dirs,
         config.backup.max_backups,
         || Ok(db.count_full_backups()?),
         || Ok(db.oldest_full_backup()?),
@@ -780,6 +781,7 @@ fn enforce_retention_full(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::dirs::QumaDirs;
 
     /// Create a standard test environment: a temp SPT dir with one mod
     /// ("TestMod") containing a single `package.json`, an in-memory DB with
@@ -833,7 +835,8 @@ mod tests {
     #[test]
     fn backup_mod_copies_files_and_records() {
         let (spt_dir, db, mod_id, config) = test_backup_env();
-        let backup_id = backup_mod(&db, spt_dir.path(), &config, mod_id, "manual").unwrap();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
+        let backup_id = backup_mod(&db, &dirs, &config, mod_id, "manual").unwrap();
 
         let backup = db.get_backup(backup_id).unwrap().unwrap();
         assert_eq!(backup.backup_type, "mod");
@@ -849,12 +852,13 @@ mod tests {
     #[test]
     fn backup_mod_enforces_retention() {
         let (spt_dir, db, mod_id, mut config) = test_backup_env();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         config.backup.max_backups = 2;
 
         // Create 3 backups — first should be pruned
-        backup_mod(&db, spt_dir.path(), &config, mod_id, "manual").unwrap();
-        backup_mod(&db, spt_dir.path(), &config, mod_id, "manual").unwrap();
-        backup_mod(&db, spt_dir.path(), &config, mod_id, "manual").unwrap();
+        backup_mod(&db, &dirs, &config, mod_id, "manual").unwrap();
+        backup_mod(&db, &dirs, &config, mod_id, "manual").unwrap();
+        backup_mod(&db, &dirs, &config, mod_id, "manual").unwrap();
 
         let backups = db.list_backups_for_mod(100).unwrap();
         assert_eq!(backups.len(), 2);
@@ -863,6 +867,7 @@ mod tests {
     #[test]
     fn backup_full_copies_mods_profiles_config() {
         let (spt_dir, db, _mod_id, config) = test_backup_env();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         // Add profiles and config for full backup test
         std::fs::create_dir_all(spt_dir.path().join("user/profiles")).unwrap();
         std::fs::write(
@@ -876,7 +881,7 @@ mod tests {
         )
         .unwrap();
 
-        let backup_id = backup_full(&db, spt_dir.path(), &config).unwrap();
+        let backup_id = backup_full(&db, &dirs, &config).unwrap();
 
         let backup = db.get_backup(backup_id).unwrap().unwrap();
         assert_eq!(backup.backup_type, "full");
@@ -904,6 +909,7 @@ mod tests {
     #[test]
     fn auto_backup_skips_when_disabled() {
         let spt_dir = tempfile::TempDir::new().unwrap();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = crate::db::Database::open_in_memory().unwrap();
         let mod_id = db
             .insert_mod(
@@ -919,37 +925,40 @@ mod tests {
         let mut config = crate::config::Config::default();
         config.backup.auto_backup = false;
 
-        auto_backup_mod(&db, spt_dir.path(), &config, mod_id, "auto_update").unwrap();
+        auto_backup_mod(&db, &dirs, &config, mod_id, "auto_update").unwrap();
         assert_eq!(db.list_backups_for_mod(100).unwrap().len(), 0);
     }
 
     #[test]
     fn auto_backup_require_backup_propagates_error() {
         let spt_dir = tempfile::TempDir::new().unwrap();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = crate::db::Database::open_in_memory().unwrap();
         // mod_id 999 doesn't exist — will error
         let mut config = crate::config::Config::default();
         config.backup.require_backup = true;
 
-        let result = auto_backup_mod(&db, spt_dir.path(), &config, 999, "auto_update");
+        let result = auto_backup_mod(&db, &dirs, &config, 999, "auto_update");
         assert!(result.is_err());
     }
 
     #[test]
     fn auto_backup_swallows_error_when_not_required() {
         let spt_dir = tempfile::TempDir::new().unwrap();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         let db = crate::db::Database::open_in_memory().unwrap();
         let mut config = crate::config::Config::default();
         config.backup.require_backup = false;
 
-        let result = auto_backup_mod(&db, spt_dir.path(), &config, 999, "auto_update");
+        let result = auto_backup_mod(&db, &dirs, &config, 999, "auto_update");
         assert!(result.is_ok());
     }
 
     #[test]
     fn restore_mod_backup_replaces_files() {
         let (spt_dir, db, mod_id, config) = test_backup_env();
-        let backup_db_id = backup_mod(&db, spt_dir.path(), &config, mod_id, "manual").unwrap();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
+        let backup_db_id = backup_mod(&db, &dirs, &config, mod_id, "manual").unwrap();
 
         // Simulate an update — overwrite the file
         std::fs::write(
@@ -960,7 +969,7 @@ mod tests {
         db.update_mod(mod_id, 300, "2.0.0").unwrap();
 
         // Restore
-        restore_mod_backup(&db, spt_dir.path(), &config, backup_db_id).unwrap();
+        restore_mod_backup(&db, &dirs, &config, backup_db_id).unwrap();
 
         // File should be restored to original content from backup (not the updated "v":"2")
         let content =
@@ -985,7 +994,8 @@ mod tests {
     #[test]
     fn restore_mod_backup_reinstalls_removed_mod() {
         let (spt_dir, db, mod_id, config) = test_backup_env();
-        let backup_db_id = backup_mod(&db, spt_dir.path(), &config, mod_id, "auto_remove").unwrap();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
+        let backup_db_id = backup_mod(&db, &dirs, &config, mod_id, "auto_remove").unwrap();
 
         // Simulate removal
         crate::spt::mods::delete_mod_files(
@@ -997,7 +1007,7 @@ mod tests {
         assert!(db.get_mod(mod_id).unwrap().is_none());
 
         // Restore
-        restore_mod_backup(&db, spt_dir.path(), &config, backup_db_id).unwrap();
+        restore_mod_backup(&db, &dirs, &config, backup_db_id).unwrap();
 
         assert!(spt_dir
             .path()
@@ -1013,6 +1023,7 @@ mod tests {
     fn backup_mod_finds_disabled_files_in_stash() {
         let tmp = tempfile::tempdir().unwrap();
         let spt_dir = tmp.path();
+        let dirs = QumaDirs::from_legacy(spt_dir.to_path_buf());
         std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
         std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
@@ -1046,7 +1057,7 @@ mod tests {
         .unwrap();
         db.set_mod_disabled(mod_id, true).unwrap();
 
-        let backup_id = backup_mod(&db, spt_dir, &config, mod_id, "manual").unwrap();
+        let backup_id = backup_mod(&db, &dirs, &config, mod_id, "manual").unwrap();
         let backup = db.get_backup(backup_id).unwrap().unwrap();
         assert!(
             backup.backup_size.unwrap_or(0) > 0,
@@ -1057,6 +1068,7 @@ mod tests {
     #[test]
     fn restore_full_backup_restores_removed_mods() {
         let spt_dir = tempfile::TempDir::new().unwrap();
+        let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         std::fs::create_dir_all(spt_dir.path().join("SPT/user/mods/ModA")).unwrap();
         std::fs::write(
             spt_dir.path().join("SPT/user/mods/ModA/package.json"),
@@ -1109,7 +1121,7 @@ mod tests {
         .unwrap();
 
         let config = crate::config::Config::default();
-        let backup_db_id = backup_full(&db, spt_dir.path(), &config).unwrap();
+        let backup_db_id = backup_full(&db, &dirs, &config).unwrap();
 
         // Simulate removing ModB after backup
         crate::spt::mods::delete_mod_files(
@@ -1122,7 +1134,7 @@ mod tests {
         assert!(db.get_mod(mod_b).unwrap().is_none());
 
         // Restore full backup — ModB should come back
-        restore_full_backup(&db, spt_dir.path(), &config, backup_db_id).unwrap();
+        restore_full_backup(&db, &dirs, &config, backup_db_id).unwrap();
 
         // Both mods should exist
         let restored_a = db.get_mod_by_forge_id(100).unwrap().unwrap();

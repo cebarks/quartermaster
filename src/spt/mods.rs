@@ -7,6 +7,8 @@ use sevenz_rust2::{ArchiveReader, Password};
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
+use crate::dirs::QumaDirs;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ArchiveFormat {
     Zip,
@@ -577,19 +579,19 @@ pub fn delete_mod_files(spt_root: &Path, file_paths: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Recursively scan `SPT/user/mods/` and `BepInEx/plugins/` under `spt_root`,
-/// returning all file paths relative to `spt_root`.
-pub fn scan_mod_directories(spt_root: &Path) -> Result<Vec<String>> {
+/// Recursively scan `SPT/user/mods/` and `BepInEx/plugins/` under the SPT server root,
+/// returning all file paths relative to `dirs.spt_server`.
+pub fn scan_mod_directories(dirs: &QumaDirs) -> Result<Vec<String>> {
     let mut out = Vec::new();
 
-    let server_dir = spt_root.join("SPT/user/mods");
+    let server_dir = dirs.server_mods_dir();
     if server_dir.is_dir() {
-        scan_dir_recursive(&server_dir, spt_root, &mut out)?;
+        scan_dir_recursive(&server_dir, &dirs.spt_server, &mut out)?;
     }
 
-    let client_dir = spt_root.join("BepInEx/plugins");
+    let client_dir = dirs.client_mods_dir();
     if client_dir.is_dir() {
-        scan_dir_recursive(&client_dir, spt_root, &mut out)?;
+        scan_dir_recursive(&client_dir, &dirs.spt_server, &mut out)?;
     }
 
     Ok(out)
@@ -683,6 +685,7 @@ fn strip_known_prefix_from_name(name: &str) -> &str {
 #[allow(clippy::unwrap_used)]
 pub(crate) mod tests {
     use super::*;
+    use crate::dirs::QumaDirs;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
@@ -861,7 +864,7 @@ pub(crate) mod tests {
         fs::create_dir_all(&client_dir).unwrap();
         fs::write(client_dir.join("TestPlugin.dll"), b"\x00").unwrap();
 
-        let mut files = scan_mod_directories(root).unwrap();
+        let mut files = scan_mod_directories(&QumaDirs::from_legacy(root.to_path_buf())).unwrap();
         files.sort();
 
         assert_eq!(files.len(), 3);
@@ -898,7 +901,7 @@ pub(crate) mod tests {
         std::os::unix::fs::symlink("/etc/hostname", &file_symlink).unwrap();
 
         // scan_mod_directories should complete without hanging and skip symlinks
-        let files = scan_mod_directories(root).unwrap();
+        let files = scan_mod_directories(&QumaDirs::from_legacy(root.to_path_buf())).unwrap();
         assert_eq!(
             files.len(),
             1,

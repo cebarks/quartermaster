@@ -38,6 +38,7 @@ use actix_web::middleware::from_fn;
 
 use crate::config::Config;
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
 use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::SptInfo;
@@ -870,13 +871,14 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         fika_installed,
         log_level_counts,
     } = ctx;
+    let dirs = QumaDirs::from_legacy(spt_dir.clone());
     let bind_addr = format!("{}:{}", config.web_bind, config.web_port);
 
     let session_key = Key::derive_from(config.session_secret.as_bytes());
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<crate::web::sse::ServerEvent>(64);
 
-    let game_data = Arc::new(GameData::load(&spt_dir).unwrap_or_else(|e| {
+    let game_data = Arc::new(GameData::load(&dirs).unwrap_or_else(|e| {
         tracing::warn!(err = %e, "failed to load SPT game data, lookups will return raw IDs");
         GameData::load_empty()
     }));
@@ -885,19 +887,19 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     let db_arc = db;
 
     // Migrate disabled mods from old .disabled suffix scheme to stash directory
-    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db_arc.lock(), &spt_dir) {
+    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db_arc.lock(), &dirs) {
         tracing::error!(err = %e, "failed to migrate disabled mods to stash");
     }
 
-    crate::ops::cleanup_staging(&spt_dir);
+    crate::ops::cleanup_staging(&dirs);
 
     // Recover any interrupted async mod updates from a previous crash
-    if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &spt_dir) {
+    if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &dirs) {
         tracing::error!(err = %e, "failed to recover pending updates on startup");
     }
 
     // Remove orphaned queued archives (no matching pending operation)
-    crate::queue::sweep_orphaned_archives(&spt_dir, &db_arc.lock());
+    crate::queue::sweep_orphaned_archives(&dirs, &db_arc.lock());
 
     let svm =
         crate::svm::SvmManager::detect(&spt_dir).map(|mgr| Arc::new(parking_lot::RwLock::new(mgr)));
@@ -906,10 +908,10 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         tracing::info!("SVM detected — web config editor enabled");
     }
 
-    let config_mgmt = crate::config_mgmt::ConfigManager::new(&spt_dir);
+    let config_mgmt = crate::config_mgmt::ConfigManager::new(&dirs);
 
     let tls_enabled = config.tls_enabled;
-    let spt_dir_for_tls = spt_dir.clone();
+    let dirs_for_tls = dirs.clone();
 
     let proxy_client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -1102,7 +1104,7 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
     };
 
     let server = if config.tls_enabled {
-        let tls_config = crate::tls::load_or_generate_tls_config(&config, &spt_dir_for_tls)
+        let tls_config = crate::tls::load_or_generate_tls_config(&config, &dirs_for_tls)
             .context("failed to configure TLS")?;
         tracing::info!("Quartermaster starting on https://{bind_addr}");
         server_builder

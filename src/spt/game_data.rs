@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+
+use crate::dirs::QumaDirs;
 
 #[derive(Debug, Clone)]
 pub struct TraderMeta {
@@ -129,13 +130,13 @@ fn build_hideout_areas() -> HashMap<i32, HideoutMeta> {
 }
 
 impl GameData {
-    pub fn load(spt_dir: &Path) -> Result<Self> {
-        let quest_names = Self::load_quest_names(spt_dir)?;
-        let trader_info = Self::load_trader_info(spt_dir)?;
+    pub fn load(dirs: &QumaDirs) -> Result<Self> {
+        let quest_names = Self::load_quest_names(dirs)?;
+        let trader_info = Self::load_trader_info(dirs)?;
         let hideout_areas = build_hideout_areas();
-        let mut prices = Self::load_prices(spt_dir)?;
-        let (item_locales, raw_locale) = Self::load_item_locales(spt_dir)?;
-        let (item_categories, handbook_prices) = Self::load_handbook_data(spt_dir, &raw_locale)?;
+        let mut prices = Self::load_prices(dirs)?;
+        let (item_locales, raw_locale) = Self::load_item_locales(dirs)?;
+        let (item_categories, handbook_prices) = Self::load_handbook_data(dirs, &raw_locale)?;
 
         for (id, price) in handbook_prices {
             prices.entry(id).or_insert(price);
@@ -172,8 +173,10 @@ impl GameData {
         }
     }
 
-    fn load_quest_names(spt_dir: &Path) -> Result<HashMap<String, String>> {
-        let path = spt_dir.join("SPT/SPT_Data/database/templates/quests.json");
+    fn load_quest_names(dirs: &QumaDirs) -> Result<HashMap<String, String>> {
+        let path = dirs
+            .spt_server
+            .join("SPT/SPT_Data/database/templates/quests.json");
         if !path.exists() {
             tracing::warn!(
                 "quests.json not found at {}, quest names will show raw IDs",
@@ -191,8 +194,8 @@ impl GameData {
             .collect())
     }
 
-    fn load_trader_info(spt_dir: &Path) -> Result<HashMap<String, TraderMeta>> {
-        let traders_dir = spt_dir.join("SPT/SPT_Data/database/traders");
+    fn load_trader_info(dirs: &QumaDirs) -> Result<HashMap<String, TraderMeta>> {
+        let traders_dir = dirs.spt_server.join("SPT/SPT_Data/database/traders");
         let mut info = HashMap::new();
         if !traders_dir.is_dir() {
             tracing::warn!("traders directory not found at {}", traders_dir.display());
@@ -230,8 +233,10 @@ impl GameData {
         Ok(info)
     }
 
-    fn load_prices(spt_dir: &Path) -> Result<HashMap<String, i64>> {
-        let path = spt_dir.join("SPT/SPT_Data/database/templates/prices.json");
+    fn load_prices(dirs: &QumaDirs) -> Result<HashMap<String, i64>> {
+        let path = dirs
+            .spt_server
+            .join("SPT/SPT_Data/database/templates/prices.json");
         if !path.exists() {
             tracing::warn!(
                 "prices.json not found at {}, stash values will be unavailable",
@@ -247,9 +252,11 @@ impl GameData {
     }
 
     fn load_item_locales(
-        spt_dir: &Path,
+        dirs: &QumaDirs,
     ) -> Result<(HashMap<String, ItemLocale>, HashMap<String, String>)> {
-        let path = spt_dir.join("SPT/SPT_Data/database/locales/global/en.json");
+        let path = dirs
+            .spt_server
+            .join("SPT/SPT_Data/database/locales/global/en.json");
         if !path.exists() {
             tracing::warn!(
                 "en.json not found at {}, item names will show raw IDs",
@@ -282,10 +289,12 @@ impl GameData {
     }
 
     fn load_handbook_data(
-        spt_dir: &Path,
+        dirs: &QumaDirs,
         raw_locale: &HashMap<String, String>,
     ) -> Result<(HashMap<String, String>, HashMap<String, i64>)> {
-        let path = spt_dir.join("SPT/SPT_Data/database/templates/handbook.json");
+        let path = dirs
+            .spt_server
+            .join("SPT/SPT_Data/database/templates/handbook.json");
         if !path.exists() {
             tracing::warn!(
                 "handbook.json not found at {}, item categories will show 'Other'",
@@ -365,6 +374,8 @@ impl GameData {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::dirs::QumaDirs;
+    use std::path::Path;
 
     fn create_test_spt_dir(dir: &Path) {
         let quests_path = dir.join("SPT/SPT_Data/database/templates/quests.json");
@@ -465,7 +476,7 @@ mod tests {
     fn loads_quest_names() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.quest_name("5936d90786f7742b1420ba5b"), "Debut");
         assert_eq!(
             gd.quest_name("5936da9e86f7742d65037edf"),
@@ -477,7 +488,7 @@ mod tests {
     fn unknown_quest_returns_raw_id() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.quest_name("unknown_id"), "unknown_id");
     }
 
@@ -485,7 +496,7 @@ mod tests {
     fn loads_trader_info() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         let prapor = gd.trader_meta("54cb50c76803fa8b248b4571").unwrap();
         assert_eq!(prapor.name, "Prapor");
         assert_eq!(prapor.currency, "RUB");
@@ -498,7 +509,7 @@ mod tests {
     fn unknown_trader_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert!(gd.trader_meta("nonexistent").is_none());
     }
 
@@ -506,7 +517,7 @@ mod tests {
     fn hideout_area_lookup() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         let vents = gd.hideout_area(0).unwrap();
         assert_eq!(vents.name, "Vents");
         assert!(vents.max_level > 0);
@@ -516,7 +527,7 @@ mod tests {
     fn unknown_hideout_area_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert!(gd.hideout_area(999).is_none());
     }
 
@@ -534,7 +545,7 @@ mod tests {
         });
         std::fs::write(&prices_path, serde_json::to_string(&prices).unwrap()).unwrap();
 
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.item_price("5447a9cd4bdc2dbd208b4567"), Some(132725));
         assert_eq!(gd.item_price("5449016a4bdc2d6f028b456f"), Some(1));
         assert_eq!(gd.item_price("nonexistent"), None);
@@ -546,7 +557,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
         // No prices.json created — should still load fine with empty prices
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert!(gd.prices().is_empty());
     }
 
@@ -555,7 +566,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
         create_test_item_data(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(
             gd.item_name("5ca20d5986f774331e7c9602"),
             "WARTECH Berkut BB-102 backpack"
@@ -567,7 +578,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
         create_test_item_data(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.item_short_name("5ca20d5986f774331e7c9602"), "Berkut");
     }
 
@@ -576,7 +587,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
         create_test_item_data(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.item_name("nonexistent_tpl"), "nonexistent_tpl");
     }
 
@@ -585,7 +596,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
         create_test_item_data(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.item_category("5ca20d5986f774331e7c9602"), "Backpacks");
     }
 
@@ -594,7 +605,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_spt_dir(tmp.path());
         create_test_item_data(tmp.path());
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.item_category("nonexistent_tpl"), "Other");
     }
 
@@ -604,7 +615,7 @@ mod tests {
         create_test_spt_dir(tmp.path());
         create_test_item_data(tmp.path());
         // No prices.json — handbook Price field should fill in
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.item_price("5ca20d5986f774331e7c9602"), Some(20000));
     }
 
@@ -620,7 +631,7 @@ mod tests {
             "5ca20d5986f774331e7c9602": 99999
         });
         std::fs::write(&prices_path, serde_json::to_string(&prices).unwrap()).unwrap();
-        let gd = GameData::load(tmp.path()).unwrap();
+        let gd = GameData::load(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(gd.item_price("5ca20d5986f774331e7c9602"), Some(99999));
     }
 }

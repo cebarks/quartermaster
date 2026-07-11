@@ -152,7 +152,7 @@ fn prompt_fika() -> Result<bool> {
 // TODO(debt): duplicates install_single_mod logic from install.rs — extract a context-free helper
 async fn install_from_forge(
     forge: &crate::forge::client::ForgeClient,
-    spt_dir: &Path,
+    dirs: &crate::dirs::QumaDirs,
     db: &Database,
     config: &Config,
     forge_mod_id: i64,
@@ -188,7 +188,7 @@ async fn install_from_forge(
     super::install::download_and_install(
         forge,
         db,
-        spt_dir,
+        dirs,
         config,
         &super::install::ModInstallParams {
             forge_mod_id,
@@ -205,7 +205,7 @@ async fn install_from_forge(
 }
 
 async fn install_infrastructure_from_forge(
-    spt_dir: &Path,
+    dirs: &crate::dirs::QumaDirs,
     db: &Database,
     config: &Config,
     install_fika: bool,
@@ -222,7 +222,7 @@ async fn install_infrastructure_from_forge(
     println!("\nInstalling Fika...");
     install_from_forge(
         &forge,
-        spt_dir,
+        dirs,
         db,
         config,
         FIKA_SERVER_FORGE_ID,
@@ -231,7 +231,7 @@ async fn install_infrastructure_from_forge(
     .await?;
     install_from_forge(
         &forge,
-        spt_dir,
+        dirs,
         db,
         config,
         FIKA_CLIENT_FORGE_ID,
@@ -320,8 +320,12 @@ async fn check_container_name_available(
     }
 }
 
-async fn wait_for_server(config: &Config, spt_dir: &Path, container_name: &str) -> Result<()> {
-    let (host, port) = crate::server_detect::resolve_server_addr(config, spt_dir);
+async fn wait_for_server(
+    config: &Config,
+    dirs: &crate::dirs::QumaDirs,
+    container_name: &str,
+) -> Result<()> {
+    let (host, port) = crate::server_detect::resolve_server_addr(config, dirs);
     let spt_client = crate::spt::server::SptClient::new(&host, port)?;
 
     println!("Waiting for server to start (timeout: 180s)...");
@@ -442,9 +446,10 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
 
     // 6. Create config (needed for wait_for_server to resolve address)
     let (config, _config_path) = create_config(&p.data_dir, &p.container_name, cli)?;
+    let dirs = crate::dirs::QumaDirs::from_root(p.data_dir.clone());
 
     // 7. Wait for server
-    wait_for_server(&config, &p.data_dir, &p.container_name).await?;
+    wait_for_server(&config, &dirs, &p.container_name).await?;
 
     // 8. Stop server
     println!("\nStopping server after first boot...");
@@ -455,7 +460,7 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> Resul
     let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
 
     // 10. Install infrastructure mods from Forge
-    install_infrastructure_from_forge(&p.data_dir, &db, &config, p.install_fika).await?;
+    install_infrastructure_from_forge(&dirs, &db, &config, p.install_fika).await?;
 
     // 11. Summary
     print_summary(&config, &p.data_dir, p.install_fika);
@@ -473,8 +478,8 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
     );
 
     // 1. Detect or create container
-    let resolved_container =
-        detect_or_create_container(mgr, &p.data_dir, &p.container_name).await?;
+    let dirs = crate::dirs::QumaDirs::from_root(p.data_dir.clone());
+    let resolved_container = detect_or_create_container(mgr, &dirs, &p.container_name).await?;
 
     // 2. Create config
     let (mut config, config_path) = create_config(&p.data_dir, &p.container_name, cli)?;
@@ -485,7 +490,6 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
     let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
 
     // 4. Scan unmanaged mods
-    let dirs = crate::dirs::QumaDirs::from_root(p.data_dir.clone());
     let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(&dirs, &db)?;
     if unmanaged_dirs.is_empty() {
         println!("No unmanaged mod files found.");
@@ -507,7 +511,7 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
     }
 
     // 5. Install infrastructure mods from Forge
-    install_infrastructure_from_forge(&p.data_dir, &db, &config, p.install_fika).await?;
+    install_infrastructure_from_forge(&dirs, &db, &config, p.install_fika).await?;
 
     // 6. Summary
     print_summary(&config, &p.data_dir, p.install_fika);
@@ -517,10 +521,10 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
 
 async fn detect_or_create_container(
     mgr: &ContainerManager,
-    data_dir: &Path,
+    dirs: &crate::dirs::QumaDirs,
     container_name: &str,
 ) -> Result<String> {
-    let detected = mgr.detect_spt_containers(data_dir).await?;
+    let detected = mgr.detect_spt_containers(dirs).await?;
 
     if detected.len() == 1 {
         println!("Detected existing container: {}", detected[0]);
@@ -551,7 +555,7 @@ async fn detect_or_create_container(
     println!("Pulling {}...", SPT_SERVER_IMAGE);
     mgr.pull_image(SPT_SERVER_IMAGE).await?;
 
-    let opts = create_container_opts(data_dir, container_name);
+    let opts = create_container_opts(&dirs.root, container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", container_name);
 

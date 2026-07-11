@@ -50,7 +50,9 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         }
     }
 
-    reload_handles.reconfigure(&logging_config, &filter, Some(&spt_dir));
+    // ponytail: temporary QumaDirs until serve.rs fully migrates to QumaDirs (Task 6)
+    let dirs = QumaDirs::from_legacy(spt_dir.clone());
+    reload_handles.reconfigure(&logging_config, &filter, Some(&dirs));
 
     config.ensure_session_secret();
     config
@@ -127,15 +129,13 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
     let config = config_arc.read().clone();
     let client_states = if fika_installed {
         if let Some(ref container_mgr_arc) = container_mgr {
-            let (host, port) = crate::server_detect::resolve_server_addr(&config, &spt_dir);
+            let (host, port) = crate::server_detect::resolve_server_addr(&config, &dirs);
             match crate::spt::server::SptClient::new(&host, port) {
                 Ok(spt_client) => {
                     // Run initial convergence if clients are already configured
                     if let Some(ref headless_config) = config.headless {
                         if headless_config.client_count() > 0 {
-                            // ponytail: temporary until Tasks 4-6 refactor callers to use QumaDirs
-                            let temp_dirs = QumaDirs::from_legacy(spt_dir.clone());
-                            if let Err(e) = headless_config.validate(&config, &temp_dirs) {
+                            if let Err(e) = headless_config.validate(&config, &dirs) {
                                 tracing::error!(err = %e, "Invalid headless configuration — skipping initial convergence");
                             } else {
                                 tracing::info!(
@@ -146,7 +146,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                                     container_mgr_arc,
                                     headless_config,
                                     &config,
-                                    &spt_dir,
+                                    &dirs,
                                     &spt_client,
                                     &forge,
                                     &spt_info.spt_version,

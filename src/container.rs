@@ -375,7 +375,7 @@ impl ContainerManager {
     }
 
     /// Detect SPT containers by checking volume mounts (for setup wizard backward compat)
-    pub async fn detect_spt_containers(&self, spt_dir: &std::path::Path) -> Result<Vec<String>> {
+    pub async fn detect_spt_containers(&self, dirs: &crate::dirs::QumaDirs) -> Result<Vec<String>> {
         let containers = self
             .docker
             .list_containers(Some(
@@ -384,7 +384,7 @@ impl ContainerManager {
             .await
             .context("failed to list containers")?;
 
-        let spt_dir_str = spt_dir.to_string_lossy();
+        let spt_dir_str = dirs.spt_server.to_string_lossy();
         Ok(containers
             .into_iter()
             .filter_map(|c| {

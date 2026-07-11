@@ -179,8 +179,7 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
         .unwrap_or_default();
 
     // Get Fika API data if server is running
-    let (server_host, server_port) =
-        server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
+    let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
     let spt_client = SptClient::new(&server_host, server_port)?;
 
     let headless_map = match spt_client.headless_clients().await {
@@ -341,8 +340,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
     config.save(&config_path)?;
     println!("Created headless client {} (total: {})", index, total);
 
-    let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&config, &ctx.dirs.root);
+    let (server_host, server_port) = crate::server_detect::resolve_server_addr(&config, &ctx.dirs);
     let spt_client = SptClient::new(&server_host, server_port)?;
     let converging = Arc::new(AtomicBool::new(false));
     let db = db_arc_for_converge(ctx)?;
@@ -354,7 +352,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
             .as_ref()
             .expect("set by get_or_insert_with above"),
         &config,
-        &ctx.dirs.spt_server,
+        &ctx.dirs,
         &spt_client,
         &ctx.forge,
         &ctx.spt_info.spt_version,
@@ -383,7 +381,7 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
 
     if !force {
         let (server_host, server_port) =
-            crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
+            crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
         let spt_client = SptClient::new(&server_host, server_port)?;
         if let Ok(resp) = spt_client.headless_clients().await {
             let container_name = crate::client::converge::client_container_name(client);
@@ -436,7 +434,7 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
     // Converge to recreate containers with correct indices
     println!("Re-converging to recreate containers with correct indices...");
     let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
+        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
     let spt_client = SptClient::new(&server_host, server_port)?;
     let db = db_arc_for_converge(ctx)?;
 
@@ -444,7 +442,7 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
         container_mgr,
         &updated_headless,
         &ctx.config,
-        &ctx.dirs.spt_server,
+        &ctx.dirs,
         &spt_client,
         &ctx.forge,
         &ctx.spt_info.spt_version,
@@ -572,7 +570,7 @@ async fn graceful_restart(ctx: &CliContext, client: u32) -> Result<()> {
 
     // Check Fika status
     let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
+        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
     let spt_client = SptClient::new(&server_host, server_port)?;
 
     if let Ok(resp) = spt_client.headless_clients().await {
@@ -730,8 +728,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
 
     // If scaling down, check for in-raid clients
     if count < old_count {
-        let (server_host, server_port) =
-            server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
+        let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
         let spt_client = SptClient::new(&server_host, server_port)?;
 
         if let Ok(resp) = spt_client.headless_clients().await {
@@ -782,8 +779,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     println!("Updated config: {} headless client(s)", count);
 
     // Run convergence
-    let (server_host, server_port) =
-        server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
+    let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
     let spt_client = SptClient::new(&server_host, server_port)?;
     let converging = Arc::new(AtomicBool::new(false));
     let db = db_arc_for_converge(ctx)?;
@@ -796,7 +792,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
             .as_ref()
             .expect("set by get_or_insert_with above"),
         &config,
-        &ctx.dirs.spt_server,
+        &ctx.dirs,
         &spt_client,
         &ctx.forge,
         &ctx.spt_info.spt_version,

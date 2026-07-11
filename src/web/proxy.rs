@@ -61,7 +61,8 @@ pub async fn proxy_handler(
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or(req.path());
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
+    let dirs = crate::dirs::QumaDirs::from_legacy(state.spt_dir.clone());
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &dirs);
     let upstream_url = format!("https://{host}:{port}{path}");
 
     let mut headers = HeaderMap::new();

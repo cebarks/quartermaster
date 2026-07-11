@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::cli::common::CliContext;
+use crate::dirs::QumaDirs;
 use crate::server_detect::resolve_server_addr;
 use crate::spt::mods::{compute_file_hash, scan_mod_directories};
 use crate::spt::server::SptClient;
@@ -71,7 +72,7 @@ impl HealthReport {
 }
 
 pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
-    let (host, port) = resolve_server_addr(&ctx.config, &ctx.dirs.root);
+    let (host, port) = resolve_server_addr(&ctx.config, &ctx.dirs);
     let spt_client = SptClient::new(&host, port)?;
     let address = spt_client.base_url().to_string();
 
@@ -100,11 +101,11 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
         Some(cached) => cached,
         None => {
             let tracked_files = ctx.db.get_all_enabled_mod_files()?;
-            let spt_server = ctx.dirs.spt_server.clone();
+            let dirs_clone = ctx.dirs.clone();
             tokio::task::spawn_blocking(move || {
                 let progress = std::sync::atomic::AtomicUsize::new(0);
                 let total = std::sync::atomic::AtomicUsize::new(0);
-                check_integrity_parallel(&tracked_files, &spt_server, &progress, &total)
+                check_integrity_parallel(&tracked_files, &dirs_clone, &progress, &total)
             })
             .await
             .map_err(|e| anyhow::anyhow!("integrity check task failed: {e}"))??
@@ -250,7 +251,7 @@ pub async fn check_mods_health(
 /// Updates `progress` and `total` atomics for progress reporting.
 pub fn check_integrity_parallel(
     tracked_files: &[crate::db::mods::InstalledFile],
-    spt_dir: &std::path::Path,
+    dirs: &QumaDirs,
     progress: &AtomicUsize,
     total: &AtomicUsize,
 ) -> Result<IntegrityHealth> {
@@ -260,7 +261,7 @@ pub fn check_integrity_parallel(
     let results: Vec<(Option<String>, Option<String>)> = tracked_files
         .iter()
         .map(|file| {
-            let full_path = spt_dir.join(&file.file_path);
+            let full_path = dirs.mod_file_path(&file.file_path);
             let result = if !full_path.exists() {
                 (Some(file.file_path.clone()), None)
             } else if let Some(ref expected_hash) = file.file_hash {
@@ -290,7 +291,7 @@ pub fn check_integrity_parallel(
         }
     }
 
-    let all_disk_files = scan_mod_directories(spt_dir)?;
+    let all_disk_files = scan_mod_directories(dirs)?;
     let tracked_paths: std::collections::HashSet<&str> =
         tracked_files.iter().map(|f| f.file_path.as_str()).collect();
 
@@ -762,7 +763,7 @@ mod tests {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
             let progress = AtomicUsize::new(0);
             let total = AtomicUsize::new(0);
-            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap()
+            check_integrity_parallel(&tracked, &ctx.dirs, &progress, &total).unwrap()
         };
         assert_eq!(result.tracked_files, 1);
         assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
@@ -810,7 +811,7 @@ mod tests {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
             let progress = AtomicUsize::new(0);
             let total = AtomicUsize::new(0);
-            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap()
+            check_integrity_parallel(&tracked, &ctx.dirs, &progress, &total).unwrap()
         };
         assert!(result.missing_files.is_empty());
         assert_eq!(
@@ -832,7 +833,7 @@ mod tests {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
             let progress = AtomicUsize::new(0);
             let total = AtomicUsize::new(0);
-            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap()
+            check_integrity_parallel(&tracked, &ctx.dirs, &progress, &total).unwrap()
         };
         assert_eq!(result.tracked_files, 0);
         assert_eq!(result.untracked_dirs.len(), 1);
@@ -1206,8 +1207,7 @@ mod tests {
         let tracked = ctx.db.get_all_tracked_files().unwrap();
         let progress = AtomicUsize::new(0);
         let total = AtomicUsize::new(0);
-        let result =
-            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap();
+        let result = check_integrity_parallel(&tracked, &ctx.dirs, &progress, &total).unwrap();
         assert_eq!(result.tracked_files, 1);
         assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
         assert!(result.modified_files.is_empty());
@@ -1254,8 +1254,7 @@ mod tests {
         let tracked = ctx.db.get_all_tracked_files().unwrap();
         let progress = AtomicUsize::new(0);
         let total = AtomicUsize::new(0);
-        let result =
-            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap();
+        let result = check_integrity_parallel(&tracked, &ctx.dirs, &progress, &total).unwrap();
         assert!(result.missing_files.is_empty());
         assert_eq!(
             result.modified_files,

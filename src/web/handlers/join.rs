@@ -286,7 +286,8 @@ pub async fn join_submit(
     }
 
     // Create SPT profile via server API
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.spt_dir);
+    let dirs = crate::dirs::QumaDirs::from_legacy(state.spt_dir.clone());
+    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &dirs);
     let spt_client = match crate::spt::server::SptClient::new(&host, port) {
         Ok(c) => c,
         Err(_) => {

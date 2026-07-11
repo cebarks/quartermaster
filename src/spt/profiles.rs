@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+
+use crate::dirs::QumaDirs;
 
 #[derive(Debug, Clone)]
 pub struct SptProfile {
@@ -347,8 +348,8 @@ fn calculate_stash_value(inventory: &InventoryData, prices: &HashMap<String, i64
     total
 }
 
-pub fn list_profiles(spt_dir: &Path) -> Result<Vec<SptProfile>> {
-    let profiles_dir = spt_dir.join("SPT/user/profiles");
+pub fn list_profiles(dirs: &QumaDirs) -> Result<Vec<SptProfile>> {
+    let profiles_dir = dirs.profiles_dir();
     if !profiles_dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -386,10 +387,8 @@ pub fn list_profiles(spt_dir: &Path) -> Result<Vec<SptProfile>> {
 
 /// Load profile stats for a single AID, returning the appropriate `ProfileStatus`.
 /// Avoids reading every profile file on disk when only one user row is needed.
-pub fn load_single_profile_status(spt_dir: &Path, aid: &str) -> ProfileStatus {
-    let path = spt_dir
-        .join("SPT/user/profiles")
-        .join(format!("{aid}.json"));
+pub fn load_single_profile_status(dirs: &QumaDirs, aid: &str) -> ProfileStatus {
+    let path = dirs.profiles_dir().join(format!("{aid}.json"));
     let contents = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(_) => return ProfileStatus::NotFound,
@@ -405,8 +404,8 @@ pub fn load_single_profile_status(spt_dir: &Path, aid: &str) -> ProfileStatus {
     ProfileStatus::Found(stats)
 }
 
-pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats> {
-    let profiles_dir = spt_dir.join("SPT/user/profiles");
+pub fn load_all_profile_stats(dirs: &QumaDirs) -> HashMap<String, SptProfileStats> {
+    let profiles_dir = dirs.profiles_dir();
     let mut map = HashMap::new();
 
     let entries = match std::fs::read_dir(&profiles_dir) {
@@ -450,13 +449,11 @@ pub fn load_all_profile_stats(spt_dir: &Path) -> HashMap<String, SptProfileStats
 }
 
 pub fn load_profile_detail(
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     profile_id: &str,
     prices: &HashMap<String, i64>,
 ) -> Result<Option<ProfileDetail>> {
-    let path = spt_dir
-        .join("SPT/user/profiles")
-        .join(format!("{profile_id}.json"));
+    let path = dirs.profiles_dir().join(format!("{profile_id}.json"));
     let contents = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read profile {}", path.display()))?;
     let parsed: FullProfileJson = serde_json::from_str(&contents)
@@ -526,10 +523,8 @@ pub fn load_profile_detail(
     }))
 }
 
-pub fn load_stash_items(spt_dir: &Path, profile_id: &str) -> Result<Option<Vec<StashItem>>> {
-    let path = spt_dir
-        .join("SPT/user/profiles")
-        .join(format!("{profile_id}.json"));
+pub fn load_stash_items(dirs: &QumaDirs, profile_id: &str) -> Result<Option<Vec<StashItem>>> {
+    let path = dirs.profiles_dir().join(format!("{profile_id}.json"));
     let contents = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read profile {}", path.display()))?;
     let parsed: FullProfileJson = serde_json::from_str(&contents)
@@ -569,6 +564,8 @@ pub fn load_stash_items(spt_dir: &Path, profile_id: &str) -> Result<Option<Vec<S
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::dirs::QumaDirs;
+    use std::path::Path;
 
     fn create_fake_profile(dir: &Path, aid: &str, username: &str) {
         let profiles_dir = dir.join("SPT/user/profiles");
@@ -583,7 +580,7 @@ mod tests {
         create_fake_profile(tmp.path(), "abc123", "Player1");
         create_fake_profile(tmp.path(), "def456", "Player2");
 
-        let profiles = list_profiles(tmp.path()).unwrap();
+        let profiles = list_profiles(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(profiles.len(), 2);
         assert_eq!(profiles[0].username, "Player1");
         assert_eq!(profiles[1].username, "Player2");
@@ -593,14 +590,14 @@ mod tests {
     fn list_profiles_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("SPT/user/profiles")).unwrap();
-        let profiles = list_profiles(tmp.path()).unwrap();
+        let profiles = list_profiles(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert!(profiles.is_empty());
     }
 
     #[test]
     fn list_profiles_no_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let profiles = list_profiles(tmp.path()).unwrap();
+        let profiles = list_profiles(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert!(profiles.is_empty());
     }
 
@@ -611,7 +608,7 @@ mod tests {
         let profiles_dir = tmp.path().join("SPT/user/profiles");
         std::fs::write(profiles_dir.join("bad.json"), "not json").unwrap();
 
-        let profiles = list_profiles(tmp.path()).unwrap();
+        let profiles = list_profiles(&QumaDirs::from_legacy(tmp.path().to_path_buf())).unwrap();
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].username, "GoodPlayer");
     }
@@ -664,7 +661,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_full_profile(tmp.path(), "abc123", "Player1");
 
-        let stats = load_all_profile_stats(tmp.path());
+        let stats = load_all_profile_stats(&QumaDirs::from_legacy(tmp.path().to_path_buf()));
         assert_eq!(stats.len(), 1);
         let s = &stats["abc123"];
         assert_eq!(s.nickname.as_deref(), Some("Player1"));
@@ -687,7 +684,7 @@ mod tests {
         let content = r#"{"info":{"id":"abc","username":"NoCharacters"}}"#;
         std::fs::write(profiles_dir.join("abc.json"), content).unwrap();
 
-        let stats = load_all_profile_stats(tmp.path());
+        let stats = load_all_profile_stats(&QumaDirs::from_legacy(tmp.path().to_path_buf()));
         assert_eq!(stats.len(), 1);
         let s = &stats["abc"];
         assert!(s.nickname.is_none());
@@ -698,14 +695,14 @@ mod tests {
     fn load_profile_stats_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("SPT/user/profiles")).unwrap();
-        let stats = load_all_profile_stats(tmp.path());
+        let stats = load_all_profile_stats(&QumaDirs::from_legacy(tmp.path().to_path_buf()));
         assert!(stats.is_empty());
     }
 
     #[test]
     fn load_profile_stats_no_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let stats = load_all_profile_stats(tmp.path());
+        let stats = load_all_profile_stats(&QumaDirs::from_legacy(tmp.path().to_path_buf()));
         assert!(stats.is_empty());
     }
 
@@ -734,7 +731,7 @@ mod tests {
         )
         .unwrap();
 
-        let stats = load_all_profile_stats(tmp.path());
+        let stats = load_all_profile_stats(&QumaDirs::from_legacy(tmp.path().to_path_buf()));
         let s = &stats["new1"];
         assert_eq!(s.nickname.as_deref(), Some("Newbie"));
         assert_eq!(s.level, Some(1));
@@ -813,9 +810,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_detailed_profile(tmp.path(), "detail1");
 
-        let detail = load_profile_detail(tmp.path(), "detail1", &HashMap::new())
-            .unwrap()
-            .unwrap();
+        let detail = load_profile_detail(
+            &QumaDirs::from_legacy(tmp.path().to_path_buf()),
+            "detail1",
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(detail.stats.nickname.as_deref(), Some("TestPlayer"));
         assert_eq!(detail.stats.level, Some(42));
         assert_eq!(detail.stats.scav_kills, Some(247));
@@ -886,7 +887,12 @@ mod tests {
         )
         .unwrap();
 
-        let result = load_profile_detail(tmp.path(), "fresh1", &HashMap::new()).unwrap();
+        let result = load_profile_detail(
+            &QumaDirs::from_legacy(tmp.path().to_path_buf()),
+            "fresh1",
+            &HashMap::new(),
+        )
+        .unwrap();
         assert!(result.is_none());
     }
 
@@ -895,7 +901,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("SPT/user/profiles")).unwrap();
 
-        let result = load_profile_detail(tmp.path(), "nonexistent", &HashMap::new());
+        let result = load_profile_detail(
+            &QumaDirs::from_legacy(tmp.path().to_path_buf()),
+            "nonexistent",
+            &HashMap::new(),
+        );
         assert!(result.is_err());
     }
 
@@ -903,7 +913,7 @@ mod tests {
     fn scav_kills_extracted_in_all_stats() {
         let tmp = tempfile::tempdir().unwrap();
         create_detailed_profile(tmp.path(), "scav_test");
-        let stats = load_all_profile_stats(tmp.path());
+        let stats = load_all_profile_stats(&QumaDirs::from_legacy(tmp.path().to_path_buf()));
         let s = &stats["scav_test"];
         assert_eq!(s.scav_kills, Some(247));
     }
@@ -912,7 +922,7 @@ mod tests {
     fn deaths_extracted() {
         let tmp = tempfile::tempdir().unwrap();
         create_full_profile(tmp.path(), "death_test", "DeathPlayer");
-        let stats = load_all_profile_stats(tmp.path());
+        let stats = load_all_profile_stats(&QumaDirs::from_legacy(tmp.path().to_path_buf()));
         let s = &stats["death_test"];
         assert_eq!(s.deaths, Some(10));
     }
@@ -1115,7 +1125,9 @@ mod tests {
     fn load_stash_items_basic() {
         let tmp = tempfile::tempdir().unwrap();
         create_profile_with_inventory(tmp.path(), "stash1");
-        let items = load_stash_items(tmp.path(), "stash1").unwrap().unwrap();
+        let items = load_stash_items(&QumaDirs::from_legacy(tmp.path().to_path_buf()), "stash1")
+            .unwrap()
+            .unwrap();
         // Should have: 2x ammo_545, 1x backpack_berkut, 1x med_ifak
         // Should NOT have: weapon_m4 (equipped), stash_container (the root)
         assert_eq!(items.len(), 4);
@@ -1157,7 +1169,9 @@ mod tests {
             serde_json::to_string(&content).unwrap(),
         )
         .unwrap();
-        let items = load_stash_items(tmp.path(), "empty1").unwrap().unwrap();
+        let items = load_stash_items(&QumaDirs::from_legacy(tmp.path().to_path_buf()), "empty1")
+            .unwrap()
+            .unwrap();
         assert!(items.is_empty());
     }
 
@@ -1175,7 +1189,8 @@ mod tests {
             serde_json::to_string(&content).unwrap(),
         )
         .unwrap();
-        let result = load_stash_items(tmp.path(), "fresh1").unwrap();
+        let result =
+            load_stash_items(&QumaDirs::from_legacy(tmp.path().to_path_buf()), "fresh1").unwrap();
         assert!(result.is_none());
     }
 }

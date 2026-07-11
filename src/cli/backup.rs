@@ -10,13 +10,8 @@ pub fn run(mod_ref: Option<&str>, list: bool, ctx: &CliContext) -> Result<()> {
     match mod_ref {
         Some(r) => {
             let installed = super::common::resolve_installed_mod(r, ctx)?;
-            let backup_id = crate::backup::backup_mod(
-                &ctx.db,
-                &ctx.dirs.spt_server,
-                &ctx.config,
-                installed.id,
-                "manual",
-            )?;
+            let backup_id =
+                crate::backup::backup_mod(&ctx.db, &ctx.dirs, &ctx.config, installed.id, "manual")?;
             let backup = ctx
                 .db
                 .get_backup(backup_id)?
@@ -27,7 +22,7 @@ pub fn run(mod_ref: Option<&str>, list: bool, ctx: &CliContext) -> Result<()> {
             );
         }
         None => {
-            let backup_id = crate::backup::backup_full(&ctx.db, &ctx.dirs.spt_server, &ctx.config)?;
+            let backup_id = crate::backup::backup_full(&ctx.db, &ctx.dirs, &ctx.config)?;
             let backup = ctx
                 .db
                 .get_backup(backup_id)?

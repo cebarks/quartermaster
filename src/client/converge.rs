@@ -10,6 +10,8 @@ use anyhow::{bail, Context, Result};
 use bollard::models::DeviceMapping;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use crate::dirs::QumaDirs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 
@@ -192,13 +194,13 @@ async fn assigned_profile_ids(
 /// profile IDs.
 async fn select_profiles_for_assignment(
     container_mgr: &ContainerManager,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     managed_names: &[String],
     needed: u32,
 ) -> Vec<Option<String>> {
     let already_assigned = assigned_profile_ids(container_mgr, managed_names).await;
 
-    let all_profiles = match profiles::list_profiles(spt_dir) {
+    let all_profiles = match profiles::list_profiles(dirs) {
         Ok(p) => p,
         Err(e) => {
             warn!("Failed to read profiles directory: {e}. Containers will be created without PROFILE_ID.");
@@ -659,7 +661,7 @@ pub fn find_name_conflicts(
 fn reconcile_headless_mods(
     db: &Arc<Mutex<crate::db::Database>>,
     _config: &crate::config::Config,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     install_dir: &Path,
 ) -> anyhow::Result<()> {
     let mut all_client_files: Vec<String> = Vec::new();
@@ -685,7 +687,7 @@ fn reconcile_headless_mods(
 
     if !excluded_client_files.is_empty() {
         let report = crate::headless_sync::sync_client_files_to_headless(
-            spt_dir,
+            &dirs.spt_server,
             install_dir,
             &excluded_client_files,
             crate::headless_sync::SyncOp::Remove,
@@ -706,7 +708,7 @@ fn reconcile_headless_mods(
     }
 
     let report = crate::headless_sync::sync_client_files_to_headless(
-        spt_dir,
+        &dirs.spt_server,
         install_dir,
         &all_client_files,
         crate::headless_sync::SyncOp::Install,
@@ -742,7 +744,7 @@ pub async fn converge(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
     config: &Config,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     spt_client: &SptClient,
     forge: &ForgeClient,
     _spt_version: &str,
@@ -830,7 +832,7 @@ pub async fn converge(
 
     // Reconcile headless mod files on every convergence (not just scale-up)
     // This catches drift from manual changes or group config updates
-    if let Err(e) = reconcile_headless_mods(db, config, spt_dir, &headless_config.install_dir) {
+    if let Err(e) = reconcile_headless_mods(db, config, dirs, &headless_config.install_dir) {
         warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
     }
 
@@ -840,7 +842,7 @@ pub async fn converge(
             container_mgr,
             headless_config,
             config,
-            spt_dir,
+            dirs,
             spt_client,
             current_count,
             desired_count,
@@ -853,7 +855,7 @@ pub async fn converge(
             container_mgr,
             headless_config,
             config,
-            spt_dir,
+            dirs,
             spt_client,
             current_count,
             desired_count,
@@ -1047,7 +1049,7 @@ async fn ensure_clients(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
     config: &Config,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
@@ -1060,7 +1062,7 @@ async fn ensure_clients(
     {
         // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
         // and the config UI save handler is the only other writer. Race window is narrow.
-        let fika_path = crate::fika::config::fika_config_path(spt_dir);
+        let fika_path = crate::fika::config::fika_config_path(&dirs.spt_server);
         let cst = crate::fika::config::read_fika_cst(&fika_path)?;
         crate::fika::config::set_headless_amount(&cst, desired_count);
         crate::fika::config::write_fika_cst(&cst, &fika_path)?;
@@ -1112,7 +1114,7 @@ async fn ensure_clients(
         .await
         .unwrap_or_default();
     let profile_assignments =
-        select_profiles_for_assignment(container_mgr, spt_dir, &managed, new_count).await;
+        select_profiles_for_assignment(container_mgr, dirs, &managed, new_count).await;
 
     // 5. Create containers for new clients
     for (offset, profile_id) in profile_assignments.into_iter().enumerate() {
@@ -1144,7 +1146,7 @@ async fn remove_excess_clients(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
     config: &Config,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     spt_client: &SptClient,
     current_count: u32,
     desired_count: u32,
@@ -1180,7 +1182,7 @@ async fn remove_excess_clients(
     {
         // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
         // and the config UI save handler is the only other writer. Race window is narrow.
-        let fika_path = crate::fika::config::fika_config_path(spt_dir);
+        let fika_path = crate::fika::config::fika_config_path(&dirs.spt_server);
         let cst = crate::fika::config::read_fika_cst(&fika_path)?;
         crate::fika::config::set_headless_amount(&cst, desired_count);
         crate::fika::config::write_fika_cst(&cst, &fika_path)?;

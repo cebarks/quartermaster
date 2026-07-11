@@ -8,6 +8,7 @@ use crate::db::rbac::{
     RoleWithPermissions,
 };
 use crate::db::users::{DeleteInviteResult, DeleteUserResult, InviteCodeWithUsers, User};
+use crate::dirs::QumaDirs;
 use crate::spt::profiles::{
     list_profiles, load_all_profile_stats, load_single_profile_status, ProfileStatus, SptProfile,
     SptProfileStats,
@@ -19,7 +20,7 @@ use crate::web::state::AppState;
 
 fn build_user_profiles(
     users: &[User],
-    spt_dir: &std::path::Path,
+    dirs: &QumaDirs,
     profile_stats: &std::collections::HashMap<String, SptProfileStats>,
 ) -> Vec<ProfileStatus> {
     users
@@ -34,9 +35,7 @@ fn build_user_profiles(
             match profile_stats.get(profile_id) {
                 Some(stats) => ProfileStatus::Found(stats.clone()),
                 None => {
-                    let profile_path = spt_dir
-                        .join("SPT/user/profiles")
-                        .join(format!("{}.json", profile_id));
+                    let profile_path = dirs.profiles_dir().join(format!("{}.json", profile_id));
                     if profile_path.exists() {
                         ProfileStatus::ParseError
                     } else {
@@ -48,8 +47,8 @@ fn build_user_profiles(
         .collect()
 }
 
-fn compute_available_profiles(spt_dir: &std::path::Path, users: &[User]) -> Vec<SptProfile> {
-    let all_profiles = list_profiles(spt_dir).unwrap_or_default();
+fn compute_available_profiles(dirs: &QumaDirs, users: &[User]) -> Vec<SptProfile> {
+    let all_profiles = list_profiles(dirs).unwrap_or_default();
     let linked_aids: std::collections::HashSet<String> = users
         .iter()
         .filter_map(|u| u.spt_profile_id.clone())
@@ -75,13 +74,14 @@ async fn load_users_with_profiles(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let spt_dir = state.spt_dir.clone();
-    let profile_stats = web::block(move || load_all_profile_stats(&spt_dir))
+    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
+    let dirs_block = dirs.clone();
+    let profile_stats = web::block(move || load_all_profile_stats(&dirs_block))
         .await
         .map_err(WebError::from)?;
 
-    let profiles = build_user_profiles(&all_users, &state.spt_dir, &profile_stats);
-    let available_profiles = compute_available_profiles(&state.spt_dir, &all_users);
+    let profiles = build_user_profiles(&all_users, &dirs, &profile_stats);
+    let available_profiles = compute_available_profiles(&dirs, &all_users);
     let users: Vec<(User, ProfileStatus)> = all_users.into_iter().zip(profiles).collect();
 
     Ok((users, roles, available_profiles))
@@ -993,22 +993,23 @@ async fn render_user_row(
     .map_err(WebError::from)?;
     let user = user.ok_or(WebError::NotFound)?;
 
-    let spt_dir = state.spt_dir.clone();
+    let dirs = QumaDirs::from_legacy(state.spt_dir.clone());
     let aid = user.spt_profile_id.clone().unwrap_or_default();
     let profile = if aid.is_empty() {
         ProfileStatus::NotFound
     } else {
-        web::block(move || load_single_profile_status(&spt_dir, &aid))
+        let dirs_block = dirs.clone();
+        web::block(move || load_single_profile_status(&dirs_block, &aid))
             .await
             .map_err(WebError::from)?
     };
 
-    let spt_dir2 = state.spt_dir.clone();
+    let dirs2 = dirs;
     let db2 = state.db.clone();
     let available_profiles = web::block(move || {
         let db = db2.lock();
         let users = db.list_users().unwrap_or_default();
-        compute_available_profiles(&spt_dir2, &users)
+        compute_available_profiles(&dirs2, &users)
     })
     .await
     .map_err(WebError::from)?;

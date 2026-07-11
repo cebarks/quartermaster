@@ -9,12 +9,9 @@ pub async fn run(
     ctx: &CliContext,
 ) -> Result<()> {
     // Check server is not running
-    let running = crate::server_detect::is_server_running(
-        &ctx.config,
-        &ctx.dirs.root,
-        ctx.container_mgr.as_ref(),
-    )
-    .await?;
+    let running =
+        crate::server_detect::is_server_running(&ctx.config, &ctx.dirs, ctx.container_mgr.as_ref())
+            .await?;
     if running {
         anyhow::bail!("Server is running — stop it before restoring a backup.");
     }
@@ -51,12 +48,7 @@ pub async fn run(
 
     match backup.backup_type.as_str() {
         "mod" => {
-            crate::backup::restore_mod_backup(
-                &ctx.db,
-                &ctx.dirs.spt_server,
-                &ctx.config,
-                backup.id,
-            )?;
+            crate::backup::restore_mod_backup(&ctx.db, &ctx.dirs, &ctx.config, backup.id)?;
             println!(
                 "Restored {} to v{}",
                 backup.mod_name.as_deref().unwrap_or("mod"),
@@ -64,12 +56,7 @@ pub async fn run(
             );
         }
         "full" => {
-            crate::backup::restore_full_backup(
-                &ctx.db,
-                &ctx.dirs.spt_server,
-                &ctx.config,
-                backup.id,
-            )?;
+            crate::backup::restore_full_backup(&ctx.db, &ctx.dirs, &ctx.config, backup.id)?;
             println!("Full backup restored. Restart the web server to reload config.");
         }
         other => anyhow::bail!("unknown backup type: {other}"),

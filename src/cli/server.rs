@@ -86,7 +86,7 @@ async fn logs(ctx: &CliContext, follow: bool) -> Result<()> {
 }
 
 async fn wait_for_ping(ctx: &CliContext, timeout_secs: u64) -> Result<()> {
-    let (host, port) = crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
+    let (host, port) = crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
     let spt_client = SptClient::new(&host, port)?;
 
     println!("Waiting for server to respond (timeout: {timeout_secs}s)...");

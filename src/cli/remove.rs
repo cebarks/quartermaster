@@ -21,13 +21,7 @@ pub async fn run(
     let installed = resolve_installed_mod(mod_ref, ctx)?;
 
     // Check if we should queue instead of applying
-    if crate::queue::should_queue(
-        &ctx.config,
-        force,
-        &ctx.dirs.root,
-        ctx.container_mgr.as_ref(),
-    )
-    .await?
+    if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
         // URL/file mods can't be queued (no forge_mod_id), must use --force
         if installed.forge_mod_id.is_none() {
@@ -146,7 +140,7 @@ pub fn collect_all_reverse_deps(mod_db_id: i64, ctx: &CliContext) -> Result<Vec<
 pub fn remove_single_mod(installed: &InstalledMod, ctx: &CliContext) -> Result<()> {
     let file_count = ctx.db.get_files_for_mod(installed.id)?.len();
 
-    crate::ops::remove_mod_by_id(&ctx.db, &ctx.dirs.spt_server, &ctx.config, installed.id)?;
+    crate::ops::remove_mod_by_id(&ctx.db, &ctx.dirs, &ctx.config, installed.id)?;
 
     if file_count > 0 {
         println!("  Deleted {} files for {}", file_count, installed.name);
@@ -161,13 +155,7 @@ async fn run_addon_remove(addon_ref: &str, force: bool, yes: bool, ctx: &CliCont
     let installed = resolve_installed_addon(addon_ref, ctx)?;
 
     // Check if we should queue instead of applying
-    if crate::queue::should_queue(
-        &ctx.config,
-        force,
-        &ctx.dirs.root,
-        ctx.container_mgr.as_ref(),
-    )
-    .await?
+    if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
         if !yes {
             let file_count = ctx.db.get_files_for_addon(installed.id)?.len();
@@ -221,7 +209,7 @@ fn remove_single_addon(
 ) -> Result<()> {
     let file_count = ctx.db.get_files_for_addon(installed.id)?.len();
 
-    crate::ops::remove_addon_by_id(&ctx.db, &ctx.dirs.spt_server, &ctx.config, installed.id)?;
+    crate::ops::remove_addon_by_id(&ctx.db, &ctx.dirs, &ctx.config, installed.id)?;
 
     if file_count > 0 {
         println!("  Deleted {} files for {}", file_count, installed.name);

@@ -1,9 +1,9 @@
-use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
 use crate::forge::models::ForgeVersion;
 
@@ -11,7 +11,7 @@ use crate::forge::models::ForgeVersion;
 pub async fn web_download_extract_and_record(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     mod_id: i64,
     mod_name: &str,
@@ -31,13 +31,13 @@ pub async fn web_download_extract_and_record(
     let mod_name_owned = mod_name.to_string();
     let mod_slug_owned = mod_slug.map(|s| s.to_string());
     let db_clone = db.clone();
-    let spt_dir = spt_dir.to_path_buf();
+    let dirs = dirs.clone();
     let config = config.clone();
     let db_id = actix_web::web::block(move || {
         let db = db_clone.lock();
         crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
             db: &db,
-            spt_dir: &spt_dir,
+            dirs: &dirs,
             config: &config,
             forge_mod_id: Some(mod_id),
             version_id: Some(version_id),
@@ -57,7 +57,7 @@ pub async fn web_download_extract_and_record(
 pub async fn web_install_from_url(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     config: &crate::config::Config,
     url: &str,
     mod_name: &str,
@@ -69,13 +69,13 @@ pub async fn web_install_from_url(
     let mod_name_owned = mod_name.to_string();
     let url_owned = url.to_string();
     let db_clone = db.clone();
-    let spt_dir = spt_dir.to_path_buf();
+    let dirs = dirs.clone();
     let config = config.clone();
     let db_id = actix_web::web::block(move || {
         let db = db_clone.lock();
         crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
             db: &db,
-            spt_dir: &spt_dir,
+            dirs: &dirs,
             config: &config,
             forge_mod_id: None,
             version_id: None,
