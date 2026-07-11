@@ -305,6 +305,10 @@ fn default_server_ready_timeout() -> u64 {
     120
 }
 
+fn default_server_image() -> String {
+    crate::container::SPT_SERVER_IMAGE.to_string()
+}
+
 fn default_container_stop_timeout() -> u64 {
     10
 }
@@ -910,6 +914,9 @@ pub struct Config {
     #[serde(default)]
     pub server_port: Option<u16>,
 
+    #[serde(default = "default_server_image")]
+    pub server_image: String,
+
     #[serde(default = "default_container_stop_timeout")]
     pub container_stop_timeout: u64,
 
@@ -1011,6 +1018,7 @@ impl Default for Config {
             server_container: None,
             server_host: None,
             server_port: None,
+            server_image: default_server_image(),
             container_stop_timeout: 10,
             web_bind: "0.0.0.0".to_string(),
             web_port: 9190,
