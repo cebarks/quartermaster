@@ -178,6 +178,10 @@ async fn main() -> Result<()> {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::restore::run(*backup_id, latest.as_deref(), *force, &ctx).await
         }
+        Command::Migrate { dry_run } => {
+            init_early_logging(&cli, &reload_handles);
+            cli::migrate::run(*dry_run, &cli).await
+        }
         Command::Serve { .. } => unreachable!(),
     }
 }

@@ -11,6 +11,7 @@ pub mod headless;
 pub mod install;
 pub mod invite;
 pub mod list;
+pub mod migrate;
 pub mod reindex;
 pub mod remove;
 pub mod restore;
@@ -208,6 +209,12 @@ pub enum Command {
         /// Skip confirmation prompt
         #[arg(long, short)]
         force: bool,
+    },
+
+    /// Migrate from legacy directory layout to new layout
+    Migrate {
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
