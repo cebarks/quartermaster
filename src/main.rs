@@ -8,6 +8,7 @@ mod config_mgmt;
 mod container;
 mod convoy;
 mod db;
+mod dirs;
 mod fika;
 mod forge;
 mod headless_sync;
