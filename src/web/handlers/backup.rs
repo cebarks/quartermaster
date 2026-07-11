@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path};
 use actix_web::{HttpRequest, HttpResponse};
@@ -76,7 +78,7 @@ pub async fn create_mod_backup(
     }
     let mod_db_id = path.into_inner();
     let db = state.db.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     web::block(move || {
@@ -127,7 +129,7 @@ pub async fn restore_backup(
 
     // Check server status
     let config = state.config_cloned();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let running =
         crate::server_detect::is_server_running(&config, &dirs, state.container_mgr.as_deref())
             .await
@@ -230,7 +232,7 @@ pub async fn create_full_backup(
     }
 
     let db = state.db.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     web::block(move || {

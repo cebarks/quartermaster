@@ -1183,11 +1183,6 @@ fn find_loose_files<'a>(file_paths: &'a [String], top_dirs: &[String]) -> Vec<&'
         .collect()
 }
 
-/// Root of the disabled-mod stash.
-pub fn disabled_stash_dir(dirs: &QumaDirs) -> PathBuf {
-    dirs.disabled_dir()
-}
-
 /// Resolve the filesystem root for a mod/addon based on disabled state.
 /// Enabled: files at `spt_server/<path>`. Disabled: files at the disabled stash.
 pub fn resolve_mod_root(dirs: &QumaDirs, disabled: bool) -> PathBuf {
@@ -1208,7 +1203,7 @@ pub fn migrate_disabled_to_stash(db: &Database, dirs: &QumaDirs) -> Result<()> {
         return Ok(());
     }
 
-    let stash = disabled_stash_dir(dirs);
+    let stash = dirs.disabled_dir();
 
     for m in &disabled_mods {
         let files = db.get_files_for_mod(m.id)?;
@@ -1402,7 +1397,7 @@ fn filter_shared_dirs(
 /// Remove empty directories in the stash, walking upward from moved paths.
 /// Stops at (never removes) the `quartermaster/disabled/` root.
 fn cleanup_empty_stash_dirs(dirs: &QumaDirs, paths: &[String]) {
-    let stash_root = disabled_stash_dir(dirs);
+    let stash_root = dirs.disabled_dir();
     for rel_path in paths {
         let mut dir = stash_root.join(rel_path);
         // Start from the parent of the moved item
@@ -1497,7 +1492,7 @@ pub fn disable_mod(
         .collect();
 
     // Build rename list: exclusive dirs as whole dirs, shared as individual files
-    let stash = disabled_stash_dir(dirs);
+    let stash = dirs.disabled_dir();
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for dir in &exclusive_dirs {
         renames.push((dirs.spt_server.join(dir), stash.join(dir)));
@@ -1572,7 +1567,7 @@ pub fn enable_mod(
 
     crate::backup::auto_backup_mod(db, dirs, config, mod_db_id, "auto_enable")?;
 
-    let stash = disabled_stash_dir(dirs);
+    let stash = dirs.disabled_dir();
 
     // Build renames: try whole-dir for top_dirs, fall back to per-file
     // if the stash doesn't have a whole directory (was disabled per-file)
@@ -1657,7 +1652,7 @@ pub fn disable_addon(
 
     // For addons, always move individual files since the parent mod likely
     // shares the same top-level directory
-    let stash = disabled_stash_dir(dirs);
+    let stash = dirs.disabled_dir();
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file in &files {
         let src = dirs.spt_server.join(&file.file_path);
@@ -1728,7 +1723,7 @@ pub fn enable_addon(
         "auto_enable_addon",
     )?;
 
-    let stash = disabled_stash_dir(dirs);
+    let stash = dirs.disabled_dir();
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file in &files {
         let src = stash.join(&file.file_path);
@@ -2268,10 +2263,10 @@ mod tests {
     }
 
     #[test]
-    fn disabled_stash_dir_path() {
+    fn disabled_dir_path() {
         let dirs = QumaDirs::from_legacy(PathBuf::from("/spt"));
         assert_eq!(
-            disabled_stash_dir(&dirs),
+            dirs.disabled_dir(),
             PathBuf::from("/spt/quartermaster/disabled")
         );
     }

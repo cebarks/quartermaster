@@ -199,11 +199,11 @@ pub fn backup_mod(
         total_size += copy_files_to_backup(&addon_files, &addon_base, &dest)?;
     }
 
-    let mod_dir_name = mod_info
-        .forge_mod_id
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| mod_info.id.to_string());
-    let backup_path = format!("{}/mods/{}/{}", config.backup.backup_dir, mod_dir_name, bid);
+    let backup_path = dest
+        .strip_prefix(&dirs.root)
+        .context("backup path not under root")?
+        .to_string_lossy()
+        .to_string();
 
     let backup_db_id = db.insert_backup(
         "mod",
@@ -339,7 +339,11 @@ pub fn backup_full(
         std::fs::copy(&config_src, dest.join("quartermaster.toml"))?;
     }
 
-    let backup_path = format!("{}/full/{}", config.backup.backup_dir, bid);
+    let backup_path = dest
+        .strip_prefix(&dirs.root)
+        .context("backup path not under root")?
+        .to_string_lossy()
+        .to_string();
     let backup_db_id = db.insert_backup(
         "full",
         "manual",

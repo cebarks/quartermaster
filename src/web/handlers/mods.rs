@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path, Query};
 use actix_web::{HttpRequest, HttpResponse};
@@ -1009,7 +1011,7 @@ async fn install_mod_from_url(
 
     // Queue if server running
     if should_queue_operation(state).await {
-        let queue_dir = (*state.dirs).clone().queue_dir();
+        let queue_dir = state.dirs.queue_dir();
         let _ = std::fs::create_dir_all(&queue_dir);
 
         let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
@@ -1059,7 +1061,7 @@ async fn install_mod_from_url(
 
     // Direct install via background task
     let forge = state.forge.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let url_owned = url.to_string();
@@ -1325,7 +1327,7 @@ pub async fn install_mod(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let db_edges = db.clone();
     let config = state.config_cloned();
@@ -1481,7 +1483,7 @@ pub async fn update_mod(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = version.clone();
@@ -1525,7 +1527,7 @@ pub async fn update_mod(
 
             crate::ops::apply_mod_update(
                 db.clone(),
-                dirs.clone(),
+                dirs.as_ref().clone(),
                 config.clone(),
                 staging_dir.path().to_path_buf(),
                 extracted,
@@ -1607,7 +1609,7 @@ pub async fn remove_mod(
         }
     }
 
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
 
@@ -1661,7 +1663,7 @@ pub async fn toggle_disable(
     .map_err(WebError::from)?
     .ok_or(WebError::NotFound)?;
 
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let was_disabled = installed.disabled;
@@ -1781,7 +1783,7 @@ pub async fn update_all_mods(
     };
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let installed = installed.clone();
@@ -1836,7 +1838,7 @@ pub async fn update_all_mods(
 
                 crate::ops::apply_mod_update(
                     db.clone(),
-                    dirs.clone(),
+                    dirs.as_ref().clone(),
                     config.clone(),
                     staging_dir.path().to_path_buf(),
                     extracted,
@@ -1955,7 +1957,7 @@ pub async fn integrity_partial(
     if state.integrity_cache.is_stale() {
         state.integrity_cache.start_check(
             state.db.clone(),
-            (*state.dirs).clone(),
+            state.dirs.as_ref().clone(),
             state.events.clone(),
         );
     }
@@ -1996,7 +1998,7 @@ pub async fn file_tracking_page(
     if state.integrity_cache.is_stale() {
         state.integrity_cache.start_check(
             state.db.clone(),
-            (*state.dirs).clone(),
+            state.dirs.as_ref().clone(),
             state.events.clone(),
         );
     }
@@ -2032,7 +2034,7 @@ pub async fn integrity_recheck(
     state.integrity_cache.invalidate();
     state.integrity_cache.start_check(
         state.db.clone(),
-        (*state.dirs).clone(),
+        state.dirs.as_ref().clone(),
         state.events.clone(),
     );
     Ok(HttpResponse::NoContent().finish())
@@ -2351,7 +2353,7 @@ pub async fn install_addon(
 
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = version.clone();
@@ -2532,7 +2534,7 @@ pub async fn update_addon(
 
     let tasks = state.tasks.clone();
     let forge = state.forge.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let db = state.db.clone();
     let config = state.config_cloned();
     let version = latest_version.clone();
@@ -2567,7 +2569,7 @@ pub async fn update_addon(
 
             crate::ops::apply_addon_update(
                 db,
-                dirs,
+                dirs.as_ref().clone(),
                 config,
                 staging_path,
                 extracted,
@@ -2640,7 +2642,7 @@ pub async fn remove_addon(
     };
 
     let parent_mod_id = addon.parent_mod_id;
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 
     let result = web::block(move || {
@@ -2710,7 +2712,7 @@ pub async fn toggle_addon_disable(
 
     let parent_mod_id = addon.parent_mod_id;
     let is_disabled = addon.disabled;
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
     let db2 = state.db.clone();
 

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use regex::Regex;
 
 use crate::config::Config;
 use crate::spt::detect::validate_spt_dir;
@@ -192,7 +193,17 @@ fn migrate_headless(root: &Path) -> Result<()> {
     let old_clients = old_install_dir.join(".quma/clients");
     if old_clients.exists() {
         for entry in std::fs::read_dir(&old_clients)?.flatten() {
-            let index: u32 = entry.file_name().to_string_lossy().parse().unwrap_or(0);
+            let name = entry.file_name();
+            let index: u32 = match name.to_string_lossy().parse() {
+                Ok(i) => i,
+                Err(_) => {
+                    tracing::warn!(
+                        "skipping non-numeric overlay dir: {}",
+                        name.to_string_lossy()
+                    );
+                    continue;
+                }
+            };
             let dest = overlay_dest.join(format!("client-{index}"));
             move_dir(&entry.path(), &dest)?;
         }
@@ -220,14 +231,12 @@ fn update_config(root: &Path) -> Result<()> {
     }
 
     let content = std::fs::read_to_string(&config_path)?;
-    let updated = content
-        .replace("spt_dir", "quma_dir")
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("install_dir"))
-        .collect::<Vec<_>>()
-        .join("\n");
 
-    std::fs::write(&config_path, updated)?;
+    // Replace only `spt_dir` as a TOML key (at start of line, before =)
+    let key_regex = Regex::new(r"(?m)^(\s*)spt_dir(\s*=)").expect("hardcoded regex should compile");
+    let updated = key_regex.replace_all(&content, "${1}quma_dir${2}");
+
+    std::fs::write(&config_path, updated.as_ref())?;
     Ok(())
 }
 

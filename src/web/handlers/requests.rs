@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Form, Html, Path, Query};
 use actix_web::HttpRequest;
@@ -286,7 +288,7 @@ async fn trigger_install_for_request(
         let request_id = request.id;
         let tasks = state.tasks.clone();
         let forge = state.forge.clone();
-        let dirs = (*state.dirs).clone();
+        let dirs = Arc::clone(&state.dirs);
         let spt_dir = state.dirs.spt_server.clone();
         let db = state.db.clone();
         let db_edges = db.clone();

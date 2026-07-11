@@ -321,7 +321,7 @@ pub async fn headless_page(
         })
         .unwrap_or_else(|| ("none".to_string(), None));
 
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let profile_names = build_profile_names(&dirs);
     let aliases = build_client_aliases(&state.dirs.spt_server);
     let headless_clients = resolve_clients(headless_clients, &profile_names, &aliases);
@@ -367,7 +367,7 @@ pub async fn client_detail(
         .find(|c| c.index == index)
         .ok_or(WebError::NotFound)?;
 
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let profile_names = build_profile_names(&dirs);
     let aliases = build_client_aliases(&state.dirs.spt_server);
     let client = resolve_clients(vec![client], &profile_names, &aliases)
@@ -722,7 +722,7 @@ pub async fn client_scale(
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let config_handle = state.config_handle();
-    let dirs_clone = (*state.dirs).clone();
+    let dirs_clone = Arc::clone(&state.dirs);
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
@@ -829,7 +829,7 @@ pub async fn client_converge(
 
     let mgr_clone = mgr.clone();
     let config_clone = state.config_cloned();
-    let dirs_clone = (*state.dirs).clone();
+    let dirs_clone = Arc::clone(&state.dirs);
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
@@ -876,7 +876,7 @@ pub async fn client_status_partial(
     };
 
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let profile_names = build_profile_names(&dirs);
     let aliases = build_client_aliases(&state.dirs.spt_server);
     let clients = resolve_clients(clients, &profile_names, &aliases);
@@ -953,7 +953,7 @@ pub async fn client_create(
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let config_handle = state.config_handle();
-    let dirs_clone = (*state.dirs).clone();
+    let dirs_clone = Arc::clone(&state.dirs);
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
@@ -1098,7 +1098,7 @@ pub async fn client_delete(
     let config_clone = state.config_cloned();
     let config_path = state.config_path.clone();
     let config_handle = state.config_handle();
-    let dirs_clone = (*state.dirs).clone();
+    let dirs_clone = Arc::clone(&state.dirs);
     let converging_clone = state.converging.clone();
     let forge_clone = state.forge.clone();
     let spt_version_clone = state.spt_info.spt_version.clone();
@@ -1466,7 +1466,7 @@ pub async fn dashboard_clients_status_partial(
         None => vec![],
     };
 
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let names = build_profile_names(&dirs);
     let aliases = build_client_aliases(&state.dirs.spt_server);
     let clients = resolve_clients(raw_clients.clone(), &names, &aliases);

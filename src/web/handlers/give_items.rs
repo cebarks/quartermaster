@@ -92,7 +92,7 @@ pub async fn give_items_page(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let nav = NavContext::from_state(&state);
 
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let profiles = web::block(move || list_profiles(&dirs))
         .await
         .map_err(WebError::from)?
@@ -174,7 +174,7 @@ pub async fn give_items_send(
     };
 
     let result = if form.profile_id == "all" {
-        let dirs = (*state.dirs).clone();
+        let dirs = Arc::clone(&state.dirs);
         let profiles = web::block(move || list_profiles(&dirs))
             .await
             .map_err(WebError::from)?

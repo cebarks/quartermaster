@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_session::Session;
 use actix_web::web::{self, Data, Html, Path, Query};
 use actix_web::HttpRequest;
@@ -120,7 +122,7 @@ pub async fn profile_page(
     let profile_username = path.into_inner();
 
     let db = state.db.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let lookup_username = profile_username.clone();
 
     let (user_found, spt_profile_id) = web::block(move || {
@@ -366,7 +368,7 @@ async fn load_detail_for_user(
     username: &str,
 ) -> Result<ProfileDetail, WebError> {
     let db = state.db.clone();
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let username = username.to_string();
 
     let spt_profile_id = web::block(move || {
@@ -433,7 +435,7 @@ pub async fn stash_partial(
         }
     };
 
-    let dirs = (*state.dirs).clone();
+    let dirs = Arc::clone(&state.dirs);
     let raw_items = web::block(move || load_stash_items(&dirs, &profile_id))
         .await
         .map_err(WebError::from)?

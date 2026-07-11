@@ -169,7 +169,13 @@ impl QumaDirs {
     }
 
     pub fn backup_dir(&self, relative: &str) -> PathBuf {
-        self.root.join(relative)
+        // In legacy mode, if the relative path is just "backups" (the new default),
+        // use "quartermaster/backups" (the old default) instead
+        if self.legacy && relative == "backups" {
+            self.root.join("quartermaster/backups")
+        } else {
+            self.root.join(relative)
+        }
     }
 
     // -- SPT server paths --
@@ -320,6 +326,14 @@ mod tests {
         assert_eq!(
             dirs.cache_dir(),
             PathBuf::from("/home/user/spt-server/quartermaster-cache")
+        );
+        assert_eq!(
+            dirs.backup_dir("backups"),
+            PathBuf::from("/home/user/spt-server/quartermaster/backups")
+        );
+        assert_eq!(
+            dirs.backup_dir("quartermaster/backups"),
+            PathBuf::from("/home/user/spt-server/quartermaster/backups")
         );
     }
 
