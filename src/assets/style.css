@@ -308,6 +308,10 @@ main > h1 { border-bottom: 1px solid var(--border); }
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 .loading-pulse { animation: pulse 1.5s ease-in-out infinite; }
 
+/* Spinning icon */
+@keyframes spin { to { transform: rotate(360deg); } }
+button.htmx-request .icon { animation: spin 0.8s linear infinite; }
+
 /* Log viewer */
 
 .log-controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem; }

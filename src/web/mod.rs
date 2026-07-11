@@ -236,6 +236,10 @@ pub fn configure_app(
             web::get().to(handlers::mods::check_updates_partial),
         )
         .route(
+            "/mods/refresh-updates",
+            web::post().to(handlers::mods::refresh_updates),
+        )
+        .route(
             "/mods/update-status",
             web::get().to(handlers::mods::update_status_partial),
         )

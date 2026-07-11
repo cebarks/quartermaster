@@ -2,7 +2,14 @@
 {% if total > 0 %}
 {% if let Some(e) = &entry %}
 <div class="flex-between" style="margin-bottom: 0.75rem">
-    <h2 style="margin: 0">Updates Available ({{ total }})</h2>
+    <div style="display: flex; align-items: center; gap: 0.5rem">
+        <h2 style="margin: 0">Updates Available ({{ total }})</h2>
+        <button class="btn btn-sm btn-outline"
+                hx-post="/quma/api/mods/refresh-updates"
+                hx-swap="none"
+                hx-on::after-request="htmx.trigger('#updates-carousel-inner', 'refreshUpdates')"
+                title="Check for updates">{% call icons::refresh() %}{% endcall %}</button>
+    </div>
     {% if user.can("mods.update") %}
     <form method="post" action="/quma/mods/update-all" style="display:inline"
           onsubmit="return confirm('Update all {{ total }} mods?')">
@@ -69,7 +76,14 @@
 {% endif %}
 {% else %}
 <div class="flex-between">
-    <h2 style="margin: 0">Updates</h2>
+    <div style="display: flex; align-items: center; gap: 0.5rem">
+        <h2 style="margin: 0">Updates</h2>
+        <button class="btn btn-sm btn-outline"
+                hx-post="/quma/api/mods/refresh-updates"
+                hx-swap="none"
+                hx-on::after-request="htmx.trigger('#updates-carousel-inner', 'refreshUpdates')"
+                title="Check for updates">{% call icons::refresh() %}{% endcall %}</button>
+    </div>
 </div>
 <p class="text-muted" style="margin: 0.5rem 0 0">{% call icons::check() %}{% endcall %} All mods are up to date</p>
 {% endif %}
