@@ -690,6 +690,15 @@ pub async fn check_updates_partial(
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
+pub async fn refresh_updates(
+    state: Data<AppState>,
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse> {
+    let _user = require_auth(&req)?;
+    state.update_cache.invalidate();
+    Ok(HttpResponse::NoContent().finish())
+}
+
 pub async fn update_status_partial(
     state: Data<AppState>,
     req: HttpRequest,
