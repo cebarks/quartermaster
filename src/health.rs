@@ -71,7 +71,7 @@ impl HealthReport {
 }
 
 pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
-    let (host, port) = resolve_server_addr(&ctx.config, &ctx.spt_dir);
+    let (host, port) = resolve_server_addr(&ctx.config, &ctx.dirs.root);
     let spt_client = SptClient::new(&host, port)?;
     let address = spt_client.base_url().to_string();
 
@@ -100,11 +100,11 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
         Some(cached) => cached,
         None => {
             let tracked_files = ctx.db.get_all_enabled_mod_files()?;
-            let spt_dir = ctx.spt_dir.clone();
+            let spt_server = ctx.dirs.spt_server.clone();
             tokio::task::spawn_blocking(move || {
                 let progress = std::sync::atomic::AtomicUsize::new(0);
                 let total = std::sync::atomic::AtomicUsize::new(0);
-                check_integrity_parallel(&tracked_files, &spt_dir, &progress, &total)
+                check_integrity_parallel(&tracked_files, &spt_server, &progress, &total)
             })
             .await
             .map_err(|e| anyhow::anyhow!("integrity check task failed: {e}"))??
@@ -432,9 +432,11 @@ mod tests {
 
     /// Build a CliContext pointing at a temp SPT directory with standard
     /// subdirectories already created. Caller still owns the `TempDir`.
+    /// Uses legacy layout (SPT/ and BepInEx/ at root).
     fn test_cli_context(spt_dir: &std::path::Path) -> crate::cli::common::CliContext {
+        let dirs = crate::dirs::QumaDirs::from_legacy(spt_dir.to_path_buf());
         crate::cli::common::CliContext {
-            spt_dir: spt_dir.to_path_buf(),
+            dirs,
             spt_info: crate::spt::detect::SptInfo {
                 root: spt_dir.to_path_buf(),
                 spt_version: "4.0.13".to_string(),
@@ -760,7 +762,7 @@ mod tests {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
             let progress = AtomicUsize::new(0);
             let total = AtomicUsize::new(0);
-            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
+            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap()
         };
         assert_eq!(result.tracked_files, 1);
         assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
@@ -808,7 +810,7 @@ mod tests {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
             let progress = AtomicUsize::new(0);
             let total = AtomicUsize::new(0);
-            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
+            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap()
         };
         assert!(result.missing_files.is_empty());
         assert_eq!(
@@ -830,7 +832,7 @@ mod tests {
             let tracked = ctx.db.get_all_tracked_files().unwrap();
             let progress = AtomicUsize::new(0);
             let total = AtomicUsize::new(0);
-            check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap()
+            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap()
         };
         assert_eq!(result.tracked_files, 0);
         assert_eq!(result.untracked_dirs.len(), 1);
@@ -1204,7 +1206,8 @@ mod tests {
         let tracked = ctx.db.get_all_tracked_files().unwrap();
         let progress = AtomicUsize::new(0);
         let total = AtomicUsize::new(0);
-        let result = check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap();
+        let result =
+            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap();
         assert_eq!(result.tracked_files, 1);
         assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
         assert!(result.modified_files.is_empty());
@@ -1251,7 +1254,8 @@ mod tests {
         let tracked = ctx.db.get_all_tracked_files().unwrap();
         let progress = AtomicUsize::new(0);
         let total = AtomicUsize::new(0);
-        let result = check_integrity_parallel(&tracked, &ctx.spt_dir, &progress, &total).unwrap();
+        let result =
+            check_integrity_parallel(&tracked, &ctx.dirs.spt_server, &progress, &total).unwrap();
         assert!(result.missing_files.is_empty());
         assert_eq!(
             result.modified_files,

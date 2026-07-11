@@ -1271,6 +1271,7 @@ impl Config {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
@@ -2186,6 +2187,7 @@ cpuset_mems = "0"
     }
 
     #[test]
+    #[allow(deprecated)]
     fn headless_numa_auto_and_node_rejects() {
         let toml_str = r#"
 [headless]

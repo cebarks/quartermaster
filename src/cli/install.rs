@@ -114,8 +114,13 @@ pub async fn run(
         return Ok(());
     }
 
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
-        .await?
+    if crate::queue::should_queue(
+        &ctx.config,
+        force,
+        &ctx.dirs.root,
+        ctx.container_mgr.as_ref(),
+    )
+    .await?
     {
         ctx.db.insert_pending_op(
             crate::db::users::QueueAction::Install,
@@ -197,8 +202,13 @@ async fn run_addon_install(
         return Ok(());
     }
 
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
-        .await?
+    if crate::queue::should_queue(
+        &ctx.config,
+        force,
+        &ctx.dirs.root,
+        ctx.container_mgr.as_ref(),
+    )
+    .await?
     {
         ctx.db.insert_pending_addon_op(
             crate::db::users::QueueAction::Install,
@@ -237,7 +247,7 @@ async fn run_addon_install(
 
     crate::ops::install_addon_from_archive(&crate::ops::InstallAddonRequest {
         db: &ctx.db,
-        spt_dir: &ctx.spt_dir,
+        spt_dir: &ctx.dirs.spt_server,
         config: &ctx.config,
         forge_addon_id: Some(forge_addon.id),
         parent_mod_id,
@@ -603,7 +613,14 @@ pub async fn install_single_mod(ctx: &CliContext, params: &ModInstallParams<'_>)
         return Ok(existing.id);
     }
 
-    download_and_install(&ctx.forge, &ctx.db, &ctx.spt_dir, &ctx.config, params).await
+    download_and_install(
+        &ctx.forge,
+        &ctx.db,
+        &ctx.dirs.spt_server,
+        &ctx.config,
+        params,
+    )
+    .await
 }
 
 fn check_fika_compat(mod_name: &str, version: &ForgeVersion) -> Result<()> {
@@ -944,7 +961,7 @@ fn is_file_path(s: &str) -> bool {
 }
 
 async fn queue_url_install(ctx: &CliContext, url: &str, mod_name: &str) -> Result<()> {
-    let queue_dir = ctx.spt_dir.join(".quartermaster").join("queued");
+    let queue_dir = ctx.dirs.queue_dir();
     std::fs::create_dir_all(&queue_dir)?;
 
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
@@ -973,7 +990,7 @@ async fn queue_file_install(
     archive_path: &std::path::Path,
     mod_name: &str,
 ) -> Result<()> {
-    let queue_dir = ctx.spt_dir.join(".quartermaster").join("queued");
+    let queue_dir = ctx.dirs.queue_dir();
     std::fs::create_dir_all(&queue_dir)?;
 
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
@@ -1020,8 +1037,13 @@ async fn install_from_url(
         );
     }
 
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
-        .await?
+    if crate::queue::should_queue(
+        &ctx.config,
+        force,
+        &ctx.dirs.spt_server,
+        ctx.container_mgr.as_ref(),
+    )
+    .await?
     {
         return queue_url_install(ctx, url, &mod_name).await;
     }
@@ -1034,7 +1056,7 @@ async fn install_from_url(
 
     let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
         db: &ctx.db,
-        spt_dir: &ctx.spt_dir,
+        spt_dir: &ctx.dirs.spt_server,
         config: &ctx.config,
         forge_mod_id: None,
         version_id: None,
@@ -1076,8 +1098,13 @@ async fn install_from_file(
         );
     }
 
-    if crate::queue::should_queue(&ctx.config, force, &ctx.spt_dir, ctx.container_mgr.as_ref())
-        .await?
+    if crate::queue::should_queue(
+        &ctx.config,
+        force,
+        &ctx.dirs.spt_server,
+        ctx.container_mgr.as_ref(),
+    )
+    .await?
     {
         return queue_file_install(ctx, &archive_path, &mod_name).await;
     }
@@ -1086,7 +1113,7 @@ async fn install_from_file(
 
     let db_id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
         db: &ctx.db,
-        spt_dir: &ctx.spt_dir,
+        spt_dir: &ctx.dirs.spt_server,
         config: &ctx.config,
         forge_mod_id: None,
         version_id: None,

@@ -104,7 +104,7 @@ pub fn run(json: bool, ctx: &CliContext) -> Result<()> {
         }
     }
 
-    let (unmanaged_dirs, _) = find_unmanaged_mod_dirs(&ctx.spt_dir, &ctx.db)?;
+    let (unmanaged_dirs, _) = find_unmanaged_mod_dirs(&ctx.dirs, &ctx.db)?;
     let unmanaged_entries: Vec<UnmanagedEntry> = unmanaged_dirs
         .into_iter()
         .map(|(dir, count)| UnmanagedEntry {

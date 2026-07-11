@@ -45,7 +45,7 @@ fn init_context(cli: &Cli, handles: &logging::ReloadHandles) -> Result<cli::comm
 
     let filter =
         logging::resolve_log_filter(&logging_config, cli.verbose, cli.log_level.as_deref());
-    handles.reconfigure(&logging_config, &filter, Some(&ctx.spt_dir));
+    handles.reconfigure(&logging_config, &filter, Some(&ctx.dirs.root));
     Ok(ctx)
 }
 

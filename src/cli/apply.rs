@@ -92,7 +92,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                         if let Err(e) = crate::ops::install_addon_from_archive(
                             &crate::ops::InstallAddonRequest {
                                 db: &ctx.db,
-                                spt_dir: &ctx.spt_dir,
+                                spt_dir: &ctx.dirs.spt_server,
                                 config: &ctx.config,
                                 forge_addon_id: Some(forge_addon_id),
                                 parent_mod_id: parent.id,
@@ -168,7 +168,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
 
                         if let Err(e) = crate::ops::update_addon_from_archive(
                             &ctx.db,
-                            &ctx.spt_dir,
+                            &ctx.dirs.spt_server,
                             &ctx.config,
                             installed.id,
                             version_id,
@@ -193,7 +193,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                     if let Some(installed) = ctx.db.get_addon_by_forge_id(forge_addon_id)? {
                         if let Err(e) = crate::ops::remove_addon_by_id(
                             &ctx.db,
-                            &ctx.spt_dir,
+                            &ctx.dirs.spt_server,
                             &ctx.config,
                             installed.id,
                         ) {
@@ -233,7 +233,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                     if let Err(e) =
                         crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
                             db: &ctx.db,
-                            spt_dir: &ctx.spt_dir,
+                            spt_dir: &ctx.dirs.spt_server,
                             config: &ctx.config,
                             forge_mod_id: None,
                             version_id: None,

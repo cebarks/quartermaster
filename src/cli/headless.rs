@@ -101,7 +101,7 @@ pub enum HeadlessAction {
 }
 
 pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
-    if !is_fika_installed(&ctx.spt_dir) {
+    if !is_fika_installed(&ctx.dirs.spt_server) {
         bail!(
             "Fika server mod is not installed.\n\
              Install Fika with: quma install fika-server\n\
@@ -173,13 +173,14 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
     }
 
     // Load Fika aliases for display names
-    let fika_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    let fika_path = crate::fika::config::fika_config_path(&ctx.dirs.spt_server);
     let aliases: HashMap<String, String> = crate::fika::config::read_fika_config(&fika_path)
         .map(|c| c.headless.profiles.aliases)
         .unwrap_or_default();
 
     // Get Fika API data if server is running
-    let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+    let (server_host, server_port) =
+        server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
     let spt_client = SptClient::new(&server_host, server_port)?;
 
     let headless_map = match spt_client.headless_clients().await {
@@ -324,7 +325,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
     let _headless_config = require_headless_config(&ctx.config)?;
     let container_mgr = require_container_manager(ctx)?;
 
-    let config_path = Config::resolve_path(None, Some(&ctx.spt_dir));
+    let config_path = Config::resolve_path(None, Some(&ctx.dirs.root));
     let mut config = Config::load_with_env(&config_path)?;
 
     let new_def = HeadlessClientDef {
@@ -341,7 +342,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
     println!("Created headless client {} (total: {})", index, total);
 
     let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&config, &ctx.spt_dir);
+        crate::server_detect::resolve_server_addr(&config, &ctx.dirs.root);
     let spt_client = SptClient::new(&server_host, server_port)?;
     let converging = Arc::new(AtomicBool::new(false));
     let db = db_arc_for_converge(ctx)?;
@@ -353,7 +354,7 @@ async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()>
             .as_ref()
             .expect("set by get_or_insert_with above"),
         &config,
-        &ctx.spt_dir,
+        &ctx.dirs.spt_server,
         &spt_client,
         &ctx.forge,
         &ctx.spt_info.spt_version,
@@ -382,7 +383,7 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
 
     if !force {
         let (server_host, server_port) =
-            crate::server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+            crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
         let spt_client = SptClient::new(&server_host, server_port)?;
         if let Ok(resp) = spt_client.headless_clients().await {
             let container_name = crate::client::converge::client_container_name(client);
@@ -414,7 +415,7 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
     crate::client::converge::remove_all_managed_containers(container_mgr).await?;
 
     // Remove from config
-    let config_path = Config::resolve_path(None, Some(&ctx.spt_dir));
+    let config_path = Config::resolve_path(None, Some(&ctx.dirs.root));
     let mut config = Config::load_with_env(&config_path)?;
     let mut updated_headless = headless_config.clone();
     if let Some(ref mut headless) = config.headless {
@@ -435,7 +436,7 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
     // Converge to recreate containers with correct indices
     println!("Re-converging to recreate containers with correct indices...");
     let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
     let spt_client = SptClient::new(&server_host, server_port)?;
     let db = db_arc_for_converge(ctx)?;
 
@@ -443,7 +444,7 @@ async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
         container_mgr,
         &updated_headless,
         &ctx.config,
-        &ctx.spt_dir,
+        &ctx.dirs.spt_server,
         &spt_client,
         &ctx.forge,
         &ctx.spt_info.spt_version,
@@ -571,7 +572,7 @@ async fn graceful_restart(ctx: &CliContext, client: u32) -> Result<()> {
 
     // Check Fika status
     let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
     let spt_client = SptClient::new(&server_host, server_port)?;
 
     if let Ok(resp) = spt_client.headless_clients().await {
@@ -587,7 +588,7 @@ async fn graceful_restart(ctx: &CliContext, client: u32) -> Result<()> {
     }
 
     // Create Fika client
-    let fika_config_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    let fika_config_path = crate::fika::config::fika_config_path(&ctx.dirs.spt_server);
     let fika_config = crate::fika::config::read_fika_config(&fika_config_path)
         .context("failed to read fika.jsonc")?;
 
@@ -663,7 +664,7 @@ async fn rename(ctx: &CliContext, client: u32, name: &str) -> Result<()> {
             )
         })?;
 
-    let fika_config_path = crate::fika::config::fika_config_path(&ctx.spt_dir);
+    let fika_config_path = crate::fika::config::fika_config_path(&ctx.dirs.spt_server);
     let config = crate::fika::config::read_fika_config(&fika_config_path)
         .context("failed to read fika.jsonc")?;
     let mut aliases = config.headless.profiles.aliases;
@@ -713,7 +714,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     let container_mgr = require_container_manager(ctx)?;
 
     // Load config
-    let config_path = Config::resolve_path(None, Some(&ctx.spt_dir));
+    let config_path = Config::resolve_path(None, Some(&ctx.dirs.root));
     let mut config = Config::load_with_env(&config_path)?;
 
     let old_count = config
@@ -730,7 +731,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     // If scaling down, check for in-raid clients
     if count < old_count {
         let (server_host, server_port) =
-            server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+            server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
         let spt_client = SptClient::new(&server_host, server_port)?;
 
         if let Ok(resp) = spt_client.headless_clients().await {
@@ -781,7 +782,8 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     println!("Updated config: {} headless client(s)", count);
 
     // Run convergence
-    let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.spt_dir);
+    let (server_host, server_port) =
+        server_detect::resolve_server_addr(&ctx.config, &ctx.dirs.root);
     let spt_client = SptClient::new(&server_host, server_port)?;
     let converging = Arc::new(AtomicBool::new(false));
     let db = db_arc_for_converge(ctx)?;
@@ -794,7 +796,7 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
             .as_ref()
             .expect("set by get_or_insert_with above"),
         &config,
-        &ctx.spt_dir,
+        &ctx.dirs.spt_server,
         &spt_client,
         &ctx.forge,
         &ctx.spt_info.spt_version,
@@ -819,7 +821,7 @@ fn require_headless_config(config: &Config) -> Result<&HeadlessConfig> {
 /// Open a DB connection wrapped for convergence (which needs Arc<Mutex<Database>>).
 /// CLI context owns a bare Database, so we open a second read-only connection.
 fn db_arc_for_converge(ctx: &CliContext) -> Result<Arc<Mutex<Database>>> {
-    let db_path = ctx.spt_dir.join("quartermaster.db");
+    let db_path = ctx.dirs.db_path();
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
     Ok(Arc::new(Mutex::new(db)))

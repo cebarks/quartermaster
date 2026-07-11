@@ -485,7 +485,8 @@ async fn wrap_existing(mgr: &ContainerManager, p: ResolvedSetup, cli: &Cli) -> R
     let db = create_db_and_admin(&p.data_dir, &p.admin_password)?;
 
     // 4. Scan unmanaged mods
-    let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(&p.data_dir, &db)?;
+    let dirs = crate::dirs::QumaDirs::from_root(p.data_dir.clone());
+    let (unmanaged_dirs, unmanaged_count) = find_unmanaged_mod_dirs(&dirs, &db)?;
     if unmanaged_dirs.is_empty() {
         println!("No unmanaged mod files found.");
     } else {

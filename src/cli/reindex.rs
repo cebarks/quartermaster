@@ -87,7 +87,8 @@ pub async fn run(dry_run: bool, ctx: &CliContext) -> Result<()> {
         }
 
         // List archive entries and apply prefix stripping
-        match reindex_mod_from_archive(&ctx.db, &ctx.spt_dir, m.id, &archive_path, dry_run) {
+        match reindex_mod_from_archive(&ctx.db, &ctx.dirs.spt_server, m.id, &archive_path, dry_run)
+        {
             Ok(count) => {
                 println!("{count} file(s)");
                 indexed += 1;

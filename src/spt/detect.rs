@@ -156,6 +156,7 @@ pub fn read_http_config(spt_dir: &Path) -> Option<(String, u16)> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
