@@ -112,6 +112,7 @@ fn read_spt_version_from_deps(spt_dir: &Path) -> Result<String> {
 /// 3. Walking up from `cwd` (or the process CWD) looking for the SPT root
 ///
 /// Returns an error if none of the strategies succeed.
+#[deprecated(note = "Use QumaDirs::detect() instead")]
 pub fn detect_spt_dir(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<PathBuf> {
     // 1. Explicit path
     if let Some(p) = explicit {

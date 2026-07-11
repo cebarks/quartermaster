@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
 
 // ponytail: unused until Task 2+ consume it
 #[allow(dead_code)]
@@ -35,6 +37,72 @@ impl QumaDirs {
 
     pub fn is_legacy(&self) -> bool {
         self.legacy
+    }
+
+    pub fn detect(explicit: Option<&Path>, cwd: Option<&Path>) -> Result<Self> {
+        // 1. Explicit path
+        if let Some(p) = explicit {
+            return Self::classify_and_build(p);
+        }
+
+        // 2. QUMA_DIR env var (new)
+        if let Ok(env_val) = std::env::var("QUMA_DIR") {
+            let env_path = PathBuf::from(&env_val);
+            return Self::classify_and_build(&env_path)
+                .with_context(|| format!("QUMA_DIR={env_val} is not a valid quma directory"));
+        }
+
+        // 3. QUMA_SPT_DIR env var (deprecated)
+        if let Ok(env_val) = std::env::var("QUMA_SPT_DIR") {
+            tracing::warn!("QUMA_SPT_DIR is deprecated, use QUMA_DIR instead");
+            let env_path = PathBuf::from(&env_val);
+            crate::spt::detect::validate_spt_dir(&env_path)
+                .with_context(|| format!("QUMA_SPT_DIR={env_val} is not a valid SPT directory"))?;
+            return Ok(Self::from_legacy(env_path));
+        }
+
+        // 4. Walk up from cwd
+        let start = match cwd {
+            Some(p) => p.to_path_buf(),
+            None => std::env::current_dir().context("failed to determine current directory")?,
+        };
+
+        let mut candidate = Some(start.as_path());
+        while let Some(dir) = candidate {
+            if let Ok(dirs) = Self::classify_and_build(dir) {
+                return Ok(dirs);
+            }
+            candidate = dir.parent();
+        }
+
+        anyhow::bail!("Quartermaster directory not found — run `quma setup` or pass --quma-dir")
+    }
+
+    fn classify_and_build(path: &Path) -> Result<Self> {
+        // New layout: quartermaster.toml or .db at root, spt-server/ subdir with SPT markers
+        let has_config = path.join("quartermaster.toml").exists();
+        let has_db = path.join("quartermaster.db").exists();
+        let spt_subdir = path.join("spt-server");
+
+        if (has_config || has_db) && spt_subdir.exists() {
+            if crate::spt::detect::validate_spt_dir(&spt_subdir).is_ok() {
+                return Ok(Self::from_root(path.to_path_buf()));
+            }
+            // spt-server/ exists but isn't valid yet (fresh setup before first run)
+            if has_config || has_db {
+                return Ok(Self::from_root(path.to_path_buf()));
+            }
+        }
+
+        // Legacy layout: SPT markers at root level
+        if crate::spt::detect::validate_spt_dir(path).is_ok() {
+            tracing::warn!(
+                "Detected legacy directory layout. Run `quma migrate` to update to the new layout."
+            );
+            return Ok(Self::from_legacy(path.to_path_buf()));
+        }
+
+        anyhow::bail!("not a valid quma or SPT directory: {}", path.display())
     }
 
     // -- Quma data paths --
@@ -247,6 +315,85 @@ mod tests {
         assert_eq!(
             dirs.cache_dir(),
             PathBuf::from("/home/user/spt-server/quartermaster-cache")
+        );
+    }
+
+    #[test]
+    fn detect_new_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("quartermaster.toml"), "").unwrap();
+        let spt = root.join("spt-server");
+        std::fs::create_dir_all(spt.join("SPT/SPT_Data/configs")).unwrap();
+        std::fs::create_dir_all(spt.join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(spt.join("BepInEx/plugins")).unwrap();
+        std::fs::write(spt.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(spt.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
+
+        let dirs = QumaDirs::detect(Some(root), None).unwrap();
+        assert!(!dirs.is_legacy());
+        assert_eq!(dirs.spt_server, spt);
+    }
+
+    #[test]
+    fn detect_legacy_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("SPT/SPT_Data/configs")).unwrap();
+        std::fs::create_dir_all(root.join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(root.join("BepInEx/plugins")).unwrap();
+        std::fs::write(root.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(root.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
+
+        let dirs = QumaDirs::detect(Some(root), None).unwrap();
+        assert!(dirs.is_legacy());
+        assert_eq!(dirs.spt_server, root.to_path_buf());
+    }
+
+    #[test]
+    fn detect_env_var_quma_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("quartermaster.toml"), "").unwrap();
+        let spt = root.join("spt-server");
+        std::fs::create_dir_all(spt.join("SPT/SPT_Data/configs")).unwrap();
+        std::fs::create_dir_all(spt.join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(spt.join("BepInEx/plugins")).unwrap();
+        std::fs::write(spt.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(spt.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
+
+        temp_env::with_vars(
+            [
+                ("QUMA_DIR", Some(root.to_str().unwrap())),
+                ("QUMA_SPT_DIR", None),
+            ],
+            || {
+                let dirs = QumaDirs::detect(None, None).unwrap();
+                assert!(!dirs.is_legacy());
+                assert_eq!(dirs.root, root.to_path_buf());
+            },
+        );
+    }
+
+    #[test]
+    fn detect_deprecated_env_var() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("SPT/SPT_Data/configs")).unwrap();
+        std::fs::create_dir_all(root.join("SPT/user/mods")).unwrap();
+        std::fs::create_dir_all(root.join("BepInEx/plugins")).unwrap();
+        std::fs::write(root.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(root.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
+
+        temp_env::with_vars(
+            [
+                ("QUMA_SPT_DIR", Some(root.to_str().unwrap())),
+                ("QUMA_DIR", None),
+            ],
+            || {
+                let dirs = QumaDirs::detect(None, None).unwrap();
+                assert!(dirs.is_legacy());
+            },
         );
     }
 }
