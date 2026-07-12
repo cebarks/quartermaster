@@ -103,7 +103,11 @@ pub async fn scanner_guard_middleware(
         return next.call(req).await;
     };
 
-    let Some(ip) = req.peer_addr().map(|a| a.ip()) else {
+    let Some(ip) = req
+        .connection_info()
+        .realip_remote_addr()
+        .and_then(|s| s.parse::<IpAddr>().ok())
+    else {
         return next.call(req).await;
     };
 
