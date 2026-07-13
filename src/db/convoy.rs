@@ -15,7 +15,6 @@ pub struct SyncReportSummary {
 #[derive(Debug, Clone)]
 pub struct SyncActivity {
     pub created_at: String,
-    pub source: String,
     pub event_type: String,
     pub detail: String,
 }
@@ -92,25 +91,18 @@ impl Database {
 
     pub fn get_recent_sync_activity(&self, limit: i64) -> rusqlite::Result<Vec<SyncActivity>> {
         let mut stmt = self.conn.prepare(
-            "SELECT created_at, source, event_type, detail FROM (
-                 SELECT created_at, 'event' AS source, event_type,
-                        COALESCE('IP: ' || ip, '') AS detail
-                 FROM convoy_sync_events
-                 UNION ALL
-                 SELECT r.created_at, 'report' AS source, r.result AS event_type,
-                        COALESCE(u.username, r.aid) AS detail
-                 FROM convoy_sync_reports r
-                 LEFT JOIN users u ON r.user_id = u.id
-             )
-             ORDER BY created_at DESC
+            "SELECT r.created_at, r.result,
+                    COALESCE(u.username, r.aid) AS detail
+             FROM convoy_sync_reports r
+             LEFT JOIN users u ON r.user_id = u.id
+             ORDER BY r.created_at DESC
              LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], |row| {
             Ok(SyncActivity {
                 created_at: row.get(0)?,
-                source: row.get(1)?,
-                event_type: row.get(2)?,
-                detail: row.get(3)?,
+                event_type: row.get(1)?,
+                detail: row.get(2)?,
             })
         })?;
         rows.collect()
@@ -146,9 +138,9 @@ mod tests {
         db.insert_sync_event("download", Some("1.2.3.4"), Some("[1,2]"), Some(1024))
             .unwrap();
 
+        // Events are stored but not shown in activity feed (reports only)
         let activity = db.get_recent_sync_activity(10).unwrap();
-        assert_eq!(activity.len(), 2);
-        assert_eq!(activity[0].source, "event");
+        assert!(activity.is_empty());
     }
 
     #[test]
@@ -203,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn recent_activity_merges_events_and_reports() {
+    fn recent_activity_shows_only_reports() {
         let db = test_db();
         db.insert_sync_event("catalog_fetch", Some("1.2.3.4"), None, None)
             .unwrap();
@@ -211,10 +203,8 @@ mod tests {
             .unwrap();
 
         let activity = db.get_recent_sync_activity(10).unwrap();
-        assert_eq!(activity.len(), 2);
-        let sources: Vec<&str> = activity.iter().map(|a| a.source.as_str()).collect();
-        assert!(sources.contains(&"event"));
-        assert!(sources.contains(&"report"));
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].event_type, "updated");
     }
 
     #[test]
@@ -229,6 +219,6 @@ mod tests {
         assert_eq!(events, 0);
         assert_eq!(reports, 0);
 
-        assert_eq!(db.get_recent_sync_activity(10).unwrap().len(), 2);
+        assert_eq!(db.get_recent_sync_activity(10).unwrap().len(), 1);
     }
 }

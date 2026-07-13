@@ -56,8 +56,12 @@
             <tr>
                 <td style="white-space: nowrap">{{ a.created_at }}</td>
                 <td>
-                    {% if a.source == "report" %}
-                    <span class="badge badge-info">{{ a.event_type }}</span>
+                    {% if a.event_type == "up_to_date" %}
+                    <span class="badge badge-success">Up to date</span>
+                    {% else if a.event_type == "updated" %}
+                    <span class="badge badge-warning">Updated</span>
+                    {% else if a.event_type == "failed" %}
+                    <span class="badge badge-error">Failed</span>
                     {% else %}
                     <span class="badge badge-outline">{{ a.event_type }}</span>
                     {% endif %}
