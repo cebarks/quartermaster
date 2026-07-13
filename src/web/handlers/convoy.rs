@@ -815,11 +815,15 @@ pub async fn single_mod_archive(
 }
 
 /// POST /quma/convoy/report — client sync report
+/// Accepts raw body instead of web::Json because SPT's PostJson may not set Content-Type.
 pub async fn report(
     req: HttpRequest,
     state: web::Data<AppState>,
-    body: web::Json<SyncReportRequest>,
+    body: String,
 ) -> actix_web::Result<HttpResponse> {
+    let body: SyncReportRequest =
+        serde_json::from_str(&body).map_err(actix_web::error::ErrorBadRequest)?;
+
     let valid_results = ["up_to_date", "updated", "failed"];
     if !valid_results.contains(&body.result.as_str()) {
         return Ok(HttpResponse::BadRequest().body("invalid result value"));
