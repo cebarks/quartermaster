@@ -437,6 +437,18 @@ impl Database {
         )
     }
 
+    pub fn update_file_hash(
+        &self,
+        file_id: i64,
+        hash: &str,
+        size: Option<i64>,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE installed_files SET file_hash = ?1, file_size = ?2 WHERE id = ?3",
+            params![hash, size, file_id],
+        )
+    }
+
     /// Rename a tracked file path in the database (e.g. when disabling/enabling a mod).
     pub fn rename_file_path(&self, file_id: i64, new_path: &str) -> rusqlite::Result<usize> {
         self.conn.execute(

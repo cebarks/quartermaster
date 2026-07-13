@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::config::ConvoyConfig;
 use crate::db::Database;
@@ -228,6 +229,7 @@ struct CatalogCacheInner {
     config: Arc<parking_lot::RwLock<crate::config::Config>>,
     cache_path: PathBuf,
     tmp_path: PathBuf,
+    rehash_marker_path: PathBuf,
     rebuilding: AtomicBool,
     dirty: AtomicBool,
 }
@@ -255,6 +257,7 @@ impl CatalogCache {
                 config,
                 cache_path: cache_dir.join("convoy-catalog.json"),
                 tmp_path: cache_dir.join("convoy-catalog.json.tmp"),
+                rehash_marker_path: cache_dir.join("convoy-last-rehash"),
                 rebuilding: AtomicBool::new(false),
                 dirty: AtomicBool::new(false),
             }),
@@ -300,6 +303,15 @@ impl CatalogCache {
         let _ = std::fs::remove_file(&self.inner.cache_path);
     }
 
+    /// Force rehash all tracked client files from disk, then rebuild catalog.
+    pub fn force_rehash(&self) {
+        let db = self.inner.db.lock();
+        let updated = rehash_client_files(&db, &self.inner.spt_dir, true);
+        drop(db);
+        tracing::info!(updated, "force rehash complete");
+        self.invalidate();
+    }
+
     /// Synchronous rebuild for tests. Guarded by compare_exchange.
     #[cfg(test)]
     pub fn rebuild_sync(&self) {
@@ -328,6 +340,8 @@ impl CatalogCacheInner {
     }
 
     fn build_cache(&self) -> anyhow::Result<()> {
+        self.rehash_if_stale();
+
         let convoy_config = self
             .config
             .read()
@@ -347,6 +361,95 @@ impl CatalogCacheInner {
         tracing::info!("rebuilt convoy catalog cache");
         Ok(())
     }
+
+    /// Rehash client files if the last rehash was more than 30 minutes ago.
+    fn rehash_if_stale(&self) {
+        let stale = self
+            .rehash_marker_path
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|mtime| mtime.elapsed().unwrap_or(Duration::MAX) > Duration::from_secs(30 * 60))
+            .unwrap_or(true);
+
+        if !stale {
+            return;
+        }
+
+        let db = self.db.lock();
+        let updated = rehash_client_files(&db, &self.spt_dir, false);
+        drop(db);
+
+        // Touch marker regardless of whether anything changed
+        std::fs::write(&self.rehash_marker_path, b"").ok();
+
+        if updated > 0 {
+            tracing::info!(updated, "rehashed stale convoy file checksums");
+        }
+    }
+}
+
+const REHASH_STALE_SECS: u64 = 30 * 60;
+
+/// Rehash all tracked BepInEx files from disk, updating DB where the hash differs.
+/// If `force` is true, rehash everything; otherwise only files whose on-disk mtime
+/// is newer than `REHASH_STALE_SECS`.
+/// Returns the number of DB rows updated.
+fn rehash_client_files(db: &Database, spt_dir: &Path, force: bool) -> usize {
+    let files = match db.get_all_tracked_files() {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!(err = %e, "failed to list tracked files for rehash");
+            return 0;
+        }
+    };
+
+    let mut updated = 0;
+    for file in &files {
+        if !file.file_path.starts_with("BepInEx/") {
+            continue;
+        }
+
+        let abs_path = spt_dir.join(&file.file_path);
+        if !abs_path.is_file() {
+            continue;
+        }
+
+        // Skip files not modified recently unless forced
+        if !force {
+            let dominated_by_mtime = abs_path
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|mtime| {
+                    mtime.elapsed().unwrap_or(Duration::MAX)
+                        < Duration::from_secs(REHASH_STALE_SECS)
+                })
+                .unwrap_or(false);
+            if !dominated_by_mtime {
+                continue;
+            }
+        }
+
+        let disk_hash = match crate::spt::mods::compute_file_hash(&abs_path) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!(path = %file.file_path, err = %e, "failed to hash file during rehash");
+                continue;
+            }
+        };
+
+        let db_hash = file.file_hash.as_deref().unwrap_or("");
+        if disk_hash != db_hash {
+            let size = abs_path.metadata().map(|m| m.len() as i64).ok();
+            if let Err(e) = db.update_file_hash(file.id, &disk_hash, size) {
+                tracing::warn!(path = %file.file_path, err = %e, "failed to update file hash");
+            } else {
+                tracing::debug!(path = %file.file_path, "updated stale file hash");
+                updated += 1;
+            }
+        }
+    }
+
+    updated
 }
 
 #[cfg(test)]

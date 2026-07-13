@@ -586,6 +586,7 @@ pub fn configure_app(
             "/convoy/settings",
             web::post().to(handlers::convoy::save_settings),
         )
+        .route("/convoy/rehash", web::post().to(handlers::convoy::rehash))
         .route("/svm", web::get().to(handlers::svm::manager_page))
         .route("/svm/view", web::get().to(handlers::svm::player_view))
         .route("/svm/edit", web::get().to(handlers::svm::editor_page))
