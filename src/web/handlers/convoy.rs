@@ -634,7 +634,8 @@ pub async fn catalog(
     }
 
     let Some((path, etag)) = state.catalog_cache.get() else {
-        tracing::warn!("convoy catalog requested but cache not yet built");
+        state.catalog_cache.invalidate();
+        tracing::warn!("convoy catalog requested but cache not yet built, triggered rebuild");
         return Ok(HttpResponse::ServiceUnavailable()
             .body("Convoy catalog is being built, try again shortly"));
     };
