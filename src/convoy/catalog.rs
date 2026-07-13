@@ -10,6 +10,7 @@ use crate::db::Database;
 #[derive(Debug, Clone, Serialize)]
 pub struct Catalog {
     pub spt_version: String,
+    pub quartermaster_version: String,
     pub groups: Vec<CatalogGroup>,
     pub exclusions: Vec<String>,
 }
@@ -127,6 +128,7 @@ pub fn generate_catalog(
 
     Ok(Catalog {
         spt_version,
+        quartermaster_version: env!("CARGO_PKG_VERSION").to_string(),
         groups: catalog_groups,
         exclusions,
     })
