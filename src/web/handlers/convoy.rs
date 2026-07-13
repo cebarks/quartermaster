@@ -646,7 +646,10 @@ pub async fn catalog(
                 tracing::debug!("convoy catalog 304 (ETag match)");
                 // Log catalog 304 event (fire-and-forget)
                 let db = state.db.clone();
-                let ip = req.peer_addr().map(|a| a.ip().to_string());
+                let ip = req
+                    .connection_info()
+                    .realip_remote_addr()
+                    .map(str::to_owned);
                 tokio::task::spawn_blocking(move || {
                     let db = db.lock();
                     if let Err(e) = db.insert_sync_event("catalog_304", ip.as_deref(), None, None) {
@@ -666,7 +669,10 @@ pub async fn catalog(
     tracing::debug!(bytes = body.len(), "served convoy catalog");
 
     let db_log = state.db.clone();
-    let ip = req.peer_addr().map(|a| a.ip().to_string());
+    let ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .map(str::to_owned);
     let body_len = body.len() as i64;
     tokio::task::spawn_blocking(move || {
         let db = db_log.lock();
@@ -739,7 +745,10 @@ pub async fn download(
     tracing::info!(bytes = zip_len, "convoy batch download served");
 
     let db_log = state.db.clone();
-    let ip = req.peer_addr().map(|a| a.ip().to_string());
+    let ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .map(str::to_owned);
     let mod_ids_json = serde_json::to_string(&body.mods).unwrap_or_default();
     tokio::task::spawn_blocking(move || {
         let db = db_log.lock();
@@ -820,7 +829,10 @@ pub async fn report(
         return Ok(HttpResponse::BadRequest().body("invalid aid"));
     }
 
-    let ip = req.peer_addr().map(|a| a.ip().to_string());
+    let ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .map(str::to_owned);
     let mods_snapshot = body
         .mods
         .as_ref()

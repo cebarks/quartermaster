@@ -170,9 +170,10 @@ pub async fn proxy_handler(
             }
 
             let client_ip = req
-                .peer_addr()
-                .map(|a| a.ip().to_string())
-                .unwrap_or_default();
+                .connection_info()
+                .realip_remote_addr()
+                .unwrap_or_default()
+                .to_owned();
             let body_size = resp_headers
                 .get("content-length")
                 .and_then(|v| v.to_str().ok())
