@@ -634,7 +634,8 @@ pub async fn catalog(
     }
 
     let Some((path, etag)) = state.catalog_cache.get() else {
-        tracing::warn!("convoy catalog requested but cache not yet built");
+        state.catalog_cache.invalidate();
+        tracing::warn!("convoy catalog requested but cache not yet built, triggered rebuild");
         return Ok(HttpResponse::ServiceUnavailable()
             .body("Convoy catalog is being built, try again shortly"));
     };
@@ -815,11 +816,15 @@ pub async fn single_mod_archive(
 }
 
 /// POST /quma/convoy/report — client sync report
+/// Accepts raw body instead of web::Json because SPT's PostJson may not set Content-Type.
 pub async fn report(
     req: HttpRequest,
     state: web::Data<AppState>,
-    body: web::Json<SyncReportRequest>,
+    body: String,
 ) -> actix_web::Result<HttpResponse> {
+    let body: SyncReportRequest =
+        serde_json::from_str(&body).map_err(actix_web::error::ErrorBadRequest)?;
+
     let valid_results = ["up_to_date", "updated", "failed"];
     if !valid_results.contains(&body.result.as_str()) {
         return Ok(HttpResponse::BadRequest().body("invalid result value"));
