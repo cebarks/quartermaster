@@ -128,7 +128,7 @@ pub fn generate_catalog(
 
     Ok(Catalog {
         spt_version,
-        quartermaster_version: env!("CARGO_PKG_VERSION").to_string(),
+        quartermaster_version: env!("QUMA_VERSION").to_string(),
         groups: catalog_groups,
         exclusions,
     })
