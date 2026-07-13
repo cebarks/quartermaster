@@ -874,6 +874,37 @@ pub async fn report(
     Ok(HttpResponse::Ok().json(serde_json::json!({"ok": true})))
 }
 
+/// POST /quma/convoy/rehash — force rehash all tracked client file checksums
+pub async fn rehash(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ConvoyManage)?;
+
+    if !crate::web::csrf::validate_token(
+        &session,
+        req.headers()
+            .get("x-csrf-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    ) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let cache = state.catalog_cache.clone();
+    web::block(move || cache.force_rehash())
+        .await
+        .map_err(WebError::from)?;
+
+    tracing::info!(user = %user.username, "convoy force rehash triggered");
+
+    set_flash(&session, "File checksums rehashed", FlashType::Success);
+    Ok(HttpResponse::Ok()
+        .json(serde_json::json!({"ok": true, "redirect": "/quma/convoy?tab=settings"})))
+}
+
 // ── Settings Tab ──────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]

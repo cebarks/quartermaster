@@ -26,3 +26,16 @@
 
     <button type="submit" class="btn btn-primary">Save Settings</button>
 </form>
+
+<hr>
+
+<h3>File Checksums</h3>
+<p class="text-muted text-sm">Rehash all tracked client-side mod files from disk. The catalog automatically rehashes files older than 30 minutes, but you can force it here if you've just updated mod files manually.</p>
+<button class="btn btn-secondary" id="rehash-btn"
+        hx-post="/quma/convoy/rehash"
+        hx-headers='{"x-csrf-token": "{{ csrf_token }}"}'
+        hx-swap="none"
+        hx-disabled-elt="this"
+        hx-on::after-request="if(event.detail.successful){window.location.href=event.detail.xhr.response&&JSON.parse(event.detail.xhr.response).redirect||'/quma/convoy?tab=settings'}">
+    Rehash File Checksums
+</button>
