@@ -217,6 +217,41 @@ impl ClientSupervisor {
             }
         }
 
+        // Proactive memory restart: restart idle clients whose memory exceeds the threshold.
+        // Only restarts clients that are Ready (not in a raid) to avoid disrupting players.
+        let threshold = headless_config.memory_restart_threshold;
+        if threshold > 0 {
+            let state_lock = self.state.read().await;
+            for s in state_lock.iter() {
+                if s.container_status != ContainerStatus::Running || s.restarting {
+                    continue;
+                }
+                if s.fika_status != Some(crate::spt::headless::EHeadlessStatus::Ready) {
+                    continue;
+                }
+                let Some(mem_mb) = s.memory_mb else {
+                    continue;
+                };
+                if mem_mb < threshold as f64 {
+                    continue;
+                }
+                let container_name = s.container_name.clone();
+                let mgr = self.container_mgr.clone();
+                tracing::warn!(
+                    container = %container_name,
+                    memory_mb = mem_mb as u64,
+                    threshold_mb = threshold,
+                    "Idle client exceeds memory threshold, restarting"
+                );
+                drop(state_lock);
+                if let Err(e) = mgr.restart(&container_name).await {
+                    tracing::error!(container = %container_name, err = %e, "Failed to restart for memory threshold");
+                }
+                // Only restart one per tick to avoid thundering herd
+                break;
+            }
+        }
+
         Ok(())
     }
 
@@ -332,6 +367,19 @@ impl ClientSupervisor {
             });
         }
 
+        // Query memory usage for running containers
+        if container_running {
+            if let Some(bytes) = self
+                .container_mgr
+                .container_memory_bytes(&container_name)
+                .await
+            {
+                state.memory_mb = Some(bytes as f64 / (1024.0 * 1024.0));
+            }
+        } else {
+            state.memory_mb = None;
+        }
+
         // Compute health
         state.health = compute_health(container_running, state.fika_status.clone(), server_up);
 
@@ -430,9 +478,9 @@ async fn exit_watcher_loop(
         // Bollard quirk: `wait_container` converts non-zero exit codes into
         // `Err(DockerContainerWaitError { code, error })`, so `Ok(response)`
         // only fires for exit code 0.
-        let (exit_code, is_clean_exit) = match wait_result {
+        let (exit_code, mut is_clean_exit) = match wait_result {
             Some(Ok(response)) => {
-                // Clean exit (code 0)
+                // Clean exit (code 0) — but may still be OOM killed
                 retry_delay = Duration::from_secs(1);
                 let code = response.status_code;
                 tracing::info!(
@@ -475,6 +523,17 @@ async fn exit_watcher_loop(
                 return;
             }
         };
+
+        // Check for OOM kill: the kernel kills the game process but the
+        // entrypoint exits cleanly (code 0). Without this check, OOM kills
+        // look like normal restarts and never trigger backoff.
+        if is_clean_exit && container_mgr.was_oom_killed(&container_name).await {
+            is_clean_exit = false;
+            tracing::warn!(
+                container = %container_name,
+                "Container was OOM killed (exit code 0 but OOMKilled=true)"
+            );
+        }
 
         // Update state with exit info
         let should_restart = {

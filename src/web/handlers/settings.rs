@@ -441,6 +441,10 @@ pub async fn save_headless_settings(
         server_ready_timeout: form.server_ready_timeout,
         use_upnp: form.use_upnp.is_some(),
         physical_cores_only: form.physical_cores_only.is_some(),
+        memory_restart_threshold: existing
+            .map(|h| h.memory_restart_threshold)
+            .unwrap_or(20_000),
+        numa_pin_memory: existing.map(|h| h.numa_pin_memory).unwrap_or(false),
     };
 
     config.headless = if form.install_dir.trim().is_empty() {
