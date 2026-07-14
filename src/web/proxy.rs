@@ -26,6 +26,16 @@ static HOP_BY_HOP_HEADERS: &[&str] = &[
     "transfer-encoding",
 ];
 
+fn is_auth_exempt(method: &actix_web::http::Method, path: &str) -> bool {
+    matches!(
+        (method, path),
+        (&actix_web::http::Method::POST, "/launcher/profile/register")
+            | (_, "/launcher/ping")
+            | (_, "/launcher/server/version")
+            | (_, "/launcher/server/loadedServerMods")
+    )
+}
+
 pub async fn proxy_handler(
     req: HttpRequest,
     mut payload: web::Payload,
@@ -33,6 +43,52 @@ pub async fn proxy_handler(
 ) -> actix_web::Result<HttpResponse> {
     if !state.config().proxy_enabled {
         return Err(actix_web::error::ErrorNotFound("proxy not enabled"));
+    }
+
+    if state.config().proxy_auth && !is_auth_exempt(req.method(), req.path()) {
+        let session_id = crate::web::raid_tracker::extract_session_id(&req).ok_or_else(|| {
+            tracing::warn!(
+                client_ip = %req.connection_info().realip_remote_addr().unwrap_or_default(),
+                path = %req.path(),
+                "proxy auth: missing or invalid session"
+            );
+            actix_web::error::ErrorUnauthorized("missing or invalid session")
+        })?;
+
+        let db = state.db.clone();
+        let user = web::block(move || {
+            let db = db.lock();
+            db.get_user_by_spt_profile_id(&session_id)
+        })
+        .await
+        .map_err(|e| {
+            tracing::error!(err = %e, "proxy auth: db lookup failed");
+            actix_web::error::ErrorInternalServerError("internal error")
+        })?
+        .map_err(|e| {
+            tracing::error!(err = %e, "proxy auth: query failed");
+            actix_web::error::ErrorInternalServerError("internal error")
+        })?;
+
+        match user {
+            Some(u) if u.disabled => {
+                tracing::warn!(
+                    username = %u.username,
+                    path = %req.path(),
+                    "proxy auth: disabled account"
+                );
+                return Err(actix_web::error::ErrorForbidden("account disabled"));
+            }
+            Some(_) => {}
+            None => {
+                tracing::warn!(
+                    client_ip = %req.connection_info().realip_remote_addr().unwrap_or_default(),
+                    path = %req.path(),
+                    "proxy auth: unknown profile"
+                );
+                return Err(actix_web::error::ErrorUnauthorized("unknown profile"));
+            }
+        }
     }
 
     // Detect WebSocket upgrade and delegate to the WS proxy handler
@@ -506,5 +562,29 @@ mod tests {
         let result = rewrite_backend_url(body, "tarkov.example.com").unwrap();
         let s = String::from_utf8(result).unwrap();
         assert_eq!(s, r#"{"backendUrl":"https://tarkov.example.com"}"#);
+    }
+
+    #[test]
+    fn auth_exempt_paths_include_register() {
+        assert!(is_auth_exempt(
+            &actix_web::http::Method::POST,
+            "/launcher/profile/register"
+        ));
+    }
+
+    #[test]
+    fn auth_exempt_paths_include_ping() {
+        assert!(is_auth_exempt(
+            &actix_web::http::Method::GET,
+            "/launcher/ping"
+        ));
+    }
+
+    #[test]
+    fn non_exempt_path_requires_auth() {
+        assert!(!is_auth_exempt(
+            &actix_web::http::Method::POST,
+            "/client/match/local/start"
+        ));
     }
 }
