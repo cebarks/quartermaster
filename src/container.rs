@@ -338,6 +338,36 @@ impl ContainerManager {
         Ok(response.id)
     }
 
+    /// Query current memory usage (RSS) of a running container, in bytes.
+    /// Returns None if the container is not running or stats are unavailable.
+    pub async fn container_memory_bytes(&self, container: &str) -> Option<u64> {
+        use futures_util::StreamExt;
+        let mut stream = self.docker.stats(
+            container,
+            Some(
+                bollard::query_parameters::StatsOptionsBuilder::default()
+                    .stream(false)
+                    .one_shot(true)
+                    .build(),
+            ),
+        );
+        if let Some(Ok(stats)) = stream.next().await {
+            stats.memory_stats?.usage
+        } else {
+            None
+        }
+    }
+
+    /// Check if a stopped container was OOM killed.
+    pub async fn was_oom_killed(&self, container: &str) -> bool {
+        self.inspect(container)
+            .await
+            .ok()
+            .and_then(|info| info.state)
+            .and_then(|state| state.oom_killed)
+            .unwrap_or(false)
+    }
+
     pub async fn remove_container(&self, container: &str) -> Result<()> {
         tracing::debug!(container, "removing container");
         self.docker

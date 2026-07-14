@@ -305,6 +305,10 @@ fn default_server_ready_timeout() -> u64 {
     120
 }
 
+fn default_memory_restart_threshold() -> u64 {
+    20_000
+}
+
 fn default_server_image() -> String {
     crate::container::SPT_SERVER_IMAGE.to_string()
 }
@@ -608,6 +612,8 @@ pub struct HeadlessConfig {
     pub use_upnp: bool,
     #[serde(default)]
     pub physical_cores_only: bool,
+    #[serde(default = "default_memory_restart_threshold")]
+    pub memory_restart_threshold: u64,
 }
 
 impl Default for HeadlessConfig {
@@ -630,6 +636,7 @@ impl Default for HeadlessConfig {
             server_ready_timeout: 120,
             use_upnp: false,
             physical_cores_only: false,
+            memory_restart_threshold: default_memory_restart_threshold(),
         }
     }
 }
