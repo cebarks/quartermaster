@@ -606,6 +606,8 @@ pub struct HeadlessConfig {
     pub numa_auto: bool,
     #[serde(default)]
     pub numa_node: Option<u32>,
+    #[serde(default)]
+    pub numa_pin_memory: bool,
     #[serde(default = "default_server_ready_timeout")]
     pub server_ready_timeout: u64,
     #[serde(default)]
@@ -633,6 +635,7 @@ impl Default for HeadlessConfig {
             fsync: false,
             numa_auto: false,
             numa_node: None,
+            numa_pin_memory: false,
             server_ready_timeout: 120,
             use_upnp: false,
             physical_cores_only: false,
