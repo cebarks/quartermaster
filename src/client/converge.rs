@@ -1231,6 +1231,12 @@ async fn remove_excess_clients(
 /// 3. Global numa_auto round-robin (0-based client_index % node_count)
 /// 4. Global numa_node
 /// 5. Unpinned (None, None)
+///
+/// Cases 2-4 only pin CPUs, not memory. Pinning memory to a single NUMA
+/// node creates a hard ceiling (~64GB on typical hardware) that triggers
+/// CONSTRAINT_CPUSET OOM kills when the EFT process leaks past it. The
+/// kernel's default NUMA policy already prefers the local node for new
+/// allocations, so CPU pinning alone provides most of the locality benefit.
 fn resolve_numa_cpuset(
     headless_config: &HeadlessConfig,
     client_index: usize,
@@ -1238,20 +1244,20 @@ fn resolve_numa_cpuset(
 ) -> Result<(Option<String>, Option<String>)> {
     let client_def = headless_config.clients.get(client_index);
 
-    // 1. Raw cpuset override
+    // 1. Raw cpuset override — explicit user choice, respect both fields
     if let Some(def) = client_def {
         if def.cpuset_cpus.is_some() || def.cpuset_mems.is_some() {
             return Ok((def.cpuset_cpus.clone(), def.cpuset_mems.clone()));
         }
     }
 
-    // 2. Per-client numa_node
+    // 2. Per-client numa_node — pin CPUs only
     if let Some(node) = client_def.and_then(|d| d.numa_node) {
-        let (cpus, mems) = topology.cpuset_for_node(node)?;
-        return Ok((Some(cpus), Some(mems)));
+        let (cpus, _mems) = topology.cpuset_for_node(node)?;
+        return Ok((Some(cpus), None));
     }
 
-    // 3. Global numa_auto round-robin
+    // 3. Global numa_auto round-robin — pin CPUs only
     if headless_config.numa_auto {
         if topology.is_empty() {
             tracing::warn!("numa_auto enabled but no NUMA nodes detected — proceeding unpinned");
@@ -1259,14 +1265,14 @@ fn resolve_numa_cpuset(
         }
         let node_ids = topology.node_ids();
         let node = node_ids[client_index % node_ids.len()];
-        let (cpus, mems) = topology.cpuset_for_node(node)?;
-        return Ok((Some(cpus), Some(mems)));
+        let (cpus, _mems) = topology.cpuset_for_node(node)?;
+        return Ok((Some(cpus), None));
     }
 
-    // 4. Global numa_node
+    // 4. Global numa_node — pin CPUs only
     if let Some(node) = headless_config.numa_node {
-        let (cpus, mems) = topology.cpuset_for_node(node)?;
-        return Ok((Some(cpus), Some(mems)));
+        let (cpus, _mems) = topology.cpuset_for_node(node)?;
+        return Ok((Some(cpus), None));
     }
 
     // 5. Unpinned
@@ -1748,7 +1754,7 @@ mod tests {
         let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
         let (cpus, mems) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
         assert_eq!(cpus, Some("8-15".to_string()));
-        assert_eq!(mems, Some("1".to_string()));
+        assert_eq!(mems, None); // memory not pinned — avoids per-node OOM ceiling
     }
 
     #[test]
@@ -1771,11 +1777,11 @@ mod tests {
         let (cpus2, mems2) = resolve_numa_cpuset(&h, 2, &topo).unwrap();
 
         assert_eq!(cpus0, Some("0-7".to_string()));
-        assert_eq!(mems0, Some("0".to_string()));
+        assert_eq!(mems0, None); // memory not pinned — avoids per-node OOM ceiling
         assert_eq!(cpus1, Some("8-15".to_string()));
-        assert_eq!(mems1, Some("1".to_string()));
+        assert_eq!(mems1, None);
         assert_eq!(cpus2, Some("0-7".to_string())); // wraps around
-        assert_eq!(mems2, Some("0".to_string()));
+        assert_eq!(mems2, None);
     }
 
     #[test]
@@ -1805,7 +1811,7 @@ mod tests {
         let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
         let (cpus, mems) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
         assert_eq!(cpus, Some("8-15".to_string()));
-        assert_eq!(mems, Some("1".to_string()));
+        assert_eq!(mems, None); // memory not pinned — avoids per-node OOM ceiling
     }
 
     #[test]
@@ -1839,15 +1845,15 @@ mod tests {
         crate::numa::tests::mock_sysfs(tmp.path(), &[(0, "0-7"), (1, "8-15")]);
         let topo = crate::numa::NumaTopology::detect_from(tmp.path()).unwrap();
 
-        // Client 0 has explicit node 1
+        // Client 0 has explicit node 1 — CPU pinned, memory unpinned
         let (cpus0, mems0) = resolve_numa_cpuset(&h, 0, &topo).unwrap();
         assert_eq!(cpus0, Some("8-15".to_string()));
-        assert_eq!(mems0, Some("1".to_string()));
+        assert_eq!(mems0, None);
 
         // Client 1 gets auto round-robin (0-based index 1 % 2 = node 1)
         let (cpus1, mems1) = resolve_numa_cpuset(&h, 1, &topo).unwrap();
         assert_eq!(cpus1, Some("8-15".to_string()));
-        assert_eq!(mems1, Some("1".to_string()));
+        assert_eq!(mems1, None);
     }
 
     #[test]
