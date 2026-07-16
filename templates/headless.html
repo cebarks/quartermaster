@@ -26,6 +26,11 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-sm">Force Converge</button>
             </form>
+            <form method="post" action="/quma/headless/rebuild" style="display:inline"
+                  onsubmit="return confirm('Rebuild all headless clients? This will destroy and recreate all containers and overlays.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-danger">Rebuild All</button>
+            </form>
         </div>
         {% endif %}
     </div>
