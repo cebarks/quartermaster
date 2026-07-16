@@ -26,7 +26,6 @@ pub struct SyncReport {
     pub errors: usize,
 }
 
-#[allow(dead_code)] // ponytail: used in task 2+
 #[derive(Debug, Clone)]
 pub enum HeadlessSyncScope {
     /// Reconcile one mod and all its addons.
@@ -40,7 +39,6 @@ pub enum HeadlessSyncScope {
 ///
 /// - `Mod(id)`: after a single mod/addon operation in ops.rs
 /// - `Full`: during convergence
-#[allow(dead_code)] // ponytail: used in task 2+
 #[allow(deprecated)]
 pub fn sync_headless(
     db: &Database,
