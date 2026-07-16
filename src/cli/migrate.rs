@@ -49,9 +49,14 @@ pub async fn run(dry_run: bool, cli: &crate::cli::Cli) -> Result<()> {
     let spt_dest = root.join("spt-server");
     std::fs::create_dir_all(&spt_dest)?;
 
-    // Move SPT directories into spt-server/
-    move_dir(&root.join("SPT"), &spt_dest.join("SPT"))?;
-    move_dir(&root.join("BepInEx"), &spt_dest.join("BepInEx"))?;
+    // Move all non-quma entries into spt-server/
+    for entry in std::fs::read_dir(&root)?.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !is_quma_owned(&name_str) {
+            move_entry(&entry.path(), &spt_dest.join(&name))?;
+        }
+    }
 
     // Flatten quma internal dirs
     flatten_quma_dirs(&root)?;
@@ -93,11 +98,44 @@ fn resolve_legacy_root(cli: &crate::cli::Cli) -> Result<PathBuf> {
     bail!("Could not find legacy SPT directory. Pass --quma-dir or set QUMA_DIR.")
 }
 
+// Files/dirs that stay at root (quma-owned). Everything else is SPT server
+// runtime and moves into spt-server/.
+const QUMA_OWNED: &[&str] = &[
+    "quartermaster.db",
+    "quartermaster.db-shm",
+    "quartermaster.db-wal",
+    "quartermaster.toml",
+    "quma-cert.pem",
+    "quma-key.pem",
+    "quartermaster",
+    ".quartermaster",
+    "quartermaster-cache",
+    "backups",
+    "logs",
+    "spt-server",
+    ".migration-in-progress",
+    // dev/editor artifacts
+    ".claude",
+    ".mcp.json",
+    "CLAUDE.md",
+    "docs",
+];
+
+fn is_quma_owned(name: &str) -> bool {
+    QUMA_OWNED.contains(&name) || name.starts_with("quartermaster.db.bak") || name.starts_with('.')
+}
+
 fn plan_moves(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
-    let mut moves = vec![
-        (root.join("SPT"), root.join("spt-server/SPT")),
-        (root.join("BepInEx"), root.join("spt-server/BepInEx")),
-    ];
+    let mut moves = Vec::new();
+
+    // Move all non-quma entries into spt-server/
+    for entry in std::fs::read_dir(root)?.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !is_quma_owned(&name_str) {
+            moves.push((entry.path(), root.join("spt-server").join(&name)));
+        }
+    }
 
     // Flatten quartermaster/ subdirs
     let qm = root.join("quartermaster");
@@ -108,7 +146,6 @@ fn plan_moves(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
                 moves.push((src, root.join(name)));
             }
         }
-        // backups special case
         let backups = qm.join("backups");
         if backups.exists() {
             moves.push((backups, root.join("backups")));
@@ -130,12 +167,26 @@ fn plan_moves(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
     Ok(moves)
 }
 
-fn move_dir(src: &Path, dst: &Path) -> Result<()> {
+fn move_entry(src: &Path, dst: &Path) -> Result<()> {
     if !src.exists() {
         return Ok(());
     }
-    std::fs::rename(src, dst)
-        .with_context(|| format!("failed to move {} → {} (cross-filesystem moves not supported — both must be on the same filesystem)", src.display(), dst.display()))
+    match std::fs::rename(src, dst) {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(17) && src.is_dir() && dst.is_dir() => {
+            // EEXIST — destination dir already exists, merge contents
+            for child in std::fs::read_dir(src)?.flatten() {
+                let child_dst = dst.join(child.file_name());
+                move_entry(&child.path(), &child_dst)?;
+            }
+            let _ = std::fs::remove_dir(src);
+            Ok(())
+        }
+        Err(e) => Err(e).with_context(|| format!(
+            "failed to move {} → {} (cross-filesystem moves not supported — both must be on the same filesystem)",
+            src.display(), dst.display()
+        )),
+    }
 }
 
 fn flatten_quma_dirs(root: &Path) -> Result<()> {
@@ -144,7 +195,7 @@ fn flatten_quma_dirs(root: &Path) -> Result<()> {
         for name in [".staging", "config-history", "disabled", "backups"] {
             let src = qm.join(name);
             if src.exists() {
-                move_dir(&src, &root.join(name))?;
+                move_entry(&src, &root.join(name))?;
             }
         }
         // Remove empty quartermaster/ dir
@@ -153,13 +204,13 @@ fn flatten_quma_dirs(root: &Path) -> Result<()> {
 
     let dotqm_queued = root.join(".quartermaster/queued");
     if dotqm_queued.exists() {
-        move_dir(&dotqm_queued, &root.join("queued"))?;
+        move_entry(&dotqm_queued, &root.join("queued"))?;
         let _ = std::fs::remove_dir(root.join(".quartermaster"));
     }
 
     let old_cache = root.join("quartermaster-cache");
     if old_cache.exists() {
-        move_dir(&old_cache, &root.join("cache"))?;
+        move_entry(&old_cache, &root.join("cache"))?;
     }
 
     Ok(())
@@ -205,7 +256,7 @@ fn migrate_headless(root: &Path) -> Result<()> {
                 }
             };
             let dest = overlay_dest.join(format!("client-{index}"));
-            move_dir(&entry.path(), &dest)?;
+            move_entry(&entry.path(), &dest)?;
         }
         let _ = std::fs::remove_dir_all(old_install_dir.join(".quma"));
     }
@@ -213,7 +264,7 @@ fn migrate_headless(root: &Path) -> Result<()> {
     // Move headless install dir contents
     for entry in std::fs::read_dir(old_install_dir)?.flatten() {
         let name = entry.file_name();
-        move_dir(&entry.path(), &headless_dest.join(&name))?;
+        move_entry(&entry.path(), &headless_dest.join(&name))?;
     }
 
     println!(
@@ -245,15 +296,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_moves_includes_spt_dirs() {
+    fn plan_moves_all_non_quma_files_to_spt_server() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
         std::fs::create_dir_all(root.join("SPT/user/mods")).expect("mkdir");
         std::fs::create_dir_all(root.join("BepInEx/plugins")).expect("mkdir");
+        std::fs::create_dir_all(root.join("EscapeFromTarkov_Data")).expect("mkdir");
+        std::fs::write(root.join("Greed.exe"), "").expect("write");
+        std::fs::write(root.join("doorstop_config.ini"), "").expect("write");
+        std::fs::write(root.join("winhttp.dll"), "").expect("write");
+        // quma-owned files that should NOT move
+        std::fs::write(root.join("quartermaster.db"), "").expect("write");
+        std::fs::write(root.join("quartermaster.toml"), "").expect("write");
 
         let moves = plan_moves(root).expect("plan_moves");
-        assert!(moves.iter().any(|(s, _)| s == &root.join("SPT")));
-        assert!(moves.iter().any(|(s, _)| s == &root.join("BepInEx")));
+
+        // SPT runtime files move into spt-server/
+        for name in [
+            "SPT",
+            "BepInEx",
+            "EscapeFromTarkov_Data",
+            "Greed.exe",
+            "doorstop_config.ini",
+            "winhttp.dll",
+        ] {
+            assert!(
+                moves.iter().any(|(s, d)| s == &root.join(name) && d == &root.join("spt-server").join(name)),
+                "{name} should be moved to spt-server/"
+            );
+        }
+
+        // quma-owned files stay put
+        for name in ["quartermaster.db", "quartermaster.toml"] {
+            assert!(
+                !moves.iter().any(|(s, _)| s == &root.join(name)),
+                "{name} should NOT be moved"
+            );
+        }
     }
 
     #[test]
@@ -284,5 +363,13 @@ mod tests {
         assert!(moves
             .iter()
             .any(|(s, d)| s == &root.join("quartermaster-cache") && d == &root.join("cache")));
+    }
+
+    #[test]
+    fn dotfiles_are_quma_owned() {
+        assert!(is_quma_owned(".claude"));
+        assert!(is_quma_owned(".mcp.json"));
+        assert!(is_quma_owned(".quartermaster"));
+        assert!(is_quma_owned("quartermaster.db.bak-20260628-135941"));
     }
 }
