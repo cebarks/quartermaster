@@ -2,6 +2,10 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::config::Config;
+use crate::db::Database;
+use crate::dirs::QumaDirs;
+
 /// A "client file" is anything that belongs in the game client install —
 /// everything EXCEPT server-side mods (`SPT/user/mods/`) and BepInEx config
 /// (per-client overlay).
@@ -20,6 +24,115 @@ pub struct SyncReport {
     pub copied: usize,
     pub removed: usize,
     pub errors: usize,
+}
+
+#[allow(dead_code)] // ponytail: used in task 2+
+#[derive(Debug, Clone)]
+pub enum HeadlessSyncScope {
+    /// Reconcile one mod and all its addons.
+    Mod(i64),
+    /// Full reconcile — all mods and all addons.
+    Full,
+}
+
+/// Unified headless mod sync. Reads the DB, computes desired file state,
+/// and syncs client files to the headless install directory.
+///
+/// - `Mod(id)`: after a single mod/addon operation in ops.rs
+/// - `Full`: during convergence
+#[allow(dead_code)] // ponytail: used in task 2+
+#[allow(deprecated)]
+pub fn sync_headless(
+    db: &Database,
+    config: &Config,
+    dirs: &QumaDirs,
+    scope: HeadlessSyncScope,
+) -> Result<()> {
+    let install_dir = match config.headless.as_ref().map(|h| &h.install_dir) {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => return Ok(()),
+    };
+
+    let mut active_files: Vec<String> = Vec::new();
+    let mut excluded_files: Vec<String> = Vec::new();
+
+    let mods = match &scope {
+        HeadlessSyncScope::Mod(mod_id) => match db.get_mod(*mod_id)? {
+            Some(m) => vec![m],
+            None => return Ok(()),
+        },
+        HeadlessSyncScope::Full => db.list_mods()?,
+    };
+
+    for m in &mods {
+        let mod_excluded = m.disabled || crate::ops::is_excluded_from_headless(db, m.id);
+
+        let files = db.get_files_for_mod(m.id)?;
+        for f in files {
+            if !is_client_file(&f.file_path) {
+                continue;
+            }
+            if mod_excluded {
+                excluded_files.push(f.file_path);
+            } else {
+                active_files.push(f.file_path);
+            }
+        }
+
+        let addons = db.list_addons_for_mod(m.id)?;
+        for addon in &addons {
+            let addon_excluded = mod_excluded || addon.disabled;
+            let addon_files = db.get_files_for_addon(addon.id)?;
+            for f in addon_files {
+                if !is_client_file(&f.file_path) {
+                    continue;
+                }
+                if addon_excluded {
+                    excluded_files.push(f.file_path);
+                } else {
+                    active_files.push(f.file_path);
+                }
+            }
+        }
+    }
+
+    // Remove excluded files first
+    if !excluded_files.is_empty() {
+        let report = sync_client_files_to_headless(
+            &dirs.spt_server,
+            install_dir,
+            &excluded_files,
+            SyncOp::Remove,
+        )?;
+        if report.removed > 0 {
+            tracing::info!(
+                removed = report.removed,
+                errors = report.errors,
+                "Removed {} excluded/disabled mod files from headless",
+                report.removed
+            );
+        }
+    }
+
+    // Copy active files
+    if !active_files.is_empty() {
+        let report = sync_client_files_to_headless(
+            &dirs.spt_server,
+            install_dir,
+            &active_files,
+            SyncOp::Install,
+        )?;
+        if report.copied > 0 {
+            tracing::info!(
+                copied = report.copied,
+                errors = report.errors,
+                "Synced {} client-side mod files to headless",
+                report.copied
+            );
+        }
+    }
+
+    Ok(())
 }
 
 pub fn sync_client_files_to_headless(
@@ -317,5 +430,198 @@ mod tests {
             .path()
             .join("BepInEx/patchers/MyPatcher/patcher.dll")
             .exists());
+    }
+
+    #[test]
+    fn sync_headless_scoped_syncs_mod_and_addon_files() {
+        let spt = tempfile::tempdir().unwrap();
+        let headless = tempfile::tempdir().unwrap();
+
+        let db = crate::db::Database::open_in_memory().unwrap();
+
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/TestMod/mod.dll",
+            Some("aaa"),
+            Some(100),
+        )
+        .unwrap();
+
+        let addon_id = db
+            .insert_addon(100, mod_id, 300, "TestAddon", None, "1.0.0", None)
+            .unwrap();
+        db.insert_addon_file(
+            addon_id,
+            "BepInEx/plugins/TestAddon/addon.dll",
+            Some("bbb"),
+            Some(50),
+        )
+        .unwrap();
+
+        // Create source files on disk
+        let mod_dir = spt.path().join("BepInEx/plugins/TestMod");
+        fs::create_dir_all(&mod_dir).unwrap();
+        fs::write(mod_dir.join("mod.dll"), b"mod-content").unwrap();
+
+        let addon_dir = spt.path().join("BepInEx/plugins/TestAddon");
+        fs::create_dir_all(&addon_dir).unwrap();
+        fs::write(addon_dir.join("addon.dll"), b"addon-content").unwrap();
+
+        let dirs = crate::dirs::QumaDirs::from_legacy(spt.path().to_path_buf());
+        let mut config = crate::config::Config::default();
+        config.headless = Some(crate::config::HeadlessConfig {
+            install_dir: headless.path().to_path_buf(),
+            ..Default::default()
+        });
+
+        sync_headless(&db, &config, &dirs, HeadlessSyncScope::Mod(mod_id)).unwrap();
+
+        assert!(headless
+            .path()
+            .join("BepInEx/plugins/TestMod/mod.dll")
+            .exists());
+        assert_eq!(
+            fs::read(headless.path().join("BepInEx/plugins/TestMod/mod.dll")).unwrap(),
+            b"mod-content"
+        );
+        assert!(headless
+            .path()
+            .join("BepInEx/plugins/TestAddon/addon.dll")
+            .exists());
+        assert_eq!(
+            fs::read(headless.path().join("BepInEx/plugins/TestAddon/addon.dll")).unwrap(),
+            b"addon-content"
+        );
+    }
+
+    #[test]
+    fn sync_headless_scoped_removes_disabled_addon_files() {
+        let spt = tempfile::tempdir().unwrap();
+        let headless = tempfile::tempdir().unwrap();
+
+        let db = crate::db::Database::open_in_memory().unwrap();
+
+        let mod_id = db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .unwrap();
+
+        let addon_id = db
+            .insert_addon(100, mod_id, 300, "DisabledAddon", None, "1.0.0", None)
+            .unwrap();
+        db.set_addon_disabled(addon_id, true).unwrap();
+        db.insert_addon_file(
+            addon_id,
+            "BepInEx/plugins/DisabledAddon/addon.dll",
+            Some("ccc"),
+            Some(100),
+        )
+        .unwrap();
+
+        // Pre-populate headless with the addon file
+        let headless_plugin = headless.path().join("BepInEx/plugins/DisabledAddon");
+        fs::create_dir_all(&headless_plugin).unwrap();
+        fs::write(headless_plugin.join("addon.dll"), b"old").unwrap();
+
+        let dirs = crate::dirs::QumaDirs::from_legacy(spt.path().to_path_buf());
+        let mut config = crate::config::Config::default();
+        config.headless = Some(crate::config::HeadlessConfig {
+            install_dir: headless.path().to_path_buf(),
+            ..Default::default()
+        });
+
+        sync_headless(&db, &config, &dirs, HeadlessSyncScope::Mod(mod_id)).unwrap();
+
+        assert!(
+            !headless
+                .path()
+                .join("BepInEx/plugins/DisabledAddon/addon.dll")
+                .exists(),
+            "disabled addon file should be removed from headless"
+        );
+    }
+
+    #[test]
+    fn sync_headless_full_syncs_all_mods_and_addons() {
+        let spt = tempfile::tempdir().unwrap();
+        let headless = tempfile::tempdir().unwrap();
+
+        let db = crate::db::Database::open_in_memory().unwrap();
+
+        // Mod A with addon
+        let mod_a = db
+            .insert_mod(Some(100), Some(200), "ModA", None, "1.0.0", "forge", None)
+            .unwrap();
+        db.insert_file(mod_a, "BepInEx/plugins/ModA/a.dll", Some("aaa"), Some(100))
+            .unwrap();
+        let addon_a = db
+            .insert_addon(100, mod_a, 300, "AddonA", None, "1.0.0", None)
+            .unwrap();
+        db.insert_addon_file(
+            addon_a,
+            "BepInEx/plugins/AddonA/aa.dll",
+            Some("bbb"),
+            Some(50),
+        )
+        .unwrap();
+
+        // Mod B (disabled) with file already in headless
+        let mod_b = db
+            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .unwrap();
+        db.insert_file(mod_b, "BepInEx/plugins/ModB/b.dll", Some("ccc"), Some(100))
+            .unwrap();
+        db.set_mod_disabled(mod_b, true).unwrap();
+
+        // Create source files
+        for (dir, file, content) in [
+            ("BepInEx/plugins/ModA", "a.dll", b"mod-a" as &[u8]),
+            ("BepInEx/plugins/AddonA", "aa.dll", b"addon-a"),
+        ] {
+            let d = spt.path().join(dir);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join(file), content).unwrap();
+        }
+
+        // Pre-populate headless with disabled mod's file
+        let disabled_dir = headless.path().join("BepInEx/plugins/ModB");
+        fs::create_dir_all(&disabled_dir).unwrap();
+        fs::write(disabled_dir.join("b.dll"), b"stale").unwrap();
+
+        let dirs = crate::dirs::QumaDirs::from_legacy(spt.path().to_path_buf());
+        let mut config = crate::config::Config::default();
+        config.headless = Some(crate::config::HeadlessConfig {
+            install_dir: headless.path().to_path_buf(),
+            ..Default::default()
+        });
+
+        sync_headless(&db, &config, &dirs, HeadlessSyncScope::Full).unwrap();
+
+        // Active mod + addon synced
+        assert!(headless.path().join("BepInEx/plugins/ModA/a.dll").exists());
+        assert!(headless
+            .path()
+            .join("BepInEx/plugins/AddonA/aa.dll")
+            .exists());
+        // Disabled mod's file removed
+        assert!(!headless.path().join("BepInEx/plugins/ModB/b.dll").exists());
     }
 }
