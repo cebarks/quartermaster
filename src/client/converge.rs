@@ -59,23 +59,14 @@ fn is_fika_headless_present(install_dir: &Path) -> bool {
         .is_file()
 }
 
-/// Ensure the Fika.Headless plugin is installed in the headless install directory.
+/// Ensure the Fika.Headless plugin is installed and up-to-date.
 ///
 /// Unlike Fika.Core (which is on Forge and synced via normal mod sync),
-/// Fika.Headless is distributed via GitHub releases only.
-/// ponytail: presence-only check, no version/hash tracking — if Fika.Core
-/// updates via mod sync, Fika.Headless stays at first-install version.
-/// Add hash comparison against GitHub latest if version drift causes issues.
+/// Fika.Headless is distributed via GitHub releases only. This function
+/// checks a version marker file against the latest GitHub release tag
+/// and re-downloads when they differ or the DLL is missing.
 async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result<()> {
-    if is_fika_headless_present(install_dir) {
-        debug!("Fika.Headless already present in {}", install_dir.display());
-        return Ok(());
-    }
-
-    info!(
-        "Fika.Headless not found in {}. Downloading from GitHub...",
-        install_dir.display()
-    );
+    let marker_path = install_dir.join(".fika-headless-version");
 
     let release: serde_json::Value = forge
         .get_external_json(&format!(
@@ -84,7 +75,28 @@ async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result
         .await
         .context("failed to query GitHub for Fika.Headless releases")?;
 
-    let tag = release["tag_name"].as_str().unwrap_or("unknown");
+    let latest_tag = release["tag_name"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Check if already up-to-date: marker matches AND DLL exists
+    if is_fika_headless_present(install_dir) {
+        if let Ok(installed_tag) = std::fs::read_to_string(&marker_path) {
+            if installed_tag.trim() == latest_tag {
+                debug!(
+                    "Fika.Headless {latest_tag} already installed in {}",
+                    install_dir.display()
+                );
+                return Ok(());
+            }
+            info!(
+                "Fika.Headless version changed: {} → {latest_tag}",
+                installed_tag.trim()
+            );
+        }
+    }
+
     let asset = release["assets"]
         .as_array()
         .and_then(|a| a.first())
@@ -93,7 +105,7 @@ async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("Fika.Headless asset has no download URL"))?;
 
-    info!("Downloading Fika.Headless {tag}...");
+    info!("Downloading Fika.Headless {latest_tag}...");
 
     let tmp_file = tempfile::NamedTempFile::new().context("failed to create temp file")?;
     forge
@@ -104,7 +116,18 @@ async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result
     crate::spt::mods::extract_mod(tmp_file.path(), install_dir)
         .context("failed to extract Fika.Headless archive")?;
 
-    info!("Fika.Headless {tag} installed to {}", install_dir.display());
+    // Write version marker after successful install
+    std::fs::write(&marker_path, &latest_tag).with_context(|| {
+        format!(
+            "failed to write version marker at {}",
+            marker_path.display()
+        )
+    })?;
+
+    info!(
+        "Fika.Headless {latest_tag} installed to {}",
+        install_dir.display()
+    );
     Ok(())
 }
 
@@ -651,81 +674,6 @@ pub fn find_name_conflicts(
     conflicts
 }
 
-/// Reconcile client-side mod files into the headless install directory.
-///
-/// Reads the mod list and file lists from the database (briefly), then:
-/// 1. Removes client-side files belonging to excluded or disabled mods
-/// 2. Copies any missing or stale client-side files for active mods
-///
-/// Skips Fika-managed directories.
-fn reconcile_headless_mods(
-    db: &Arc<Mutex<crate::db::Database>>,
-    _config: &crate::config::Config,
-    dirs: &QumaDirs,
-    install_dir: &Path,
-) -> anyhow::Result<()> {
-    let mut all_client_files: Vec<String> = Vec::new();
-    let mut excluded_client_files: Vec<String> = Vec::new();
-    {
-        let db = db.lock();
-        let mods = db.list_mods()?;
-        for m in &mods {
-            let files = db.get_files_for_mod(m.id)?;
-            let client_files: Vec<String> = files
-                .into_iter()
-                .filter(|f| crate::headless_sync::is_client_file(&f.file_path))
-                .map(|f| f.file_path)
-                .collect();
-
-            if m.disabled || crate::ops::is_excluded_from_headless(&db, m.id) {
-                excluded_client_files.extend(client_files);
-            } else {
-                all_client_files.extend(client_files);
-            }
-        }
-    }
-
-    if !excluded_client_files.is_empty() {
-        let report = crate::headless_sync::sync_client_files_to_headless(
-            &dirs.spt_server,
-            install_dir,
-            &excluded_client_files,
-            crate::headless_sync::SyncOp::Remove,
-        )?;
-        if report.removed > 0 {
-            info!(
-                removed = report.removed,
-                errors = report.errors,
-                "Removed {} excluded/disabled mod files from headless install",
-                report.removed
-            );
-        }
-    }
-
-    if all_client_files.is_empty() {
-        debug!("No client-side mod files to reconcile for headless");
-        return Ok(());
-    }
-
-    let report = crate::headless_sync::sync_client_files_to_headless(
-        &dirs.spt_server,
-        install_dir,
-        &all_client_files,
-        crate::headless_sync::SyncOp::Install,
-    )?;
-
-    if report.copied > 0 {
-        info!(
-            copied = report.copied,
-            errors = report.errors,
-            "Reconciled {} client-side mod files to headless install",
-            report.copied
-        );
-    }
-
-    Ok(())
-}
-
 /// Main convergence function: reconcile desired client count with actual state.
 ///
 /// This function:
@@ -830,10 +778,17 @@ pub async fn converge(
     // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge)
     ensure_fika_headless(forge, &headless_config.install_dir).await?;
 
-    // Reconcile headless mod files on every convergence (not just scale-up)
-    // This catches drift from manual changes or group config updates
-    if let Err(e) = reconcile_headless_mods(db, config, dirs, &headless_config.install_dir) {
-        warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
+    // Reconcile headless mod files on every convergence
+    {
+        let db = db.lock();
+        if let Err(e) = crate::headless_sync::sync_headless(
+            &db,
+            config,
+            dirs,
+            crate::headless_sync::HeadlessSyncScope::Full,
+        ) {
+            warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
+        }
     }
 
     // Scale up or down
@@ -1486,6 +1441,29 @@ mod tests {
     use super::*;
     use crate::config::HeadlessClientDef;
     use std::collections::HashSet;
+
+    #[test]
+    fn fika_headless_version_marker_written_and_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker_path = tmp.path().join(".fika-headless-version");
+
+        // No marker file yet
+        assert!(!marker_path.exists());
+
+        // Write a marker
+        std::fs::write(&marker_path, "v2.1.3").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&marker_path).unwrap().trim(),
+            "v2.1.3"
+        );
+
+        // Overwrite with new version
+        std::fs::write(&marker_path, "v2.2.0").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&marker_path).unwrap().trim(),
+            "v2.2.0"
+        );
+    }
 
     #[test]
     fn discover_new_profiles_finds_diff() {
