@@ -651,81 +651,6 @@ pub fn find_name_conflicts(
     conflicts
 }
 
-/// Reconcile client-side mod files into the headless install directory.
-///
-/// Reads the mod list and file lists from the database (briefly), then:
-/// 1. Removes client-side files belonging to excluded or disabled mods
-/// 2. Copies any missing or stale client-side files for active mods
-///
-/// Skips Fika-managed directories.
-fn reconcile_headless_mods(
-    db: &Arc<Mutex<crate::db::Database>>,
-    _config: &crate::config::Config,
-    dirs: &QumaDirs,
-    install_dir: &Path,
-) -> anyhow::Result<()> {
-    let mut all_client_files: Vec<String> = Vec::new();
-    let mut excluded_client_files: Vec<String> = Vec::new();
-    {
-        let db = db.lock();
-        let mods = db.list_mods()?;
-        for m in &mods {
-            let files = db.get_files_for_mod(m.id)?;
-            let client_files: Vec<String> = files
-                .into_iter()
-                .filter(|f| crate::headless_sync::is_client_file(&f.file_path))
-                .map(|f| f.file_path)
-                .collect();
-
-            if m.disabled || crate::ops::is_excluded_from_headless(&db, m.id) {
-                excluded_client_files.extend(client_files);
-            } else {
-                all_client_files.extend(client_files);
-            }
-        }
-    }
-
-    if !excluded_client_files.is_empty() {
-        let report = crate::headless_sync::sync_client_files_to_headless(
-            &dirs.spt_server,
-            install_dir,
-            &excluded_client_files,
-            crate::headless_sync::SyncOp::Remove,
-        )?;
-        if report.removed > 0 {
-            info!(
-                removed = report.removed,
-                errors = report.errors,
-                "Removed {} excluded/disabled mod files from headless install",
-                report.removed
-            );
-        }
-    }
-
-    if all_client_files.is_empty() {
-        debug!("No client-side mod files to reconcile for headless");
-        return Ok(());
-    }
-
-    let report = crate::headless_sync::sync_client_files_to_headless(
-        &dirs.spt_server,
-        install_dir,
-        &all_client_files,
-        crate::headless_sync::SyncOp::Install,
-    )?;
-
-    if report.copied > 0 {
-        info!(
-            copied = report.copied,
-            errors = report.errors,
-            "Reconciled {} client-side mod files to headless install",
-            report.copied
-        );
-    }
-
-    Ok(())
-}
-
 /// Main convergence function: reconcile desired client count with actual state.
 ///
 /// This function:
@@ -830,10 +755,17 @@ pub async fn converge(
     // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge)
     ensure_fika_headless(forge, &headless_config.install_dir).await?;
 
-    // Reconcile headless mod files on every convergence (not just scale-up)
-    // This catches drift from manual changes or group config updates
-    if let Err(e) = reconcile_headless_mods(db, config, dirs, &headless_config.install_dir) {
-        warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
+    // Reconcile headless mod files on every convergence
+    {
+        let db = db.lock();
+        if let Err(e) = crate::headless_sync::sync_headless(
+            &db,
+            config,
+            dirs,
+            crate::headless_sync::HeadlessSyncScope::Full,
+        ) {
+            warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
+        }
     }
 
     // Scale up or down
