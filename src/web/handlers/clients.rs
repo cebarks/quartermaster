@@ -863,6 +863,126 @@ pub async fn client_converge(
         .finish())
 }
 
+pub async fn client_rebuild(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    form: Form<crate::web::csrf::CsrfForm>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let headless_config = match state.config().headless.clone() {
+        Some(h) => h,
+        None => {
+            set_flash(
+                &session,
+                "No headless config in quartermaster.toml",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+    };
+
+    if headless_config.client_count() == 0 {
+        set_flash(&session, "No headless clients configured", FlashType::Error);
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/headless"))
+            .finish());
+    }
+
+    let mgr = match require_container_mgr(&state, &session) {
+        Ok(m) => m,
+        Err(resp) => return Ok(resp),
+    };
+
+    let spt_client = match create_spt_client(&state, &session) {
+        Ok(c) => c,
+        Err(resp) => return Ok(resp),
+    };
+
+    let mgr_clone = mgr.clone();
+    let config_clone = state.config_cloned();
+    let dirs_clone = Arc::clone(&state.dirs);
+    let converging_clone = state.converging.clone();
+    let forge_clone = state.forge.clone();
+    let spt_version_clone = state.spt_info.spt_version.clone();
+    let db_clone = state.db.clone();
+
+    tokio::spawn(async move {
+        // Acquire converging flag before destructive work to prevent
+        // the supervisor or manual converge from racing with teardown
+        if converging_clone
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            tracing::warn!("Rebuild skipped: convergence already in progress");
+            return;
+        }
+
+        // 1. Remove all managed containers
+        if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr_clone).await {
+            tracing::error!(err = %e, "Rebuild: failed to remove containers");
+            converging_clone.store(false, std::sync::atomic::Ordering::Release);
+            return;
+        }
+
+        // 2. Remove all overlay directories (glob to catch orphans from prior scale-downs)
+        #[allow(deprecated)]
+        let clients_dir = headless_config.install_dir.join(".quma/clients");
+        if clients_dir.is_dir() {
+            if let Err(e) = std::fs::remove_dir_all(&clients_dir) {
+                tracing::warn!(err = %e, "Rebuild: failed to remove overlay dir");
+            }
+        }
+
+        // Release before converge() — converge() acquires it via its own CAS
+        converging_clone.store(false, std::sync::atomic::Ordering::Release);
+
+        // 3. Re-converge to recreate everything
+        let count = headless_config.client_count();
+        let result = crate::client::converge::converge(
+            &mgr_clone,
+            &headless_config,
+            &config_clone,
+            &dirs_clone,
+            &spt_client,
+            &forge_clone,
+            &spt_version_clone,
+            converging_clone,
+            &db_clone,
+        )
+        .await;
+
+        if let Err(e) = result {
+            tracing::error!(err = %e, "Rebuild: convergence failed");
+        } else {
+            tracing::info!(count, "Rebuild completed successfully");
+        }
+    });
+
+    set_flash(
+        &session,
+        "Rebuilding all headless clients...",
+        FlashType::Success,
+    );
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", "/quma/headless"))
+        .finish())
+}
+
 pub async fn client_status_partial(
     state: Data<AppState>,
     req: HttpRequest,

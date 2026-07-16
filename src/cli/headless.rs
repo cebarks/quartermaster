@@ -98,6 +98,8 @@ pub enum HeadlessAction {
         #[arg(value_parser = clap::value_parser!(u32).range(0..=16))]
         count: u32,
     },
+    /// Tear down and recreate all headless client containers and overlays
+    Rebuild,
 }
 
 pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
@@ -122,6 +124,7 @@ pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
         HeadlessAction::GracefulRestart { client } => graceful_restart(ctx, *client).await,
         HeadlessAction::Rename { client, name } => rename(ctx, *client, name).await,
         HeadlessAction::Scale { count } => scale(ctx, *count).await,
+        HeadlessAction::Rebuild => rebuild(ctx).await,
     }
 }
 
@@ -802,6 +805,60 @@ async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
     .await?;
 
     println!("Successfully scaled to {} client(s).", count);
+    Ok(())
+}
+
+#[allow(deprecated)]
+async fn rebuild(ctx: &CliContext) -> Result<()> {
+    let headless_config = require_headless_config(&ctx.config)?;
+    let container_mgr = require_container_manager(ctx)?;
+    let count = headless_config.client_count();
+
+    if count == 0 {
+        println!("No headless clients configured.");
+        return Ok(());
+    }
+
+    if !confirm(&format!(
+        "Rebuild all {count} headless client(s)? This will destroy and recreate all containers and overlays."
+    ))? {
+        println!("Rebuild cancelled.");
+        return Ok(());
+    }
+
+    // 1. Remove all managed containers
+    println!("Removing all headless containers...");
+    crate::client::converge::remove_all_managed_containers(container_mgr).await?;
+
+    // 2. Remove all overlay directories (wipe the whole clients dir to catch orphans)
+    let clients_dir = headless_config.install_dir.join(".quma/clients");
+    if clients_dir.is_dir() {
+        println!("Removing overlay directories...");
+        std::fs::remove_dir_all(&clients_dir)?;
+    }
+
+    // 3. Re-converge to recreate everything from scratch
+    println!("Re-converging to recreate {count} client(s)...");
+    let (server_host, server_port) =
+        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
+    let spt_client = SptClient::new(&server_host, server_port)?;
+    let converging = Arc::new(AtomicBool::new(false));
+    let db = db_arc_for_converge(ctx)?;
+
+    crate::client::converge::converge(
+        container_mgr,
+        headless_config,
+        &ctx.config,
+        &ctx.dirs,
+        &spt_client,
+        &ctx.forge,
+        &ctx.spt_info.spt_version,
+        converging,
+        &db,
+    )
+    .await?;
+
+    println!("Successfully rebuilt {count} client(s).");
     Ok(())
 }
 
