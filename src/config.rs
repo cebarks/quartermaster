@@ -75,6 +75,10 @@ fn default_proxy_enabled() -> bool {
     true
 }
 
+fn default_proxy_auth() -> bool {
+    true
+}
+
 fn default_proxy_rewrite_source_port() -> u16 {
     6969
 }
@@ -989,6 +993,9 @@ pub struct Config {
     #[serde(default = "default_proxy_enabled")]
     pub proxy_enabled: bool,
 
+    #[serde(default = "default_proxy_auth")]
+    pub proxy_auth: bool,
+
     /// Deprecated: the proxy now auto-detects the origin from response bodies.
     /// Retained so existing TOML files with this field still parse.
     #[serde(default = "default_proxy_rewrite_source_port")]
@@ -1047,6 +1054,7 @@ impl Default for Config {
             tls_cert: None,
             tls_key: None,
             proxy_enabled: true,
+            proxy_auth: true,
             proxy_rewrite_source_port: 6969,
             proxy_rewrite_target_port: None,
             proxy_rewrite_http_paths: default_proxy_rewrite_http_paths(),
@@ -1242,6 +1250,7 @@ impl Config {
         env_override!(opt_path: self.tls_cert, "QUMA_TLS_CERT");
         env_override!(opt_path: self.tls_key, "QUMA_TLS_KEY");
         env_override!(bool: self.proxy_enabled, "QUMA_PROXY_ENABLED");
+        env_override!(bool: self.proxy_auth, "QUMA_PROXY_AUTH");
         env_override!(bool: self.snapshots_enabled, "QUMA_SNAPSHOTS_ENABLED");
         env_override!(parse: self.leaderboard_min_raids, "QUMA_LEADERBOARD_MIN_RAIDS", u32);
         env_override!(bool: self.backup.auto_backup, "QUMA_AUTO_BACKUP");
@@ -2037,6 +2046,27 @@ enabled = true
         let mtime_after = std::fs::metadata(&config_path).unwrap().modified().unwrap();
 
         assert_eq!(mtime_before, mtime_after);
+    }
+
+    #[test]
+    fn proxy_auth_defaults_true() {
+        let config: Config = toml::from_str("").expect("empty config");
+        assert!(config.proxy_auth);
+    }
+
+    #[test]
+    fn proxy_auth_disabled_via_toml() {
+        let config: Config = toml::from_str("proxy_auth = false").expect("should parse");
+        assert!(!config.proxy_auth);
+    }
+
+    #[test]
+    fn proxy_auth_env_override() {
+        temp_env::with_vars([("QUMA_PROXY_AUTH", Some("false"))], || {
+            let mut config = Config::default();
+            config.apply_env_overrides();
+            assert!(!config.proxy_auth);
+        });
     }
 }
 

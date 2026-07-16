@@ -42,7 +42,6 @@
 - SSE has no keepalive/heartbeat — proxies may close idle connections (`sse.rs`)
 
 ## Security
-- proxy has no authentication — unauthenticated access to SPT server API (`proxy.rs`)
 - profile/raid data visible to all authenticated users
 - no mechanism to sync non-admin role permissions on upgrade (`sync_builtin_role_permissions` only covers admin)
 
