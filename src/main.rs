@@ -160,6 +160,10 @@ async fn main() -> Result<()> {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::headless::run(action, &ctx).await
         }
+        Command::Spt { action } => {
+            let ctx = init_context(&cli, &reload_handles)?;
+            cli::spt::run(action, &ctx).await
+        }
         Command::Invite { expires } => {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::invite::run(expires.as_deref(), &ctx)
