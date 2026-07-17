@@ -153,3 +153,7 @@ dev-clean:
 # Build the minimal headless container image
 build-headless:
     podman build -t localhost/quma-headless:latest container/headless/
+
+# Build the SPT server container image
+build-spt-server:
+    podman build -t localhost/quma-spt-server:latest container/spt-server/
