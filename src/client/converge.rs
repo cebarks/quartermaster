@@ -775,19 +775,22 @@ pub async fn converge(
     // Determine current count
     let current_count = managed.len() as u32;
 
-    // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge)
-    ensure_fika_headless(forge, &headless_config.install_dir).await?;
+    // Only ensure headless plugin and sync mods when we'll actually have containers
+    if desired_count > 0 {
+        // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge)
+        ensure_fika_headless(forge, &headless_config.install_dir).await?;
 
-    // Reconcile headless mod files on every convergence
-    {
-        let db = db.lock();
-        if let Err(e) = crate::headless_sync::sync_headless(
-            &db,
-            config,
-            dirs,
-            crate::headless_sync::HeadlessSyncScope::Full,
-        ) {
-            warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
+        // Reconcile headless mod files on every convergence
+        {
+            let db = db.lock();
+            if let Err(e) = crate::headless_sync::sync_headless(
+                &db,
+                config,
+                dirs,
+                crate::headless_sync::HeadlessSyncScope::Full,
+            ) {
+                warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
+            }
         }
     }
 
