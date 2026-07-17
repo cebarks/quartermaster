@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 
-use crate::container::ContainerManager;
+use crate::container::{ContainerManager, SPT_SERVER_IMAGE};
 use crate::spt::server::SptClient;
 
 use super::common::CliContext;
@@ -12,6 +12,7 @@ pub async fn run(action: &ServerAction, ctx: &CliContext) -> Result<()> {
         ServerAction::Stop => stop(ctx).await,
         ServerAction::Restart { drain, skip_queue } => restart(ctx, *drain, *skip_queue).await,
         ServerAction::Logs { follow } => logs(ctx, *follow).await,
+        ServerAction::Recreate { pull } => recreate(ctx, *pull).await,
     }
 }
 
@@ -123,6 +124,36 @@ fn require_container(ctx: &CliContext) -> Result<(&ContainerManager, &str)> {
         ),
         (Some(name), Some(mgr)) => Ok((mgr, name.as_str())),
     }
+}
+
+async fn recreate(ctx: &CliContext, pull: bool) -> Result<()> {
+    let (mgr, container) = require_container(ctx)?;
+    let container_name = container.to_string();
+
+    if ctx.config.auto_drain_on_lifecycle {
+        drain_if_pending(ctx).await?;
+    }
+
+    match mgr.stop(&container_name).await {
+        Ok(()) => println!("Stopped container '{container_name}'."),
+        Err(_) => println!("Container '{container_name}' not running (skipping stop)."),
+    }
+    match mgr.remove_container(&container_name).await {
+        Ok(()) => println!("Removed container '{container_name}'."),
+        Err(_) => println!("Container '{container_name}' not found (skipping remove)."),
+    }
+
+    if pull {
+        println!("Pulling {SPT_SERVER_IMAGE}...");
+        mgr.pull_image(SPT_SERVER_IMAGE).await?;
+    }
+
+    let opts = super::setup::create_container_opts(&ctx.dirs.spt_server, &container_name);
+    mgr.create_container(opts).await?;
+    println!("Container '{container_name}' recreated.");
+    println!("Run `quma server start` to start it.");
+
+    Ok(())
 }
 
 async fn drain_if_pending(ctx: &CliContext) -> Result<()> {

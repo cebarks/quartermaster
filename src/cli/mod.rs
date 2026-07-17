@@ -253,6 +253,12 @@ pub enum ServerAction {
         #[arg(long, short)]
         follow: bool,
     },
+    /// Recreate the SPT server container (stop, remove, create)
+    Recreate {
+        /// Pull latest image before creating
+        #[arg(long)]
+        pull: bool,
+    },
 }
 
 #[derive(Subcommand)]

@@ -352,9 +352,10 @@ async fn prompt_spt_version(explicit: Option<&str>) -> Result<crate::spt::releas
         .ok_or_else(|| anyhow::anyhow!("selection out of range"))
 }
 
-// TODO(debt): server container NUMA pinning deferred — bootstrap creates the container
-// before Config exists. Needs a `quma server recreate` command or setup refactor.
-fn create_container_opts(spt_server_dir: &Path, container_name: &str) -> CreateContainerOpts {
+pub(crate) fn create_container_opts(
+    spt_server_dir: &Path,
+    container_name: &str,
+) -> CreateContainerOpts {
     CreateContainerOpts {
         name: container_name.to_string(),
         image: SPT_SERVER_IMAGE.to_string(),
