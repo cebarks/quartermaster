@@ -404,42 +404,6 @@ async fn check_container_name_available(
     }
 }
 
-async fn wait_for_server(
-    config: &Config,
-    dirs: &crate::dirs::QumaDirs,
-    container_name: &str,
-) -> Result<()> {
-    let (host, port) = crate::server_detect::resolve_server_addr(config, dirs);
-    let spt_client = crate::spt::server::SptClient::new(&host, port)?;
-
-    println!("Waiting for server to start (timeout: 180s)...");
-    let start_time = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(180);
-
-    loop {
-        if start_time.elapsed() > timeout {
-            bail!(
-                "Server did not respond within 180s. Check container logs with \
-                 `podman logs {}` or `docker logs {0}`.",
-                container_name
-            );
-        }
-
-        match spt_client.ping().await {
-            Ok(ping) if ping.ok => {
-                println!("Server is ready (responded in {}ms).", ping.latency_ms);
-                return Ok(());
-            }
-            _ => {
-                // Connection refused or not ready yet — keep waiting
-                print!(".");
-                std::io::stdout().flush()?;
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            }
-        }
-    }
-}
-
 fn create_config(dirs: &crate::dirs::QumaDirs, container_name: &str) -> Result<(Config, PathBuf)> {
     let config_path = dirs.config_path();
     let mut config = if config_path.exists() {
@@ -528,7 +492,7 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, _cli: &Cli) -> Resu
         &release,
         &dirs.spt_server,
         |downloaded, total| {
-            let mut last = last_log.lock().unwrap();
+            let mut last = last_log.lock().expect("progress mutex poisoned");
             if last.elapsed().as_secs() >= 5 {
                 let dl_mb = downloaded as f64 / 1_048_576.0;
                 if let Some(t) = total {

@@ -8,15 +8,12 @@ pub struct SptRelease {
     pub version: String,
     pub eft_version: String,
     pub download_url: Option<String>,
-    pub tag: String,
-    pub published_at: String,
 }
 
 #[derive(Deserialize)]
 struct GitHubRelease {
     tag_name: String,
     body: Option<String>,
-    published_at: Option<String>,
 }
 
 const RELEASES_URL: &str = "https://api.github.com/repos/sp-tarkov/build/releases";
@@ -78,8 +75,6 @@ fn parse_release(gh: GitHubRelease) -> SptRelease {
         version,
         eft_version: parse_eft_version(body).unwrap_or_default(),
         download_url: parse_download_url(body),
-        tag: gh.tag_name,
-        published_at: gh.published_at.unwrap_or_default(),
     }
 }
 
@@ -315,7 +310,6 @@ mod tests {
         let gh = GitHubRelease {
             tag_name: "4.0.13".to_string(),
             body: Some("#### Requires EFT `0.16.9-40087`\n\n## Direct Download\nhttps://spt-releases.modd.in/SPT-4.0.13-40087-2891fd4.7z\n".to_string()),
-            published_at: Some("2026-01-15T00:00:00Z".to_string()),
         };
         let release = parse_release(gh);
         assert_eq!(release.version, "4.0.13");
@@ -331,7 +325,6 @@ mod tests {
         let gh = GitHubRelease {
             tag_name: "4.0.9".to_string(),
             body: Some("#### Requires EFT `0.16.9-40087`\n\n## Direct Download\nRemoved - Get latest instead\n".to_string()),
-            published_at: Some("2025-12-25T00:00:00Z".to_string()),
         };
         let release = parse_release(gh);
         assert_eq!(release.version, "4.0.9");

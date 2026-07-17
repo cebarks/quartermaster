@@ -68,11 +68,9 @@ async fn update(ctx: &CliContext, skip_confirm: bool) -> Result<()> {
         installed, latest.version, latest.eft_version
     );
 
-    if !skip_confirm {
-        if !super::common::confirm("Proceed with update?")? {
-            println!("Update cancelled.");
-            return Ok(());
-        }
+    if !skip_confirm && !super::common::confirm("Proceed with update?")? {
+        println!("Update cancelled.");
+        return Ok(());
     }
 
     // Stop server if running
@@ -118,7 +116,7 @@ async fn update(ctx: &CliContext, skip_confirm: bool) -> Result<()> {
 
     let last_log = std::sync::Mutex::new(std::time::Instant::now());
     releases::download_and_extract_release(&latest, &ctx.dirs.spt_server, |downloaded, total| {
-        let mut last = last_log.lock().unwrap();
+        let mut last = last_log.lock().expect("progress mutex poisoned");
         if last.elapsed().as_secs() >= 5 {
             let dl_mb = downloaded as f64 / 1_048_576.0;
             if let Some(t) = total {
