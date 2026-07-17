@@ -85,6 +85,9 @@ pub enum Command {
         /// Override the container name (useful for parallel dev environments)
         #[arg(long)]
         container_name: Option<String>,
+        /// SPT server version to install (prompts if omitted)
+        #[arg(long)]
+        spt_version: Option<String>,
     },
 
     /// Install a mod and its dependencies

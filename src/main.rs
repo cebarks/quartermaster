@@ -79,6 +79,7 @@ async fn main() -> Result<()> {
             admin_password,
             dev,
             container_name,
+            spt_version,
         } => {
             init_early_logging(&cli, &reload_handles);
             cli::setup::run(
@@ -89,6 +90,7 @@ async fn main() -> Result<()> {
                     admin_password: admin_password.clone(),
                     dev: *dev,
                     container_name: container_name.clone(),
+                    spt_version: spt_version.clone(),
                 },
                 &cli,
             )

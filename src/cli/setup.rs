@@ -26,6 +26,7 @@ pub struct SetupArgs {
     pub admin_password: Option<String>,
     pub dev: bool,
     pub container_name: Option<String>,
+    pub spt_version: Option<String>,
 }
 
 impl SetupArgs {
@@ -67,6 +68,7 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
         install_fika,
         admin_password,
         container_name,
+        spt_version: args.spt_version,
     };
 
     // --- Detect path ---
@@ -89,6 +91,7 @@ struct ResolvedSetup {
     install_fika: bool,
     admin_password: String,
     container_name: String,
+    spt_version: Option<String>,
 }
 
 #[derive(Debug)]
@@ -288,6 +291,67 @@ fn prompt_admin_password() -> Result<String> {
     }
 }
 
+async fn prompt_spt_version(explicit: Option<&str>) -> Result<crate::spt::releases::SptRelease> {
+    use crate::spt::releases;
+
+    if let Some(version) = explicit {
+        let releases = releases::list_releases().await?;
+        return releases
+            .into_iter()
+            .find(|r| r.version == version && r.download_url.is_some())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SPT version {version} not found or download is no longer available"
+                )
+            });
+    }
+
+    println!("Fetching available SPT versions...");
+    let releases = releases::list_releases().await?;
+    let available: Vec<_> = releases
+        .iter()
+        .filter(|r| r.download_url.is_some())
+        .collect();
+
+    if available.is_empty() {
+        anyhow::bail!("no SPT releases with valid download URLs found");
+    }
+
+    println!("\nAvailable SPT versions:");
+    for (i, r) in available.iter().enumerate() {
+        let marker = if i == 0 { " (latest)" } else { "" };
+        println!(
+            "  {}. SPT {} (EFT {}){}",
+            i + 1,
+            r.version,
+            r.eft_version,
+            marker
+        );
+    }
+
+    print!("\nSelect version [1]: ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let trimmed = input.trim();
+
+    let idx = if trimmed.is_empty() {
+        0
+    } else {
+        trimmed
+            .parse::<usize>()
+            .context("invalid selection")?
+            .checked_sub(1)
+            .ok_or_else(|| anyhow::anyhow!("selection out of range"))?
+    };
+
+    available
+        .into_iter()
+        .nth(idx)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("selection out of range"))
+}
+
 // TODO(debt): server container NUMA pinning deferred — bootstrap creates the container
 // before Config exists. Needs a `quma server recreate` command or setup refactor.
 fn create_container_opts(spt_server_dir: &Path, container_name: &str) -> CreateContainerOpts {
@@ -452,41 +516,64 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, _cli: &Cli) -> Resu
         .with_context(|| format!("failed to create directory {}", dirs.overlay.display()))?;
     println!("Created {}", p.data_dir.display());
 
-    // 2. Check container name available
+    // 2. Download and extract SPT server
+    let release = prompt_spt_version(p.spt_version.as_deref()).await?;
+    println!(
+        "\nDownloading SPT {} (EFT {})...",
+        release.version, release.eft_version
+    );
+
+    let last_log = std::sync::Mutex::new(std::time::Instant::now());
+    crate::spt::releases::download_and_extract_release(
+        &release,
+        &dirs.spt_server,
+        |downloaded, total| {
+            let mut last = last_log.lock().unwrap();
+            if last.elapsed().as_secs() >= 5 {
+                let dl_mb = downloaded as f64 / 1_048_576.0;
+                if let Some(t) = total {
+                    let total_mb = t as f64 / 1_048_576.0;
+                    println!(
+                        "  {dl_mb:.1} / {total_mb:.1} MB ({:.0}%)",
+                        dl_mb / total_mb * 100.0
+                    );
+                } else {
+                    println!("  {dl_mb:.1} MB downloaded");
+                }
+                *last = std::time::Instant::now();
+            }
+        },
+    )
+    .await?;
+    println!(
+        "SPT {} extracted to {}",
+        release.version,
+        dirs.spt_server.display()
+    );
+
+    // 3. Check container name available
     check_container_name_available(mgr, &p.container_name).await?;
 
-    // 3. Pull image
+    // 4. Pull image
     println!("Pulling {}...", SPT_SERVER_IMAGE);
     mgr.pull_image(SPT_SERVER_IMAGE).await?;
     println!("Image pulled.");
 
-    // 4. Create container (mounts spt-server/ subdir, not root)
+    // 5. Create container (files already on disk — no first-boot needed)
     let opts = create_container_opts(&dirs.spt_server, &p.container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", p.container_name);
 
-    // 5. First boot
-    println!("\nStarting first boot...");
-    mgr.start(&p.container_name).await?;
-
-    // 6. Create config (needed for wait_for_server to resolve address)
+    // 6. Create config
     let (config, _config_path) = create_config(&dirs, &p.container_name)?;
 
-    // 7. Wait for server
-    wait_for_server(&config, &dirs, &p.container_name).await?;
-
-    // 8. Stop server
-    println!("\nStopping server after first boot...");
-    mgr.stop(&p.container_name).await?;
-    println!("Server stopped.");
-
-    // 9. Create DB and admin
+    // 7. Create DB and admin
     let db = create_db_and_admin(&dirs, &p.admin_password)?;
 
-    // 10. Install infrastructure mods from Forge
+    // 8. Install infrastructure mods from Forge
     install_infrastructure_from_forge(&dirs, &db, &config, p.install_fika).await?;
 
-    // 11. Summary
+    // 9. Summary
     print_summary(&config, &p.data_dir, p.install_fika);
 
     Ok(())
@@ -671,6 +758,7 @@ mod tests {
             admin_password: None,
             dev: false,
             container_name: None,
+            spt_version: None,
         };
         assert_eq!(args.effective_dir(), Some(Path::new("/quma")));
     }
@@ -684,6 +772,7 @@ mod tests {
             admin_password: None,
             dev: false,
             container_name: None,
+            spt_version: None,
         };
         assert_eq!(args.effective_dir(), Some(Path::new("/path")));
     }
@@ -697,6 +786,7 @@ mod tests {
             admin_password: None,
             dev: false,
             container_name: None,
+            spt_version: None,
         };
         assert_eq!(args.effective_dir(), None);
     }
