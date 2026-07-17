@@ -79,6 +79,7 @@ async fn main() -> Result<()> {
             admin_password,
             dev,
             container_name,
+            spt_version,
         } => {
             init_early_logging(&cli, &reload_handles);
             cli::setup::run(
@@ -89,6 +90,7 @@ async fn main() -> Result<()> {
                     admin_password: admin_password.clone(),
                     dev: *dev,
                     container_name: container_name.clone(),
+                    spt_version: spt_version.clone(),
                 },
                 &cli,
             )
@@ -157,6 +159,10 @@ async fn main() -> Result<()> {
         Command::Headless { action } => {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::headless::run(action, &ctx).await
+        }
+        Command::Spt { action } => {
+            let ctx = init_context(&cli, &reload_handles)?;
+            cli::spt::run(action, &ctx).await
         }
         Command::Invite { expires } => {
             let ctx = init_context(&cli, &reload_handles)?;

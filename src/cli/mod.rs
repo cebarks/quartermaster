@@ -18,6 +18,7 @@ pub mod restore;
 pub mod serve;
 pub mod server;
 pub mod setup;
+pub mod spt;
 pub mod status;
 pub mod update;
 
@@ -85,6 +86,9 @@ pub enum Command {
         /// Override the container name (useful for parallel dev environments)
         #[arg(long)]
         container_name: Option<String>,
+        /// SPT server version to install (prompts if omitted)
+        #[arg(long)]
+        spt_version: Option<String>,
     },
 
     /// Install a mod and its dependencies
@@ -158,6 +162,12 @@ pub enum Command {
     Headless {
         #[command(subcommand)]
         action: headless::HeadlessAction,
+    },
+
+    /// Manage the SPT server installation
+    Spt {
+        #[command(subcommand)]
+        action: spt::SptAction,
     },
 
     /// Start the Quartermaster web UI

@@ -26,6 +26,7 @@ pub struct SetupArgs {
     pub admin_password: Option<String>,
     pub dev: bool,
     pub container_name: Option<String>,
+    pub spt_version: Option<String>,
 }
 
 impl SetupArgs {
@@ -67,6 +68,7 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
         install_fika,
         admin_password,
         container_name,
+        spt_version: args.spt_version,
     };
 
     // --- Detect path ---
@@ -89,6 +91,7 @@ struct ResolvedSetup {
     install_fika: bool,
     admin_password: String,
     container_name: String,
+    spt_version: Option<String>,
 }
 
 #[derive(Debug)]
@@ -288,6 +291,67 @@ fn prompt_admin_password() -> Result<String> {
     }
 }
 
+async fn prompt_spt_version(explicit: Option<&str>) -> Result<crate::spt::releases::SptRelease> {
+    use crate::spt::releases;
+
+    if let Some(version) = explicit {
+        let releases = releases::list_releases().await?;
+        return releases
+            .into_iter()
+            .find(|r| r.version == version && r.download_url.is_some())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SPT version {version} not found or download is no longer available"
+                )
+            });
+    }
+
+    println!("Fetching available SPT versions...");
+    let releases = releases::list_releases().await?;
+    let available: Vec<_> = releases
+        .iter()
+        .filter(|r| r.download_url.is_some())
+        .collect();
+
+    if available.is_empty() {
+        anyhow::bail!("no SPT releases with valid download URLs found");
+    }
+
+    println!("\nAvailable SPT versions:");
+    for (i, r) in available.iter().enumerate() {
+        let marker = if i == 0 { " (latest)" } else { "" };
+        println!(
+            "  {}. SPT {} (EFT {}){}",
+            i + 1,
+            r.version,
+            r.eft_version,
+            marker
+        );
+    }
+
+    print!("\nSelect version [1]: ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let trimmed = input.trim();
+
+    let idx = if trimmed.is_empty() {
+        0
+    } else {
+        trimmed
+            .parse::<usize>()
+            .context("invalid selection")?
+            .checked_sub(1)
+            .ok_or_else(|| anyhow::anyhow!("selection out of range"))?
+    };
+
+    available
+        .into_iter()
+        .nth(idx)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("selection out of range"))
+}
+
 pub(crate) fn create_container_opts(
     spt_server_dir: &Path,
     container_name: &str,
@@ -295,10 +359,7 @@ pub(crate) fn create_container_opts(
     CreateContainerOpts {
         name: container_name.to_string(),
         image: SPT_SERVER_IMAGE.to_string(),
-        env: vec![
-            ("LISTEN_ALL_NETWORKS".to_string(), "true".to_string()),
-            ("OVERWRITE_FIKA".to_string(), "false".to_string()),
-        ],
+        env: vec![],
         volumes: vec![VolumeMount {
             host_path: spt_server_dir.to_path_buf(),
             container_path: "/opt/server".to_string(),
@@ -315,12 +376,12 @@ pub(crate) fn create_container_opts(
         healthcheck: Some(HealthConfig {
             test: Some(vec![
                 "CMD-SHELL".to_string(),
-                "wget -q --spider http://localhost:6969/launcher/ping || exit 1".to_string(),
+                "curl -sf http://localhost:6969/launcher/ping || exit 1".to_string(),
             ]),
-            interval: Some(30_000_000_000), // 30s in nanoseconds
-            timeout: Some(10_000_000_000),  // 10s
+            interval: Some(30_000_000_000),
+            timeout: Some(10_000_000_000),
             retries: Some(3),
-            start_period: Some(120_000_000_000), // 120s - SPT server takes a while to boot
+            start_period: Some(120_000_000_000),
             start_interval: None,
         }),
         devices: vec![],
@@ -341,42 +402,6 @@ async fn check_container_name_available(
             container_name
         ),
         Err(_) => Ok(()),
-    }
-}
-
-async fn wait_for_server(
-    config: &Config,
-    dirs: &crate::dirs::QumaDirs,
-    container_name: &str,
-) -> Result<()> {
-    let (host, port) = crate::server_detect::resolve_server_addr(config, dirs);
-    let spt_client = crate::spt::server::SptClient::new(&host, port)?;
-
-    println!("Waiting for server to start (timeout: 180s)...");
-    let start_time = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(180);
-
-    loop {
-        if start_time.elapsed() > timeout {
-            bail!(
-                "Server did not respond within 180s. Check container logs with \
-                 `podman logs {}` or `docker logs {0}`.",
-                container_name
-            );
-        }
-
-        match spt_client.ping().await {
-            Ok(ping) if ping.ok => {
-                println!("Server is ready (responded in {}ms).", ping.latency_ms);
-                return Ok(());
-            }
-            _ => {
-                // Connection refused or not ready yet — keep waiting
-                print!(".");
-                std::io::stdout().flush()?;
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            }
-        }
     }
 }
 
@@ -456,41 +481,64 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, _cli: &Cli) -> Resu
         .with_context(|| format!("failed to create directory {}", dirs.overlay.display()))?;
     println!("Created {}", p.data_dir.display());
 
-    // 2. Check container name available
+    // 2. Download and extract SPT server
+    let release = prompt_spt_version(p.spt_version.as_deref()).await?;
+    println!(
+        "\nDownloading SPT {} (EFT {})...",
+        release.version, release.eft_version
+    );
+
+    let last_log = std::sync::Mutex::new(std::time::Instant::now());
+    crate::spt::releases::download_and_extract_release(
+        &release,
+        &dirs.spt_server,
+        |downloaded, total| {
+            let mut last = last_log.lock().expect("progress mutex poisoned");
+            if last.elapsed().as_secs() >= 5 {
+                let dl_mb = downloaded as f64 / 1_048_576.0;
+                if let Some(t) = total {
+                    let total_mb = t as f64 / 1_048_576.0;
+                    println!(
+                        "  {dl_mb:.1} / {total_mb:.1} MB ({:.0}%)",
+                        dl_mb / total_mb * 100.0
+                    );
+                } else {
+                    println!("  {dl_mb:.1} MB downloaded");
+                }
+                *last = std::time::Instant::now();
+            }
+        },
+    )
+    .await?;
+    println!(
+        "SPT {} extracted to {}",
+        release.version,
+        dirs.spt_server.display()
+    );
+
+    // 3. Check container name available
     check_container_name_available(mgr, &p.container_name).await?;
 
-    // 3. Pull image
+    // 4. Pull image
     println!("Pulling {}...", SPT_SERVER_IMAGE);
     mgr.pull_image(SPT_SERVER_IMAGE).await?;
     println!("Image pulled.");
 
-    // 4. Create container (mounts spt-server/ subdir, not root)
+    // 5. Create container (files already on disk — no first-boot needed)
     let opts = create_container_opts(&dirs.spt_server, &p.container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", p.container_name);
 
-    // 5. First boot
-    println!("\nStarting first boot...");
-    mgr.start(&p.container_name).await?;
-
-    // 6. Create config (needed for wait_for_server to resolve address)
+    // 6. Create config
     let (config, _config_path) = create_config(&dirs, &p.container_name)?;
 
-    // 7. Wait for server
-    wait_for_server(&config, &dirs, &p.container_name).await?;
-
-    // 8. Stop server
-    println!("\nStopping server after first boot...");
-    mgr.stop(&p.container_name).await?;
-    println!("Server stopped.");
-
-    // 9. Create DB and admin
+    // 7. Create DB and admin
     let db = create_db_and_admin(&dirs, &p.admin_password)?;
 
-    // 10. Install infrastructure mods from Forge
+    // 8. Install infrastructure mods from Forge
     install_infrastructure_from_forge(&dirs, &db, &config, p.install_fika).await?;
 
-    // 11. Summary
+    // 9. Summary
     print_summary(&config, &p.data_dir, p.install_fika);
 
     Ok(())
@@ -675,6 +723,7 @@ mod tests {
             admin_password: None,
             dev: false,
             container_name: None,
+            spt_version: None,
         };
         assert_eq!(args.effective_dir(), Some(Path::new("/quma")));
     }
@@ -688,6 +737,7 @@ mod tests {
             admin_password: None,
             dev: false,
             container_name: None,
+            spt_version: None,
         };
         assert_eq!(args.effective_dir(), Some(Path::new("/path")));
     }
@@ -701,6 +751,7 @@ mod tests {
             admin_password: None,
             dev: false,
             container_name: None,
+            spt_version: None,
         };
         assert_eq!(args.effective_dir(), None);
     }
@@ -728,15 +779,17 @@ mod tests {
     }
 
     #[test]
-    fn create_container_opts_no_fika_mode() {
+    fn create_container_opts_defaults() {
         let dir = PathBuf::from("/data/spt");
         let opts = create_container_opts(&dir, DEFAULT_CONTAINER_NAME);
-        assert!(
-            !opts.env.iter().any(|(k, _)| k == "FIKA_MODE"),
-            "FIKA_MODE should not be set — Fika is installed via Forge"
-        );
         assert_eq!(opts.name, "spt-server");
+        assert_eq!(opts.image, SPT_SERVER_IMAGE);
+        assert!(
+            opts.env.is_empty(),
+            "no env vars needed for purpose-built image"
+        );
         assert_eq!(opts.volumes[0].container_path, "/opt/server");
+        assert!(opts.healthcheck.is_some());
     }
 
     #[test]

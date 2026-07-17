@@ -1,0 +1,17 @@
+FROM registry.fedoraproject.org/fedora-minimal:latest
+
+RUN microdnf install -y --nodocs --setopt=install_weak_deps=False \
+    dotnet-runtime-9.0 aspnetcore-runtime-9.0 curl \
+    && microdnf clean all \
+    && rm -rf /usr/share/locale /usr/share/doc /usr/share/man /usr/share/info
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+VOLUME /opt/server
+
+LABEL quma.image-type="spt-server" \
+      org.opencontainers.image.title="quma-spt-server" \
+      org.opencontainers.image.description="Minimal .NET 9 runtime for SPT Server"
+
+ENTRYPOINT ["/entrypoint.sh"]

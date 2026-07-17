@@ -9,7 +9,7 @@ docs/superpowers/
 # Override global gitignore
 !CLAUDE.md
 
-spt-server/
+/spt-server/
 .dev/
 .dev-server/
 .venv

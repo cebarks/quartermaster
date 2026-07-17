@@ -15,7 +15,7 @@ use bollard::query_parameters::{
 use bollard::Docker;
 use futures_util::Stream;
 
-pub const SPT_SERVER_IMAGE: &str = "ghcr.io/zhliau/fika-spt-server-docker:latest";
+pub const SPT_SERVER_IMAGE: &str = "ghcr.io/cebarks/quartermaster/spt-server:latest";
 pub const DEFAULT_CONTAINER_NAME: &str = "spt-server";
 pub const DEFAULT_SPT_PORT: u16 = 6969;
 
