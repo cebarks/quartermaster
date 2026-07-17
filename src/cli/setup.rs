@@ -294,10 +294,7 @@ fn create_container_opts(spt_server_dir: &Path, container_name: &str) -> CreateC
     CreateContainerOpts {
         name: container_name.to_string(),
         image: SPT_SERVER_IMAGE.to_string(),
-        env: vec![
-            ("LISTEN_ALL_NETWORKS".to_string(), "true".to_string()),
-            ("OVERWRITE_FIKA".to_string(), "false".to_string()),
-        ],
+        env: vec![],
         volumes: vec![VolumeMount {
             host_path: spt_server_dir.to_path_buf(),
             container_path: "/opt/server".to_string(),
@@ -314,12 +311,12 @@ fn create_container_opts(spt_server_dir: &Path, container_name: &str) -> CreateC
         healthcheck: Some(HealthConfig {
             test: Some(vec![
                 "CMD-SHELL".to_string(),
-                "wget -q --spider http://localhost:6969/launcher/ping || exit 1".to_string(),
+                "curl -sf http://localhost:6969/launcher/ping || exit 1".to_string(),
             ]),
-            interval: Some(30_000_000_000), // 30s in nanoseconds
-            timeout: Some(10_000_000_000),  // 10s
+            interval: Some(30_000_000_000),
+            timeout: Some(10_000_000_000),
             retries: Some(3),
-            start_period: Some(120_000_000_000), // 120s - SPT server takes a while to boot
+            start_period: Some(120_000_000_000),
             start_interval: None,
         }),
         devices: vec![],
@@ -727,15 +724,17 @@ mod tests {
     }
 
     #[test]
-    fn create_container_opts_no_fika_mode() {
+    fn create_container_opts_defaults() {
         let dir = PathBuf::from("/data/spt");
         let opts = create_container_opts(&dir, DEFAULT_CONTAINER_NAME);
-        assert!(
-            !opts.env.iter().any(|(k, _)| k == "FIKA_MODE"),
-            "FIKA_MODE should not be set — Fika is installed via Forge"
-        );
         assert_eq!(opts.name, "spt-server");
+        assert_eq!(opts.image, SPT_SERVER_IMAGE);
+        assert!(
+            opts.env.is_empty(),
+            "no env vars needed for purpose-built image"
+        );
         assert_eq!(opts.volumes[0].container_path, "/opt/server");
+        assert!(opts.healthcheck.is_some());
     }
 
     #[test]
