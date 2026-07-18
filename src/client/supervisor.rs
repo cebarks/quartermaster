@@ -118,8 +118,9 @@ impl ClientSupervisor {
     async fn tick(&self) -> anyhow::Result<()> {
         // Reload config from disk so out-of-band changes (e.g. CLI scale) are picked up.
         // This is the same Arc the web UI reads, so both stay in sync.
-        if let Ok(fresh) = Config::load_with_env(&self.config_path) {
-            *self.config.write() = fresh;
+        match Config::load_with_env(&self.config_path) {
+            Ok(fresh) => *self.config.write() = fresh,
+            Err(e) => tracing::warn!(error = %e, "Failed to reload config on tick, using cached"),
         }
 
         let headless_config = match self.headless_config() {
