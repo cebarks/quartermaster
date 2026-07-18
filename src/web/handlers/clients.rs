@@ -9,12 +9,12 @@ use askama::Template;
 
 use crate::client::{ClientHealth, ClientState};
 use crate::config::{Config, RestartPolicy};
-use crate::container::ContainerManager;
+// ponytail: removed ContainerManager import - HeadlessService handles container management
 use crate::db::rbac::Permission;
 use crate::dirs::QumaDirs;
 use crate::headless::service::LifecycleAction;
 use crate::numa::NumaTopology;
-use crate::spt::headless::EHeadlessStatus;
+// ponytail: removed EHeadlessStatus import - now handled in service layer
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
@@ -129,42 +129,10 @@ fn build_client_aliases(spt_dir: &std::path::Path) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-fn require_container_mgr<'a>(
-    state: &'a AppState,
-    session: &Session,
-) -> Result<&'a Arc<ContainerManager>, HttpResponse> {
-    state.container_mgr.as_ref().ok_or_else(|| {
-        set_flash(
-            session,
-            "Podman socket not available. Ensure podman.socket is enabled.",
-            FlashType::Error,
-        );
-        HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish()
-    })
-}
-
+// ponytail: removed require_container_mgr - no longer needed, HeadlessService handles dependencies
+// ponytail: removed create_spt_client - HeadlessService constructs SptClient on-demand
 // ponytail: removed resolve_client_container - replaced by HeadlessService methods
-
 // ponytail: removed client_lifecycle helper - logic moved to HeadlessService
-
-fn create_spt_client(
-    state: &AppState,
-    session: &Session,
-) -> Result<crate::spt::server::SptClient, HttpResponse> {
-    let (host, port) = crate::server_detect::resolve_server_addr(&state.config(), &state.dirs);
-    crate::spt::server::SptClient::new(&host, port).map_err(|e| {
-        set_flash(
-            session,
-            &format!("Failed to create SPT client: {e}"),
-            FlashType::Error,
-        );
-        HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish()
-    })
-}
 
 pub async fn headless_page(
     state: Data<AppState>,
@@ -499,54 +467,26 @@ pub async fn client_scale(
     let target = form.count;
     let force = form.force;
 
-    if target > crate::config::MAX_HEADLESS_CLIENTS {
-        set_flash(
-            &session,
-            &format!(
-                "Maximum {} headless clients allowed",
-                crate::config::MAX_HEADLESS_CLIENTS
-            ),
-            FlashType::Error,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish());
-    }
-
-    // Check if we have headless clients configured
-    if state.config().headless.is_none() {
-        set_flash(
-            &session,
-            "No headless config in quartermaster.toml",
-            FlashType::Error,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish());
-    }
-
-    // Check if we're scaling down and need to check in-raid status
-    let current_count = match &state.client_states {
-        Some(states) => states.read().await.len(),
-        None => 0,
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
     };
 
-    if target < current_count as u32 && !force {
-        // Check for in-raid clients
-        let in_raid_clients: Vec<u32> = match &state.client_states {
-            Some(states) => states
-                .read()
-                .await
-                .iter()
-                .filter(|c| matches!(c.fika_status, Some(EHeadlessStatus::InRaid)))
-                .filter(|c| c.index >= target)
-                .map(|c| c.index)
-                .collect(),
-            None => vec![],
-        };
-
-        if !in_raid_clients.is_empty() {
-            let client_list = in_raid_clients
+    match service.scale(target, force).await {
+        Ok(_op_id) => {
+            set_flash(
+                &session,
+                &format!("Scaling to {target} client(s)..."),
+                FlashType::Success,
+            );
+        }
+        Err(crate::headless::HeadlessError::ClientInRaid { clients }) => {
+            let client_list = clients
                 .iter()
                 .map(|i| format!("Client {i}"))
                 .collect::<Vec<_>>()
@@ -559,116 +499,11 @@ pub async fn client_scale(
                 ),
                 FlashType::Error,
             );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/headless"))
-                .finish());
+        }
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
         }
     }
-
-    // Get required dependencies
-    let container_mgr = match require_container_mgr(&state, &session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    let headless_config = match state.config().headless.as_ref() {
-        Some(cfg) => cfg.clone(),
-        None => {
-            set_flash(
-                &session,
-                "Headless config was removed during operation",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/headless"))
-                .finish());
-        }
-    };
-    let mut updated_config = headless_config;
-    let current = updated_config.client_count();
-    if target > current {
-        for _ in 0..(target - current) {
-            updated_config
-                .clients
-                .push(crate::config::HeadlessClientDef::default());
-        }
-    } else if target < current {
-        updated_config.clients.truncate(target as usize);
-    }
-
-    // Create SPT client
-    let spt_client = match create_spt_client(&state, &session) {
-        Ok(c) => c,
-        Err(resp) => return Ok(resp),
-    };
-
-    // Run convergence in a background task
-    let mgr_clone = container_mgr.clone();
-    let config_clone = state.config_cloned();
-    let config_path = state.config_path.clone();
-    let config_handle = state.config_handle();
-    let dirs_clone = Arc::clone(&state.dirs);
-    let converging_clone = state.converging.clone();
-    let forge_clone = state.forge.clone();
-    let spt_version_clone = state.spt_info.spt_version.clone();
-    let db_clone = state.db.clone();
-    let state_clone = state.clone();
-
-    tokio::spawn(async move {
-        let result = crate::client::converge::converge(
-            &mgr_clone,
-            &updated_config,
-            &config_clone,
-            &dirs_clone,
-            &spt_client,
-            &forge_clone,
-            &spt_version_clone,
-            converging_clone,
-            &db_clone,
-        )
-        .await;
-
-        if let Err(e) = result {
-            tracing::error!(err = %e, "Client convergence failed during scale operation");
-        } else {
-            tracing::info!(target_count = target, "Client scaling completed");
-
-            // Persist the updated client count to config file
-            {
-                let _guard = state_clone.config_lock.lock();
-                match crate::config::Config::load_with_env(&config_path) {
-                    Ok(mut fresh_config) => {
-                        if let Some(ref mut headless) = fresh_config.headless {
-                            let current = headless.client_count();
-                            if target > current {
-                                for _ in 0..(target - current) {
-                                    headless
-                                        .clients
-                                        .push(crate::config::HeadlessClientDef::default());
-                                }
-                            } else if target < current {
-                                headless.clients.truncate(target as usize);
-                            }
-                        }
-                        if let Err(e) = fresh_config.save(&config_path) {
-                            tracing::error!(err = %e, "Failed to save updated headless config");
-                        } else {
-                            *config_handle.write() = fresh_config;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(err = %e, "Failed to reload config for persisting headless changes");
-                    }
-                }
-            }
-        }
-    });
-
-    set_flash(
-        &session,
-        &format!("Scaling to {target} client(s)..."),
-        FlashType::Success,
-    );
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/headless"))
@@ -688,60 +523,24 @@ pub async fn client_converge(
         return Err(WebError::Forbidden.into());
     }
 
-    let headless_config = match state.config().headless.clone() {
-        Some(h) => h,
-        None => {
-            set_flash(
-                &session,
-                "No headless config in quartermaster.toml",
-                FlashType::Error,
-            );
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
 
-    let mgr = match require_container_mgr(&state, &session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    let spt_client = match create_spt_client(&state, &session) {
-        Ok(c) => c,
-        Err(resp) => return Ok(resp),
-    };
-
-    let mgr_clone = mgr.clone();
-    let config_clone = state.config_cloned();
-    let dirs_clone = Arc::clone(&state.dirs);
-    let converging_clone = state.converging.clone();
-    let forge_clone = state.forge.clone();
-    let spt_version_clone = state.spt_info.spt_version.clone();
-    let db_clone = state.db.clone();
-
-    tokio::spawn(async move {
-        let result = crate::client::converge::converge(
-            &mgr_clone,
-            &headless_config,
-            &config_clone,
-            &dirs_clone,
-            &spt_client,
-            &forge_clone,
-            &spt_version_clone,
-            converging_clone,
-            &db_clone,
-        )
-        .await;
-
-        if let Err(e) = result {
-            tracing::error!(err = %e, "Manual convergence failed");
-        } else {
-            tracing::info!("Manual convergence completed");
+    match service.converge().await {
+        Ok(_op_id) => {
+            set_flash(&session, "Convergence started...", FlashType::Success);
         }
-    });
-
-    set_flash(&session, "Convergence started...", FlashType::Success);
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
+        }
+    }
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/headless"))
@@ -761,107 +560,41 @@ pub async fn client_rebuild(
         return Err(WebError::Forbidden.into());
     }
 
-    let headless_config = match state.config().headless.clone() {
-        Some(h) => h,
-        None => {
-            set_flash(
-                &session,
-                "No headless config in quartermaster.toml",
-                FlashType::Error,
-            );
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
 
-    if headless_config.client_count() == 0 {
-        set_flash(&session, "No headless clients configured", FlashType::Error);
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish());
+    // ponytail: force=false for now, add force param to form in later tasks if needed
+    match service.rebuild(false).await {
+        Ok(_op_id) => {
+            set_flash(
+                &session,
+                "Rebuilding all headless clients...",
+                FlashType::Success,
+            );
+        }
+        Err(crate::headless::HeadlessError::ClientInRaid { clients }) => {
+            let client_list = clients
+                .iter()
+                .map(|i| format!("Client {i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            set_flash(
+                &session,
+                &format!("Cannot rebuild: {} in raid.", client_list),
+                FlashType::Error,
+            );
+        }
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
+        }
     }
-
-    let mgr = match require_container_mgr(&state, &session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    let spt_client = match create_spt_client(&state, &session) {
-        Ok(c) => c,
-        Err(resp) => return Ok(resp),
-    };
-
-    let mgr_clone = mgr.clone();
-    let config_clone = state.config_cloned();
-    let dirs_clone = Arc::clone(&state.dirs);
-    let converging_clone = state.converging.clone();
-    let forge_clone = state.forge.clone();
-    let spt_version_clone = state.spt_info.spt_version.clone();
-    let db_clone = state.db.clone();
-
-    tokio::spawn(async move {
-        // Acquire converging flag before destructive work to prevent
-        // the supervisor or manual converge from racing with teardown
-        if converging_clone
-            .compare_exchange(
-                false,
-                true,
-                std::sync::atomic::Ordering::Acquire,
-                std::sync::atomic::Ordering::Relaxed,
-            )
-            .is_err()
-        {
-            tracing::warn!("Rebuild skipped: convergence already in progress");
-            return;
-        }
-
-        // 1. Remove all managed containers
-        if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr_clone).await {
-            tracing::error!(err = %e, "Rebuild: failed to remove containers");
-            converging_clone.store(false, std::sync::atomic::Ordering::Release);
-            return;
-        }
-
-        // 2. Remove all overlay directories (glob to catch orphans from prior scale-downs)
-        #[allow(deprecated)]
-        let clients_dir = headless_config.install_dir.join(".quma/clients");
-        if clients_dir.is_dir() {
-            if let Err(e) = std::fs::remove_dir_all(&clients_dir) {
-                tracing::warn!(err = %e, "Rebuild: failed to remove overlay dir");
-            }
-        }
-
-        // Release before converge() — converge() acquires it via its own CAS
-        converging_clone.store(false, std::sync::atomic::Ordering::Release);
-
-        // 3. Re-converge to recreate everything
-        let count = headless_config.client_count();
-        let result = crate::client::converge::converge(
-            &mgr_clone,
-            &headless_config,
-            &config_clone,
-            &dirs_clone,
-            &spt_client,
-            &forge_clone,
-            &spt_version_clone,
-            converging_clone,
-            &db_clone,
-        )
-        .await;
-
-        if let Err(e) = result {
-            tracing::error!(err = %e, "Rebuild: convergence failed");
-        } else {
-            tracing::info!(count, "Rebuild completed successfully");
-        }
-    });
-
-    set_flash(
-        &session,
-        "Rebuilding all headless clients...",
-        FlashType::Success,
-    );
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/headless"))
@@ -906,122 +639,41 @@ pub async fn client_create(
         return Err(WebError::Forbidden.into());
     }
 
-    // Headless must be configured
-    let headless_config = match state.config().headless.clone() {
-        Some(h) => h,
-        None => {
-            set_flash(
-                &session,
-                "No headless config in quartermaster.toml",
-                FlashType::Error,
-            );
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
 
-    if headless_config.client_count() >= crate::config::MAX_HEADLESS_CLIENTS {
-        set_flash(
-            &session,
-            &format!(
-                "Maximum {} headless clients allowed",
-                crate::config::MAX_HEADLESS_CLIENTS
-            ),
-            FlashType::Error,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish());
+    let new_count = state
+        .config()
+        .headless
+        .as_ref()
+        .map(|h| h.client_count() + 1)
+        .unwrap_or(1);
+
+    match service.create().await {
+        Ok(_op_id) => {
+            set_flash(
+                &session,
+                &format!("Creating client {new_count}..."),
+                FlashType::Success,
+            );
+        }
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
+        }
     }
-
-    let container_mgr = match require_container_mgr(&state, &session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    // Build updated config with one new default client appended
-    let mut updated_config = headless_config;
-    updated_config
-        .clients
-        .push(crate::config::HeadlessClientDef::default());
-    let new_count = updated_config.client_count();
-
-    // Create SPT client
-    let spt_client = match create_spt_client(&state, &session) {
-        Ok(c) => c,
-        Err(resp) => return Ok(resp),
-    };
-
-    // Persist to config and spawn convergence
-    let mgr_clone = container_mgr.clone();
-    let config_clone = state.config_cloned();
-    let config_path = state.config_path.clone();
-    let config_handle = state.config_handle();
-    let dirs_clone = Arc::clone(&state.dirs);
-    let converging_clone = state.converging.clone();
-    let forge_clone = state.forge.clone();
-    let spt_version_clone = state.spt_info.spt_version.clone();
-    let db_clone = state.db.clone();
-    let state_clone = state.clone();
-
-    tokio::spawn(async move {
-        // Persist first
-        {
-            let _guard = state_clone.config_lock.lock();
-            match crate::config::Config::load_with_env(&config_path) {
-                Ok(mut fresh_config) => {
-                    if let Some(ref mut headless) = fresh_config.headless {
-                        headless
-                            .clients
-                            .push(crate::config::HeadlessClientDef::default());
-                    }
-                    if let Err(e) = fresh_config.save(&config_path) {
-                        tracing::error!(err = %e, "Failed to save new client to config");
-                        return;
-                    } else {
-                        *config_handle.write() = fresh_config;
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(err = %e, "Failed to reload config for adding client");
-                    return;
-                }
-            }
-        }
-
-        let result = crate::client::converge::converge(
-            &mgr_clone,
-            &updated_config,
-            &config_clone,
-            &dirs_clone,
-            &spt_client,
-            &forge_clone,
-            &spt_version_clone,
-            converging_clone,
-            &db_clone,
-        )
-        .await;
-
-        if let Err(e) = result {
-            tracing::error!(err = %e, "Convergence failed after creating client");
-        } else {
-            tracing::info!(count = new_count, "Client created successfully");
-        }
-    });
-
-    set_flash(
-        &session,
-        &format!("Creating client {new_count}..."),
-        FlashType::Success,
-    );
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/headless"))
         .finish())
 }
 
-#[allow(deprecated)]
 pub async fn client_delete(
     state: Data<AppState>,
     req: HttpRequest,
@@ -1038,143 +690,43 @@ pub async fn client_delete(
 
     let index = path.into_inner();
 
-    let headless_config = match state.config().headless.clone() {
-        Some(h) => h,
-        None => {
-            set_flash(
-                &session,
-                "No headless config in quartermaster.toml",
-                FlashType::Error,
-            );
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
 
-    // Validate index (1-based)
-    if index == 0 || index > headless_config.client_count() {
-        set_flash(
-            &session,
-            &format!("Client {index} does not exist"),
-            FlashType::Error,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish());
-    }
-
-    // Check if this client is in raid
-    if let Some(states) = &state.client_states {
-        let clients = states.read().await;
-        if let Some(client) = clients.iter().find(|c| c.index == index) {
-            if matches!(client.fika_status, Some(EHeadlessStatus::InRaid))
-                && !client.players.is_empty()
-            {
-                set_flash(
-                    &session,
-                    &format!("Client {index} is in raid. Wait for it to finish or stop it first."),
-                    FlashType::Error,
-                );
-                return Ok(HttpResponse::SeeOther()
-                    .insert_header(("Location", "/quma/headless"))
-                    .finish());
-            }
+    // ponytail: force=false for now, add force param to form in later tasks if needed
+    match service.delete(index, false).await {
+        Ok(_op_id) => {
+            set_flash(
+                &session,
+                &format!("Deleting client {index}..."),
+                FlashType::Success,
+            );
+        }
+        Err(crate::headless::HeadlessError::ClientInRaid { .. }) => {
+            set_flash(
+                &session,
+                &format!("Client {index} is in raid. Wait for it to finish or stop it first."),
+                FlashType::Error,
+            );
+        }
+        Err(crate::headless::HeadlessError::ClientNotFound(_)) => {
+            set_flash(
+                &session,
+                &format!("Client {index} does not exist"),
+                FlashType::Error,
+            );
+        }
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
         }
     }
-
-    let container_mgr = match require_container_mgr(&state, &session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    // Build updated config with client removed (0-based index into vec)
-    let mut updated_config = headless_config;
-    updated_config.clients.remove((index - 1) as usize);
-
-    // Create SPT client
-    let spt_client = match create_spt_client(&state, &session) {
-        Ok(c) => c,
-        Err(resp) => return Ok(resp),
-    };
-
-    // Stop and remove the container, persist config, then converge
-    let mgr_clone = container_mgr.clone();
-    let config_clone = state.config_cloned();
-    let config_path = state.config_path.clone();
-    let config_handle = state.config_handle();
-    let dirs_clone = Arc::clone(&state.dirs);
-    let converging_clone = state.converging.clone();
-    let forge_clone = state.forge.clone();
-    let spt_version_clone = state.spt_info.spt_version.clone();
-    let db_clone = state.db.clone();
-    let state_clone = state.clone();
-
-    tokio::spawn(async move {
-        // Remove ALL managed containers so converge recreates with correct indices
-        if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr_clone).await {
-            tracing::error!(err = %e, "Failed to remove managed containers before re-convergence");
-            return;
-        }
-
-        // Persist
-        {
-            let _guard = state_clone.config_lock.lock();
-            match crate::config::Config::load_with_env(&config_path) {
-                Ok(mut fresh_config) => {
-                    if let Some(ref mut headless) = fresh_config.headless {
-                        if (index as usize) <= headless.clients.len() && index > 0 {
-                            headless.clients.remove((index - 1) as usize);
-                        }
-                    }
-                    if let Err(e) = fresh_config.save(&config_path) {
-                        tracing::error!(err = %e, "Failed to save config after deleting client");
-                        return;
-                    } else {
-                        *config_handle.write() = fresh_config;
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(err = %e, "Failed to reload config for deleting client");
-                    return;
-                }
-            }
-        }
-
-        // Clean up overlay for the deleted index
-        let overlay =
-            crate::client::converge::client_overlay_dir(&updated_config.install_dir, index);
-        if overlay.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&overlay) {
-                tracing::warn!(err = %e, "Failed to clean overlay dir for deleted client {index}");
-            }
-        }
-
-        let result = crate::client::converge::converge(
-            &mgr_clone,
-            &updated_config,
-            &config_clone,
-            &dirs_clone,
-            &spt_client,
-            &forge_clone,
-            &spt_version_clone,
-            converging_clone,
-            &db_clone,
-        )
-        .await;
-
-        if let Err(e) = result {
-            tracing::error!(err = %e, "Convergence failed after deleting client");
-        } else {
-            tracing::info!(deleted_index = index, "Client deleted successfully");
-        }
-    });
-
-    set_flash(
-        &session,
-        &format!("Deleting client {index}..."),
-        FlashType::Success,
-    );
 
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/headless"))

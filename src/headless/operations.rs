@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use serde::Serialize;
@@ -22,22 +23,29 @@ struct OperationEntry {
     completed_at: Option<Instant>,
 }
 
-pub struct OperationTracker {
+struct OperationTrackerInner {
     ops: parking_lot::Mutex<HashMap<u64, OperationEntry>>,
     next_id: AtomicU64,
+}
+
+#[derive(Clone)]
+pub struct OperationTracker {
+    inner: Arc<OperationTrackerInner>,
 }
 
 impl OperationTracker {
     pub fn new() -> Self {
         Self {
-            ops: parking_lot::Mutex::new(HashMap::new()),
-            next_id: AtomicU64::new(1),
+            inner: Arc::new(OperationTrackerInner {
+                ops: parking_lot::Mutex::new(HashMap::new()),
+                next_id: AtomicU64::new(1),
+            }),
         }
     }
 
     pub fn start(&self) -> OperationId {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut ops = self.ops.lock();
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut ops = self.inner.ops.lock();
         self.expire(&mut ops);
         ops.insert(
             id,
@@ -50,7 +58,7 @@ impl OperationTracker {
     }
 
     pub fn complete(&self, id: &OperationId) {
-        let mut ops = self.ops.lock();
+        let mut ops = self.inner.ops.lock();
         if let Some(entry) = ops.get_mut(&id.0) {
             entry.status = OperationStatus::Completed;
             entry.completed_at = Some(Instant::now());
@@ -58,7 +66,7 @@ impl OperationTracker {
     }
 
     pub fn fail(&self, id: &OperationId, error: String) {
-        let mut ops = self.ops.lock();
+        let mut ops = self.inner.ops.lock();
         if let Some(entry) = ops.get_mut(&id.0) {
             entry.status = OperationStatus::Failed { error };
             entry.completed_at = Some(Instant::now());
@@ -66,7 +74,7 @@ impl OperationTracker {
     }
 
     pub fn poll(&self, id: u64) -> Option<OperationStatus> {
-        let ops = self.ops.lock();
+        let ops = self.inner.ops.lock();
         ops.get(&id).map(|e| e.status.clone())
     }
 

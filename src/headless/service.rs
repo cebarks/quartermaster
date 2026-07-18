@@ -92,6 +92,61 @@ impl HeadlessService {
         &self.operations
     }
 
+    fn spt_client(&self) -> crate::spt::server::SptClient {
+        let config = self.config.read();
+        let (host, port) = crate::server_detect::resolve_server_addr(&config, &self.dirs);
+        crate::spt::server::SptClient::new(&host, port)
+            .expect("SptClient construction should not fail")
+    }
+
+    fn persist_config(&self, mutate: impl FnOnce(&mut Config)) -> Result<(), HeadlessError> {
+        let _guard = self.config_lock.lock();
+        let mut fresh = Config::load_with_env(&self.config_path)
+            .map_err(|e| HeadlessError::ConfigError(e.to_string()))?;
+        mutate(&mut fresh);
+        fresh
+            .save(&self.config_path)
+            .map_err(|e| HeadlessError::ConfigError(e.to_string()))?;
+        *self.config.write() = fresh;
+        Ok(())
+    }
+
+    fn spawn_convergence(
+        &self,
+        headless_config: crate::config::HeadlessConfig,
+    ) -> crate::headless::OperationId {
+        let op_id = self.operations.start();
+        let mgr = self.container_mgr.clone();
+        let config = self.config.read().clone();
+        let dirs = Arc::clone(&self.dirs);
+        let spt_client = self.spt_client();
+        let forge = self.forge.clone();
+        let spt_version = "";
+        let converging = Arc::clone(&self.converging);
+        let db = Arc::clone(&self.db);
+        let ops = self.operations.clone();
+
+        tokio::spawn(async move {
+            match crate::client::converge::converge(
+                &mgr,
+                &headless_config,
+                &config,
+                &dirs,
+                &spt_client,
+                &forge,
+                &spt_version,
+                converging,
+                &db,
+            )
+            .await
+            {
+                Ok(()) => ops.complete(&op_id),
+                Err(e) => ops.fail(&op_id, e.to_string()),
+            }
+        });
+        op_id
+    }
+
     pub async fn status(&self) -> Vec<ClientState> {
         self.client_states.read().await.clone()
     }
@@ -354,5 +409,301 @@ impl HeadlessService {
                     _ => None,
                 }
             })
+    }
+
+    pub async fn scale(
+        &self,
+        target: u32,
+        force: bool,
+    ) -> Result<crate::headless::OperationId, HeadlessError> {
+        if target > crate::config::MAX_HEADLESS_CLIENTS {
+            return Err(HeadlessError::MaxClientsReached);
+        }
+
+        let mut headless_config = self
+            .config
+            .read()
+            .headless
+            .clone()
+            .ok_or(HeadlessError::NotConfigured)?;
+
+        let current = headless_config.client_count();
+        let current_state_count = self.client_states.read().await.len() as u32;
+
+        if target < current_state_count && !force {
+            let in_raid_clients: Vec<u32> = self
+                .client_states
+                .read()
+                .await
+                .iter()
+                .filter(|c| matches!(c.fika_status, Some(EHeadlessStatus::InRaid)))
+                .filter(|c| c.index >= target)
+                .map(|c| c.index)
+                .collect();
+
+            if !in_raid_clients.is_empty() {
+                return Err(HeadlessError::ClientInRaid {
+                    clients: in_raid_clients,
+                });
+            }
+        }
+
+        if target > current {
+            for _ in 0..(target - current) {
+                headless_config
+                    .clients
+                    .push(crate::config::HeadlessClientDef::default());
+            }
+        } else if target < current {
+            headless_config.clients.truncate(target as usize);
+        }
+
+        let updated_config = headless_config.clone();
+        self.persist_config(|cfg| {
+            if let Some(ref mut headless) = cfg.headless {
+                let current = headless.client_count();
+                if target > current {
+                    for _ in 0..(target - current) {
+                        headless
+                            .clients
+                            .push(crate::config::HeadlessClientDef::default());
+                    }
+                } else if target < current {
+                    headless.clients.truncate(target as usize);
+                }
+            }
+        })?;
+
+        Ok(self.spawn_convergence(updated_config))
+    }
+
+    pub async fn create(&self) -> Result<crate::headless::OperationId, HeadlessError> {
+        let mut headless_config = self
+            .config
+            .read()
+            .headless
+            .clone()
+            .ok_or(HeadlessError::NotConfigured)?;
+
+        if headless_config.client_count() >= crate::config::MAX_HEADLESS_CLIENTS {
+            return Err(HeadlessError::MaxClientsReached);
+        }
+
+        headless_config
+            .clients
+            .push(crate::config::HeadlessClientDef::default());
+
+        let updated_config = headless_config.clone();
+        self.persist_config(|cfg| {
+            if let Some(ref mut headless) = cfg.headless {
+                headless
+                    .clients
+                    .push(crate::config::HeadlessClientDef::default());
+            }
+        })?;
+
+        Ok(self.spawn_convergence(updated_config))
+    }
+
+    pub async fn delete(
+        &self,
+        index: u32,
+        force: bool,
+    ) -> Result<crate::headless::OperationId, HeadlessError> {
+        let headless_config = self
+            .config
+            .read()
+            .headless
+            .clone()
+            .ok_or(HeadlessError::NotConfigured)?;
+
+        if index == 0 || index > headless_config.client_count() {
+            return Err(HeadlessError::ClientNotFound(index));
+        }
+
+        if !force {
+            let states = self.client_states.read().await;
+            if let Some(client) = states.iter().find(|c| c.index == index) {
+                if matches!(client.fika_status, Some(EHeadlessStatus::InRaid))
+                    && !client.players.is_empty()
+                {
+                    return Err(HeadlessError::ClientInRaid {
+                        clients: vec![index],
+                    });
+                }
+            }
+        }
+
+        let op_id = self.operations.start();
+        let mgr = self.container_mgr.clone();
+        let config = self.config.read().clone();
+        let config_path = self.config_path.clone();
+        let config_lock = Arc::clone(&self.config_lock);
+        let config_handle = Arc::clone(&self.config);
+        let dirs = Arc::clone(&self.dirs);
+        let spt_client = self.spt_client();
+        let forge = self.forge.clone();
+        let spt_version = "";
+        let converging = Arc::clone(&self.converging);
+        let db = Arc::clone(&self.db);
+        let ops = self.operations.clone();
+
+        let mut updated_config = headless_config;
+        updated_config.clients.remove((index - 1) as usize);
+
+        tokio::spawn(async move {
+            if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr).await {
+                ops.fail(&op_id, format!("Failed to remove containers: {e}"));
+                return;
+            }
+
+            {
+                let _guard = config_lock.lock();
+                match Config::load_with_env(&config_path) {
+                    Ok(mut fresh_config) => {
+                        if let Some(ref mut headless) = fresh_config.headless {
+                            if (index as usize) <= headless.clients.len() && index > 0 {
+                                headless.clients.remove((index - 1) as usize);
+                            }
+                        }
+                        if let Err(e) = fresh_config.save(&config_path) {
+                            ops.fail(&op_id, format!("Failed to save config: {e}"));
+                            return;
+                        }
+                        *config_handle.write() = fresh_config;
+                    }
+                    Err(e) => {
+                        ops.fail(&op_id, format!("Failed to reload config: {e}"));
+                        return;
+                    }
+                }
+            }
+
+            let overlay = crate::client::converge::client_overlay_dir(&dirs.headless, index);
+            if overlay.exists() {
+                let _ = std::fs::remove_dir_all(&overlay);
+            }
+
+            match crate::client::converge::converge(
+                &mgr,
+                &updated_config,
+                &config,
+                &dirs,
+                &spt_client,
+                &forge,
+                &spt_version,
+                converging,
+                &db,
+            )
+            .await
+            {
+                Ok(()) => ops.complete(&op_id),
+                Err(e) => ops.fail(&op_id, e.to_string()),
+            }
+        });
+
+        Ok(op_id)
+    }
+
+    pub async fn rebuild(
+        &self,
+        force: bool,
+    ) -> Result<crate::headless::OperationId, HeadlessError> {
+        let headless_config = self
+            .config
+            .read()
+            .headless
+            .clone()
+            .ok_or(HeadlessError::NotConfigured)?;
+
+        if headless_config.client_count() == 0 {
+            return Err(HeadlessError::NotConfigured);
+        }
+
+        if !force {
+            let in_raid_clients: Vec<u32> = self
+                .client_states
+                .read()
+                .await
+                .iter()
+                .filter(|c| matches!(c.fika_status, Some(EHeadlessStatus::InRaid)))
+                .map(|c| c.index)
+                .collect();
+
+            if !in_raid_clients.is_empty() {
+                return Err(HeadlessError::ClientInRaid {
+                    clients: in_raid_clients,
+                });
+            }
+        }
+
+        let op_id = self.operations.start();
+        let mgr = self.container_mgr.clone();
+        let config = self.config.read().clone();
+        let dirs = Arc::clone(&self.dirs);
+        let spt_client = self.spt_client();
+        let forge = self.forge.clone();
+        let spt_version = "";
+        let converging = Arc::clone(&self.converging);
+        let db = Arc::clone(&self.db);
+        let ops = self.operations.clone();
+
+        tokio::spawn(async move {
+            if converging
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::Acquire,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                ops.fail(&op_id, "Convergence already in progress".into());
+                return;
+            }
+
+            if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr).await {
+                converging.store(false, std::sync::atomic::Ordering::Release);
+                ops.fail(&op_id, format!("Failed to remove containers: {e}"));
+                return;
+            }
+
+            let clients_dir = dirs.headless.join(".quma/clients");
+            if clients_dir.is_dir() {
+                let _ = std::fs::remove_dir_all(&clients_dir);
+            }
+
+            converging.store(false, std::sync::atomic::Ordering::Release);
+
+            match crate::client::converge::converge(
+                &mgr,
+                &headless_config,
+                &config,
+                &dirs,
+                &spt_client,
+                &forge,
+                &spt_version,
+                converging,
+                &db,
+            )
+            .await
+            {
+                Ok(()) => ops.complete(&op_id),
+                Err(e) => ops.fail(&op_id, e.to_string()),
+            }
+        });
+
+        Ok(op_id)
+    }
+
+    pub async fn converge(&self) -> Result<crate::headless::OperationId, HeadlessError> {
+        let headless_config = self
+            .config
+            .read()
+            .headless
+            .clone()
+            .ok_or(HeadlessError::NotConfigured)?;
+
+        Ok(self.spawn_convergence(headless_config))
     }
 }
