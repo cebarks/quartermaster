@@ -8,6 +8,7 @@ use actix_web::middleware::Next;
 use actix_web::{web, HttpMessage};
 use rand::distr::Alphanumeric;
 use rand::RngExt;
+use subtle::ConstantTimeEq;
 
 use crate::dirs::QumaDirs;
 use crate::web::auth::SessionUser;
@@ -76,7 +77,7 @@ pub async fn api_auth_middleware(
 ) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
     if let Some(header) = req.headers().get("X-Quma-Token") {
         if let Some(token_state) = req.app_data::<web::Data<ApiTokenState>>() {
-            if header.as_bytes() == token_state.token.as_bytes() {
+            if header.as_bytes().ct_eq(token_state.token.as_bytes()).into() {
                 // Valid token — inject synthetic admin user
                 let synthetic_user = SessionUser {
                     user_id: -1, // sentinel for API token auth
