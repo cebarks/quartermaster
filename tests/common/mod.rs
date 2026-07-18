@@ -22,6 +22,7 @@ pub struct TestAppBuilder {
     invites: Vec<(String, Option<String>)>, // (code, expires_at)
     external_url: Option<String>,
     mock_server: Option<wiremock::MockServer>,
+    api_token: Option<String>,
 }
 
 impl TestAppBuilder {
@@ -32,6 +33,7 @@ impl TestAppBuilder {
             invites: Vec::new(),
             external_url: None,
             mock_server: None,
+            api_token: None,
         }
     }
 
@@ -65,6 +67,12 @@ impl TestAppBuilder {
     /// Use a pre-configured mock server (instead of creating a new one).
     pub fn with_mock_server(mut self, server: wiremock::MockServer) -> Self {
         self.mock_server = Some(server);
+        self
+    }
+
+    /// Set an API token for X-Quma-Token auth testing.
+    pub fn with_api_token(mut self, token: &str) -> Self {
+        self.api_token = Some(token.to_string());
         self
     }
 
@@ -165,7 +173,7 @@ impl TestAppBuilder {
             forge,
             config: config_arc.clone(),
             config_path,
-            config_lock: parking_lot::Mutex::new(()),
+            config_lock: Arc::new(parking_lot::Mutex::new(())),
             dirs: Arc::new(spt_quartermaster::dirs::QumaDirs::from_legacy(
                 spt_dir.clone(),
             )),
@@ -180,11 +188,11 @@ impl TestAppBuilder {
             log_broadcast: Arc::new(spt_quartermaster::logging::LogBroadcast::new(1000)),
             reload_handles: Arc::new(spt_quartermaster::logging::init_reload_handles_only()),
             container_mgr: None,
-            client_states: None,
             converging: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             fika_installed: false,
             fika_client: None,
-            fika_config_lock: parking_lot::Mutex::new(()),
+            fika_config_lock: Arc::new(parking_lot::Mutex::new(())),
+            headless_service: None,
             fika_items: Arc::new(parking_lot::Mutex::new(None)),
             svm: None,
             svm_installed: std::sync::atomic::AtomicBool::new(false),
@@ -209,10 +217,19 @@ impl TestAppBuilder {
             ),
         });
 
+        let api_token_state = Some(web::Data::new(
+            spt_quartermaster::web::api_auth::ApiTokenState {
+                token: self
+                    .api_token
+                    .unwrap_or_else(|| "dummy-token-for-testing".to_string()),
+            },
+        ));
+
         TestApp {
             db: db_arc,
             app_state,
             session_key,
+            api_token_state,
             cookies: Vec::new(),
             _tmp_dir: tmp_dir,
             _mock_server: mock_server,
@@ -235,6 +252,7 @@ pub struct TestApp {
     pub db: Arc<Mutex<Database>>,
     app_state: web::Data<AppState>,
     session_key: Key,
+    api_token_state: Option<web::Data<spt_quartermaster::web::api_auth::ApiTokenState>>,
     cookies: Vec<String>,
     _tmp_dir: TempDir,
     _mock_server: wiremock::MockServer,
@@ -247,9 +265,11 @@ impl TestApp {
     {
         let app_state = self.app_state.clone();
         let session_key = self.session_key.clone();
+        let api_token_state = self.api_token_state.clone().unwrap(); // always Some now
         test::init_service(
             App::new()
                 .app_data(app_state)
+                .app_data(api_token_state)
                 .app_data(web::PayloadConfig::new(64 * 1024 * 1024))
                 .wrap(middleware::NormalizePath::new(
                     middleware::TrailingSlash::MergeOnly,
@@ -274,6 +294,11 @@ impl TestApp {
         };
         self.collect_cookies(&resp);
         resp
+    }
+
+    /// Send a raw request without automatic cookie handling. Useful for API token tests.
+    pub async fn send_raw(&mut self, req: actix_http::Request) -> ServiceResponse {
+        self.send(req).await
     }
 
     /// Make a GET request with current cookies. Automatically saves response cookies.
@@ -358,6 +383,12 @@ impl TestApp {
         let body = test::read_body(resp).await;
         let body_str = std::str::from_utf8(&body).expect("invalid UTF-8");
         extract_csrf_token(body_str).unwrap_or_else(|| panic!("no CSRF token found at {}", path))
+    }
+
+    /// Check if api_token_state is set (for debugging tests).
+    #[allow(dead_code)]
+    pub fn has_api_token(&self) -> bool {
+        self.api_token_state.is_some()
     }
 }
 

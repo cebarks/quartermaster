@@ -3,15 +3,18 @@ pub mod supervisor;
 
 use crate::spt::headless::EHeadlessStatus;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContainerStatus {
     Running,
     Stopped,
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClientHealth {
     Healthy,
     Degraded,
@@ -19,7 +22,7 @@ pub enum ClientHealth {
     GivenUp,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientState {
     pub index: u32,
     pub container_name: String,

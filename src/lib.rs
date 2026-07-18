@@ -11,6 +11,7 @@ pub mod db;
 pub mod dirs;
 pub mod fika;
 pub mod forge;
+pub mod headless;
 pub mod headless_sync;
 pub mod health;
 pub mod invite;

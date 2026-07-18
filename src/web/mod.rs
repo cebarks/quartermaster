@@ -1,3 +1,4 @@
+pub mod api_auth;
 pub mod auth;
 pub mod csrf;
 pub mod error;
@@ -229,8 +230,11 @@ pub fn configure_app(
     }
 
     // Build the API scope
+    // api_auth_middleware must be outermost (last .wrap) so it runs first —
+    // it checks X-Quma-Token before auth_middleware checks session cookies.
     let mut api_scope = web::scope("/api")
         .wrap(from_fn(auth::auth_middleware))
+        .wrap(from_fn(api_auth::api_auth_middleware))
         .route("/events", web::get().to(crate::web::sse::events_stream))
         .route(
             "/mods/check-updates",
@@ -292,8 +296,12 @@ pub fn configure_app(
             web::get().to(handlers::mods::integrity_progress),
         )
         .route(
-            "/headless/status",
+            "/headless/status-partial",
             web::get().to(handlers::clients::client_status_partial),
+        )
+        .route(
+            "/headless/operations/{id}/partial",
+            web::get().to(handlers::clients::operation_status_partial),
         )
         .route(
             "/profiles/{username}/quests",
@@ -493,6 +501,67 @@ pub fn configure_app(
                 .route(
                     "/roles/{name}/delete",
                     web::post().to(handlers::admin::delete_role_handler),
+                ),
+        )
+        // Headless JSON API (nested under /api/headless)
+        .service(
+            web::scope("/headless")
+                .route(
+                    "/status",
+                    web::get().to(handlers::headless_api::api_headless_status),
+                )
+                .route(
+                    "/{n}/start",
+                    web::post().to(handlers::headless_api::api_client_start),
+                )
+                .route(
+                    "/{n}/stop",
+                    web::post().to(handlers::headless_api::api_client_stop),
+                )
+                .route(
+                    "/{n}/restart",
+                    web::post().to(handlers::headless_api::api_client_restart),
+                )
+                .route(
+                    "/{n}/graceful-restart",
+                    web::post().to(handlers::headless_api::api_client_graceful_restart),
+                )
+                .route("/scale", web::post().to(handlers::headless_api::api_scale))
+                .route(
+                    "/create",
+                    web::post().to(handlers::headless_api::api_create),
+                )
+                .route(
+                    "/{n}/delete",
+                    web::post().to(handlers::headless_api::api_client_delete),
+                )
+                .route(
+                    "/rebuild",
+                    web::post().to(handlers::headless_api::api_rebuild),
+                )
+                .route(
+                    "/converge",
+                    web::post().to(handlers::headless_api::api_converge),
+                )
+                .route(
+                    "/{n}/rename",
+                    web::post().to(handlers::headless_api::api_client_rename),
+                )
+                .route(
+                    "/{n}/image",
+                    web::post().to(handlers::headless_api::api_client_set_image),
+                )
+                .route(
+                    "/{n}/start-raid",
+                    web::post().to(handlers::headless_api::api_client_start_raid),
+                )
+                .route(
+                    "/{n}/logs",
+                    web::get().to(handlers::headless_api::api_client_logs),
+                )
+                .route(
+                    "/operations/{id}",
+                    web::get().to(handlers::headless_api::api_operation_status),
                 ),
         );
 
@@ -872,7 +941,7 @@ pub fn configure_app(
     cfg.default_service(web::to(proxy::proxy_handler));
 }
 
-pub async fn start_server(ctx: ServerContext) -> Result<()> {
+pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
     let ServerContext {
         config,
         config_handle,
@@ -984,12 +1053,34 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
 
     let dirs = Arc::new(dirs);
 
+    // ponytail: HeadlessService only when headless is configured (container_mgr + client_states both Some)
+    let config_lock = Arc::new(parking_lot::Mutex::new(()));
+    let fika_config_lock = Arc::new(parking_lot::Mutex::new(()));
+    let headless_service =
+        if let (Some(ref mgr), Some(ref states)) = (&container_mgr, &client_states) {
+            Some(crate::headless::HeadlessService::new(
+                mgr.as_ref().clone(),
+                Arc::clone(&config_handle),
+                config_path.clone(),
+                Arc::clone(&config_lock),
+                Arc::clone(&dirs),
+                Arc::clone(&db_arc),
+                Arc::clone(&converging),
+                Arc::clone(states),
+                fika_client.clone(),
+                Arc::clone(&fika_config_lock),
+                forge.clone(),
+            ))
+        } else {
+            None
+        };
+
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
         config: config_handle,
         config_path,
-        config_lock: parking_lot::Mutex::new(()),
+        config_lock,
         dirs: Arc::clone(&dirs),
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(events_tx.clone()),
@@ -999,7 +1090,6 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         log_broadcast,
         reload_handles,
         container_mgr,
-        client_states,
         converging,
         fika_installed,
         svm,
@@ -1012,9 +1102,10 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         mod_zip_cache,
         log_level_counts,
         fika_client,
-        fika_config_lock: parking_lot::Mutex::new(()),
+        fika_config_lock,
         catalog_cache,
         fika_items: Arc::new(parking_lot::Mutex::new(None)),
+        headless_service,
     });
 
     // Pre-warm mod ZIP cache in background
@@ -1079,11 +1170,14 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         None
     };
 
+    let api_token_state = web::Data::new(api_auth::ApiTokenState { token: api_token });
+
     let server_builder = HttpServer::new(move || {
         let gov = governor_conf.clone();
         let search_gov = search_governor_conf.clone();
         let mut app = App::new()
             .app_data(app_state.clone())
+            .app_data(api_token_state.clone())
             .app_data(web::PayloadConfig::new(64 * 1024 * 1024));
 
         if let Some(ref guard) = scanner_guard_data {

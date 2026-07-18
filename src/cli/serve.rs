@@ -162,6 +162,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         container_mgr_arc.as_ref().clone(),
                         spt_client,
                         Arc::clone(&config_arc),
+                        config_path.clone(),
                         Arc::clone(&db_arc),
                         Arc::clone(&converging),
                         cancel_token,
@@ -209,25 +210,37 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
         None
     };
 
+    // Generate API token file
+    let api_token = crate::web::api_auth::generate_api_token(
+        &dirs,
+        &config.web_bind,
+        config.web_port,
+        config.tls_enabled,
+    )
+    .context("failed to generate API token")?;
+
     let on_exit = config.on_exit.clone();
     let teardown_mgr = container_mgr.clone();
 
-    let server_future = crate::web::start_server(crate::web::ServerContext {
-        config,
-        config_handle: config_arc,
-        config_path,
-        db: db_arc,
-        forge,
-        dirs,
-        spt_info,
-        log_broadcast: Arc::clone(&log_broadcast),
-        reload_handles: Arc::new(reload_handles),
-        container_mgr,
-        client_states,
-        converging,
-        fika_installed,
-        log_level_counts: Arc::clone(&log_level_counts),
-    });
+    let server_future = crate::web::start_server(
+        crate::web::ServerContext {
+            config,
+            config_handle: config_arc,
+            config_path,
+            db: db_arc,
+            forge,
+            dirs,
+            spt_info,
+            log_broadcast: Arc::clone(&log_broadcast),
+            reload_handles: Arc::new(reload_handles),
+            container_mgr,
+            client_states,
+            converging,
+            fika_installed,
+            log_level_counts: Arc::clone(&log_level_counts),
+        },
+        api_token,
+    );
 
     // Actix-web handles SIGINT/SIGTERM internally. For SIGHUP, we race
     // the server future against the signal — dropping the future triggers
