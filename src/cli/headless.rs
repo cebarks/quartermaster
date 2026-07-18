@@ -11,6 +11,15 @@ use crate::spt::headless::EHeadlessStatus;
 
 use super::common::confirm;
 
+#[derive(Debug)]
+struct ClientInRaidError(String);
+impl std::fmt::Display for ClientInRaidError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for ClientInRaidError {}
+
 #[derive(Subcommand)]
 pub enum HeadlessAction {
     /// Show headless client status
@@ -182,11 +191,10 @@ impl HeadlessApiClient {
         }
         let resp = req.send().await?;
 
-        // Handle client_in_raid specially
         if resp.status() == 409 {
             let body: ErrorResponse = resp.json().await?;
             if body.error.as_deref() == Some("client_in_raid") {
-                return Err(anyhow::anyhow!("{}", body.message));
+                return Err(ClientInRaidError(body.message).into());
             }
             bail!("{}", body.message);
         }
@@ -359,8 +367,8 @@ async fn cmd_scale(api: &HeadlessApiClient, count: u32) -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("in a raid") {
+            if e.downcast_ref::<ClientInRaidError>().is_some() {
+                let msg = e.to_string();
                 if confirm(&format!("{} Scale down anyway?", msg))? {
                     let force_body = ScaleRequest { count, force: true };
                     let resp = api
@@ -404,8 +412,8 @@ async fn cmd_delete(api: &HeadlessApiClient, client: u32, force: bool) -> Result
             Ok(())
         }
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("in a raid") && !force {
+            if e.downcast_ref::<ClientInRaidError>().is_some() && !force {
+                let msg = e.to_string();
                 if confirm(&format!("{} Delete anyway?", msg))? {
                     let force_body = DeleteRequest { force: true };
                     let resp = api
@@ -515,13 +523,17 @@ async fn cmd_logs(api: &HeadlessApiClient, client: u32, follow: bool) -> Result<
     println!("Streaming logs for client {}...", client);
 
     let mut stream = resp.bytes_stream();
+    let mut buffer = String::new();
     while let Some(chunk) = stream.next().await {
         let bytes = chunk?;
-        // SSE format: "data: <line>\n\n"
-        let text = String::from_utf8_lossy(&bytes);
-        for line in text.lines() {
-            if let Some(data) = line.strip_prefix("data: ") {
-                println!("{}", data);
+        buffer.push_str(&String::from_utf8_lossy(&bytes));
+        while let Some(idx) = buffer.find("\n\n") {
+            let event = buffer[..idx].to_string();
+            buffer.drain(..idx + 2);
+            for line in event.lines() {
+                if let Some(data) = line.strip_prefix("data: ") {
+                    println!("{}", data);
+                }
             }
         }
     }
@@ -539,8 +551,8 @@ async fn cmd_rebuild(api: &HeadlessApiClient) -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("in a raid") {
+            if e.downcast_ref::<ClientInRaidError>().is_some() {
+                let msg = e.to_string();
                 if confirm(&format!("{} Rebuild anyway?", msg))? {
                     let force_body = RebuildRequest { force: true };
                     let resp = api
