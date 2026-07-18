@@ -156,8 +156,9 @@ async fn main() -> Result<()> {
             cli::server::run(action, &ctx).await
         }
         Command::Headless { action } => {
-            let ctx = init_context(&cli, &reload_handles)?;
-            cli::headless::run(action, &ctx).await
+            init_early_logging(&cli, &reload_handles);
+            let dirs = dirs::QumaDirs::detect(cli.spt_dir.as_deref(), None)?;
+            cli::headless::run(action, &dirs.spt_server).await
         }
         Command::Invite { expires } => {
             let ctx = init_context(&cli, &reload_handles)?;

@@ -1,39 +1,15 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::Subcommand;
 use futures_util::StreamExt;
-use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::time::Duration;
 
-use parking_lot::Mutex;
-
-use crate::client::converge::client_container_name;
-use crate::config::{is_fika_installed, Config, HeadlessClientDef, HeadlessConfig};
-use crate::container::ContainerManager;
-use crate::db::Database;
-use crate::server_detect;
+use crate::client::{ClientHealth, ClientState, ContainerStatus};
+use crate::config::is_fika_installed;
 use crate::spt::headless::EHeadlessStatus;
-use crate::spt::server::SptClient;
 
-use super::common::{confirm, CliContext};
-
-struct ClientInfo {
-    index: u32,
-    name: String,
-    container_status: &'static str,
-    profile_id: Option<String>,
-    started_at: Option<String>,
-}
-
-const CONNECT_GRACE_SECS: i64 = 90;
-
-fn is_recently_started(started_at: Option<&str>) -> bool {
-    started_at
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .is_some_and(|t| {
-            chrono::Utc::now().signed_duration_since(t).num_seconds() < CONNECT_GRACE_SECS
-        })
-}
+use super::common::confirm;
 
 #[derive(Subcommand)]
 pub enum HeadlessAction {
@@ -102,8 +78,158 @@ pub enum HeadlessAction {
     Rebuild,
 }
 
-pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
-    if !is_fika_installed(&ctx.dirs.spt_server) {
+struct HeadlessApiClient {
+    client: reqwest::Client,
+    base_url: String,
+    token: String,
+}
+
+#[derive(Deserialize)]
+struct OperationIdResponse {
+    operation_id: u64,
+}
+
+#[derive(Deserialize)]
+struct GracefulRestartResponse {
+    result: String,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum OperationStatus {
+    Running,
+    Completed,
+    Failed { error: String },
+}
+
+#[derive(Deserialize)]
+struct ErrorResponse {
+    error: Option<String>,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct ScaleRequest {
+    count: u32,
+    force: bool,
+}
+
+#[derive(Serialize)]
+struct DeleteRequest {
+    force: bool,
+}
+
+#[derive(Serialize)]
+struct RebuildRequest {
+    force: bool,
+}
+
+#[derive(Serialize)]
+struct RenameRequest {
+    name: String,
+}
+
+impl HeadlessApiClient {
+    fn new(spt_dir: &Path) -> Result<Self> {
+        let (token, url) = crate::web::api_auth::read_api_token(spt_dir)?;
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(Duration::from_secs(30))
+            .build()?;
+        Ok(Self {
+            client,
+            base_url: url,
+            token,
+        })
+    }
+
+    async fn check_server(&self) -> Result<()> {
+        match self
+            .client
+            .get(format!("{}/quma/api/headless/status", self.base_url))
+            .header("X-Quma-Token", &self.token)
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(_) => bail!("Web server is not running. Start it with 'quma serve' first."),
+        }
+    }
+
+    async fn get(&self, path: &str) -> Result<reqwest::Response> {
+        let resp = self
+            .client
+            .get(format!("{}{}", self.base_url, path))
+            .header("X-Quma-Token", &self.token)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let body: ErrorResponse = resp.json().await?;
+            bail!("{}", body.message);
+        }
+        Ok(resp)
+    }
+
+    async fn post<T: Serialize>(&self, path: &str, body: Option<&T>) -> Result<reqwest::Response> {
+        let mut req = self
+            .client
+            .post(format!("{}{}", self.base_url, path))
+            .header("X-Quma-Token", &self.token);
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        let resp = req.send().await?;
+
+        // Handle client_in_raid specially
+        if resp.status() == 409 {
+            let body: ErrorResponse = resp.json().await?;
+            if body.error.as_deref() == Some("client_in_raid") {
+                return Err(anyhow::anyhow!("{}", body.message));
+            }
+            bail!("{}", body.message);
+        }
+
+        if !resp.status().is_success() {
+            let body: ErrorResponse = resp.json().await?;
+            bail!("{}", body.message);
+        }
+        Ok(resp)
+    }
+
+    async fn poll_operation(&self, op_id: u64) -> Result<()> {
+        let timeout = Duration::from_secs(600);
+        let start = std::time::Instant::now();
+        print!("Operation in progress");
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        loop {
+            if start.elapsed() > timeout {
+                bail!("Operation timed out — check server logs");
+            }
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            print!(".");
+            std::io::Write::flush(&mut std::io::stdout())?;
+
+            let resp = self
+                .get(&format!("/quma/api/headless/operations/{}", op_id))
+                .await?;
+            let status: OperationStatus = resp.json().await?;
+            match status {
+                OperationStatus::Completed => {
+                    println!(" done");
+                    return Ok(());
+                }
+                OperationStatus::Failed { error } => bail!("Operation failed: {}", error),
+                OperationStatus::Running => continue,
+            }
+        }
+    }
+}
+
+pub async fn run(action: &HeadlessAction, spt_dir: &Path) -> Result<()> {
+    if !is_fika_installed(spt_dir) {
         bail!(
             "Fika server mod is not installed.\n\
              Install Fika with: quma install fika-server\n\
@@ -111,211 +237,107 @@ pub async fn run(action: &HeadlessAction, ctx: &CliContext) -> Result<()> {
         );
     }
 
+    let api = HeadlessApiClient::new(spt_dir)?;
+    api.check_server().await?;
+
     match action {
-        HeadlessAction::Status { client } => status(ctx, *client).await,
-        HeadlessAction::Create {
-            extra_isolated_paths,
-        } => create(ctx, extra_isolated_paths).await,
-        HeadlessAction::Delete { client, force } => delete(ctx, *client, *force).await,
-        HeadlessAction::Logs { client, follow } => logs(ctx, *client, *follow).await,
-        HeadlessAction::Stop { client } => stop(ctx, *client).await,
-        HeadlessAction::Start { client } => start(ctx, *client).await,
-        HeadlessAction::Restart { client } => restart(ctx, *client).await,
-        HeadlessAction::GracefulRestart { client } => graceful_restart(ctx, *client).await,
-        HeadlessAction::Rename { client, name } => rename(ctx, *client, name).await,
-        HeadlessAction::Scale { count } => scale(ctx, *count).await,
-        HeadlessAction::Rebuild => rebuild(ctx).await,
+        HeadlessAction::Status { client } => cmd_status(&api, *client).await,
+        HeadlessAction::Scale { count } => cmd_scale(&api, *count).await,
+        HeadlessAction::Create { .. } => cmd_create(&api).await,
+        HeadlessAction::Delete { client, force } => cmd_delete(&api, *client, *force).await,
+        HeadlessAction::Stop { client } => cmd_stop(&api, *client).await,
+        HeadlessAction::Start { client } => cmd_start(&api, *client).await,
+        HeadlessAction::Restart { client } => cmd_restart(&api, *client).await,
+        HeadlessAction::GracefulRestart { client } => cmd_graceful_restart(&api, *client).await,
+        HeadlessAction::Rename { client, name } => cmd_rename(&api, *client, name).await,
+        HeadlessAction::Logs { client, follow } => cmd_logs(&api, *client, *follow).await,
+        HeadlessAction::Rebuild => cmd_rebuild(&api).await,
     }
 }
 
-async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
-    let headless_config = require_headless_config(&ctx.config)?;
-    let container_mgr = require_container_manager(ctx)?;
-
-    // Get live data from containers (including PROFILE_ID for Fika correlation)
-    let mut states: Vec<ClientInfo> = Vec::new();
-    for index in 1..=headless_config.client_count() {
-        let name = client_container_name(index);
-
-        let info = match container_mgr.inspect(&name).await {
-            Ok(info) => {
-                let running = info.state.as_ref().and_then(|s| s.running).unwrap_or(false);
-                let started_at = info
-                    .state
-                    .as_ref()
-                    .and_then(|s| crate::container::filter_started_at(s.started_at.clone()));
-                let status = if running { "running" } else { "stopped" };
-                let pid = if running {
-                    info.config.and_then(|c| c.env).and_then(|env| {
-                        env.iter()
-                            .find(|e| e.starts_with("PROFILE_ID="))
-                            .and_then(|e| e.strip_prefix("PROFILE_ID="))
-                            .map(String::from)
-                    })
-                } else {
-                    None
-                };
-                ClientInfo {
-                    index,
-                    name,
-                    container_status: status,
-                    profile_id: pid,
-                    started_at,
-                }
-            }
-            Err(_) => ClientInfo {
-                index,
-                name,
-                container_status: "not found",
-                profile_id: None,
-                started_at: None,
-            },
-        };
-
-        states.push(info);
-    }
-
-    // Load Fika aliases for display names
-    let fika_path = crate::fika::config::fika_config_path(&ctx.dirs.spt_server);
-    let aliases: HashMap<String, String> = crate::fika::config::read_fika_config(&fika_path)
-        .map(|c| c.headless.profiles.aliases)
-        .unwrap_or_default();
-
-    // Get Fika API data if server is running
-    let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
-    let spt_client = SptClient::new(&server_host, server_port)?;
-
-    let headless_map = match spt_client.headless_clients().await {
-        Ok(resp) => Some(resp.headlesses),
-        Err(_) => None,
-    };
+async fn cmd_status(api: &HeadlessApiClient, client: Option<u32>) -> Result<()> {
+    let resp = api.get("/quma/api/headless/status").await?;
+    let states: Vec<ClientState> = resp.json().await?;
 
     match client {
         None => {
             // Table of all clients
             println!(
                 "{:<8} {:<20} {:<20} {:<15} {:<10}",
-                "CLIENT", "ALIAS", "CONTAINER", "STATUS", "FIKA STATE"
+                "CLIENT", "CONTAINER", "STATUS", "HEALTH", "FIKA STATE"
             );
             println!("{}", "-".repeat(80));
 
-            for ci in &states {
-                let fika_state: String = if let Some(ref map) = headless_map {
-                    match &ci.profile_id {
-                        Some(pid) => match map.get(pid) {
-                            Some(info) => match &info.state {
-                                EHeadlessStatus::Ready => "Ready".into(),
-                                EHeadlessStatus::InRaid => "In Raid".into(),
-                                EHeadlessStatus::Unknown(s) => format!("Unknown({s})"),
-                            },
-                            None => {
-                                if is_recently_started(ci.started_at.as_deref()) {
-                                    "connecting...".into()
-                                } else {
-                                    "no data".into()
-                                }
-                            }
-                        },
-                        None => "awaiting profile".into(),
-                    }
-                } else {
-                    "server offline".into()
+            for cs in &states {
+                let container_status_str = match cs.container_status {
+                    ContainerStatus::Running => "running",
+                    ContainerStatus::Stopped => "stopped",
+                    ContainerStatus::Unknown => "unknown",
                 };
-
-                let alias = ci
-                    .profile_id
-                    .as_ref()
-                    .and_then(|pid| aliases.get(pid))
-                    .map(|s| s.as_str())
-                    .unwrap_or("-");
+                let health_str = match cs.health {
+                    ClientHealth::Healthy => "healthy",
+                    ClientHealth::Degraded => "degraded",
+                    ClientHealth::Down => "down",
+                    ClientHealth::GivenUp => "given up",
+                };
+                let fika_str = match &cs.fika_status {
+                    Some(EHeadlessStatus::Ready) => "Ready".to_string(),
+                    Some(EHeadlessStatus::InRaid) => "In Raid".to_string(),
+                    Some(EHeadlessStatus::Unknown(v)) => format!("Unknown({})", v),
+                    None => "no data".to_string(),
+                };
                 println!(
                     "{:<8} {:<20} {:<20} {:<15} {:<10}",
-                    ci.index, alias, ci.name, ci.container_status, fika_state
+                    cs.index, cs.container_name, container_status_str, health_str, fika_str
                 );
             }
         }
         Some(index) => {
             // Detailed single client view
-            let name = client_container_name(index);
+            let cs = states
+                .iter()
+                .find(|s| s.index == index)
+                .ok_or_else(|| anyhow::anyhow!("Client {} not found", index))?;
 
-            println!("Client {}", index);
-            println!("  Container: {}", name);
-
-            let inspect = container_mgr
-                .inspect(&name)
-                .await
-                .with_context(|| format!("container '{}' not found", name))?;
-
-            let running = inspect
-                .state
-                .as_ref()
-                .and_then(|s| s.running)
-                .unwrap_or(false);
-
-            println!("  Status: {}", if running { "running" } else { "stopped" });
-
-            let detail_started_at = inspect
-                .state
-                .as_ref()
-                .and_then(|s| s.started_at.clone())
-                .filter(|s| !s.is_empty() && s != "0001-01-01T00:00:00Z");
-
-            if let Some(ref started) = detail_started_at {
-                println!("  Started: {}", started);
-            }
-            if let Some(restart_count) = &inspect.restart_count {
-                println!("  Restart count: {}", restart_count);
-            }
-
-            // Extract PROFILE_ID and show per-client Fika data
-            let profile_id = if running {
-                inspect.config.and_then(|c| c.env).and_then(|env| {
-                    env.iter()
-                        .find(|e| e.starts_with("PROFILE_ID="))
-                        .and_then(|e| e.strip_prefix("PROFILE_ID="))
-                        .map(String::from)
-                })
-            } else {
-                None
-            };
-
-            if let Some(ref pid) = profile_id {
-                println!("  Profile ID: {}", pid);
-                if let Some(alias) = aliases.get(pid) {
-                    println!("  Alias: {}", alias);
+            println!("Client {}", cs.index);
+            println!("  Container: {}", cs.container_name);
+            println!(
+                "  Status: {}",
+                match cs.container_status {
+                    ContainerStatus::Running => "running",
+                    ContainerStatus::Stopped => "stopped",
+                    ContainerStatus::Unknown => "unknown",
                 }
-            }
-
-            if let Some(ref map) = headless_map {
-                if let Some(ref pid) = profile_id {
-                    if let Some(info) = map.get(pid) {
-                        println!("\nFika Status:");
-                        let state_str = match info.state {
-                            EHeadlessStatus::Ready => "Ready",
-                            EHeadlessStatus::InRaid => "In Raid",
-                            EHeadlessStatus::Unknown(_) => "Unknown",
-                        };
-                        println!("  State: {}", state_str);
-                        println!("  Players: {}", info.players.join(", "));
-                        println!("  Level: {}", info.level);
-                    } else if is_recently_started(detail_started_at.as_deref()) {
-                        println!("\nFika Status: connecting... (client recently started)");
-                    } else {
-                        println!("\nFika Status: no data for this client");
-                    }
-                } else {
-                    // PROFILE_ID is set on the container env during convergence.
-                    // It will be None if no headless profile was available at creation
-                    // time (the SPT server needs to run with Fika to generate them)
-                    // or if the container is stopped.
-                    let client_count = headless_config.client_count();
-                    println!(
-                        "\nFika Status: awaiting profile assignment. \
-                         Restart the SPT server to generate headless profiles, \
-                         then run `quma headless scale {}` to re-provision.",
-                        client_count
-                    );
+            );
+            println!(
+                "  Health: {}",
+                match cs.health {
+                    ClientHealth::Healthy => "healthy",
+                    ClientHealth::Degraded => "degraded",
+                    ClientHealth::Down => "down",
+                    ClientHealth::GivenUp => "given up",
                 }
+            );
+            println!("  Restart count: {}", cs.restart_count);
+            if let Some(ref last) = cs.last_restart {
+                println!("  Last restart: {}", last);
+            }
+            if let Some(ref fika) = cs.fika_status {
+                let status_str = match fika {
+                    EHeadlessStatus::Ready => "Ready".to_string(),
+                    EHeadlessStatus::InRaid => "In Raid".to_string(),
+                    EHeadlessStatus::Unknown(v) => format!("Unknown({})", v),
+                };
+                println!("  Fika status: {}", status_str);
+            }
+            if !cs.players.is_empty() {
+                println!("  Players: {}", cs.players.join(", "));
+            }
+            if let Some(cpu) = cs.cpu_percent {
+                println!("  CPU: {:.1}%", cpu);
+            }
+            if let Some(mem) = cs.memory_mb {
+                println!("  Memory: {:.1} MB", mem);
             }
         }
     }
@@ -323,599 +345,217 @@ async fn status(ctx: &CliContext, client: Option<u32>) -> Result<()> {
     Ok(())
 }
 
-async fn create(ctx: &CliContext, extra_isolated_paths: &[String]) -> Result<()> {
-    let _headless_config = require_headless_config(&ctx.config)?;
-    let container_mgr = require_container_manager(ctx)?;
-
-    let config_path = Config::resolve_path(None, Some(&ctx.dirs.root));
-    let mut config = Config::load_with_env(&config_path)?;
-
-    let new_def = HeadlessClientDef {
-        extra_isolated_paths: extra_isolated_paths.to_vec(),
-        ..Default::default()
+async fn cmd_scale(api: &HeadlessApiClient, count: u32) -> Result<()> {
+    let body = ScaleRequest {
+        count,
+        force: false,
     };
 
-    let headless = config.headless.get_or_insert_with(HeadlessConfig::default);
-    headless.clients.push(new_def);
-    let index = headless.client_count();
-    let total = index; // capture before dropping borrow
-
-    config.save(&config_path)?;
-    println!("Created headless client {} (total: {})", index, total);
-
-    let (server_host, server_port) = crate::server_detect::resolve_server_addr(&config, &ctx.dirs);
-    let spt_client = SptClient::new(&server_host, server_port)?;
-    let converging = Arc::new(AtomicBool::new(false));
-    let db = db_arc_for_converge(ctx)?;
-
-    crate::client::converge::converge(
-        container_mgr,
-        config
-            .headless
-            .as_ref()
-            .expect("set by get_or_insert_with above"),
-        &config,
-        &ctx.dirs,
-        &spt_client,
-        &ctx.forge,
-        &ctx.spt_info.spt_version,
-        converging,
-        &db,
-    )
-    .await?;
-
-    println!("Client {} created and started.", index);
-    Ok(())
-}
-
-#[allow(deprecated)]
-async fn delete(ctx: &CliContext, client: u32, force: bool) -> Result<()> {
-    let headless_config = require_headless_config(&ctx.config)?;
-    let container_mgr = require_container_manager(ctx)?;
-
-    let index = client as usize;
-    if index == 0 || index > headless_config.clients.len() {
-        bail!(
-            "Client {} does not exist (valid range: 1-{})",
-            client,
-            headless_config.client_count()
-        );
-    }
-
-    if !force {
-        let (server_host, server_port) =
-            crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
-        let spt_client = SptClient::new(&server_host, server_port)?;
-        if let Ok(resp) = spt_client.headless_clients().await {
-            let container_name = crate::client::converge::client_container_name(client);
-            if let Ok(info) = container_mgr.inspect(&container_name).await {
-                if let Some(pid) = info.config.and_then(|c| c.env).and_then(|env| {
-                    env.iter()
-                        .find(|e| e.starts_with("PROFILE_ID="))
-                        .and_then(|e| e.strip_prefix("PROFILE_ID="))
-                        .map(String::from)
-                }) {
-                    if let Some(client_info) = resp.headlesses.get(&pid) {
-                        if client_info.state == EHeadlessStatus::InRaid
-                            && !client_info.players.is_empty()
-                        {
-                            bail!(
-                                "Client {} is in a raid with {} player(s). Use --force to override.",
-                                client,
-                                client_info.players.len()
-                            );
-                        }
-                    }
+    match api.post("/quma/api/headless/scale", Some(&body)).await {
+        Ok(resp) => {
+            let op: OperationIdResponse = resp.json().await?;
+            api.poll_operation(op.operation_id).await?;
+            println!("Successfully scaled to {} client(s).", count);
+            Ok(())
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("in a raid") {
+                if confirm(&format!("{} Scale down anyway?", msg))? {
+                    let force_body = ScaleRequest { count, force: true };
+                    let resp = api
+                        .post("/quma/api/headless/scale", Some(&force_body))
+                        .await?;
+                    let op: OperationIdResponse = resp.json().await?;
+                    api.poll_operation(op.operation_id).await?;
+                    println!("Successfully scaled to {} client(s).", count);
+                    return Ok(());
+                } else {
+                    println!("Scale operation cancelled.");
+                    return Ok(());
                 }
             }
+            Err(e)
         }
     }
+}
 
-    // Remove ALL managed containers so converge recreates with correct indices
-    println!("Removing all headless containers for clean index renumbering...");
-    crate::client::converge::remove_all_managed_containers(container_mgr).await?;
+async fn cmd_create(api: &HeadlessApiClient) -> Result<()> {
+    let resp = api.post("/quma/api/headless/create", None::<&()>).await?;
+    let op: OperationIdResponse = resp.json().await?;
+    api.poll_operation(op.operation_id).await?;
+    println!("Client created successfully.");
+    Ok(())
+}
 
-    // Remove from config
-    let config_path = Config::resolve_path(None, Some(&ctx.dirs.root));
-    let mut config = Config::load_with_env(&config_path)?;
-    let mut updated_headless = headless_config.clone();
-    if let Some(ref mut headless) = config.headless {
-        headless.clients.remove(index - 1);
-        updated_headless = headless.clone();
+async fn cmd_delete(api: &HeadlessApiClient, client: u32, force: bool) -> Result<()> {
+    let body = DeleteRequest { force };
+    match api
+        .post(
+            &format!("/quma/api/headless/{}/delete", client),
+            Some(&body),
+        )
+        .await
+    {
+        Ok(resp) => {
+            let op: OperationIdResponse = resp.json().await?;
+            api.poll_operation(op.operation_id).await?;
+            println!("Client {} deleted successfully.", client);
+            Ok(())
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("in a raid") && !force {
+                if confirm(&format!("{} Delete anyway?", msg))? {
+                    let force_body = DeleteRequest { force: true };
+                    let resp = api
+                        .post(
+                            &format!("/quma/api/headless/{}/delete", client),
+                            Some(&force_body),
+                        )
+                        .await?;
+                    let op: OperationIdResponse = resp.json().await?;
+                    api.poll_operation(op.operation_id).await?;
+                    println!("Client {} deleted successfully.", client);
+                    return Ok(());
+                } else {
+                    println!("Delete operation cancelled.");
+                    return Ok(());
+                }
+            }
+            Err(e)
+        }
     }
-    config.save(&config_path)?;
+}
 
-    // Clean up overlay directory for deleted index
-    let overlay_dir =
-        crate::client::converge::client_overlay_dir(&updated_headless.install_dir, client);
-    if overlay_dir.exists() {
-        std::fs::remove_dir_all(&overlay_dir)?;
-    }
+async fn cmd_stop(api: &HeadlessApiClient, client: u32) -> Result<()> {
+    api.post(&format!("/quma/api/headless/{}/stop", client), None::<&()>)
+        .await?;
+    println!("Client {} stopped successfully.", client);
+    Ok(())
+}
 
-    let new_count = updated_headless.client_count();
+async fn cmd_start(api: &HeadlessApiClient, client: u32) -> Result<()> {
+    api.post(&format!("/quma/api/headless/{}/start", client), None::<&()>)
+        .await?;
+    println!("Client {} started successfully.", client);
+    Ok(())
+}
 
-    // Converge to recreate containers with correct indices
-    println!("Re-converging to recreate containers with correct indices...");
-    let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
-    let spt_client = SptClient::new(&server_host, server_port)?;
-    let db = db_arc_for_converge(ctx)?;
-
-    crate::client::converge::converge(
-        container_mgr,
-        &updated_headless,
-        &ctx.config,
-        &ctx.dirs,
-        &spt_client,
-        &ctx.forge,
-        &ctx.spt_info.spt_version,
-        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        &db,
+async fn cmd_restart(api: &HeadlessApiClient, client: u32) -> Result<()> {
+    api.post(
+        &format!("/quma/api/headless/{}/restart", client),
+        None::<&()>,
     )
     .await?;
-
-    println!(
-        "Deleted client {}. {} client(s) remaining.",
-        client, new_count
-    );
-    Ok(())
-}
-
-async fn logs(ctx: &CliContext, client: u32, follow: bool) -> Result<()> {
-    let container_mgr = require_container_manager(ctx)?;
-    let name = client_container_name(client);
-
-    // Verify container exists
-    container_mgr
-        .inspect(&name)
-        .await
-        .with_context(|| format!("container '{}' not found", name))?;
-
-    println!("Streaming logs for {}...", name);
-
-    let mut stream = container_mgr.log_stream(&name, 100, follow);
-    while let Some(log) = stream.next().await {
-        match log? {
-            bollard::container::LogOutput::StdOut { message } => {
-                print!("{}", String::from_utf8_lossy(&message));
-            }
-            bollard::container::LogOutput::StdErr { message } => {
-                eprint!("{}", String::from_utf8_lossy(&message));
-            }
-            _ => {}
-        }
-    }
-
-    Ok(())
-}
-
-async fn stop(ctx: &CliContext, client: u32) -> Result<()> {
-    let container_mgr = require_container_manager(ctx)?;
-    let name = client_container_name(client);
-
-    // Verify container exists
-    container_mgr
-        .inspect(&name)
-        .await
-        .with_context(|| format!("container '{}' not found", name))?;
-
-    println!("Stopping {}...", name);
-    container_mgr.stop(&name).await?;
-    println!("Client {} stopped successfully.", client);
-
-    Ok(())
-}
-
-async fn start(ctx: &CliContext, client: u32) -> Result<()> {
-    let container_mgr = require_container_manager(ctx)?;
-    let name = client_container_name(client);
-
-    // Verify container exists
-    container_mgr
-        .inspect(&name)
-        .await
-        .with_context(|| format!("container '{}' not found", name))?;
-
-    println!("Starting {}...", name);
-    container_mgr.start(&name).await?;
-    println!("Client {} started successfully.", client);
-
-    Ok(())
-}
-
-async fn restart(ctx: &CliContext, client: u32) -> Result<()> {
-    let container_mgr = require_container_manager(ctx)?;
-    let name = client_container_name(client);
-
-    // Verify container exists
-    container_mgr
-        .inspect(&name)
-        .await
-        .with_context(|| format!("container '{}' not found", name))?;
-
-    println!("Restarting {}...", name);
-    container_mgr.restart(&name).await?;
     println!("Client {} restarted successfully.", client);
-
     Ok(())
 }
 
-async fn graceful_restart(ctx: &CliContext, client: u32) -> Result<()> {
-    let container_mgr = require_container_manager(ctx)?;
-    let name = client_container_name(client);
-
-    // Verify container exists and get profile ID
-    let inspect = container_mgr
-        .inspect(&name)
-        .await
-        .with_context(|| format!("container '{}' not found", name))?;
-
-    let running = inspect
-        .state
-        .as_ref()
-        .and_then(|s| s.running)
-        .unwrap_or(false);
-
-    if !running {
-        bail!("Client {} is not running", client);
-    }
-
-    let profile_id = inspect
-        .config
-        .and_then(|c| c.env)
-        .and_then(|env| {
-            env.iter()
-                .find(|e| e.starts_with("PROFILE_ID="))
-                .and_then(|e| e.strip_prefix("PROFILE_ID="))
-                .map(String::from)
-        })
-        .ok_or_else(|| anyhow!("Client {} has no profile ID", client))?;
-
-    // Check Fika status
-    let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
-    let spt_client = SptClient::new(&server_host, server_port)?;
-
-    if let Ok(resp) = spt_client.headless_clients().await {
-        if let Some(client_info) = resp.headlesses.get(&profile_id) {
-            if client_info.state == EHeadlessStatus::InRaid {
-                bail!(
-                    "Client {} is in a raid. Use force restart (`quma headless restart {}`)",
-                    client,
-                    client
-                );
-            }
-        }
-    }
-
-    // Create Fika client
-    let fika_config_path = crate::fika::config::fika_config_path(&ctx.dirs.spt_server);
-    let fika_config = crate::fika::config::read_fika_config(&fika_config_path)
-        .context("failed to read fika.jsonc")?;
-
-    if fika_config.server.api_key.is_empty() {
-        bail!("Fika API key not configured in fika.jsonc");
-    }
-
-    let base_url = format!(
-        "https://{}:{}",
-        fika_config.server.spt.http.backend_ip, fika_config.server.spt.http.backend_port
-    );
-    let fika_client = crate::fika::client::FikaClient::new(&base_url, fika_config.server.api_key)?;
-
-    // Send shutdown
+async fn cmd_graceful_restart(api: &HeadlessApiClient, client: u32) -> Result<()> {
     println!("Sending graceful shutdown to client {}...", client);
-    fika_client.shutdown_headless(&profile_id).await?;
+    let resp = api
+        .post(
+            &format!("/quma/api/headless/{}/graceful-restart", client),
+            None::<&()>,
+        )
+        .await?;
+    let result: GracefulRestartResponse = resp.json().await?;
 
-    // Poll for exit (30s timeout)
-    println!("Waiting for container to exit (30s timeout)...");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-    let mut exited = false;
-    while tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        if !container_mgr.is_running(&name).await.unwrap_or(true) {
-            exited = true;
-            break;
+    match result.result.as_str() {
+        "exited" => {
+            println!("Client {} shut down gracefully.", client);
+            Ok(())
         }
-    }
-
-    if exited {
-        println!("Client {} shut down gracefully.", client);
-    } else {
-        bail!(
+        "timeout" => bail!(
             "Client {} did not shut down within 30s. Use force restart if needed.",
             client
-        );
+        ),
+        _ => bail!("Unexpected result: {}", result.result),
     }
-
-    Ok(())
 }
 
-async fn rename(ctx: &CliContext, client: u32, name: &str) -> Result<()> {
-    let headless_config = require_headless_config(&ctx.config)?;
-    if client == 0 || client > headless_config.client_count() {
-        bail!(
-            "Client {} does not exist (valid range: 1-{})",
-            client,
-            headless_config.client_count()
-        );
-    }
-
-    let container_mgr = require_container_manager(ctx)?;
-    let container_name = client_container_name(client);
-
-    // Get profile_id from container env
-    let profile_id = container_mgr
-        .inspect(&container_name)
-        .await
-        .ok()
-        .and_then(|info| {
-            info.config.and_then(|c| c.env).and_then(|env| {
-                env.iter()
-                    .find(|e| e.starts_with("PROFILE_ID="))
-                    .and_then(|e| e.strip_prefix("PROFILE_ID="))
-                    .map(String::from)
-            })
-        })
-        .ok_or_else(|| {
-            anyhow!(
-                "Client {} has no profile assigned. \
-                 Start the SPT server to generate headless profiles.",
-                client
-            )
-        })?;
-
-    let fika_config_path = crate::fika::config::fika_config_path(&ctx.dirs.spt_server);
-    let config = crate::fika::config::read_fika_config(&fika_config_path)
-        .context("failed to read fika.jsonc")?;
-    let mut aliases = config.headless.profiles.aliases;
-
-    let name = name.trim();
+async fn cmd_rename(api: &HeadlessApiClient, client: u32, name: &str) -> Result<()> {
+    let body = RenameRequest {
+        name: name.to_string(),
+    };
+    api.post(
+        &format!("/quma/api/headless/{}/rename", client),
+        Some(&body),
+    )
+    .await?;
     if name.is_empty() {
-        if aliases.remove(&profile_id).is_some() {
-            println!("Cleared alias for client {}.", client);
-        } else {
-            println!("Client {} has no alias to clear.", client);
-            return Ok(());
-        }
+        println!("Cleared alias for client {}.", client);
     } else {
-        aliases.insert(profile_id, name.to_string());
         println!("Renamed client {} to \"{}\".", client, name);
     }
-
-    // Write via CST to preserve comments
-    let cst = crate::fika::config::read_fika_cst(&fika_config_path)?;
-    let root = cst.object_value_or_set();
-    if let Some(headless) = root.object_value("headless") {
-        if let Some(profiles) = headless.object_value("profiles") {
-            let alias_entries: Vec<(String, jsonc_parser::cst::CstInputValue)> = aliases
-                .into_iter()
-                .map(|(k, v)| (k, jsonc_parser::cst::CstInputValue::String(v)))
-                .collect();
-            match profiles.get("aliases") {
-                Some(prop) => {
-                    prop.set_value(jsonc_parser::cst::CstInputValue::Object(alias_entries))
-                }
-                None => {
-                    profiles.append(
-                        "aliases",
-                        jsonc_parser::cst::CstInputValue::Object(alias_entries),
-                    );
-                }
-            }
-        }
-    }
-    crate::fika::config::write_fika_cst(&cst, &fika_config_path)?;
-
     println!("Restart the SPT server for the in-game name to take effect.");
     Ok(())
 }
 
-async fn scale(ctx: &CliContext, count: u32) -> Result<()> {
-    let container_mgr = require_container_manager(ctx)?;
+async fn cmd_logs(api: &HeadlessApiClient, client: u32, follow: bool) -> Result<()> {
+    let tail = 100;
+    let url = format!(
+        "{}/quma/api/headless/{}/logs?tail={}&follow={}",
+        api.base_url, client, tail, follow
+    );
 
-    // Load config
-    let config_path = Config::resolve_path(None, Some(&ctx.dirs.root));
-    let mut config = Config::load_with_env(&config_path)?;
+    let resp = api
+        .client
+        .get(&url)
+        .header("X-Quma-Token", &api.token)
+        .send()
+        .await?;
 
-    let old_count = config
-        .headless
-        .as_ref()
-        .map(|h| h.client_count())
-        .unwrap_or(0);
-
-    if count == old_count {
-        println!("Already at {} clients.", count);
-        return Ok(());
+    if !resp.status().is_success() {
+        let body: ErrorResponse = resp.json().await?;
+        bail!("{}", body.message);
     }
 
-    // If scaling down, check for in-raid clients
-    if count < old_count {
-        let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
-        let spt_client = SptClient::new(&server_host, server_port)?;
+    println!("Streaming logs for client {}...", client);
 
-        if let Ok(resp) = spt_client.headless_clients().await {
-            for index in (count + 1)..=old_count {
-                let container_name = crate::client::converge::client_container_name(index);
-                if let Ok(info) = container_mgr.inspect(&container_name).await {
-                    if let Some(pid) = info.config.and_then(|c| c.env).and_then(|env| {
-                        env.iter()
-                            .find(|e| e.starts_with("PROFILE_ID="))
-                            .and_then(|e| e.strip_prefix("PROFILE_ID="))
-                            .map(String::from)
-                    }) {
-                        if let Some(client_info) = resp.headlesses.get(&pid) {
-                            if client_info.state == EHeadlessStatus::InRaid
-                                && !client_info.players.is_empty()
-                            {
-                                let prompt = format!(
-                                    "Client {} is in a raid with {} player(s). Scale down anyway?",
-                                    index,
-                                    client_info.players.len()
-                                );
-                                if !confirm(&prompt)? {
-                                    println!("Scale operation cancelled.");
-                                    return Ok(());
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk?;
+        // SSE format: "data: <line>\n\n"
+        let text = String::from_utf8_lossy(&bytes);
+        for line in text.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                println!("{}", data);
             }
         }
     }
 
-    // Update config: add or remove HeadlessClientDef entries
-    let headless = config.headless.get_or_insert_with(HeadlessConfig::default);
-    if count > old_count {
-        // Scale up: push new default entries
-        for _ in old_count..count {
-            headless.clients.push(HeadlessClientDef::default());
+    Ok(())
+}
+
+async fn cmd_rebuild(api: &HeadlessApiClient) -> Result<()> {
+    let body = RebuildRequest { force: false };
+    match api.post("/quma/api/headless/rebuild", Some(&body)).await {
+        Ok(resp) => {
+            let op: OperationIdResponse = resp.json().await?;
+            api.poll_operation(op.operation_id).await?;
+            println!("Rebuild completed successfully.");
+            Ok(())
         }
-    } else {
-        // Scale down: truncate the vec
-        headless.clients.truncate(count as usize);
-    }
-
-    config.save(&config_path)?;
-    println!("Updated config: {} headless client(s)", count);
-
-    // Run convergence
-    let (server_host, server_port) = server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
-    let spt_client = SptClient::new(&server_host, server_port)?;
-    let converging = Arc::new(AtomicBool::new(false));
-    let db = db_arc_for_converge(ctx)?;
-
-    println!("Converging to {} client(s)...", count);
-    crate::client::converge::converge(
-        container_mgr,
-        config
-            .headless
-            .as_ref()
-            .expect("set by get_or_insert_with above"),
-        &config,
-        &ctx.dirs,
-        &spt_client,
-        &ctx.forge,
-        &ctx.spt_info.spt_version,
-        converging,
-        &db,
-    )
-    .await?;
-
-    println!("Successfully scaled to {} client(s).", count);
-    Ok(())
-}
-
-#[allow(deprecated)]
-async fn rebuild(ctx: &CliContext) -> Result<()> {
-    let headless_config = require_headless_config(&ctx.config)?;
-    let container_mgr = require_container_manager(ctx)?;
-    let count = headless_config.client_count();
-
-    if count == 0 {
-        println!("No headless clients configured.");
-        return Ok(());
-    }
-
-    if !confirm(&format!(
-        "Rebuild all {count} headless client(s)? This will destroy and recreate all containers and overlays."
-    ))? {
-        println!("Rebuild cancelled.");
-        return Ok(());
-    }
-
-    // 1. Remove all managed containers
-    println!("Removing all headless containers...");
-    crate::client::converge::remove_all_managed_containers(container_mgr).await?;
-
-    // 2. Remove all overlay directories (wipe the whole clients dir to catch orphans)
-    let clients_dir = headless_config.install_dir.join(".quma/clients");
-    if clients_dir.is_dir() {
-        println!("Removing overlay directories...");
-        std::fs::remove_dir_all(&clients_dir)?;
-    }
-
-    // 3. Re-converge to recreate everything from scratch
-    println!("Re-converging to recreate {count} client(s)...");
-    let (server_host, server_port) =
-        crate::server_detect::resolve_server_addr(&ctx.config, &ctx.dirs);
-    let spt_client = SptClient::new(&server_host, server_port)?;
-    let converging = Arc::new(AtomicBool::new(false));
-    let db = db_arc_for_converge(ctx)?;
-
-    crate::client::converge::converge(
-        container_mgr,
-        headless_config,
-        &ctx.config,
-        &ctx.dirs,
-        &spt_client,
-        &ctx.forge,
-        &ctx.spt_info.spt_version,
-        converging,
-        &db,
-    )
-    .await?;
-
-    println!("Successfully rebuilt {count} client(s).");
-    Ok(())
-}
-
-fn require_headless_config(config: &Config) -> Result<&HeadlessConfig> {
-    config.headless.as_ref().ok_or_else(|| {
-        anyhow!(
-            "headless clients not configured.\n\
-             Add a [headless] section to quartermaster.toml or run `quma setup`."
-        )
-    })
-}
-
-/// Open a DB connection wrapped for convergence (which needs Arc<Mutex<Database>>).
-/// CLI context owns a bare Database, so we open a second read-only connection.
-fn db_arc_for_converge(ctx: &CliContext) -> Result<Arc<Mutex<Database>>> {
-    let db_path = ctx.dirs.db_path();
-    let db = Database::open(&db_path)
-        .with_context(|| format!("failed to open database at {}", db_path.display()))?;
-    Ok(Arc::new(Mutex::new(db)))
-}
-
-fn require_container_manager(ctx: &CliContext) -> Result<&ContainerManager> {
-    ctx.container_mgr.as_ref().ok_or_else(|| {
-        anyhow!(
-            "failed to connect to Podman socket.\n\
-             Ensure podman.socket is enabled:\n  \
-             systemctl --user enable --now podman.socket"
-        )
-    })
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recently_started_within_grace_period() {
-        let now = chrono::Utc::now();
-        let ts = now.to_rfc3339();
-        assert!(is_recently_started(Some(&ts)));
-    }
-
-    #[test]
-    fn not_recently_started_after_grace_period() {
-        let old = chrono::Utc::now() - chrono::Duration::seconds(CONNECT_GRACE_SECS + 10);
-        let ts = old.to_rfc3339();
-        assert!(!is_recently_started(Some(&ts)));
-    }
-
-    #[test]
-    fn not_recently_started_when_none() {
-        assert!(!is_recently_started(None));
-    }
-
-    #[test]
-    fn not_recently_started_when_invalid() {
-        assert!(!is_recently_started(Some("not-a-timestamp")));
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("in a raid") {
+                if confirm(&format!("{} Rebuild anyway?", msg))? {
+                    let force_body = RebuildRequest { force: true };
+                    let resp = api
+                        .post("/quma/api/headless/rebuild", Some(&force_body))
+                        .await?;
+                    let op: OperationIdResponse = resp.json().await?;
+                    api.poll_operation(op.operation_id).await?;
+                    println!("Rebuild completed successfully.");
+                    return Ok(());
+                } else {
+                    println!("Rebuild cancelled.");
+                    return Ok(());
+                }
+            }
+            Err(e)
+        }
     }
 }
