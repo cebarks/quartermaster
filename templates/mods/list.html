@@ -65,6 +65,7 @@
     <form id="install-form" method="post" action="/quma/mods/install">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="mod_ref" id="install-mod-ref" value="">
+        <input type="hidden" name="version_id" id="install-version-id" value="">
         <label for="install-search">Search Forge, enter a Mod ID, or paste a URL</label>
         <div style="position:relative">
             <input type="text" id="install-search"
@@ -90,6 +91,14 @@
             </div>
             <p class="text-muted text-sm" id="install-preview-desc" style="margin:0.25rem 0 0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></p>
             <div id="install-preview-badges" style="margin-top:0.25rem;display:flex;gap:0.5rem"></div>
+            <div style="margin-top:0.5rem">
+                <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+                    <input type="checkbox" id="install-show-all-versions"
+                           onchange="fetchVersions(this.checked)">
+                    <span>Show all versions</span>
+                </label>
+                <div id="install-versions-container"></div>
+            </div>
         </div>
         <button type="submit" class="btn mt-1" id="install-submit-btn" disabled>{% call icons::download() %}{% endcall %} Install</button>
     </form>
@@ -153,6 +162,17 @@ document.addEventListener('DOMContentLoaded', function() {
     var modRefInput = document.getElementById('install-mod-ref');
     var preview = document.getElementById('install-selected-preview');
     var submitBtn = document.getElementById('install-submit-btn');
+    var currentModId = null;
+
+    window.fetchVersions = function(showAll, modId) {
+        if (modId) currentModId = modId;
+        if (!currentModId) return;
+        var container = document.getElementById('install-versions-container');
+        container.innerHTML = '<p class="text-muted text-sm loading-pulse">Loading versions...</p>';
+        var url = '/quma/api/mods/' + currentModId + '/versions';
+        if (showAll) url += '?all=true';
+        htmx.ajax('GET', url, {target: '#install-versions-container', swap: 'innerHTML'});
+    };
 
     if (!searchInput) return;
 
@@ -172,6 +192,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (modRefInput.value) {
             modRefInput.value = '';
             preview.style.display = 'none';
+            document.getElementById('install-version-id').value = '';
+            document.getElementById('install-versions-container').innerHTML = '';
+            document.getElementById('install-show-all-versions').checked = false;
+            currentModId = null;
         }
         var v = searchInput.value.trim();
         // ponytail: enable button for URLs or numeric mod IDs typed directly
@@ -185,6 +209,10 @@ document.addEventListener('DOMContentLoaded', function() {
         searchInput.value = '';
         searchInput.focus();
         resultsDiv.innerHTML = '';
+        document.getElementById('install-version-id').value = '';
+        document.getElementById('install-versions-container').innerHTML = '';
+        document.getElementById('install-show-all-versions').checked = false;
+        currentModId = null;
     });
 
     resultsDiv.addEventListener('click', function(e) {
@@ -228,6 +256,11 @@ document.addEventListener('DOMContentLoaded', function() {
         preview.style.display = '';
         submitBtn.disabled = false;
         resultsDiv.innerHTML = '';
+
+        // Fetch versions for selected mod
+        document.getElementById('install-version-id').value = '';
+        document.getElementById('install-show-all-versions').checked = false;
+        fetchVersions(false, id);
     });
 
     document.getElementById('install-form').addEventListener('submit', function(e) {

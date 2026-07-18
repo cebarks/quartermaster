@@ -239,6 +239,8 @@ struct ListBodyTemplate {
 pub struct InstallForm {
     mod_ref: String,
     csrf_token: String,
+    #[serde(default)]
+    version_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1266,17 +1268,57 @@ pub async fn install_mod(
         }
     };
 
-    let version = match versions.iter().max_by_key(|v| v.id) {
-        Some(v) => v,
-        None => {
-            set_flash(
-                &session,
-                "No compatible version found for current SPT version",
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/mods"))
-                .finish());
+    let requested_version_id: Option<i64> = form
+        .version_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(|s| s.parse().ok());
+
+    let version: crate::forge::models::ForgeVersion = if let Some(vid) = requested_version_id {
+        match versions.iter().find(|v| v.id == vid) {
+            Some(v) => v.clone(),
+            None => {
+                // Version not in SPT-filtered list — try all versions (user used "show all")
+                match state.forge.get_versions(mod_id, None).await {
+                    Ok(all) => match all.into_iter().find(|v| v.id == vid) {
+                        Some(v) => v,
+                        None => {
+                            set_flash(
+                                &session,
+                                "Selected version not found on Forge",
+                                FlashType::Error,
+                            );
+                            return Ok(HttpResponse::SeeOther()
+                                .insert_header(("Location", "/quma/mods"))
+                                .finish());
+                        }
+                    },
+                    Err(_) => {
+                        set_flash(
+                            &session,
+                            "Could not verify selected version. Please try again.",
+                            FlashType::Error,
+                        );
+                        return Ok(HttpResponse::SeeOther()
+                            .insert_header(("Location", "/quma/mods"))
+                            .finish());
+                    }
+                }
+            }
+        }
+    } else {
+        match crate::forge::models::latest_version(&versions) {
+            Some(v) => v.clone(),
+            None => {
+                set_flash(
+                    &session,
+                    "No compatible version found for current SPT version",
+                    FlashType::Error,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/mods"))
+                    .finish());
+            }
         }
     };
 
