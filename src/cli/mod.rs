@@ -96,6 +96,7 @@ pub enum Command {
         /// Mod name, Forge ID, slug, URL, or file path
         mod_ref: String,
         /// Specific version (latest compatible if omitted)
+        #[arg(long)]
         version: Option<String>,
         /// Override the mod name (used with URL/file installs)
         #[arg(long)]
