@@ -121,6 +121,11 @@ pub async fn auth_middleware(
     req: ServiceRequest,
     next: Next<BoxBody>,
 ) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
+    // Check if a SessionUser was already injected (e.g., by API token auth)
+    if req.extensions().get::<SessionUser>().is_some() {
+        return next.call(req).await;
+    }
+
     let session = req.get_session();
     let user_id: Option<i64> = match session.get("user_id") {
         Ok(v) => v,

@@ -1,3 +1,4 @@
+pub mod api_auth;
 pub mod auth;
 pub mod csrf;
 pub mod error;
@@ -230,6 +231,7 @@ pub fn configure_app(
 
     // Build the API scope
     let mut api_scope = web::scope("/api")
+        .wrap(from_fn(api_auth::api_auth_middleware))
         .wrap(from_fn(auth::auth_middleware))
         .route("/events", web::get().to(crate::web::sse::events_stream))
         .route(
@@ -867,7 +869,7 @@ pub fn configure_app(
     cfg.default_service(web::to(proxy::proxy_handler));
 }
 
-pub async fn start_server(ctx: ServerContext) -> Result<()> {
+pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
     let ServerContext {
         config,
         config_handle,
@@ -1097,11 +1099,14 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         None
     };
 
+    let api_token_state = web::Data::new(api_auth::ApiTokenState { token: api_token });
+
     let server_builder = HttpServer::new(move || {
         let gov = governor_conf.clone();
         let search_gov = search_governor_conf.clone();
         let mut app = App::new()
             .app_data(app_state.clone())
+            .app_data(api_token_state.clone())
             .app_data(web::PayloadConfig::new(64 * 1024 * 1024));
 
         if let Some(ref guard) = scanner_guard_data {
