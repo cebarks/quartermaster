@@ -8,6 +8,7 @@ pub mod convoy;
 pub mod dashboard;
 pub mod fika_settings;
 pub mod give_items;
+pub mod headless_api;
 pub mod join;
 pub mod logs;
 pub mod metrics;

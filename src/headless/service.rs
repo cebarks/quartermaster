@@ -32,7 +32,7 @@ pub enum GracefulResult {
     Timeout,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LogLine {
     pub stream: String,
     pub message: String,

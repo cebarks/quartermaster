@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -47,6 +47,19 @@ impl<'de> Deserialize<'de> for EHeadlessStatus {
                 _ => Ok(EHeadlessStatus::Unknown(v)),
             },
             _ => Ok(EHeadlessStatus::Unknown(v)),
+        }
+    }
+}
+
+impl Serialize for EHeadlessStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            EHeadlessStatus::Ready => serializer.serialize_str("Ready"),
+            EHeadlessStatus::InRaid => serializer.serialize_str("InRaid"),
+            EHeadlessStatus::Unknown(v) => v.serialize(serializer),
         }
     }
 }

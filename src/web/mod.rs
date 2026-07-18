@@ -500,6 +500,67 @@ pub fn configure_app(
                     "/roles/{name}/delete",
                     web::post().to(handlers::admin::delete_role_handler),
                 ),
+        )
+        // Headless JSON API (nested under /api/headless)
+        .service(
+            web::scope("/headless")
+                .route(
+                    "/status",
+                    web::get().to(handlers::headless_api::api_headless_status),
+                )
+                .route(
+                    "/{n}/start",
+                    web::post().to(handlers::headless_api::api_client_start),
+                )
+                .route(
+                    "/{n}/stop",
+                    web::post().to(handlers::headless_api::api_client_stop),
+                )
+                .route(
+                    "/{n}/restart",
+                    web::post().to(handlers::headless_api::api_client_restart),
+                )
+                .route(
+                    "/{n}/graceful-restart",
+                    web::post().to(handlers::headless_api::api_client_graceful_restart),
+                )
+                .route("/scale", web::post().to(handlers::headless_api::api_scale))
+                .route(
+                    "/create",
+                    web::post().to(handlers::headless_api::api_create),
+                )
+                .route(
+                    "/{n}/delete",
+                    web::post().to(handlers::headless_api::api_client_delete),
+                )
+                .route(
+                    "/rebuild",
+                    web::post().to(handlers::headless_api::api_rebuild),
+                )
+                .route(
+                    "/converge",
+                    web::post().to(handlers::headless_api::api_converge),
+                )
+                .route(
+                    "/{n}/rename",
+                    web::post().to(handlers::headless_api::api_client_rename),
+                )
+                .route(
+                    "/{n}/image",
+                    web::post().to(handlers::headless_api::api_client_set_image),
+                )
+                .route(
+                    "/{n}/start-raid",
+                    web::post().to(handlers::headless_api::api_client_start_raid),
+                )
+                .route(
+                    "/{n}/logs",
+                    web::get().to(handlers::headless_api::api_client_logs),
+                )
+                .route(
+                    "/operations/{id}",
+                    web::get().to(handlers::headless_api::api_operation_status),
+                ),
         );
 
     // Rate-limited search routes
