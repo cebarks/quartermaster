@@ -241,7 +241,10 @@ pub async fn run(action: &HeadlessAction, spt_dir: &Path) -> Result<()> {
         );
     }
 
-    let api = HeadlessApiClient::new(spt_dir)?;
+    let api = match HeadlessApiClient::new(spt_dir) {
+        Ok(api) => api,
+        Err(_) => bail!("Web server is not running. Start it with 'quma serve' first."),
+    };
     api.check_server().await?;
 
     match action {
