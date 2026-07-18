@@ -153,7 +153,8 @@ pub async fn operation_status_partial(
     req: HttpRequest,
     path: Path<u64>,
 ) -> actix_web::Result<web::Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
 
     let operation_id = path.into_inner();
     let service = match state.headless_service() {
