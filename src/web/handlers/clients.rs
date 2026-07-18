@@ -114,6 +114,20 @@ struct DashboardClientsStatusTemplate {
     clients: Vec<ClientView>,
 }
 
+#[derive(Template)]
+#[template(path = "headless/operation_polling.html")]
+struct OperationPollingTemplate {
+    operation_id: u64,
+    message: String,
+}
+
+#[derive(Template)]
+#[template(path = "headless/operation_result.html")]
+struct OperationResultTemplate {
+    success: bool,
+    message: String,
+}
+
 fn build_profile_names(dirs: &QumaDirs) -> HashMap<String, String> {
     crate::spt::profiles::list_profiles(dirs)
         .unwrap_or_default()
@@ -133,6 +147,57 @@ fn build_client_aliases(spt_dir: &std::path::Path) -> HashMap<String, String> {
 // ponytail: removed create_spt_client - HeadlessService constructs SptClient on-demand
 // ponytail: removed resolve_client_container - replaced by HeadlessService methods
 // ponytail: removed client_lifecycle helper - logic moved to HeadlessService
+
+pub async fn operation_status_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    path: Path<u64>,
+) -> actix_web::Result<web::Html> {
+    require_auth(&req)?;
+
+    let operation_id = path.into_inner();
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(_) => {
+            let tmpl = OperationResultTemplate {
+                success: false,
+                message: "Operation tracker unavailable".to_string(),
+            };
+            return Ok(web::Html::new(tmpl.render().map_err(WebError::from)?));
+        }
+    };
+
+    match service.operations().poll(operation_id) {
+        Some(crate::headless::operations::OperationStatus::Running) => {
+            let tmpl = OperationPollingTemplate {
+                operation_id,
+                message: "Operation in progress...".to_string(),
+            };
+            Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
+        }
+        Some(crate::headless::operations::OperationStatus::Completed) => {
+            let tmpl = OperationResultTemplate {
+                success: true,
+                message: "Operation completed successfully".to_string(),
+            };
+            Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
+        }
+        Some(crate::headless::operations::OperationStatus::Failed { error }) => {
+            let tmpl = OperationResultTemplate {
+                success: false,
+                message: error,
+            };
+            Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
+        }
+        None => {
+            let tmpl = OperationResultTemplate {
+                success: true,
+                message: "Operation completed".to_string(),
+            };
+            Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
+        }
+    }
+}
 
 pub async fn headless_page(
     state: Data<AppState>,
@@ -466,10 +531,20 @@ pub async fn client_scale(
 
     let target = form.count;
     let force = form.force;
+    let is_htmx = req.headers().get("HX-Request").is_some();
 
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                return Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?));
+            }
             set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
@@ -478,12 +553,25 @@ pub async fn client_scale(
     };
 
     match service.scale(target, force).await {
-        Ok(_op_id) => {
-            set_flash(
-                &session,
-                &format!("Scaling to {target} client(s)..."),
-                FlashType::Success,
-            );
+        Ok(op_id) => {
+            if is_htmx {
+                let tmpl = OperationPollingTemplate {
+                    operation_id: op_id.0,
+                    message: format!("Scaling to {target} client(s)..."),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(
+                    &session,
+                    &format!("Scaling to {target} client(s)..."),
+                    FlashType::Success,
+                );
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(crate::headless::HeadlessError::ClientInRaid { clients }) => {
             let client_list = clients
@@ -491,23 +579,42 @@ pub async fn client_scale(
                 .map(|i| format!("Client {i}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            set_flash(
-                &session,
-                &format!(
-                    "Cannot scale down: {} in raid. Use force to override.",
-                    client_list
-                ),
-                FlashType::Error,
+            let msg = format!(
+                "Cannot scale down: {} in raid. Use force to override.",
+                client_list
             );
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: msg,
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &msg, FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(e) => {
-            set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &e.to_string(), FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
     }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/headless"))
-        .finish())
 }
 
 pub async fn client_converge(
@@ -523,9 +630,20 @@ pub async fn client_converge(
         return Err(WebError::Forbidden.into());
     }
 
+    let is_htmx = req.headers().get("HX-Request").is_some();
+
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                return Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?));
+            }
             set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
@@ -534,17 +652,39 @@ pub async fn client_converge(
     };
 
     match service.converge().await {
-        Ok(_op_id) => {
-            set_flash(&session, "Convergence started...", FlashType::Success);
+        Ok(op_id) => {
+            if is_htmx {
+                let tmpl = OperationPollingTemplate {
+                    operation_id: op_id.0,
+                    message: "Convergence started...".to_string(),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, "Convergence started...", FlashType::Success);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(e) => {
-            set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &e.to_string(), FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
     }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/headless"))
-        .finish())
 }
 
 pub async fn client_rebuild(
@@ -560,9 +700,20 @@ pub async fn client_rebuild(
         return Err(WebError::Forbidden.into());
     }
 
+    let is_htmx = req.headers().get("HX-Request").is_some();
+
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                return Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?));
+            }
             set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
@@ -572,12 +723,25 @@ pub async fn client_rebuild(
 
     // ponytail: force=false for now, add force param to form in later tasks if needed
     match service.rebuild(false).await {
-        Ok(_op_id) => {
-            set_flash(
-                &session,
-                "Rebuilding all headless clients...",
-                FlashType::Success,
-            );
+        Ok(op_id) => {
+            if is_htmx {
+                let tmpl = OperationPollingTemplate {
+                    operation_id: op_id.0,
+                    message: "Rebuilding all headless clients...".to_string(),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(
+                    &session,
+                    "Rebuilding all headless clients...",
+                    FlashType::Success,
+                );
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(crate::headless::HeadlessError::ClientInRaid { clients }) => {
             let client_list = clients
@@ -585,20 +749,39 @@ pub async fn client_rebuild(
                 .map(|i| format!("Client {i}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            set_flash(
-                &session,
-                &format!("Cannot rebuild: {} in raid.", client_list),
-                FlashType::Error,
-            );
+            let msg = format!("Cannot rebuild: {} in raid.", client_list);
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: msg,
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &msg, FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(e) => {
-            set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &e.to_string(), FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
     }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/headless"))
-        .finish())
 }
 
 pub async fn client_status_partial(
@@ -639,9 +822,20 @@ pub async fn client_create(
         return Err(WebError::Forbidden.into());
     }
 
+    let is_htmx = req.headers().get("HX-Request").is_some();
+
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                return Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?));
+            }
             set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
@@ -657,21 +851,43 @@ pub async fn client_create(
         .unwrap_or(1);
 
     match service.create().await {
-        Ok(_op_id) => {
-            set_flash(
-                &session,
-                &format!("Creating client {new_count}..."),
-                FlashType::Success,
-            );
+        Ok(op_id) => {
+            if is_htmx {
+                let tmpl = OperationPollingTemplate {
+                    operation_id: op_id.0,
+                    message: format!("Creating client {new_count}..."),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(
+                    &session,
+                    &format!("Creating client {new_count}..."),
+                    FlashType::Success,
+                );
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(e) => {
-            set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &e.to_string(), FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
     }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/headless"))
-        .finish())
 }
 
 pub async fn client_delete(
@@ -689,10 +905,20 @@ pub async fn client_delete(
     }
 
     let index = path.into_inner();
+    let is_htmx = req.headers().get("HX-Request").is_some();
 
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                return Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?));
+            }
             set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
@@ -702,35 +928,77 @@ pub async fn client_delete(
 
     // ponytail: force=false for now, add force param to form in later tasks if needed
     match service.delete(index, false).await {
-        Ok(_op_id) => {
-            set_flash(
-                &session,
-                &format!("Deleting client {index}..."),
-                FlashType::Success,
-            );
+        Ok(op_id) => {
+            if is_htmx {
+                let tmpl = OperationPollingTemplate {
+                    operation_id: op_id.0,
+                    message: format!("Deleting client {index}..."),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(
+                    &session,
+                    &format!("Deleting client {index}..."),
+                    FlashType::Success,
+                );
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(crate::headless::HeadlessError::ClientInRaid { .. }) => {
-            set_flash(
-                &session,
-                &format!("Client {index} is in raid. Wait for it to finish or stop it first."),
-                FlashType::Error,
-            );
+            let msg = format!("Client {index} is in raid. Wait for it to finish or stop it first.");
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: msg,
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &msg, FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(crate::headless::HeadlessError::ClientNotFound(_)) => {
-            set_flash(
-                &session,
-                &format!("Client {index} does not exist"),
-                FlashType::Error,
-            );
+            let msg = format!("Client {index} does not exist");
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: msg,
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &msg, FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
         Err(e) => {
-            set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                let tmpl = OperationResultTemplate {
+                    success: false,
+                    message: e.to_string(),
+                };
+                Ok(HttpResponse::Ok()
+                    .content_type("text/html; charset=utf-8")
+                    .body(tmpl.render().map_err(WebError::from)?))
+            } else {
+                set_flash(&session, &e.to_string(), FlashType::Error);
+                Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/headless"))
+                    .finish())
+            }
         }
     }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", "/quma/headless"))
-        .finish())
 }
 
 #[derive(serde::Deserialize)]

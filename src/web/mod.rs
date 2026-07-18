@@ -296,6 +296,10 @@ pub fn configure_app(
             web::get().to(handlers::clients::client_status_partial),
         )
         .route(
+            "/headless/operations/{id}/partial",
+            web::get().to(handlers::clients::operation_status_partial),
+        )
+        .route(
             "/profiles/{username}/quests",
             web::get().to(handlers::profiles::quests_partial),
         )
