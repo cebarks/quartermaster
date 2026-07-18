@@ -60,6 +60,20 @@ impl actix_web::ResponseError for HeadlessError {
                 "clients": clients,
                 "message": self.to_string(),
             }),
+            Self::ContainerError(e) | Self::ConfigError(e) | Self::FikaError(e) => {
+                tracing::error!(error = %e, error_type = ?self, "Internal headless error");
+                serde_json::json!({
+                    "error": self.error_code(),
+                    "message": "An internal error occurred",
+                })
+            }
+            Self::Internal(e) => {
+                tracing::error!(error = %e, "Internal headless error");
+                serde_json::json!({
+                    "error": self.error_code(),
+                    "message": "An internal error occurred",
+                })
+            }
             _ => serde_json::json!({
                 "error": self.error_code(),
                 "message": self.to_string(),

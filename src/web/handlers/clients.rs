@@ -6,13 +6,13 @@ use actix_session::Session;
 use actix_web::web::{self, Data, Form, Path};
 use actix_web::{HttpRequest, HttpResponse};
 use askama::Template;
-use jsonc_parser::cst::CstInputValue;
 
 use crate::client::{ClientHealth, ClientState};
 use crate::config::{Config, RestartPolicy};
 use crate::container::ContainerManager;
 use crate::db::rbac::Permission;
 use crate::dirs::QumaDirs;
+use crate::headless::service::LifecycleAction;
 use crate::numa::NumaTopology;
 use crate::spt::headless::EHeadlessStatus;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
@@ -145,112 +145,9 @@ fn require_container_mgr<'a>(
     })
 }
 
-async fn resolve_client_container(
-    state: &AppState,
-    session: &Session,
-    index: u32,
-) -> Result<String, HttpResponse> {
-    let container_name = match &state.client_states {
-        Some(states) => {
-            let clients = states.read().await;
-            clients
-                .iter()
-                .find(|c| c.index == index)
-                .map(|c| c.container_name.clone())
-        }
-        None => None,
-    };
+// ponytail: removed resolve_client_container - replaced by HeadlessService methods
 
-    container_name.ok_or_else(|| {
-        set_flash(
-            session,
-            &format!("Client {index} not found"),
-            FlashType::Error,
-        );
-        HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish()
-    })
-}
-
-async fn client_lifecycle(
-    state: &Data<AppState>,
-    req: &HttpRequest,
-    session: &Session,
-    csrf_token: &str,
-    index: u32,
-    action: &str,
-) -> actix_web::Result<HttpResponse> {
-    let user = require_auth(req)?;
-    require_permission(&user, Permission::HeadlessManage)?;
-
-    if !crate::web::csrf::validate_token(session, csrf_token) {
-        return Err(WebError::Forbidden.into());
-    }
-
-    let mgr = match require_container_mgr(state, session) {
-        Ok(m) => m,
-        Err(resp) => return Ok(resp),
-    };
-
-    let container_name = match resolve_client_container(state, session, index).await {
-        Ok(n) => n,
-        Err(resp) => return Ok(resp),
-    };
-
-    let result = match action {
-        "start" => mgr.start(&container_name).await,
-        "stop" => mgr.stop(&container_name).await,
-        "restart" => mgr.restart(&container_name).await,
-        _ => unreachable!(),
-    };
-
-    let verb_past = match action {
-        "start" => "starting",
-        "stop" => "stopped",
-        "restart" => "restarting",
-        _ => unreachable!(),
-    };
-
-    if let Err(e) = result {
-        tracing::error!(container = %container_name, action, err = %e, "client lifecycle action failed");
-        set_flash(
-            session,
-            &format!("Failed to {action} client {index}: {e}"),
-            FlashType::Error,
-        );
-    } else {
-        tracing::info!(container = %container_name, action, "client lifecycle action succeeded");
-        set_flash(
-            session,
-            &format!("Client {index} {verb_past}"),
-            FlashType::Success,
-        );
-        // Reset failure state on manual start/restart so GivenUp can recover
-        if action == "start" || action == "restart" {
-            if let Some(states) = &state.client_states {
-                let mut clients = states.write().await;
-                if let Some(client) = clients.iter_mut().find(|c| c.index == index) {
-                    client.consecutive_failures = 0;
-                    client.health = ClientHealth::Degraded;
-                    client.manually_stopped = false;
-                }
-            }
-        }
-        if action == "stop" {
-            if let Some(states) = &state.client_states {
-                let mut clients = states.write().await;
-                if let Some(client) = clients.iter_mut().find(|c| c.index == index) {
-                    client.manually_stopped = true;
-                }
-            }
-        }
-    }
-
-    Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/quma/headless/{index}")))
-        .finish())
-}
+// ponytail: removed client_lifecycle helper - logic moved to HeadlessService
 
 fn create_spt_client(
     state: &AppState,
@@ -411,15 +308,38 @@ pub async fn client_restart(
     path: Path<u32>,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    client_lifecycle(
-        &state,
-        &req,
-        &session,
-        &form.csrf_token,
-        path.into_inner(),
-        "restart",
-    )
-    .await
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let index = path.into_inner();
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+    };
+
+    match service
+        .client_lifecycle(index, LifecycleAction::Restart)
+        .await
+    {
+        Ok(()) => set_flash(
+            &session,
+            &format!("Client {index} restarting"),
+            FlashType::Success,
+        ),
+        Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .finish())
 }
 
 pub async fn client_graceful_restart(
@@ -431,121 +351,43 @@ pub async fn client_graceful_restart(
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::HeadlessManage)?;
-
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
 
     let index = path.into_inner();
-
-    let fika_client = match state.fika_client.as_ref() {
-        Some(c) => c.clone(),
-        None => {
-            set_flash(&session, "Fika integration not available", FlashType::Error);
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
 
-    // Read client state
-    let (profile_id, fika_status) = {
-        let states = match state.client_states.as_ref() {
-            Some(s) => s.read().await,
-            None => {
-                set_flash(
-                    &session,
-                    "Headless clients not configured",
-                    FlashType::Error,
-                );
-                return Ok(HttpResponse::SeeOther()
-                    .insert_header(("Location", "/quma/headless"))
-                    .finish());
-            }
-        };
-        let client = states.iter().find(|c| c.index == index);
-        match client {
-            Some(c) => (c.profile_id.clone(), c.fika_status.clone()),
-            None => {
-                set_flash(
-                    &session,
-                    &format!("Client {index} not found"),
-                    FlashType::Error,
-                );
-                return Ok(HttpResponse::SeeOther()
-                    .insert_header(("Location", "/quma/headless"))
-                    .finish());
-            }
-        }
-    };
-
-    // Block if IN_RAID
-    if fika_status == Some(EHeadlessStatus::InRaid) {
-        set_flash(
-            &session,
-            &format!("Client {index} is in a raid — use force restart or wait for raid to end"),
-            FlashType::Error,
-        );
-        return Ok(HttpResponse::SeeOther()
-            .insert_header(("Location", "/quma/headless"))
-            .finish());
-    }
-
-    let profile_id = match profile_id {
-        Some(pid) if !pid.is_empty() => pid,
-        _ => {
-            set_flash(
-                &session,
-                &format!("Client {index} has no profile ID"),
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/headless"))
-                .finish());
-        }
-    };
-
-    // Send shutdown
-    match fika_client.shutdown_headless(&profile_id).await {
-        Ok(()) => {
-            // Wait for container exit (poll every 2s, 30s timeout)
-            let mgr = match require_container_mgr(&state, &session) {
-                Ok(m) => m,
-                Err(resp) => return Ok(resp),
-            };
-            let container_name = match resolve_client_container(&state, &session, index).await {
-                Ok(n) => n,
-                Err(resp) => return Ok(resp),
-            };
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-            let mut exited = false;
-            while tokio::time::Instant::now() < deadline {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                if !mgr.is_running(&container_name).await.unwrap_or(true) {
-                    exited = true;
-                    break;
+    match service.graceful_restart(index).await {
+        Ok(result) => {
+            use crate::headless::service::GracefulResult;
+            match result {
+                GracefulResult::Exited => {
+                    set_flash(
+                        &session,
+                        &format!("Client {index} shut down gracefully"),
+                        FlashType::Success,
+                    );
                 }
-            }
-            if exited {
-                set_flash(
-                    &session,
-                    &format!("Client {index} shut down gracefully"),
-                    FlashType::Success,
-                );
-            } else {
-                set_flash(
-                    &session,
-                    &format!("Client {index} did not shut down within 30s — use force restart"),
-                    FlashType::Warning,
-                );
+                GracefulResult::Timeout => {
+                    set_flash(
+                        &session,
+                        &format!("Client {index} did not shut down within 30s — use force restart"),
+                        FlashType::Warning,
+                    );
+                }
             }
         }
         Err(e) => {
-            set_flash(
-                &session,
-                &format!("Graceful restart failed: {e}"),
-                FlashType::Error,
-            );
+            set_flash(&session, &e.to_string(), FlashType::Error);
         }
     }
 
@@ -561,15 +403,35 @@ pub async fn client_stop(
     path: Path<u32>,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    client_lifecycle(
-        &state,
-        &req,
-        &session,
-        &form.csrf_token,
-        path.into_inner(),
-        "stop",
-    )
-    .await
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let index = path.into_inner();
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+    };
+
+    match service.client_lifecycle(index, LifecycleAction::Stop).await {
+        Ok(()) => set_flash(
+            &session,
+            &format!("Client {index} stopped"),
+            FlashType::Success,
+        ),
+        Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .finish())
 }
 
 pub async fn client_start(
@@ -579,15 +441,38 @@ pub async fn client_start(
     path: Path<u32>,
     form: Form<crate::web::csrf::CsrfForm>,
 ) -> actix_web::Result<HttpResponse> {
-    client_lifecycle(
-        &state,
-        &req,
-        &session,
-        &form.csrf_token,
-        path.into_inner(),
-        "start",
-    )
-    .await
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::HeadlessManage)?;
+    if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let index = path.into_inner();
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
+        }
+    };
+
+    match service
+        .client_lifecycle(index, LifecycleAction::Start)
+        .await
+    {
+        Ok(()) => set_flash(
+            &session,
+            &format!("Client {index} started"),
+            FlashType::Success,
+        ),
+        Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
+    }
+
+    Ok(HttpResponse::SeeOther()
+        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .finish())
 }
 
 #[derive(serde::Deserialize)]
@@ -1318,83 +1203,31 @@ pub async fn client_start_raid(
     }
 
     let index = path.into_inner();
-    let fika_client = match state.fika_client.as_ref() {
-        Some(c) => c.clone(),
-        None => {
-            set_flash(&session, "Fika integration not available", FlashType::Error);
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/headless"))
-                .finish());
-        }
-    };
-
-    // Get profile_id and check READY status
-    let profile_id = {
-        let states = state
-            .client_states
-            .as_ref()
-            .ok_or(WebError::Internal(anyhow::anyhow!(
-                "Headless not configured"
-            )))?
-            .read()
-            .await;
-        let client = states
-            .iter()
-            .find(|c| c.index == index)
-            .ok_or(WebError::NotFound)?;
-        if client.fika_status != Some(EHeadlessStatus::Ready) {
-            set_flash(
-                &session,
-                &format!("Client {index} is not READY"),
-                FlashType::Error,
-            );
-            return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", "/quma/headless"))
-                .finish());
-        }
-        client
-            .profile_id
-            .clone()
-            .ok_or(WebError::Internal(anyhow::anyhow!("No profile ID")))?
-    };
-
-    let req_body = crate::fika::client::StartHeadlessRaidRequest {
-        headless_session_id: profile_id,
-        location_id: form.location_id.clone(),
-        time: form.time,
-        time_and_weather_settings: None,
-        use_event: form.use_event.is_some(),
-        side: 0,
-        spawn_place: 0,
-        metabolism_disabled: false,
-        bot_settings: None,
-        waves_settings: None,
-        custom_raid_settings: None,
-    };
-
-    match fika_client.start_headless_raid(&req_body).await {
-        Ok(resp) => {
-            if let Some(err) = resp.error {
-                set_flash(
-                    &session,
-                    &format!("Start raid failed: {err}"),
-                    FlashType::Error,
-                );
-            } else {
-                set_flash(
-                    &session,
-                    &format!("Raid started on client {index}"),
-                    FlashType::Success,
-                );
-            }
-        }
+    let service = match state.headless_service() {
+        Ok(s) => s,
         Err(e) => {
-            set_flash(
-                &session,
-                &format!("Start raid failed: {e}"),
-                FlashType::Error,
-            );
+            set_flash(&session, &e.to_string(), FlashType::Error);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/headless"))
+                .finish());
         }
+    };
+
+    match service
+        .start_raid(
+            index,
+            &form.location_id,
+            form.time,
+            form.use_event.is_some(),
+        )
+        .await
+    {
+        Ok(()) => set_flash(
+            &session,
+            &format!("Raid started on client {index}"),
+            FlashType::Success,
+        ),
+        Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
     }
 
     Ok(HttpResponse::SeeOther()
@@ -1417,96 +1250,28 @@ pub async fn client_rename(
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::HeadlessManage)?;
-
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
 
     let index = path.into_inner();
-
-    let profile_id = match &state.client_states {
-        Some(states) => {
-            let clients = states.read().await;
-            clients
-                .iter()
-                .find(|c| c.index == index)
-                .and_then(|c| c.profile_id.clone())
-        }
-        None => None,
-    };
-
-    let profile_id = match profile_id {
-        Some(pid) => pid,
-        None => {
-            set_flash(
-                &session,
-                "Cannot rename: client has no profile assigned yet. Start the SPT server first.",
-                FlashType::Error,
-            );
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", format!("/quma/headless/{index}")))
+                .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
 
-    let spt_dir = state.dirs.spt_server.clone();
-    let new_name = form.into_inner().name.trim().to_string();
-
-    let result = actix_web::web::block(move || {
-        let _guard = state.fika_config_lock.lock();
-        let path = crate::fika::config::fika_config_path(&spt_dir);
-
-        // Read current aliases from typed config
-        let config = crate::fika::config::read_fika_config(&path)?;
-        let mut aliases = config.headless.profiles.aliases;
-
-        if new_name.is_empty() {
-            aliases.remove(&profile_id);
-        } else {
-            aliases.insert(profile_id, new_name);
-        }
-
-        // Read CST, set aliases, write back
-        let cst = crate::fika::config::read_fika_cst(&path)?;
-        let root = cst.object_value_or_set();
-        if let Some(headless) = root.object_value("headless") {
-            if let Some(profiles) = headless.object_value("profiles") {
-                let alias_entries: Vec<(String, CstInputValue)> = aliases
-                    .into_iter()
-                    .map(|(k, v)| (k, CstInputValue::String(v)))
-                    .collect();
-                match profiles.get("aliases") {
-                    Some(prop) => prop.set_value(CstInputValue::Object(alias_entries)),
-                    None => {
-                        profiles.append("aliases", CstInputValue::Object(alias_entries));
-                    }
-                }
-            }
-        }
-        crate::fika::config::write_fika_cst(&cst, &path)?;
-
-        Ok::<(), anyhow::Error>(())
-    })
-    .await;
-
-    match result {
-        Ok(Ok(())) => set_flash(
+    match service.rename(index, &form.name).await {
+        Ok(()) => set_flash(
             &session,
             "Client renamed. Restart the SPT server for the in-game name to take effect.",
             FlashType::Success,
         ),
-        Ok(Err(e)) => {
-            tracing::warn!("failed to rename client: {e:#}");
-            set_flash(
-                &session,
-                &format!("Failed to rename: {e}"),
-                FlashType::Error,
-            );
-        }
-        Err(e) => {
-            tracing::error!(err = %e, "task failed renaming client");
-            set_flash(&session, "Failed to rename client", FlashType::Error);
-        }
+        Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
     }
 
     Ok(HttpResponse::SeeOther()
@@ -1529,47 +1294,36 @@ pub async fn client_set_image(
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
     require_permission(&user, Permission::HeadlessManage)?;
-
     if !crate::web::csrf::validate_token(&session, &form.csrf_token) {
         return Err(WebError::Forbidden.into());
     }
 
     let index = path.into_inner();
-    let new_image = form.into_inner().image.trim().to_string();
-
-    let _guard = state.config_lock.lock();
-    let mut config =
-        crate::config::Config::load_with_env(&state.config_path).map_err(WebError::from)?;
-
-    let headless = match config.headless.as_mut() {
-        Some(h) => h,
-        None => {
-            set_flash(&session, "No headless config", FlashType::Error);
+    let service = match state.headless_service() {
+        Ok(s) => s,
+        Err(e) => {
+            set_flash(&session, &e.to_string(), FlashType::Error);
             return Ok(HttpResponse::SeeOther()
-                .insert_header(("Location", format!("/quma/headless/{index}")))
+                .insert_header(("Location", "/quma/headless"))
                 .finish());
         }
     };
-
-    let client_index = (index as usize).checked_sub(1).ok_or(WebError::NotFound)?;
-    let client_def = headless
-        .clients
-        .get_mut(client_index)
-        .ok_or(WebError::NotFound)?;
-
-    client_def.image = if new_image.is_empty() || new_image == headless.image {
+    let new_image = form.into_inner().image.trim().to_string();
+    let image_opt = if new_image.is_empty() {
         None
     } else {
         Some(new_image)
     };
 
-    state.persist_config(&config)?;
+    match service.set_image(index, image_opt).await {
+        Ok(()) => set_flash(
+            &session,
+            "Client image updated. Re-converge to apply.",
+            FlashType::Success,
+        ),
+        Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
+    }
 
-    set_flash(
-        &session,
-        "Client image updated. Re-converge to apply.",
-        FlashType::Success,
-    );
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", format!("/quma/headless/{index}")))
         .finish())

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,6 +39,7 @@ pub struct ClientSupervisor {
     container_mgr: ContainerManager,
     spt_client: SptClient,
     config: Arc<parking_lot::RwLock<Config>>,
+    config_path: PathBuf,
     db: Arc<parking_lot::Mutex<crate::db::Database>>,
     converging: Arc<AtomicBool>,
     cancel_token: CancellationToken,
@@ -51,6 +53,7 @@ impl ClientSupervisor {
         container_mgr: ContainerManager,
         spt_client: SptClient,
         config: Arc<parking_lot::RwLock<Config>>,
+        config_path: PathBuf,
         db: Arc<parking_lot::Mutex<crate::db::Database>>,
         converging: Arc<AtomicBool>,
         cancel_token: CancellationToken,
@@ -60,6 +63,7 @@ impl ClientSupervisor {
             container_mgr,
             spt_client,
             config,
+            config_path,
             db,
             converging,
             cancel_token,
@@ -112,6 +116,12 @@ impl ClientSupervisor {
     }
 
     async fn tick(&self) -> anyhow::Result<()> {
+        // Reload config from disk so out-of-band changes (e.g. CLI scale) are picked up.
+        // This is the same Arc the web UI reads, so both stay in sync.
+        if let Ok(fresh) = Config::load_with_env(&self.config_path) {
+            *self.config.write() = fresh;
+        }
+
         let headless_config = match self.headless_config() {
             Some(hc) if hc.client_count() > 0 => hc,
             _ => {
