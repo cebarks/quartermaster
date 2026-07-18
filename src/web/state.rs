@@ -12,6 +12,7 @@ use crate::container::ContainerManager;
 use crate::db::Database;
 use crate::dirs::QumaDirs;
 use crate::forge::client::ForgeClient;
+use crate::headless::{HeadlessError, HeadlessService};
 use crate::logging::writer::LogLevelCounts;
 use crate::logging::{LogBroadcast, ReloadHandles};
 use crate::spt::detect::SptInfo;
@@ -29,7 +30,7 @@ pub struct AppState {
     pub forge: ForgeClient,
     pub config: Arc<parking_lot::RwLock<Config>>,
     pub config_path: PathBuf,
-    pub config_lock: parking_lot::Mutex<()>,
+    pub config_lock: Arc<parking_lot::Mutex<()>>,
     pub dirs: Arc<QumaDirs>,
     pub spt_info: SptInfo,
     pub tasks: TaskTracker,
@@ -54,11 +55,13 @@ pub struct AppState {
     #[allow(dead_code)] // ponytail: used in later tasks
     pub fika_client: Option<Arc<crate::fika::client::FikaClient>>,
     #[allow(dead_code)] // ponytail: used in later tasks
-    pub fika_config_lock: parking_lot::Mutex<()>,
+    pub fika_config_lock: Arc<parking_lot::Mutex<()>>,
     pub catalog_cache: crate::convoy::catalog::CatalogCache,
     #[allow(clippy::type_complexity)]
     pub fika_items:
         Arc<parking_lot::Mutex<Option<Arc<HashMap<String, crate::fika::client::FikaItemInfo>>>>>,
+    #[allow(dead_code)] // ponytail: used in later tasks
+    pub headless_service: Option<HeadlessService>,
 }
 
 impl AppState {
@@ -126,5 +129,11 @@ impl AppState {
 
     pub fn clear_fika_items(&self) {
         *self.fika_items.lock() = None;
+    }
+
+    pub fn headless_service(&self) -> Result<&HeadlessService, HeadlessError> {
+        self.headless_service
+            .as_ref()
+            .ok_or(HeadlessError::NotConfigured)
     }
 }

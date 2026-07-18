@@ -165,7 +165,7 @@ impl TestAppBuilder {
             forge,
             config: config_arc.clone(),
             config_path,
-            config_lock: parking_lot::Mutex::new(()),
+            config_lock: Arc::new(parking_lot::Mutex::new(())),
             dirs: Arc::new(spt_quartermaster::dirs::QumaDirs::from_legacy(
                 spt_dir.clone(),
             )),
@@ -184,7 +184,8 @@ impl TestAppBuilder {
             converging: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             fika_installed: false,
             fika_client: None,
-            fika_config_lock: parking_lot::Mutex::new(()),
+            fika_config_lock: Arc::new(parking_lot::Mutex::new(())),
+            headless_service: None,
             fika_items: Arc::new(parking_lot::Mutex::new(None)),
             svm: None,
             svm_installed: std::sync::atomic::AtomicBool::new(false),

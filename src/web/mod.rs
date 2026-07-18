@@ -975,12 +975,34 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
 
     let dirs = Arc::new(dirs);
 
+    // ponytail: HeadlessService only when headless is configured (container_mgr + client_states both Some)
+    let config_lock = Arc::new(parking_lot::Mutex::new(()));
+    let fika_config_lock = Arc::new(parking_lot::Mutex::new(()));
+    let headless_service =
+        if let (Some(ref mgr), Some(ref states)) = (&container_mgr, &client_states) {
+            Some(crate::headless::HeadlessService::new(
+                mgr.as_ref().clone(),
+                Arc::clone(&config_handle),
+                config_path.clone(),
+                Arc::clone(&config_lock),
+                Arc::clone(&dirs),
+                Arc::clone(&db_arc),
+                Arc::clone(&converging),
+                Arc::clone(states),
+                fika_client.clone(),
+                Arc::clone(&fika_config_lock),
+                forge.clone(),
+            ))
+        } else {
+            None
+        };
+
     let app_state = web::Data::new(AppState {
         db: db_arc,
         forge,
         config: config_handle,
         config_path,
-        config_lock: parking_lot::Mutex::new(()),
+        config_lock,
         dirs: Arc::clone(&dirs),
         spt_info,
         tasks: crate::web::tasks::TaskTracker::new(events_tx.clone()),
@@ -1003,9 +1025,10 @@ pub async fn start_server(ctx: ServerContext) -> Result<()> {
         mod_zip_cache,
         log_level_counts,
         fika_client,
-        fika_config_lock: parking_lot::Mutex::new(()),
+        fika_config_lock,
         catalog_cache,
         fika_items: Arc::new(parking_lot::Mutex::new(None)),
+        headless_service,
     });
 
     // Pre-warm mod ZIP cache in background
