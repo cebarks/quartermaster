@@ -1,0 +1,40 @@
+<div class="version-list" id="install-version-list">
+{% for v in &versions %}
+    <div class="version-card{% if let Some(selected_id) = selected_version_id %}{% if *selected_id == v.id %} selected{% endif %}{% endif %}{% if show_all && !compatible_ids.contains(&v.id) %} incompatible{% endif %}"
+         data-version-id="{{ v.id }}"
+         onclick="selectVersion(this, {{ v.id }})">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>v{{ v.version }}</strong>
+            <span class="text-muted text-sm">{{ v.published_at|format_date_short }}</span>
+        </div>
+        <div style="margin-top:0.25rem;display:flex;gap:0.5rem;align-items:center">
+            {% if let Some(spt) = v.spt_version.as_deref() %}
+            <span class="badge badge-muted">SPT {{ spt }}</span>
+            {% endif %}
+            {% match &v.fika_compatibility %}
+                {% when Some with (crate::forge::models::FikaCompat::Compatible) %}
+                    <span class="badge badge-success">Fika ✓</span>
+                {% when Some with (crate::forge::models::FikaCompat::Incompatible) %}
+                    <span class="badge badge-danger">Fika ✗</span>
+                {% when Some with (crate::forge::models::FikaCompat::Unknown) %}
+                    <span class="badge badge-muted">Fika ?</span>
+                {% when None %}
+            {% endmatch %}
+            {% if show_all && !compatible_ids.contains(&v.id) %}
+                <span class="badge badge-warning">Incompatible</span>
+            {% endif %}
+        </div>
+    </div>
+{% endfor %}
+{% if versions.is_empty() %}
+    <p class="text-muted text-sm">No versions available{% if !show_all %} for this SPT version{% endif %}</p>
+{% endif %}
+</div>
+<script>
+function selectVersion(el, versionId) {
+    document.querySelectorAll('.version-card').forEach(function(c) { c.classList.remove('selected'); });
+    el.classList.add('selected');
+    var input = document.getElementById('install-version-id');
+    if (input) input.value = versionId;
+}
+</script>

@@ -267,6 +267,21 @@ struct CompatBadgeTemplate {
     status: String,
 }
 
+#[derive(Template)]
+#[template(path = "mods/partials/version_list.html")]
+struct VersionListTemplate {
+    versions: Vec<crate::forge::models::ForgeVersion>,
+    compatible_ids: std::collections::HashSet<i64>,
+    show_all: bool,
+    selected_version_id: Option<i64>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct VersionsQuery {
+    #[serde(default)]
+    all: bool,
+}
+
 #[derive(serde::Deserialize)]
 pub struct DepTreeQuery {
     #[serde(rename = "mod")]
@@ -984,6 +999,45 @@ pub async fn compat_check(
     };
 
     let tmpl = CompatBadgeTemplate { status };
+    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+}
+
+pub async fn mod_versions(
+    state: Data<AppState>,
+    req: HttpRequest,
+    path: Path<i64>,
+    query: Query<VersionsQuery>,
+) -> actix_web::Result<Html> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
+    let mod_id = path.into_inner();
+    let show_all = query.all;
+
+    let compatible = state
+        .forge
+        .get_versions(mod_id, Some(&state.spt_info.spt_version))
+        .await
+        .unwrap_or_default();
+    let compatible_ids: std::collections::HashSet<i64> = compatible.iter().map(|v| v.id).collect();
+
+    let versions = if show_all {
+        state
+            .forge
+            .get_versions(mod_id, None)
+            .await
+            .unwrap_or_default()
+    } else {
+        compatible
+    };
+
+    let selected_version_id = crate::forge::models::latest_version(&versions).map(|v| v.id);
+
+    let tmpl = VersionListTemplate {
+        versions,
+        compatible_ids,
+        show_all,
+        selected_version_id,
+    };
     Ok(Html::new(tmpl.render().map_err(WebError::from)?))
 }
 
