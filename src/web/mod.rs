@@ -1079,7 +1079,6 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         log_broadcast,
         reload_handles,
         container_mgr,
-        client_states,
         converging,
         fika_installed,
         svm,

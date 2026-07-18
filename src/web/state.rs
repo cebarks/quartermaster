@@ -40,7 +40,6 @@ pub struct AppState {
     pub log_broadcast: Arc<LogBroadcast>,
     pub reload_handles: Arc<ReloadHandles>,
     pub container_mgr: Option<Arc<ContainerManager>>,
-    pub client_states: Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>>,
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
     pub svm: Option<Arc<parking_lot::RwLock<SvmManager>>>,
@@ -77,6 +76,7 @@ impl AppState {
 
     /// Get a handle to the config RwLock for passing into background tasks
     /// that need to update config after disk writes.
+    #[allow(dead_code)] // ponytail: public API for background tasks
     pub fn config_handle(&self) -> Arc<parking_lot::RwLock<Config>> {
         Arc::clone(&self.config)
     }
@@ -135,5 +135,11 @@ impl AppState {
         self.headless_service
             .as_ref()
             .ok_or(HeadlessError::NotConfigured)
+    }
+
+    pub fn client_states(
+        &self,
+    ) -> Option<Arc<tokio::sync::RwLock<Vec<crate::client::ClientState>>>> {
+        self.headless_service.as_ref().map(|s| s.client_states())
     }
 }

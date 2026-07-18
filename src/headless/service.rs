@@ -134,7 +134,7 @@ impl HeadlessService {
                 &dirs,
                 &spt_client,
                 &forge,
-                &spt_version,
+                spt_version,
                 converging,
                 &db,
             )
@@ -591,7 +591,7 @@ impl HeadlessService {
                 &dirs,
                 &spt_client,
                 &forge,
-                &spt_version,
+                spt_version,
                 converging,
                 &db,
             )
@@ -682,7 +682,7 @@ impl HeadlessService {
                 &dirs,
                 &spt_client,
                 &forge,
-                &spt_version,
+                spt_version,
                 converging,
                 &db,
             )

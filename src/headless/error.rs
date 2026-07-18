@@ -6,8 +6,11 @@ use actix_web::HttpResponse;
 pub enum HeadlessError {
     NotConfigured,
     ClientNotFound(u32),
-    ClientInRaid { clients: Vec<u32> },
+    ClientInRaid {
+        clients: Vec<u32>,
+    },
     MaxClientsReached,
+    #[allow(dead_code)] // ponytail: used in Display/ResponseError/error_code impls, false positive
     AlreadyConverging,
     NoFikaClient,
     ContainerError(String),

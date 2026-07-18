@@ -218,7 +218,7 @@ pub async fn headless_page(
         .map(|c| c.restart_policy.to_string())
         .unwrap_or_else(|| RestartPolicy::Auto.to_string());
 
-    let headless_clients = match &state.client_states {
+    let headless_clients = match state.client_states() {
         Some(states) => states.read().await.clone(),
         None => vec![],
     };
@@ -288,7 +288,7 @@ pub async fn client_detail(
 
     let index = path.into_inner();
 
-    let clients = match &state.client_states {
+    let clients = match state.client_states() {
         Some(states) => states.read().await.clone(),
         None => vec![],
     };
@@ -792,7 +792,7 @@ pub async fn client_status_partial(
 ) -> actix_web::Result<web::Html> {
     let user = require_auth(&req)?;
 
-    let clients = match &state.client_states {
+    let clients = match state.client_states() {
         Some(states) => states.read().await.clone(),
         None => vec![],
     };
@@ -1156,7 +1156,7 @@ pub async fn dashboard_clients_status_partial(
 ) -> actix_web::Result<web::Html> {
     require_auth(&req)?;
 
-    let raw_clients = match &state.client_states {
+    let raw_clients = match state.client_states() {
         Some(states) => states.read().await.clone(),
         None => vec![],
     };

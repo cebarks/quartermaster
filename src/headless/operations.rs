@@ -33,6 +33,12 @@ pub struct OperationTracker {
     inner: Arc<OperationTrackerInner>,
 }
 
+impl Default for OperationTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OperationTracker {
     pub fn new() -> Self {
         Self {
