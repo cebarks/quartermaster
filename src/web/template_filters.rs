@@ -154,7 +154,7 @@ fn compute_date_short(timestamp: &str) -> Result<String, askama::Error> {
         .parse::<DateTime<Utc>>()
         .or_else(|_| {
             NaiveDate::parse_from_str(timestamp, "%Y-%m-%d")
-                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                .map(|d| d.and_hms_opt(0, 0, 0).expect("midnight is valid").and_utc())
         })
         .map_err(|e| askama::Error::Custom(Box::new(e)))?;
     Ok(dt.format("%b %d, %Y").to_string())
