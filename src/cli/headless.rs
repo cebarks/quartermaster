@@ -28,11 +28,7 @@ pub enum HeadlessAction {
         client: Option<u32>,
     },
     /// Create a new headless client
-    Create {
-        /// Extra isolated paths for this client (additive to global)
-        #[arg(long)]
-        extra_isolated_paths: Vec<String>,
-    },
+    Create,
     /// Delete a specific headless client
     Delete {
         /// Client number
@@ -251,7 +247,7 @@ pub async fn run(action: &HeadlessAction, spt_dir: &Path) -> Result<()> {
     match action {
         HeadlessAction::Status { client } => cmd_status(&api, *client).await,
         HeadlessAction::Scale { count } => cmd_scale(&api, *count).await,
-        HeadlessAction::Create { .. } => cmd_create(&api).await,
+        HeadlessAction::Create => cmd_create(&api).await,
         HeadlessAction::Delete { client, force } => cmd_delete(&api, *client, *force).await,
         HeadlessAction::Stop { client } => cmd_stop(&api, *client).await,
         HeadlessAction::Start { client } => cmd_start(&api, *client).await,

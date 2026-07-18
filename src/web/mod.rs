@@ -230,9 +230,11 @@ pub fn configure_app(
     }
 
     // Build the API scope
+    // api_auth_middleware must be outermost (last .wrap) so it runs first —
+    // it checks X-Quma-Token before auth_middleware checks session cookies.
     let mut api_scope = web::scope("/api")
-        .wrap(from_fn(api_auth::api_auth_middleware))
         .wrap(from_fn(auth::auth_middleware))
+        .wrap(from_fn(api_auth::api_auth_middleware))
         .route("/events", web::get().to(crate::web::sse::events_stream))
         .route(
             "/mods/check-updates",
