@@ -353,6 +353,43 @@ pub struct SptVersionsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Version comparison helpers
+// ---------------------------------------------------------------------------
+
+/// Parse a version string into a comparable tuple of numeric parts.
+/// Returns None if the string contains no parseable numeric segments.
+fn parse_version_parts(version: &str) -> Option<Vec<u64>> {
+    let parts: Vec<u64> = version
+        .split('.')
+        .filter_map(|s| {
+            // Take leading digits from each segment (handles "1.2.3-beta" → [1, 2, 3])
+            let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.parse().ok()
+        })
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts)
+    }
+}
+
+/// Return the latest version by semver ordering.
+/// Falls back to highest Forge version ID for unparseable version strings.
+pub fn latest_version(versions: &[ForgeVersion]) -> Option<&ForgeVersion> {
+    versions.iter().max_by(|a, b| {
+        let pa = parse_version_parts(&a.version);
+        let pb = parse_version_parts(&b.version);
+        match (pa, pb) {
+            (Some(ref va), Some(ref vb)) => va.cmp(vb).then(a.id.cmp(&b.id)),
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => a.id.cmp(&b.id),
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -868,5 +905,56 @@ mod tests {
             Some("https://github.com/sp-tarkov/build/releases/tag/3.11.3")
         );
         assert_eq!(v.color_class.as_deref(), Some("green"));
+    }
+
+    // Helper for latest_version tests
+    fn ver(id: i64, version: &str) -> ForgeVersion {
+        ForgeVersion {
+            id,
+            hub_id: None,
+            version: version.to_string(),
+            description: None,
+            spt_version: None,
+            link: None,
+            content_length: None,
+            downloads: None,
+            fika_compatibility: None,
+            dependencies: None,
+            published_at: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn latest_version_semver_ordering() {
+        let versions = vec![ver(1, "1.0.0"), ver(2, "2.0.0"), ver(3, "1.5.0")];
+        assert_eq!(latest_version(&versions).unwrap().id, 2);
+    }
+
+    #[test]
+    fn latest_version_falls_back_to_forge_id() {
+        let versions = vec![ver(10, "alpha"), ver(20, "beta")];
+        assert_eq!(latest_version(&versions).unwrap().id, 20);
+    }
+
+    #[test]
+    fn latest_version_mixed_parseable_and_not() {
+        let versions = vec![ver(1, "1.0.0"), ver(100, "beta-rc1")];
+        // "1.0.0" parses to (1,0,0); "beta-rc1" doesn't parse, gets (0,0,0) sentinel
+        // So "1.0.0" wins on semver
+        assert_eq!(latest_version(&versions).unwrap().id, 1);
+    }
+
+    #[test]
+    fn latest_version_empty() {
+        let versions: Vec<ForgeVersion> = vec![];
+        assert!(latest_version(&versions).is_none());
+    }
+
+    #[test]
+    fn latest_version_four_part() {
+        let versions = vec![ver(1, "1.2.3.4"), ver(2, "1.2.3.5")];
+        assert_eq!(latest_version(&versions).unwrap().id, 2);
     }
 }

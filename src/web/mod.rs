@@ -516,6 +516,11 @@ pub fn configure_app(
                 web::resource("/mods/{id}/compat-check")
                     .wrap(Governor::new(search_gov))
                     .route(web::get().to(handlers::mods::compat_check)),
+            )
+            .service(
+                web::resource("/mods/{id}/versions")
+                    .wrap(Governor::new(search_gov))
+                    .route(web::get().to(handlers::mods::mod_versions)),
             );
     } else {
         // Same routes without rate limiting
@@ -528,6 +533,10 @@ pub fn configure_app(
             .route(
                 "/mods/{id}/compat-check",
                 web::get().to(handlers::mods::compat_check),
+            )
+            .route(
+                "/mods/{id}/versions",
+                web::get().to(handlers::mods::mod_versions),
             );
     }
 

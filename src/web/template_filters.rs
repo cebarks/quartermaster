@@ -147,6 +147,30 @@ pub fn markdown(content: &str, _env: &dyn askama::Values) -> askama::Result<Stri
     html::push_html(&mut html_output, parser);
     Ok(ammonia::clean(&html_output))
 }
+
+fn compute_date_short(timestamp: &str) -> Result<String, askama::Error> {
+    use chrono::{DateTime, NaiveDate, Utc};
+    let dt = timestamp
+        .parse::<DateTime<Utc>>()
+        .or_else(|_| {
+            NaiveDate::parse_from_str(timestamp, "%Y-%m-%d")
+                .map(|d| d.and_hms_opt(0, 0, 0).expect("midnight is valid").and_utc())
+        })
+        .map_err(|e| askama::Error::Custom(Box::new(e)))?;
+    Ok(dt.format("%b %d, %Y").to_string())
+}
+
+#[askama::filter_fn]
+pub fn format_date_short(
+    timestamp: &Option<String>,
+    _env: &dyn askama::Values,
+) -> askama::Result<String> {
+    match timestamp {
+        Some(t) => compute_date_short(t),
+        None => Ok(String::new()),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -320,5 +344,23 @@ mod tests {
     #[test]
     fn time_ago_invalid() {
         assert!(compute_time_ago("not-a-date").is_err());
+    }
+
+    #[test]
+    fn format_date_short_iso8601() {
+        assert_eq!(
+            compute_date_short("2025-01-15T12:30:00+00:00").unwrap(),
+            "Jan 15, 2025"
+        );
+    }
+
+    #[test]
+    fn format_date_short_date_only() {
+        assert_eq!(compute_date_short("2025-01-15").unwrap(), "Jan 15, 2025");
+    }
+
+    #[test]
+    fn format_date_short_invalid() {
+        assert!(compute_date_short("not-a-date").is_err());
     }
 }
