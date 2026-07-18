@@ -296,7 +296,7 @@ pub fn configure_app(
             web::get().to(handlers::mods::integrity_progress),
         )
         .route(
-            "/headless/status",
+            "/headless/status-partial",
             web::get().to(handlers::clients::client_status_partial),
         )
         .route(

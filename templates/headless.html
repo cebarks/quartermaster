@@ -44,7 +44,7 @@
     </div>
     {% endif %}
 
-    <div hx-get="/quma/api/headless/status" hx-trigger="load, every 5s" hx-swap="innerHTML" style="margin-top: 0.5rem">
+    <div hx-get="/quma/api/headless/status-partial" hx-trigger="load, every 5s" hx-swap="innerHTML" style="margin-top: 0.5rem">
         {% if headless_clients.is_empty() %}
         <p class="text-muted text-sm">No headless clients running. Use the controls above to add clients.</p>
         {% else %}
