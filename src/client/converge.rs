@@ -1426,6 +1426,7 @@ async fn create_client_container(
         security_opt,
         cpuset_cpus,
         cpuset_mems,
+        network_mode: None,
     };
 
     let container_id = container_mgr.create_container(opts).await?;
