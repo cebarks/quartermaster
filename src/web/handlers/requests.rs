@@ -239,47 +239,50 @@ async fn trigger_install_for_request(
             .unwrap_or(false);
 
     if should_queue {
-        let db = state.db.clone();
-        let mod_name = request.mod_name.clone();
         let version_id = version.id;
-        let username = user.username.clone();
         let request_id = request.id;
-        let user_id = user.user_id;
         let metadata = serde_json::json!({"request_id": request_id}).to_string();
-        let already_queued = web::block(move || {
-            let db = db.lock();
-            if db.has_pending_op(forge_mod_id, crate::db::users::QueueAction::Install)? {
-                return Ok::<bool, rusqlite::Error>(true);
-            }
-            db.insert_pending_op(&crate::db::users::InsertPendingOp {
-                action: crate::db::users::QueueAction::Install,
-                forge_mod_id: Some(forge_mod_id),
-                forge_version_id: Some(version_id),
-                mod_name: &mod_name,
+
+        match crate::queue::stage_and_queue_mod(
+            &state.forge,
+            &state.db,
+            &state.dirs,
+            &crate::queue::StageRequest {
+                forge_mod_id,
+                version_id,
+                mod_name: &request.mod_name,
+                slug: None,
+                queued_by: Some(&user.username),
                 metadata: Some(&metadata),
-                queued_by: Some(&username),
-                item_type: "mod",
-                forge_addon_id: None,
-                archive_path: None,
-                source: "forge",
-                source_url: None,
-            })?;
-            db.transition_request_status(
-                request_id,
-                &[RequestStatus::Approved],
-                RequestStatus::Queued,
-                Some(user_id),
-                Some("Queued for install"),
-            )?;
-            Ok(false)
-        })
+            },
+        )
         .await
-        .map_err(|e| format!("Failed to queue install: {e}"))
-        .and_then(|r| r.map_err(|e| format!("Failed to queue install: {e}")))?;
-        if already_queued {
-            message += "Already queued for install.";
-        } else {
-            message += "Queued for install.";
+        {
+            Ok(result) => {
+                // Transition request status
+                let db = state.db.clone();
+                let user_id = user.user_id;
+                let _ = web::block(move || {
+                    let db = db.lock();
+                    db.transition_request_status(
+                        request_id,
+                        &[RequestStatus::Approved],
+                        RequestStatus::Queued,
+                        Some(user_id),
+                        Some("Queued for install"),
+                    )
+                })
+                .await;
+
+                if result.dep_count > 0 {
+                    message += &format!("Queued for install (+ {} dep(s)).", result.dep_count);
+                } else {
+                    message += "Queued for install.";
+                }
+            }
+            Err(e) => {
+                message += &format!("Failed to queue: {e}");
+            }
         }
     } else {
         let Some(task_id) =

@@ -118,7 +118,6 @@ pub(crate) fn archive_extension(download_url: &str) -> &'static str {
 
 // ── Staging types ────────────────────────────────────────────────────
 
-#[allow(dead_code)] // used in Tasks 3-4
 pub struct StageRequest<'a> {
     pub forge_mod_id: i64,
     pub version_id: i64,
@@ -128,8 +127,8 @@ pub struct StageRequest<'a> {
     pub metadata: Option<&'a str>,
 }
 
-#[allow(dead_code)] // used in Tasks 3-4
 pub struct StageResult {
+    #[allow(dead_code)] // used in Task 6 (queue page display)
     pub queued_count: usize, // total ops created (main + deps)
     pub dep_count: usize,
 }
@@ -139,7 +138,6 @@ pub struct StageResult {
 /// Download a Forge mod archive and all uninstalled dependencies to queue_dir,
 /// then insert pending operations for each. If any download fails, all archives
 /// from this call are cleaned up and the error is returned.
-#[allow(dead_code)] // used in Tasks 3-4
 pub async fn stage_and_queue_mod(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
@@ -164,7 +162,6 @@ pub async fn stage_and_queue_mod(
 }
 
 /// Collected fields for a single pending operation ready to insert.
-#[allow(dead_code)] // used in Tasks 3-4
 struct StagedOp {
     action: QueueAction,
     forge_mod_id: Option<i64>,
@@ -176,7 +173,6 @@ struct StagedOp {
     source_url: String,
 }
 
-#[allow(dead_code)] // used in Tasks 3-4
 async fn stage_mod_inner(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
@@ -342,7 +338,6 @@ async fn stage_mod_inner(
 /// Stage a Forge mod update — downloads the new version archive and queues the update.
 /// Dependencies are resolved for the new version: any uninstalled deps are downloaded
 /// and queued as installs (deps before the update).
-#[allow(dead_code)] // used in Tasks 3-4
 pub async fn stage_and_queue_update(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
@@ -378,7 +373,7 @@ pub async fn stage_and_queue_update(
     result
 }
 
-#[allow(dead_code, clippy::too_many_arguments)] // used in Tasks 3-4
+#[allow(clippy::too_many_arguments)]
 async fn stage_update_inner(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
@@ -524,7 +519,7 @@ async fn stage_update_inner(
 /// Stage a Forge addon install/update — downloads the archive and queues the operation.
 /// Addons have no dependency resolution. Stores `parent_forge_mod_id` in metadata so
 /// `apply_addon_install` can find the parent mod at apply time without a Forge API call.
-#[allow(dead_code, clippy::too_many_arguments)] // used in Tasks 3-4
+#[allow(clippy::too_many_arguments)]
 pub async fn stage_and_queue_addon(
     forge: &ForgeClient,
     db: &Arc<Mutex<Database>>,
