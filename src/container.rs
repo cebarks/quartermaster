@@ -75,6 +75,7 @@ impl VolumeMount {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Protocol {
     Tcp,
     Udp,
@@ -111,6 +112,7 @@ pub struct CreateContainerOpts {
     pub security_opt: Vec<String>,
     pub cpuset_cpus: Option<String>,
     pub cpuset_mems: Option<String>,
+    pub network_mode: Option<String>,
 }
 
 impl CreateContainerOpts {
@@ -308,7 +310,10 @@ impl ContainerManager {
             healthcheck: opts.healthcheck.clone(),
             host_config: Some(HostConfig {
                 binds: Some(binds),
-                port_bindings: if port_bindings.is_empty() {
+                network_mode: opts.network_mode.clone(),
+                port_bindings: if port_bindings.is_empty()
+                    || opts.network_mode.as_deref() == Some("host")
+                {
                     None
                 } else {
                     Some(port_bindings)
@@ -490,6 +495,7 @@ mod tests {
             security_opt: vec![],
             cpuset_cpus: None,
             cpuset_mems: None,
+            network_mode: None,
         };
         let labels = opts.all_labels();
         assert!(labels.iter().any(|(k, v)| k == "managed-by" && v == "quma"));
@@ -510,6 +516,7 @@ mod tests {
             security_opt: vec![],
             cpuset_cpus: None,
             cpuset_mems: None,
+            network_mode: None,
         };
         assert!(opts.devices.is_empty());
     }
@@ -529,6 +536,7 @@ mod tests {
             security_opt: vec![],
             cpuset_cpus: None,
             cpuset_mems: None,
+            network_mode: None,
         };
         assert!(opts.cpuset_cpus.is_none());
         assert!(opts.cpuset_mems.is_none());

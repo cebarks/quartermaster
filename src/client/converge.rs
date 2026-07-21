@@ -1,7 +1,5 @@
 use crate::config::{Config, HeadlessConfig};
-use crate::container::{
-    ContainerManager, CreateContainerOpts, PortMapping, Protocol, SelinuxLabel, VolumeMount,
-};
+use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
 use crate::forge::client::ForgeClient;
 use crate::numa::NumaTopology;
 use crate::spt::profiles;
@@ -1347,9 +1345,11 @@ async fn create_client_container(
         }
     }
 
-    // Route through quma's HTTPS proxy
+    // Route through quma's HTTPS proxy.
+    // Host-networked containers are on the host's network stack directly,
+    // so use 127.0.0.1 instead of host.containers.internal.
     let proxy_host = match config.web_bind.as_str() {
-        "0.0.0.0" | "127.0.0.1" | "localhost" | "" => "host.containers.internal",
+        "0.0.0.0" | "127.0.0.1" | "localhost" | "" => "127.0.0.1",
         other => other,
     };
     env.push(("SERVER_URL".to_string(), proxy_host.to_string()));
@@ -1364,12 +1364,7 @@ async fn create_client_container(
         ("quma.client.index".to_string(), index.to_string()),
     ];
 
-    let udp_port = client_port(headless_config.base_udp_port, index)?;
-    let ports = vec![PortMapping {
-        host_port: udp_port,
-        container_port: udp_port,
-        protocol: Protocol::Udp,
-    }];
+    let ports = vec![];
 
     let mut devices = vec![];
     if ntsync_available && headless_config.ntsync {
@@ -1426,6 +1421,7 @@ async fn create_client_container(
         security_opt,
         cpuset_cpus,
         cpuset_mems,
+        network_mode: Some("host".to_string()),
     };
 
     let container_id = container_mgr.create_container(opts).await?;

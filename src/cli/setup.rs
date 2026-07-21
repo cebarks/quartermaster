@@ -388,6 +388,7 @@ pub(crate) fn create_container_opts(
         security_opt: vec![],
         cpuset_cpus: None,
         cpuset_mems: None,
+        network_mode: None,
     }
 }
 
