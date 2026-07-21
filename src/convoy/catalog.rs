@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,6 +7,19 @@ use std::time::Duration;
 
 use crate::config::ConvoyConfig;
 use crate::db::Database;
+
+#[derive(Debug, Deserialize)]
+struct BundleManifest {
+    manifest: Option<Vec<BundleManifestEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BundleManifestEntry {
+    key: String,
+    #[serde(default, rename = "dependencyKeys")]
+    #[allow(dead_code)]
+    dependency_keys: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Catalog {
@@ -31,6 +44,7 @@ pub struct CatalogMod {
     pub name: String,
     pub version: String,
     pub file_checksums: BTreeMap<String, String>,
+    pub bundle_checksums: BTreeMap<String, String>,
 }
 
 fn get_client_file_checksums(
@@ -47,6 +61,93 @@ fn get_client_file_checksums(
                 .map(|h| (f.file_path.clone(), h.clone()))
         })
         .collect())
+}
+
+fn get_bundle_checksums(
+    spt_dir: &Path,
+    db: &Database,
+    mod_id: i64,
+) -> BTreeMap<String, String> {
+    let files = match db.get_files_for_mod_ids(&[mod_id]) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(mod_id, err = %e, "failed to query files for bundle discovery");
+            return BTreeMap::new();
+        }
+    };
+
+    let mod_dir = files.iter()
+        .filter_map(|f| {
+            f.file_path.strip_prefix("SPT/user/mods/")
+                .and_then(|rest| rest.split('/').next())
+        })
+        .next();
+
+    let mod_dir = match mod_dir {
+        Some(d) => d.to_string(),
+        None => return BTreeMap::new(),
+    };
+
+    let bundles_json_path = spt_dir
+        .join("SPT/user/mods")
+        .join(&mod_dir)
+        .join("bundles.json");
+
+    if !bundles_json_path.is_file() {
+        return BTreeMap::new();
+    }
+
+    let content = match std::fs::read_to_string(&bundles_json_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(path = %bundles_json_path.display(), err = %e, "failed to read bundles.json");
+            return BTreeMap::new();
+        }
+    };
+
+    let manifest: BundleManifest = match serde_json::from_str(&content) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(path = %bundles_json_path.display(), err = %e, "failed to parse bundles.json");
+            return BTreeMap::new();
+        }
+    };
+
+    let entries = match manifest.manifest {
+        Some(e) => e,
+        None => return BTreeMap::new(),
+    };
+
+    let bundles_dir = spt_dir.join("SPT/user/mods").join(&mod_dir).join("bundles");
+    let mut checksums = BTreeMap::new();
+
+    for entry in entries {
+        let bundle_path = bundles_dir.join(&entry.key);
+        if !bundle_path.is_file() {
+            tracing::warn!(
+                key = %entry.key,
+                mod_dir = %mod_dir,
+                "bundle file missing on disk, skipping"
+            );
+            continue;
+        }
+
+        match crate::spt::mods::compute_file_hash(&bundle_path) {
+            Ok(hash) => {
+                let cache_key = format!("SPT/user/cache/bundles/{}", entry.key);
+                checksums.insert(cache_key, hash);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    key = %entry.key,
+                    err = %e,
+                    "failed to hash bundle file, skipping"
+                );
+            }
+        }
+    }
+
+    checksums
 }
 
 pub fn generate_catalog(
@@ -72,12 +173,14 @@ pub fn generate_catalog(
     for m in ungrouped {
         let checksums = get_client_file_checksums(db, m)?;
         if !checksums.is_empty() {
+            let bundle_checksums = get_bundle_checksums(spt_dir, db, m.id);
             default_mods.push(CatalogMod {
                 id: m.id,
                 forge_id: m.forge_mod_id,
                 name: m.name.clone(),
                 version: m.version.clone(),
                 file_checksums: checksums,
+                bundle_checksums,
             });
         }
     }
@@ -101,12 +204,14 @@ pub fn generate_catalog(
         for m in group_mods {
             let checksums = get_client_file_checksums(db, m)?;
             if !checksums.is_empty() {
+                let bundle_checksums = get_bundle_checksums(spt_dir, db, m.id);
                 catalog_mods.push(CatalogMod {
                     id: m.id,
                     forge_id: m.forge_mod_id,
                     name: m.name.clone(),
                     version: m.version.clone(),
                     file_checksums: checksums,
+                    bundle_checksums,
                 });
             }
         }
