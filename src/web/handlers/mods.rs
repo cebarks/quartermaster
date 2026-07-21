@@ -2879,3 +2879,374 @@ pub async fn integrity_json(
         None => Ok(HttpResponse::ServiceUnavailable().finish()),
     }
 }
+
+// ── Groups Tab ────────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct AvailableMod {
+    id: i64,
+    name: String,
+}
+
+struct GroupMember {
+    id: i64,
+    name: String,
+    has_client_files: bool,
+}
+
+#[derive(Template)]
+#[template(path = "mods/partials/group_card.html")]
+struct GroupCardTemplate {
+    index: usize,
+    predefined: String,
+    name: String,
+    slug: String,
+    tier: String,
+    exclude_headless: bool,
+    members: Vec<GroupMember>,
+    available_mods: Vec<AvailableMod>,
+}
+
+#[derive(Template)]
+#[template(path = "mods/partials/groups.html")]
+struct GroupsPartialTemplate {
+    csrf_token: String,
+    groups: Vec<GroupCardTemplate>,
+    next_index: usize,
+}
+
+fn mods_with_client_files(
+    db: &crate::db::Database,
+) -> Result<Vec<(i64, String, bool)>, anyhow::Error> {
+    let mods = db.list_mods()?;
+    let mut result = Vec::new();
+    for m in &mods {
+        let files = db.get_files_for_mod(m.id)?;
+        let has_client = files.iter().any(|f| f.file_path.starts_with("BepInEx/"));
+        result.push((m.id, m.name.clone(), has_client));
+    }
+    Ok(result)
+}
+
+async fn fetch_mods_with_client_files(
+    state: &AppState,
+) -> Result<Vec<(i64, String, bool)>, WebError> {
+    let db = state.db.clone();
+    web::block(move || {
+        let db = db.lock();
+        mods_with_client_files(&db)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)
+}
+
+async fn render_groups_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
+    let all_mods = fetch_mods_with_client_files(state).await?;
+
+    let db = state.db.clone();
+    let db_groups = web::block(move || {
+        let db = db.lock();
+        db.list_groups()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let mut assigned: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for group in &db_groups {
+        let db = state.db.clone();
+        let group_id = group.id;
+        let members = web::block(move || {
+            let db = db.lock();
+            db.get_mods_in_group(group_id)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+        for m in members {
+            assigned.insert(m.id);
+        }
+    }
+
+    let mod_lookup: std::collections::HashMap<i64, (&str, bool)> = all_mods
+        .iter()
+        .map(|(id, name, has_client)| (*id, (name.as_str(), *has_client)))
+        .collect();
+
+    let mut group_cards: Vec<GroupCardTemplate> = Vec::new();
+    let mut card_index: usize = 0;
+
+    // Virtual "default" card
+    {
+        let default_members: Vec<GroupMember> = all_mods
+            .iter()
+            .filter(|(id, _, has_client)| *has_client && !assigned.contains(id))
+            .map(|(id, name, _)| GroupMember {
+                id: *id,
+                name: name.clone(),
+                has_client_files: true,
+            })
+            .collect();
+
+        group_cards.push(GroupCardTemplate {
+            index: card_index,
+            predefined: "default".to_string(),
+            name: "Default".to_string(),
+            slug: "default".to_string(),
+            tier: "required".to_string(),
+            exclude_headless: false,
+            members: default_members,
+            available_mods: Vec::new(),
+        });
+        card_index += 1;
+    }
+
+    // DB groups
+    for group in db_groups {
+        let db = state.db.clone();
+        let group_id = group.id;
+        let db_members = web::block(move || {
+            let db = db.lock();
+            db.get_mods_in_group(group_id)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        let members: Vec<GroupMember> = db_members
+            .iter()
+            .map(|m| {
+                if let Some(&(name, has_client)) = mod_lookup.get(&m.id) {
+                    GroupMember {
+                        id: m.id,
+                        name: name.to_string(),
+                        has_client_files: has_client,
+                    }
+                } else {
+                    GroupMember {
+                        id: m.id,
+                        name: format!("Mod #{}", m.id),
+                        has_client_files: false,
+                    }
+                }
+            })
+            .collect();
+
+        let member_ids: Vec<i64> = db_members.iter().map(|m| m.id).collect();
+
+        let card_available: Vec<AvailableMod> = all_mods
+            .iter()
+            .filter(|(id, _, has_client)| {
+                *has_client && (!assigned.contains(id) || member_ids.contains(id))
+            })
+            .map(|(id, name, _)| AvailableMod {
+                id: *id,
+                name: name.clone(),
+            })
+            .collect();
+
+        group_cards.push(GroupCardTemplate {
+            index: card_index,
+            predefined: String::new(),
+            name: group.name.clone(),
+            slug: group.slug.clone(),
+            tier: group.tier.clone(),
+            exclude_headless: group.exclude_headless,
+            members,
+            available_mods: card_available,
+        });
+        card_index += 1;
+    }
+
+    let next_index = card_index;
+    let tmpl = GroupsPartialTemplate {
+        csrf_token: csrf_token.to_string(),
+        groups: group_cards,
+        next_index,
+    };
+    tmpl.render().map_err(WebError::from)
+}
+
+pub async fn groups_partial(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
+    let csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let html = render_groups_tab(&state, &csrf_token).await?;
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(html))
+}
+
+#[derive(serde::Deserialize)]
+pub struct NewGroupQuery {
+    #[serde(default)]
+    index: usize,
+}
+
+pub async fn new_group_card(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    query: Query<NewGroupQuery>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
+    let _csrf_token = crate::web::csrf::get_or_create_token(&session);
+
+    let all_mods = fetch_mods_with_client_files(&state).await?;
+
+    let db = state.db.clone();
+    let db_groups = web::block(move || {
+        let db = db.lock();
+        db.list_groups()
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    let mut assigned: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for group in &db_groups {
+        let db = state.db.clone();
+        let group_id = group.id;
+        let members = web::block(move || {
+            let db = db.lock();
+            db.get_mods_in_group(group_id)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+        for m in members {
+            assigned.insert(m.id);
+        }
+    }
+
+    let available: Vec<AvailableMod> = all_mods
+        .iter()
+        .filter(|(id, _, has_client)| *has_client && !assigned.contains(id))
+        .map(|(id, name, _)| AvailableMod {
+            id: *id,
+            name: name.clone(),
+        })
+        .collect();
+
+    let tmpl = GroupCardTemplate {
+        index: query.index,
+        predefined: String::new(),
+        name: String::new(),
+        slug: String::new(),
+        tier: "required".to_string(),
+        exclude_headless: false,
+        members: Vec::new(),
+        available_mods: available,
+    };
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(tmpl.render().map_err(WebError::from)?))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SaveGroupsRequest {
+    csrf_token: String,
+    groups: Vec<GroupData>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct GroupData {
+    name: String,
+    slug: String,
+    tier: String,
+    exclude_headless: bool,
+    members: Vec<i64>,
+}
+
+pub async fn save_groups(
+    state: Data<AppState>,
+    req: HttpRequest,
+    session: Session,
+    body: web::Json<SaveGroupsRequest>,
+) -> actix_web::Result<HttpResponse> {
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsInstall)?;
+
+    if !crate::web::csrf::validate_token(&session, &body.csrf_token) {
+        return Err(WebError::Forbidden.into());
+    }
+
+    let all_mods = fetch_mods_with_client_files(&state).await?;
+    let client_mod_ids: std::collections::HashSet<i64> = all_mods
+        .iter()
+        .filter(|(_, _, has_client)| *has_client)
+        .map(|(id, _, _)| *id)
+        .collect();
+
+    let mut processed_groups: Vec<(String, String, String, bool, Vec<i64>)> = Vec::new();
+
+    for g in &body.groups {
+        let name = g.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+
+        let slug = if g.slug.trim().is_empty() {
+            crate::config::slugify(name)
+        } else {
+            g.slug.trim().to_string()
+        };
+
+        let tier = if g.tier == "optional" {
+            "optional".to_string()
+        } else {
+            "required".to_string()
+        };
+
+        let members: Vec<i64> = g
+            .members
+            .iter()
+            .copied()
+            .filter(|id| client_mod_ids.contains(id))
+            .collect();
+
+        processed_groups.push((name.to_string(), slug, tier, g.exclude_headless, members));
+    }
+
+    // Dedup members
+    {
+        let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        for (_, _, _, _, members) in &mut processed_groups {
+            members.retain(|id| seen.insert(*id));
+        }
+    }
+
+    let group_count = processed_groups.len();
+
+    let db = state.db.clone();
+    web::block(move || {
+        let db = db.lock();
+        db.save_groups_atomic(&processed_groups)
+    })
+    .await
+    .map_err(WebError::from)?
+    .map_err(WebError::from)?;
+
+    tracing::info!(
+        user = %user.username,
+        group_count,
+        "mod groups saved"
+    );
+
+    // Regenerate convoy catalog if convoy is enabled
+    state.regenerate_convoy();
+
+    set_flash(&session, "Mod groups saved", FlashType::Success);
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "ok": true,
+        "redirect": "/quma/mods#groups"
+    })))
+}
