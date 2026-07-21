@@ -214,8 +214,8 @@
 
     var initialSnapshot = JSON.stringify(serializeGroups());
 
-    document.querySelector('.tabs').addEventListener('htmx:beforeRequest', function(evt) {
-        if (!evt.target.closest('.tabs')) return;
+    document.querySelector('.tab-bar').addEventListener('htmx:beforeRequest', function(evt) {
+        if (!evt.target.closest('.tab-bar')) return;
         var currentSnapshot = JSON.stringify(serializeGroups());
         if (currentSnapshot !== initialSnapshot) {
             if (!confirm('You have unsaved changes that will be lost. Continue?')) {
