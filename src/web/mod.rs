@@ -260,6 +260,15 @@ pub fn configure_app(
             "/mods/dep-tree",
             web::get().to(handlers::mods::dep_tree_partial),
         )
+        // Mod groups API routes
+        .route(
+            "/mods/groups",
+            web::get().to(handlers::mods::groups_partial),
+        )
+        .route(
+            "/mods/groups/new",
+            web::get().to(handlers::mods::new_group_card),
+        )
         // Dashboard partials
         .route(
             "/dashboard/server",
@@ -422,18 +431,6 @@ pub fn configure_app(
             web::post().to(handlers::svm::save_section),
         )
         // Convoy API routes
-        .route(
-            "/convoy/groups",
-            web::get().to(handlers::convoy::groups_partial),
-        )
-        .route(
-            "/convoy/groups/new",
-            web::get().to(handlers::convoy::new_group_card),
-        )
-        .route(
-            "/convoy/mods",
-            web::get().to(handlers::convoy::mods_partial),
-        )
         .route(
             "/convoy/preview",
             web::get().to(handlers::convoy::preview_partial),
@@ -655,11 +652,8 @@ pub fn configure_app(
         )
         .route("/mods", web::get().to(handlers::mods::list_mods))
         .route("/files", web::get().to(handlers::mods::file_tracking_page))
+        .route("/mods/groups", web::post().to(handlers::mods::save_groups))
         .route("/convoy", web::get().to(handlers::convoy::convoy_page))
-        .route(
-            "/convoy/groups",
-            web::post().to(handlers::convoy::save_groups),
-        )
         .route(
             "/convoy/settings",
             web::post().to(handlers::convoy::save_settings),
