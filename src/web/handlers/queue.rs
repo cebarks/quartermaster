@@ -105,7 +105,56 @@ async fn cancel_op_inner(
         }
     }
 
-    set_flash(session, flash_msg, FlashType::Success);
+    // Cascade cancel to dependency ops whose queued_for array references
+    // this parent's forge_mod_id. Remove the parent ID from each dep's array;
+    // cancel the dep entirely when the array becomes empty.
+    let final_flash = if let Some(parent_forge_mod_id) = op.as_ref().and_then(|o| o.forge_mod_id) {
+        let db = state.db.clone();
+        let dep_result = web::block(move || {
+            let db = db.lock();
+            let deps = db.list_dep_ops_for_parent(parent_forge_mod_id)?;
+            let mut cancelled = Vec::new();
+
+            for dep in deps {
+                let Some(ref metadata_str) = dep.metadata else {
+                    continue;
+                };
+                let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(metadata_str) else {
+                    continue;
+                };
+
+                if let Some(arr) = meta.get_mut("queued_for").and_then(|v| v.as_array_mut()) {
+                    arr.retain(|v| v.as_i64() != Some(parent_forge_mod_id));
+
+                    if arr.is_empty() {
+                        // No remaining parents — cancel this dep
+                        crate::queue::cleanup_queued_archive(&dep);
+                        db.delete_pending_op(dep.id)?;
+                        cancelled.push(dep.mod_name.clone());
+                    } else {
+                        // Still needed by other parents — update metadata
+                        let updated =
+                            serde_json::to_string(&meta).unwrap_or_else(|_| metadata_str.clone());
+                        db.update_pending_op_metadata(dep.id, &updated)?;
+                    }
+                }
+            }
+            Ok::<Vec<String>, anyhow::Error>(cancelled)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if dep_result.is_empty() {
+            flash_msg.to_string()
+        } else {
+            format!("{} (+ {} dep(s) cancelled)", flash_msg, dep_result.len())
+        }
+    } else {
+        flash_msg.to_string()
+    };
+
+    set_flash(session, &final_flash, FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/mods#queue"))
         .finish())

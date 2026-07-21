@@ -233,10 +233,31 @@ async fn stage_mod_inner(
             continue;
         }
 
-        // Check if already queued
+        // Check if already queued — if so, ensure our parent's forge_mod_id
+        // is in the dep's queued_for array so cascade cancel works correctly.
         {
             let db_guard = db.lock();
             if db_guard.has_pending_op(dep.mod_id, QueueAction::Install)? {
+                if let Some(existing_op) =
+                    db_guard.get_pending_op_by_forge_id(dep.mod_id, QueueAction::Install)?
+                {
+                    if let Some(ref meta_str) = existing_op.metadata {
+                        if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(meta_str) {
+                            if let Some(arr) =
+                                meta.get_mut("queued_for").and_then(|v| v.as_array_mut())
+                            {
+                                let parent_id = serde_json::Value::Number(req.forge_mod_id.into());
+                                if !arr.contains(&parent_id) {
+                                    arr.push(parent_id);
+                                    let updated = serde_json::to_string(&meta)
+                                        .unwrap_or_else(|_| meta_str.clone());
+                                    db_guard
+                                        .update_pending_op_metadata(existing_op.id, &updated)?;
+                                }
+                            }
+                        }
+                    }
+                }
                 continue;
             }
         }
@@ -423,9 +444,31 @@ async fn stage_update_inner(
         if !visited.insert(dep.mod_id) {
             continue;
         }
+        // Check if already queued — if so, ensure our parent's forge_mod_id
+        // is in the dep's queued_for array so cascade cancel works correctly.
         {
             let db_guard = db.lock();
             if db_guard.has_pending_op(dep.mod_id, QueueAction::Install)? {
+                if let Some(existing_op) =
+                    db_guard.get_pending_op_by_forge_id(dep.mod_id, QueueAction::Install)?
+                {
+                    if let Some(ref meta_str) = existing_op.metadata {
+                        if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(meta_str) {
+                            if let Some(arr) =
+                                meta.get_mut("queued_for").and_then(|v| v.as_array_mut())
+                            {
+                                let parent_id = serde_json::Value::Number(forge_mod_id.into());
+                                if !arr.contains(&parent_id) {
+                                    arr.push(parent_id);
+                                    let updated = serde_json::to_string(&meta)
+                                        .unwrap_or_else(|_| meta_str.clone());
+                                    db_guard
+                                        .update_pending_op_metadata(existing_op.id, &updated)?;
+                                }
+                            }
+                        }
+                    }
+                }
                 continue;
             }
         }

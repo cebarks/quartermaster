@@ -508,6 +508,50 @@ impl Database {
             .execute("DELETE FROM pending_operations WHERE id = ?1", params![id])
     }
 
+    /// Find pending ops whose metadata `queued_for` array contains the given parent forge_mod_id.
+    /// Uses SQLite JSON functions (available since SQLite 3.38, which rusqlite bundles).
+    pub fn list_dep_ops_for_parent(
+        &self,
+        parent_forge_mod_id: i64,
+    ) -> rusqlite::Result<Vec<PendingOperation>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT po.id, po.action, po.forge_mod_id, po.forge_version_id, po.mod_name,
+                    po.metadata, po.queued_at, po.queued_by, po.item_type, po.forge_addon_id,
+                    po.archive_path, po.source, po.source_url
+             FROM pending_operations po, json_each(po.metadata, '$.queued_for') je
+             WHERE je.value = ?1
+             ORDER BY po.queued_at",
+        )?;
+        let rows = stmt.query_map(params![parent_forge_mod_id], row_to_pending_op)?;
+        rows.collect()
+    }
+
+    /// Update a pending op's metadata JSON in place.
+    pub fn update_pending_op_metadata(&self, op_id: i64, metadata: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE pending_operations SET metadata = ?1 WHERE id = ?2",
+            params![metadata, op_id],
+        )?;
+        Ok(())
+    }
+
+    /// Look up a pending op by forge_mod_id and action.
+    pub fn get_pending_op_by_forge_id(
+        &self,
+        forge_mod_id: i64,
+        action: QueueAction,
+    ) -> rusqlite::Result<Option<PendingOperation>> {
+        self.conn
+            .query_row(
+                "SELECT id, action, forge_mod_id, forge_version_id, mod_name, metadata, queued_at, queued_by,
+                        item_type, forge_addon_id, archive_path, source, source_url
+                 FROM pending_operations WHERE forge_mod_id = ?1 AND action = ?2",
+                params![forge_mod_id, action.as_str()],
+                row_to_pending_op,
+            )
+            .optional()
+    }
+
     #[cfg(test)]
     pub fn clear_pending_ops(&self) -> rusqlite::Result<usize> {
         self.conn.execute("DELETE FROM pending_operations", [])
