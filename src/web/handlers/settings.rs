@@ -430,6 +430,7 @@ pub async fn save_headless_settings(
         max_restart_attempts: form.max_restart_attempts,
         restart_backoff_cap: form.restart_backoff_cap,
         base_udp_port: form.base_udp_port,
+        force_ip: existing.and_then(|h| h.force_ip.clone()),
         image: form.image.trim().to_string(),
         isolated_paths: isolated,
         numa_auto,

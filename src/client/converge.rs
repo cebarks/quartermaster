@@ -32,6 +32,10 @@ pub const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 static PORT_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(UDP Port\s*=\s*)\d+").expect("valid regex"));
 
+/// Regex for editing Force IP in Fika client config
+static FORCE_IP_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?m)^(Force IP\s*=\s*).*$").expect("valid regex"));
+
 /// Regex for editing Use UPnP in Fika client config
 static UPNP_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(Use UPnP\s*=\s*)\S+").expect("valid regex"));
@@ -288,7 +292,7 @@ fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create config dir {}", parent.display()))?;
         }
-        let seed = format!("[Network]\nUDP Port = {port}\n");
+        let seed = format!("[Network]\nForce IP = \nUDP Port = {port}\n");
         std::fs::write(&cfg_path, &seed)
             .with_context(|| format!("failed to seed {}", cfg_path.display()))?;
         debug!(
@@ -351,6 +355,38 @@ fn write_fika_upnp(overlay_dir: &Path, enabled: bool) -> Result<()> {
     Ok(())
 }
 
+/// Write the Force IP setting into the Fika client config in a per-client overlay.
+fn write_fika_force_ip(overlay_dir: &Path, force_ip: &str) -> Result<()> {
+    let cfg_path = overlay_dir.join("BepInEx/config/com.fika.core.cfg");
+    if !cfg_path.exists() {
+        debug!(
+            "Fika config not found at {}, skipping Force IP write",
+            cfg_path.display()
+        );
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&cfg_path)
+        .with_context(|| format!("failed to read {}", cfg_path.display()))?;
+
+    if !FORCE_IP_RE.is_match(&content) {
+        debug!(
+            "No Force IP setting found in {}, skipping",
+            cfg_path.display()
+        );
+        return Ok(());
+    }
+
+    let updated = FORCE_IP_RE
+        .replace(&content, format!("${{1}}{force_ip}"))
+        .to_string();
+    std::fs::write(&cfg_path, &updated)
+        .with_context(|| format!("failed to write {}", cfg_path.display()))?;
+
+    debug!("Set Force IP to {force_ip} in {}", cfg_path.display());
+    Ok(())
+}
+
 /// Patch `Game.ini` to control EFT's CPU affinity behaviour.
 ///
 /// EFT's `SetAffinityToLogicalCores` is confusingly named:
@@ -401,6 +437,7 @@ pub fn setup_client_overlay(
     index: u32,
     isolated_paths: &[String],
     base_udp_port: u16,
+    force_ip: Option<&str>,
     use_upnp: bool,
     physical_cores_only: bool,
 ) -> Result<()> {
@@ -453,6 +490,9 @@ pub fn setup_client_overlay(
 
     let port = client_port(base_udp_port, index)?;
     write_fika_udp_port(&overlay_dir, port)?;
+    if let Some(ip) = force_ip {
+        write_fika_force_ip(&overlay_dir, ip)?;
+    }
     write_fika_upnp(&overlay_dir, use_upnp)?;
 
     // Game.ini is shared (not per-client overlay), so only patch once.
@@ -902,6 +942,7 @@ pub async fn converge(
             index,
             &effective_paths,
             headless_config.base_udp_port,
+            headless_config.force_ip.as_deref(),
             headless_config.use_upnp,
             headless_config.physical_cores_only,
         )?;
@@ -1266,6 +1307,7 @@ async fn create_client_container(
         index,
         effective_paths,
         headless_config.base_udp_port,
+        headless_config.force_ip.as_deref(),
         headless_config.use_upnp,
         headless_config.physical_cores_only,
     )?;
@@ -1489,6 +1531,7 @@ mod tests {
             1,
             &["BepInEx/config".to_string()],
             25565,
+            None,
             false,
             false,
         )
@@ -1523,6 +1566,7 @@ mod tests {
             1,
             &["BepInEx/config".to_string()],
             25565,
+            None,
             false,
             false,
         )
@@ -1555,6 +1599,7 @@ mod tests {
             1,
             &["BepInEx/config".to_string()],
             25565,
+            None,
             false,
             false,
         )
@@ -1568,6 +1613,7 @@ mod tests {
             1,
             &["BepInEx/config".to_string(), "BepInEx/cache".to_string()],
             25565,
+            None,
             false,
             false,
         )

@@ -615,6 +615,8 @@ pub struct HeadlessConfig {
     #[serde(default = "default_server_ready_timeout")]
     pub server_ready_timeout: u64,
     #[serde(default)]
+    pub force_ip: Option<String>,
+    #[serde(default)]
     pub use_upnp: bool,
     #[serde(default)]
     pub physical_cores_only: bool,
@@ -641,6 +643,7 @@ impl Default for HeadlessConfig {
             numa_node: None,
             numa_pin_memory: false,
             server_ready_timeout: 120,
+            force_ip: None,
             use_upnp: false,
             physical_cores_only: false,
             memory_restart_threshold: default_memory_restart_threshold(),
