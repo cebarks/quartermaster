@@ -46,6 +46,11 @@
                     {% if op.item_type == "addon" %}
                     <span class="badge badge-info" style="margin-left: 0.5rem;">addon</span>
                     {% endif %}
+                    {% if let Some(m) = &op.metadata %}
+                    {% if m.contains("queued_for") %}
+                    <span class="text-sm text-muted" style="margin-left: 0.5rem;">(dependency)</span>
+                    {% endif %}
+                    {% endif %}
                     {% if op.action.as_str() != "remove" %}
                     {% if let Some(mod_id) = op.forge_mod_id %}
                     {% if let Some(ver_id) = op.forge_version_id %}
