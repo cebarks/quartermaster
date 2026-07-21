@@ -13,22 +13,6 @@
 
 <div class="tabs" style="margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.25rem">
     {% if convoy_enabled %}
-    <a href="/quma/convoy?tab=groups"
-       class="btn btn-sm {% if active_tab == "groups" %}btn-primary{% else %}btn-outline{% endif %}"
-       hx-get="/quma/api/convoy/groups"
-       hx-target="#tab-content"
-       hx-swap="innerHTML"
-       hx-push-url="/quma/convoy?tab=groups">
-        Groups
-    </a>
-    <a href="/quma/convoy?tab=mods"
-       class="btn btn-sm {% if active_tab == "mods" %}btn-primary{% else %}btn-outline{% endif %}"
-       hx-get="/quma/api/convoy/mods"
-       hx-target="#tab-content"
-       hx-swap="innerHTML"
-       hx-push-url="/quma/convoy?tab=mods">
-        Mods
-    </a>
     <a href="/quma/convoy?tab=preview"
        class="btn btn-sm {% if active_tab == "preview" %}btn-primary{% else %}btn-outline{% endif %}"
        hx-get="/quma/api/convoy/preview"

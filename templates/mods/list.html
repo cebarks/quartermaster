@@ -19,6 +19,11 @@
             hx-target="#mods-tab-content"
             hx-swap="innerHTML"
             onclick="tabSwitch(this, {hash: true})">Requests</button>
+    <button class="tab" data-tab="groups"
+            hx-get="/quma/api/mods/groups"
+            hx-target="#mods-tab-content"
+            hx-swap="innerHTML"
+            onclick="tabSwitch(this, {hash: true})">Groups</button>
 </div>
 
 <div id="mods-tab-content">

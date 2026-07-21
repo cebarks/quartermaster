@@ -5,7 +5,7 @@
         <h2 style="margin: 0">Mod Groups</h2>
         <div style="display: flex; gap: 0.5rem">
             <button type="button" id="add-group-btn" class="btn btn-sm btn-outline"
-                    hx-get="/quma/api/convoy/groups/new?index={{ next_index }}"
+                    hx-get="/quma/api/mods/groups/new?index={{ next_index }}"
                     hx-target="#groups-container"
                     hx-swap="beforeend">
                 + Add Group
@@ -67,7 +67,7 @@
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving...';
 
-            fetch('/quma/convoy/groups', {
+            fetch('/quma/mods/groups', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ csrf_token: csrf, groups: groups })
@@ -191,7 +191,7 @@
         });
         var addBtn = document.getElementById('add-group-btn');
         if (addBtn) {
-            var url = '/quma/api/convoy/groups/new?index=' + (maxIdx + 1);
+            var url = '/quma/api/mods/groups/new?index=' + (maxIdx + 1);
             addBtn.setAttribute('hx-get', url);
             if (typeof htmx !== 'undefined') htmx.process(addBtn);
         }
@@ -214,8 +214,8 @@
 
     var initialSnapshot = JSON.stringify(serializeGroups());
 
-    document.querySelector('.tabs').addEventListener('htmx:beforeRequest', function(evt) {
-        if (!evt.target.closest('.tabs')) return;
+    document.querySelector('.tab-bar').addEventListener('htmx:beforeRequest', function(evt) {
+        if (!evt.target.closest('.tab-bar')) return;
         var currentSnapshot = JSON.stringify(serializeGroups());
         if (currentSnapshot !== initialSnapshot) {
             if (!confirm('You have unsaved changes that will be lost. Continue?')) {
