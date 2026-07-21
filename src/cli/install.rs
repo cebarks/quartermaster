@@ -57,11 +57,11 @@ pub async fn install_with_deps(ctx: &CliContext, forge_mod_id: i64, version_id: 
 }
 
 /// A dependency that needs to be installed.
-struct PendingInstall {
-    mod_id: i64,
-    version_id: i64,
-    name: String,
-    version: String,
+pub(crate) struct PendingInstall {
+    pub(crate) mod_id: i64,
+    pub(crate) version_id: i64,
+    pub(crate) name: String,
+    pub(crate) version: String,
 }
 
 pub async fn run(
@@ -637,7 +637,7 @@ fn check_fika_compat(mod_name: &str, version: &ForgeVersion) -> Result<()> {
     Ok(())
 }
 
-fn collect_deps_to_install(
+pub(crate) fn collect_deps_to_install(
     nodes: &[DependencyNode],
     db: &crate::db::Database,
     out: &mut Vec<PendingInstall>,
