@@ -84,14 +84,20 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
                 .iter()
                 .find(|m| m.forge_mod_id == Some(update.current_version.mod_id));
             if let Some(m) = installed {
-                ctx.db.insert_pending_op(
-                    crate::db::users::QueueAction::Update,
-                    m.forge_mod_id.expect("forge mod in update path"),
-                    Some(update.recommended_version.id),
-                    &m.name,
-                    None,
-                    None,
-                )?;
+                ctx.db
+                    .insert_pending_op(&crate::db::users::InsertPendingOp {
+                        action: crate::db::users::QueueAction::Update,
+                        forge_mod_id: Some(m.forge_mod_id.expect("forge mod in update path")),
+                        forge_version_id: Some(update.recommended_version.id),
+                        mod_name: &m.name,
+                        metadata: None,
+                        queued_by: None,
+                        item_type: "mod",
+                        forge_addon_id: None,
+                        archive_path: None,
+                        source: "forge",
+                        source_url: None,
+                    })?;
             }
         }
         println!(
@@ -287,14 +293,20 @@ async fn run_addon_update(addon_ref: &str, force: bool, ctx: &CliContext) -> Res
 
     if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
-        ctx.db.insert_pending_addon_op(
-            crate::db::users::QueueAction::Update,
-            installed.forge_addon_id,
-            Some(latest.id),
-            &installed.name,
-            None,
-            None,
-        )?;
+        ctx.db
+            .insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Update,
+                forge_mod_id: None,
+                forge_version_id: Some(latest.id),
+                mod_name: &installed.name,
+                metadata: None,
+                queued_by: None,
+                item_type: "addon",
+                forge_addon_id: Some(installed.forge_addon_id),
+                archive_path: None,
+                source: "forge",
+                source_url: None,
+            })?;
         println!(
             "Server is running — operation queued. It will be applied on next server restart."
         );

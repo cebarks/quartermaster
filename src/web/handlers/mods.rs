@@ -374,14 +374,19 @@ async fn try_queue_mod_op(
         if db.has_pending_op(forge_mod_id, action_clone)? {
             return Ok::<bool, rusqlite::Error>(true);
         }
-        db.insert_pending_op(
-            action_clone,
-            forge_mod_id,
-            version_id,
-            &mod_name_owned,
-            None,
-            None,
-        )?;
+        db.insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: action_clone,
+            forge_mod_id: Some(forge_mod_id),
+            forge_version_id: version_id,
+            mod_name: &mod_name_owned,
+            metadata: None,
+            queued_by: None,
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: None,
+            source: "forge",
+            source_url: None,
+        })?;
         Ok(false)
     })
     .await
@@ -439,14 +444,19 @@ async fn try_queue_addon_op(
         if db.has_pending_addon_op(forge_addon_id, action_clone)? {
             return Ok::<bool, rusqlite::Error>(true);
         }
-        db.insert_pending_addon_op(
-            action_clone,
-            forge_addon_id,
-            version_id,
-            &addon_name_owned,
-            None,
-            Some(&username),
-        )?;
+        db.insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: action_clone,
+            forge_mod_id: None,
+            forge_version_id: version_id,
+            mod_name: &addon_name_owned,
+            metadata: None,
+            queued_by: Some(&username),
+            item_type: "addon",
+            forge_addon_id: Some(forge_addon_id),
+            archive_path: None,
+            source: "forge",
+            source_url: None,
+        })?;
         Ok(false)
     })
     .await
@@ -1101,14 +1111,19 @@ async fn install_mod_from_url(
         let url_owned = url.to_string();
         let _ = web::block(move || {
             let db = db.lock();
-            db.insert_pending_url_op(
-                crate::db::users::QueueAction::Install,
-                &mod_name_q,
-                &dest_str,
-                "url",
-                Some(&url_owned),
-                None,
-            )
+            db.insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Install,
+                forge_mod_id: None,
+                forge_version_id: None,
+                mod_name: &mod_name_q,
+                metadata: None,
+                queued_by: None,
+                item_type: "mod",
+                forge_addon_id: None,
+                archive_path: Some(&dest_str),
+                source: "url",
+                source_url: Some(&url_owned),
+            })
         })
         .await
         .map_err(WebError::from)?
@@ -1851,14 +1866,19 @@ pub async fn update_all_mods(
             let db = db.lock();
             for update in &results.updates {
                 if !db.has_pending_op(update.current_version.mod_id, QueueAction::Update)? {
-                    db.insert_pending_op(
-                        QueueAction::Update,
-                        update.current_version.mod_id,
-                        Some(update.recommended_version.id),
-                        &update.current_version.name,
-                        None,
-                        None,
-                    )?;
+                    db.insert_pending_op(&crate::db::users::InsertPendingOp {
+                        action: QueueAction::Update,
+                        forge_mod_id: Some(update.current_version.mod_id),
+                        forge_version_id: Some(update.recommended_version.id),
+                        mod_name: &update.current_version.name,
+                        metadata: None,
+                        queued_by: None,
+                        item_type: "mod",
+                        forge_addon_id: None,
+                        archive_path: None,
+                        source: "forge",
+                        source_url: None,
+                    })?;
                 }
             }
             Ok::<_, anyhow::Error>(())

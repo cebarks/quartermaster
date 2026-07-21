@@ -115,14 +115,20 @@ pub async fn run(
 
     if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
-        ctx.db.insert_pending_op(
-            crate::db::users::QueueAction::Install,
-            forge_mod.id,
-            Some(selected_version.id),
-            &forge_mod.name,
-            None,
-            None,
-        )?;
+        ctx.db
+            .insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Install,
+                forge_mod_id: Some(forge_mod.id),
+                forge_version_id: Some(selected_version.id),
+                mod_name: &forge_mod.name,
+                metadata: None,
+                queued_by: None,
+                item_type: "mod",
+                forge_addon_id: None,
+                archive_path: None,
+                source: "forge",
+                source_url: None,
+            })?;
         println!(
             "Server is running — operation queued. It will be applied on next server restart."
         );
@@ -197,14 +203,20 @@ async fn run_addon_install(
 
     if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
-        ctx.db.insert_pending_addon_op(
-            crate::db::users::QueueAction::Install,
-            forge_addon.id,
-            Some(selected_version.id),
-            &forge_addon.name,
-            None,
-            None,
-        )?;
+        ctx.db
+            .insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Install,
+                forge_mod_id: None,
+                forge_version_id: Some(selected_version.id),
+                mod_name: &forge_addon.name,
+                metadata: None,
+                queued_by: None,
+                item_type: "addon",
+                forge_addon_id: Some(forge_addon.id),
+                archive_path: None,
+                source: "forge",
+                source_url: None,
+            })?;
         println!(
             "Server is running — operation queued. It will be applied on next server restart."
         );
@@ -952,14 +964,20 @@ async fn queue_url_install(ctx: &CliContext, url: &str, mod_name: &str) -> Resul
     println!("Downloading archive for queue...");
     ctx.forge.download_file(url, &dest).await?;
 
-    ctx.db.insert_pending_url_op(
-        crate::db::users::QueueAction::Install,
-        mod_name,
-        dest.to_str().expect("valid UTF-8 path"),
-        "url",
-        Some(url),
-        None,
-    )?;
+    ctx.db
+        .insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: crate::db::users::QueueAction::Install,
+            forge_mod_id: None,
+            forge_version_id: None,
+            mod_name,
+            metadata: None,
+            queued_by: None,
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: Some(dest.to_str().expect("valid UTF-8 path")),
+            source: "url",
+            source_url: Some(url),
+        })?;
 
     println!("Server is running — operation queued. It will be applied on next server restart.");
     Ok(())
@@ -982,14 +1000,20 @@ async fn queue_file_install(
 
     std::fs::copy(archive_path, &dest).context("failed to copy archive to queue dir")?;
 
-    ctx.db.insert_pending_url_op(
-        crate::db::users::QueueAction::Install,
-        mod_name,
-        dest.to_str().expect("valid UTF-8 path"),
-        "file",
-        None,
-        None,
-    )?;
+    ctx.db
+        .insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: crate::db::users::QueueAction::Install,
+            forge_mod_id: None,
+            forge_version_id: None,
+            mod_name,
+            metadata: None,
+            queued_by: None,
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: Some(dest.to_str().expect("valid UTF-8 path")),
+            source: "file",
+            source_url: None,
+        })?;
 
     println!("Server is running — operation queued. It will be applied on next server restart.");
     Ok(())

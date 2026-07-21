@@ -484,25 +484,35 @@ fn pending_operations_crud() {
     use crate::db::users::QueueAction;
 
     let op_id = db
-        .insert_pending_op(
-            QueueAction::Install,
-            1001,
-            Some(2001),
-            "Cool Mod",
-            Some("{\"source\":\"web\"}"),
-            Some("admin"),
-        )
+        .insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: QueueAction::Install,
+            forge_mod_id: Some(1001),
+            forge_version_id: Some(2001),
+            mod_name: "Cool Mod",
+            metadata: Some("{\"source\":\"web\"}"),
+            queued_by: Some("admin"),
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: None,
+            source: "forge",
+            source_url: None,
+        })
         .unwrap();
     assert!(op_id > 0);
 
-    db.insert_pending_op(
-        QueueAction::Update,
-        1002,
-        Some(2002),
-        "Other Mod",
-        None,
-        None,
-    )
+    db.insert_pending_op(&crate::db::users::InsertPendingOp {
+        action: QueueAction::Update,
+        forge_mod_id: Some(1002),
+        forge_version_id: Some(2002),
+        mod_name: "Other Mod",
+        metadata: None,
+        queued_by: None,
+        item_type: "mod",
+        forge_addon_id: None,
+        archive_path: None,
+        source: "forge",
+        source_url: None,
+    })
     .unwrap();
 
     let ops = db.list_pending_ops().unwrap();
@@ -524,14 +534,19 @@ fn pending_operations_crud() {
 fn pending_op_with_no_version() {
     let db = test_db();
     let op_id = db
-        .insert_pending_op(
-            crate::db::users::QueueAction::Remove,
-            1001,
-            None,
-            "Removed Mod",
-            None,
-            None,
-        )
+        .insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: crate::db::users::QueueAction::Remove,
+            forge_mod_id: Some(1001),
+            forge_version_id: None,
+            mod_name: "Removed Mod",
+            metadata: None,
+            queued_by: None,
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: None,
+            source: "forge",
+            source_url: None,
+        })
         .unwrap();
     let ops = db.list_pending_ops().unwrap();
     assert_eq!(ops.len(), 1);
@@ -1185,8 +1200,20 @@ fn has_pending_op_check() {
     assert!(!db.has_pending_op(42, QueueAction::Install).unwrap());
 
     // Insert an Install op for forge_mod_id=42
-    db.insert_pending_op(QueueAction::Install, 42, Some(100), "Test Mod", None, None)
-        .unwrap();
+    db.insert_pending_op(&crate::db::users::InsertPendingOp {
+        action: QueueAction::Install,
+        forge_mod_id: Some(42),
+        forge_version_id: Some(100),
+        mod_name: "Test Mod",
+        metadata: None,
+        queued_by: None,
+        item_type: "mod",
+        forge_addon_id: None,
+        archive_path: None,
+        source: "forge",
+        source_url: None,
+    })
+    .unwrap();
 
     // Same mod_id + action → true
     assert!(db.has_pending_op(42, QueueAction::Install).unwrap());

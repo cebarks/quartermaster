@@ -251,14 +251,19 @@ async fn trigger_install_for_request(
             if db.has_pending_op(forge_mod_id, crate::db::users::QueueAction::Install)? {
                 return Ok::<bool, rusqlite::Error>(true);
             }
-            db.insert_pending_op(
-                crate::db::users::QueueAction::Install,
-                forge_mod_id,
-                Some(version_id),
-                &mod_name,
-                Some(&metadata),
-                Some(&username),
-            )?;
+            db.insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Install,
+                forge_mod_id: Some(forge_mod_id),
+                forge_version_id: Some(version_id),
+                mod_name: &mod_name,
+                metadata: Some(&metadata),
+                queued_by: Some(&username),
+                item_type: "mod",
+                forge_addon_id: None,
+                archive_path: None,
+                source: "forge",
+                source_url: None,
+            })?;
             db.transition_request_status(
                 request_id,
                 &[RequestStatus::Approved],

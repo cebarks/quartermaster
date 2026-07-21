@@ -114,6 +114,21 @@ pub struct PendingOperation {
     pub source_url: Option<String>,
 }
 
+/// Parameters for inserting a pending queue operation.
+pub struct InsertPendingOp<'a> {
+    pub action: QueueAction,
+    pub forge_mod_id: Option<i64>,
+    pub forge_version_id: Option<i64>,
+    pub mod_name: &'a str,
+    pub metadata: Option<&'a str>,
+    pub queued_by: Option<&'a str>,
+    pub item_type: &'a str, // "mod" or "addon"
+    pub forge_addon_id: Option<i64>,
+    pub archive_path: Option<&'a str>,
+    pub source: &'a str, // "forge", "url", "file"
+    pub source_url: Option<&'a str>,
+}
+
 impl Database {
     // ── User CRUD ─────────────────────────────────────────────────────
 
@@ -435,54 +450,23 @@ impl Database {
 
     // ── Pending Operations CRUD ───────────────────────────────────────
 
-    pub fn insert_pending_op(
-        &self,
-        action: QueueAction,
-        forge_mod_id: i64,
-        forge_version_id: Option<i64>,
-        mod_name: &str,
-        metadata: Option<&str>,
-        queued_by: Option<&str>,
-    ) -> rusqlite::Result<i64> {
-        self.conn.execute(
-            "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by, item_type, forge_addon_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'mod', NULL)",
-            params![action.as_str(), forge_mod_id, forge_version_id, mod_name, metadata, queued_by],
-        )?;
-        Ok(self.conn.last_insert_rowid())
-    }
-
-    #[allow(dead_code)] // used in Task 5
-    pub fn insert_pending_addon_op(
-        &self,
-        action: QueueAction,
-        forge_addon_id: i64,
-        forge_version_id: Option<i64>,
-        addon_name: &str,
-        metadata: Option<&str>,
-        queued_by: Option<&str>,
-    ) -> rusqlite::Result<i64> {
-        self.conn.execute(
-            "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by, item_type, forge_addon_id)
-             VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'addon', ?6)",
-            params![action.as_str(), forge_version_id, addon_name, metadata, queued_by, forge_addon_id],
-        )?;
-        Ok(self.conn.last_insert_rowid())
-    }
-
-    pub fn insert_pending_url_op(
-        &self,
-        action: QueueAction,
-        mod_name: &str,
-        archive_path: &str,
-        source: &str,
-        source_url: Option<&str>,
-        queued_by: Option<&str>,
-    ) -> rusqlite::Result<i64> {
+    pub fn insert_pending_op(&self, op: &InsertPendingOp<'_>) -> rusqlite::Result<i64> {
         self.conn.execute(
             "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by, item_type, forge_addon_id, archive_path, source, source_url)
-             VALUES (?1, NULL, NULL, ?2, NULL, ?3, 'mod', NULL, ?4, ?5, ?6)",
-            params![action.as_str(), mod_name, queued_by, archive_path, source, source_url],
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                op.action.as_str(),
+                op.forge_mod_id,
+                op.forge_version_id,
+                op.mod_name,
+                op.metadata,
+                op.queued_by,
+                op.item_type,
+                op.forge_addon_id,
+                op.archive_path,
+                op.source,
+                op.source_url,
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
