@@ -240,3 +240,25 @@ async fn requests_tab_loads() {
     let resp = app.get("/quma/api/mods/requests").await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+// Groups tab tests
+#[actix_web::test]
+async fn mods_groups_tab_requires_auth() {
+    let mut app = TestAppBuilder::new().build().await;
+
+    let resp = app.get("/quma/api/mods/groups").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+}
+
+#[actix_web::test]
+async fn mods_groups_tab_loads() {
+    let mut app = TestAppBuilder::new()
+        .with_user("admin", "pass", "admin")
+        .build()
+        .await;
+
+    app.login_as("admin", "pass").await;
+
+    let resp = app.get("/quma/api/mods/groups").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
