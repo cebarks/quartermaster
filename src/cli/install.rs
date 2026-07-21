@@ -9,53 +9,6 @@ use crate::spt::mods::{detect_mod_type, ModType};
 
 use super::common::{confirm, resolve_mod, CliContext};
 
-/// Resolve dependencies and install a mod plus all its deps.
-/// Used by both the interactive `install` command and `apply::drain_all`.
-pub async fn install_with_deps(ctx: &CliContext, forge_mod_id: i64, version_id: i64) -> Result<()> {
-    let forge_mod = ctx.forge.get_mod(forge_mod_id, false).await?;
-
-    if let Some(existing) = ctx.db.get_mod_by_forge_id(forge_mod.id)? {
-        println!(
-            "  {} already installed (v{}), skipping",
-            existing.name, existing.version
-        );
-        return Ok(());
-    }
-
-    let versions = ctx.forge.get_versions(forge_mod_id, None).await?;
-
-    let selected = versions
-        .iter()
-        .find(|v| v.id == version_id)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "version ID {} not found for {} on Forge",
-                version_id,
-                forge_mod.name
-            )
-        })?
-        .clone();
-
-    let (to_install, skipped_conflicts) = resolve_deps(ctx, &forge_mod, &selected).await?;
-    if !skipped_conflicts.is_empty() {
-        tracing::warn!(
-            "Skipped {} conflicting dependency(ies) for {}: {}",
-            skipped_conflicts.len(),
-            forge_mod.name,
-            skipped_conflicts.join(", "),
-        );
-    }
-    install_deps(ctx, &to_install).await?;
-    let db_id = install_main_mod(ctx, &forge_mod, &selected).await?;
-    record_dependency_edges(ctx, db_id, &to_install)?;
-
-    println!(
-        "  {} v{} installed successfully.",
-        forge_mod.name, selected.version
-    );
-    Ok(())
-}
-
 /// A dependency that needs to be installed.
 pub(crate) struct PendingInstall {
     pub(crate) mod_id: i64,

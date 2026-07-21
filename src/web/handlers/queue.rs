@@ -334,137 +334,59 @@ pub async fn apply_queue(
         .finish())
 }
 
-async fn resolve_version_link(
-    state: &AppState,
-    forge_mod_id: i64,
-    version_id: i64,
-) -> anyhow::Result<(String, String, crate::forge::models::ForgeVersion)> {
-    let forge_mod = state.forge.get_mod(forge_mod_id, true).await?;
-    let versions = forge_mod.versions.unwrap_or_default();
-    let version = versions
-        .iter()
-        .find(|v| v.id == version_id)
-        .ok_or_else(|| anyhow::anyhow!("version {version_id} not found"))?;
-    let link = version
-        .link
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
-    Ok((link.to_string(), version.version.clone(), version.clone()))
-}
-
-async fn download_to_temp(state: &AppState, link: &str) -> anyhow::Result<tempfile::TempDir> {
-    let tmp_dir = tempfile::tempdir()?;
-    let archive_path = tmp_dir.path().join("mod.zip");
-    state.forge.download_file(link, &archive_path).await?;
-    Ok(tmp_dir)
-}
-
 pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> anyhow::Result<()> {
     if op.item_type == "addon" {
         return apply_addon_install(op, state).await;
     }
 
-    // URL/file install — archive already downloaded
-    if let Some(ref archive_path) = op.archive_path {
-        let archive = std::path::Path::new(archive_path);
-        if !archive.exists() {
-            anyhow::bail!("queued archive not found at {archive_path}");
-        }
-        let source =
-            crate::ops::ModSource::parse(&op.source).unwrap_or(crate::ops::ModSource::Forge);
-
-        let db = state.db.clone();
-        let dirs = Arc::clone(&state.dirs);
-        let config = state.config_cloned();
-        let mod_name = op.mod_name.clone();
-        let source_url = op.source_url.clone();
-        let archive_owned = archive.to_path_buf();
-
-        web::block(move || {
-            let db = db.lock();
-            crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
-                db: &db,
-                dirs: &dirs,
-                config: &config,
-                forge_mod_id: None,
-                version_id: None,
-                name: &mod_name,
-                slug: None,
-                version: "unknown",
-                archive_path: &archive_owned,
-                source,
-                source_url: source_url.as_deref(),
-            })
-        })
-        .await??;
-
-        // Clean up cached archive
-        let _ = std::fs::remove_file(archive);
-        return Ok(());
+    let archive_path = op
+        .archive_path
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("queued install for {} has no archive_path", op.mod_name))?;
+    let archive = std::path::Path::new(archive_path);
+    if !archive.exists() {
+        anyhow::bail!("queued archive not found at {archive_path}");
     }
 
-    // Existing Forge install path
-    let forge_mod_id = op
-        .forge_mod_id
-        .expect("mod operation must have forge_mod_id");
-    let version_id = op
-        .forge_version_id
-        .ok_or_else(|| anyhow::anyhow!("install op missing version_id"))?;
+    let forge_mod_id = op.forge_mod_id;
+    let version_id = op.forge_version_id;
+    let source = crate::ops::ModSource::parse(&op.source).unwrap_or(crate::ops::ModSource::Forge);
 
-    {
+    // Skip if already installed (dep may have been installed by a previous op in this batch)
+    if let Some(fid) = forge_mod_id {
         let db = state.db.lock();
-        if db.get_mod_by_forge_id(forge_mod_id)?.is_some() {
+        if db.get_mod_by_forge_id(fid)?.is_some() {
             return Ok(());
         }
     }
 
-    let (link, version_str, full_version) =
-        resolve_version_link(state, forge_mod_id, version_id).await?;
-
-    let dirs = Arc::clone(&state.dirs);
-    let dep_db_ids = crate::ops::resolve_and_install_deps(
-        &state.forge,
-        &state.db,
-        &dirs,
-        &state.config_cloned(),
-        forge_mod_id,
-        &full_version,
-    )
-    .await?;
-
-    let tmp_dir = download_to_temp(state, &link).await?;
-    let archive_path = tmp_dir.path().join("mod.zip");
+    let version_str = crate::queue::extract_version_from_metadata(op.metadata.as_deref())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let db = state.db.clone();
     let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
     let mod_name = op.mod_name.clone();
+    let source_url = op.source_url.clone();
+    let archive_owned = archive.to_path_buf();
 
-    let db_id = web::block(move || {
+    web::block(move || {
         let db = db.lock();
-        if let Some(existing) = db.get_mod_by_forge_id(forge_mod_id)? {
-            return Ok(Some(existing.id));
-        }
-        let id = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
+        crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
             db: &db,
             dirs: &dirs,
             config: &config,
-            forge_mod_id: Some(forge_mod_id),
-            version_id: Some(version_id),
+            forge_mod_id,
+            version_id,
             name: &mod_name,
             slug: None,
             version: &version_str,
-            archive_path: &archive_path,
-            source: crate::ops::ModSource::Forge,
-            source_url: None,
-        })?;
-        Ok::<_, anyhow::Error>(Some(id))
+            archive_path: &archive_owned,
+            source,
+            source_url: source_url.as_deref(),
+        })
     })
     .await??;
-
-    if let Some(db_id) = db_id {
-        crate::ops::record_dep_edges(&state.db, db_id, &dep_db_ids);
-    }
 
     Ok(())
 }
@@ -474,53 +396,46 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
         return apply_addon_update(op, state).await;
     }
 
+    let archive_path = op
+        .archive_path
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("queued update for {} has no archive_path", op.mod_name))?;
+    let archive = std::path::Path::new(archive_path);
+    if !archive.exists() {
+        anyhow::bail!("queued archive not found at {archive_path}");
+    }
+
     let forge_mod_id = op
         .forge_mod_id
-        .expect("mod operation must have forge_mod_id");
+        .ok_or_else(|| anyhow::anyhow!("update op missing forge_mod_id"))?;
     let version_id = op
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("update op missing version_id"))?;
-    let (link, version_str, full_version) =
-        resolve_version_link(state, forge_mod_id, version_id).await?;
 
-    let dirs = Arc::clone(&state.dirs);
-    let dep_db_ids = crate::ops::resolve_and_install_deps(
-        &state.forge,
-        &state.db,
-        &dirs,
-        &state.config_cloned(),
-        forge_mod_id,
-        &full_version,
-    )
-    .await?;
-
-    let tmp_dir = download_to_temp(state, &link).await?;
-    let archive_path = tmp_dir.path().join("mod.zip");
+    let version_str = crate::queue::extract_version_from_metadata(op.metadata.as_deref())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let db = state.db.clone();
     let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
+    let archive_owned = archive.to_path_buf();
 
-    let mod_db_id = web::block(move || {
+    web::block(move || {
         let db = db.lock();
         let installed = db
             .get_mod_by_forge_id(forge_mod_id)?
             .ok_or_else(|| anyhow::anyhow!("mod not found for forge_id {forge_mod_id}"))?;
-        let db_id = installed.id;
         crate::ops::update_mod_from_archive(
             &db,
             &dirs,
             &config,
-            db_id,
+            installed.id,
             version_id,
             &version_str,
-            &archive_path,
-        )?;
-        Ok::<_, anyhow::Error>(db_id)
+            &archive_owned,
+        )
     })
     .await??;
-
-    crate::ops::record_dep_edges(&state.db, mod_db_id, &dep_db_ids);
 
     Ok(())
 }
@@ -566,6 +481,17 @@ async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow:
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("addon install op missing version_id"))?;
 
+    let archive_path = op.archive_path.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "queued addon install for {} has no archive_path",
+            op.mod_name
+        )
+    })?;
+    let archive = std::path::Path::new(archive_path);
+    if !archive.exists() {
+        anyhow::bail!("queued archive not found at {archive_path}");
+    }
+
     // Check if already installed
     {
         let db = state.db.lock();
@@ -574,22 +500,27 @@ async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow:
         }
     }
 
-    // Fetch addon info
-    let addon_info = state.forge.get_addon(forge_addon_id, true).await?;
-    let versions = addon_info.versions.unwrap_or_default();
-    let version = versions
-        .iter()
-        .find(|v| v.id == version_id)
-        .ok_or_else(|| anyhow::anyhow!("version {version_id} not found"))?;
-    let link = version
-        .link
+    // Extract parent_forge_mod_id from metadata (stored at staging time)
+    let metadata_val: serde_json::Value = op
+        .metadata
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+        .and_then(|m| serde_json::from_str(m).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let parent_forge_mod_id = metadata_val
+        .get("parent_forge_mod_id")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| anyhow::anyhow!("addon op missing parent_forge_mod_id in metadata"))?;
+    let version_str = metadata_val
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let mod_version_constraint = metadata_val
+        .get("mod_version_constraint")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
-    // Find parent mod by forge_mod_id
-    let parent_forge_mod_id = addon_info
-        .mod_id
-        .ok_or_else(|| anyhow::anyhow!("addon has no parent mod_id"))?;
+    // Find parent mod in DB
     let parent_mod_db_id = {
         let db = state.db.lock();
         let parent_mod = db
@@ -598,19 +529,11 @@ async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow:
         parent_mod.id
     };
 
-    // Download
-    let tmp_dir = tempfile::tempdir()?;
-    let archive_path = tmp_dir.path().join("addon.zip");
-    state.forge.download_file(link, &archive_path).await?;
-
-    // Install
     let db = state.db.clone();
     let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
     let addon_name = op.mod_name.clone();
-    let addon_slug = addon_info.slug.clone();
-    let version_str = version.version.clone();
-    let mod_version_constraint = version.mod_version_constraint.clone();
+    let archive_owned = archive.to_path_buf();
 
     web::block(move || {
         let db = db.lock();
@@ -622,10 +545,10 @@ async fn apply_addon_install(op: &PendingOperation, state: &AppState) -> anyhow:
             parent_mod_id: parent_mod_db_id,
             version_id: Some(version_id),
             name: &addon_name,
-            slug: addon_slug.as_deref(),
+            slug: None,
             version: &version_str,
             mod_version_constraint: mod_version_constraint.as_deref(),
-            archive_path: &archive_path,
+            archive_path: &archive_owned,
             source: crate::ops::ModSource::Forge,
             source_url: None,
         };
@@ -645,6 +568,17 @@ async fn apply_addon_update(op: &PendingOperation, state: &AppState) -> anyhow::
         .forge_version_id
         .ok_or_else(|| anyhow::anyhow!("addon update op missing version_id"))?;
 
+    let archive_path = op.archive_path.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "queued addon update for {} has no archive_path",
+            op.mod_name
+        )
+    })?;
+    let archive = std::path::Path::new(archive_path);
+    if !archive.exists() {
+        anyhow::bail!("queued archive not found at {archive_path}");
+    }
+
     // Get installed addon
     let addon_db_id = {
         let db = state.db.lock();
@@ -654,54 +588,34 @@ async fn apply_addon_update(op: &PendingOperation, state: &AppState) -> anyhow::
         addon.id
     };
 
-    // Fetch version info
-    let addon_info = state.forge.get_addon(forge_addon_id, true).await?;
-    let versions = addon_info.versions.unwrap_or_default();
-    let version = versions
-        .iter()
-        .find(|v| v.id == version_id)
-        .ok_or_else(|| anyhow::anyhow!("version {version_id} not found"))?;
-    let link = version
-        .link
+    // Extract version info from metadata
+    let version_str = crate::queue::extract_version_from_metadata(op.metadata.as_deref())
+        .unwrap_or_else(|| "unknown".to_string());
+    let mod_version_constraint = op
+        .metadata
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("version has no download link"))?;
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("mod_version_constraint")?.as_str().map(String::from));
 
-    // Download archive to system temp, extract to same-fs staging dir
-    let tmp_dir = tempfile::tempdir()?;
-    let archive_path = tmp_dir.path().join("addon.zip");
-    state.forge.download_file(link, &archive_path).await?;
-
+    let db = state.db.clone();
     let dirs = Arc::clone(&state.dirs);
-    let staging_dir = crate::ops::staging_tempdir(&dirs)?;
-    let staging_path = staging_dir.path().to_path_buf();
-
     let config = state.config_cloned();
-    let version_str = version.version.clone();
-    let mod_version_constraint = version.mod_version_constraint.clone();
-    let forge_addon_id = op
-        .forge_addon_id
-        .ok_or_else(|| anyhow::anyhow!("addon operation missing forge_addon_id"))?;
+    let archive_owned = archive.to_path_buf();
 
-    let staging_path2 = staging_path.clone();
-    let extracted =
-        web::block(move || crate::spt::mods::extract_mod(&archive_path, &staging_path2))
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))??;
-
-    // Update
-    crate::ops::apply_addon_update(
-        state.db.clone(),
-        dirs.as_ref().clone(),
-        config,
-        staging_path,
-        extracted,
-        addon_db_id,
-        version_id,
-        version_str,
-        mod_version_constraint,
-        forge_addon_id,
-    )
-    .await?;
+    web::block(move || {
+        let db = db.lock();
+        crate::ops::update_addon_from_archive(
+            &db,
+            &dirs,
+            &config,
+            addon_db_id,
+            version_id,
+            &version_str,
+            mod_version_constraint.as_deref(),
+            &archive_owned,
+        )
+    })
+    .await??;
 
     Ok(())
 }

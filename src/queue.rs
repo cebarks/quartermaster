@@ -99,7 +99,6 @@ pub(crate) fn build_dep_metadata(version: &str, parent_forge_mod_id: i64) -> Str
 }
 
 /// Extract version string from pending op metadata JSON.
-#[allow(dead_code)] // used in Task 5
 pub fn extract_version_from_metadata(metadata: Option<&str>) -> Option<String> {
     metadata
         .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
@@ -556,13 +555,16 @@ pub async fn stage_and_queue_addon(
     let dest = queue_dir.join(format!("{timestamp}-{slug}.{ext}"));
     forge.download_file(download_url, &dest).await?;
 
-    // Store parent_forge_mod_id and version in metadata so apply can find
-    // the parent mod without a Forge API call
-    let metadata = serde_json::json!({
+    // Store parent_forge_mod_id, version, and mod_version_constraint in metadata
+    // so apply can find the parent mod without a Forge API call
+    let mut meta = serde_json::json!({
         "version": version.version,
         "parent_forge_mod_id": parent_forge_mod_id,
-    })
-    .to_string();
+    });
+    if let Some(ref constraint) = version.mod_version_constraint {
+        meta["mod_version_constraint"] = serde_json::Value::String(constraint.clone());
+    }
+    let metadata = meta.to_string();
 
     let db_guard = db.lock();
     db_guard.insert_pending_op(&InsertPendingOp {
