@@ -69,10 +69,8 @@ pub fn sweep_orphaned_archives(dirs: &QumaDirs, db: &crate::db::Database) {
 }
 
 // ── Metadata helpers ─────────────────────────────────────────────────
-// These helpers and staging functions are wired up in Tasks 3-4.
 
 /// Build metadata JSON, merging a version string with optional extra metadata.
-#[allow(dead_code)] // used in Task 3
 pub(crate) fn build_metadata(version: &str, extra: Option<&str>) -> String {
     let mut map: serde_json::Map<String, serde_json::Value> = match extra {
         Some(m) => serde_json::from_str(m).unwrap_or_default(),
@@ -89,7 +87,6 @@ pub(crate) fn build_metadata(version: &str, extra: Option<&str>) -> String {
 /// forge_mod_ids that caused this dep to be queued. When cancelling a parent,
 /// its ID is removed from the array; the dep is only cancelled when the array
 /// is empty.
-#[allow(dead_code)] // used in Task 3
 pub(crate) fn build_dep_metadata(version: &str, parent_forge_mod_id: i64) -> String {
     serde_json::json!({
         "version": version,
@@ -106,13 +103,27 @@ pub fn extract_version_from_metadata(metadata: Option<&str>) -> Option<String> {
 }
 
 /// Detect archive extension from download URL. SPT Forge serves both .zip and .7z.
-#[allow(dead_code)] // used in Task 3
 pub(crate) fn archive_extension(download_url: &str) -> &'static str {
     if download_url.ends_with(".7z") {
         "7z"
     } else {
         "zip"
     }
+}
+
+/// Sanitize a slug for use in archive filenames. Replaces path separators and
+/// traversal sequences to prevent directory traversal in queue archive names.
+pub(crate) fn sanitize_slug(slug: &str) -> String {
+    slug.replace(['/', '\\'], "-").replace("..", "-")
+}
+
+/// Extract `queued_for` parent forge_mod_ids from pending op metadata JSON.
+pub fn extract_queued_for(metadata: Option<&str>) -> Vec<i64> {
+    metadata
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("queued_for")?.as_array().cloned())
+        .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
+        .unwrap_or_default()
 }
 
 // ── Staging types ────────────────────────────────────────────────────
@@ -127,8 +138,6 @@ pub struct StageRequest<'a> {
 }
 
 pub struct StageResult {
-    #[allow(dead_code)] // used in Task 6 (queue page display)
-    pub queued_count: usize, // total ops created (main + deps)
     pub dep_count: usize,
 }
 
@@ -276,11 +285,13 @@ async fn stage_mod_inner(
 
         // Download dep archive
         let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-        let dep_slug = forge
-            .get_mod(dep.mod_id, false)
-            .await?
-            .slug
-            .unwrap_or_else(|| dep.name.clone());
+        let dep_slug = sanitize_slug(
+            &forge
+                .get_mod(dep.mod_id, false)
+                .await?
+                .slug
+                .unwrap_or_else(|| dep.name.clone()),
+        );
         let ext = archive_extension(dep_url);
         let dest = queue_dir.join(format!("{timestamp}-{dep_slug}.{ext}"));
         forge.download_file(dep_url, &dest).await?;
@@ -302,9 +313,10 @@ async fn stage_mod_inner(
 
     // 4. Download main mod archive
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let slug = req
-        .slug
-        .unwrap_or_else(|| forge_mod.slug.as_deref().unwrap_or("mod"));
+    let slug = sanitize_slug(
+        req.slug
+            .unwrap_or_else(|| forge_mod.slug.as_deref().unwrap_or("mod")),
+    );
     let ext = archive_extension(download_url);
     let dest = queue_dir.join(format!("{timestamp}-{slug}.{ext}"));
     forge.download_file(download_url, &dest).await?;
@@ -347,10 +359,7 @@ async fn stage_mod_inner(
         tx.commit()?;
     }
 
-    Ok(StageResult {
-        queued_count: staged_ops.len(),
-        dep_count,
-    })
+    Ok(StageResult { dep_count })
 }
 
 // ── Stage + queue: updates ───────────────────────────────────────────
@@ -484,7 +493,7 @@ async fn stage_update_inner(
 
         let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
         let dep_mod_info = forge.get_mod(dep.mod_id, false).await?;
-        let dep_slug = dep_mod_info.slug.unwrap_or_else(|| dep.name.clone());
+        let dep_slug = sanitize_slug(&dep_mod_info.slug.unwrap_or_else(|| dep.name.clone()));
         let ext = archive_extension(dep_url);
         let dest = queue_dir.join(format!("{timestamp}-{dep_slug}.{ext}"));
         forge.download_file(dep_url, &dest).await?;
@@ -507,7 +516,7 @@ async fn stage_update_inner(
     // Download main mod archive
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
     let mod_info = forge.get_mod(forge_mod_id, false).await?;
-    let slug = mod_info.slug.unwrap_or_else(|| mod_name.to_string());
+    let slug = sanitize_slug(&mod_info.slug.unwrap_or_else(|| mod_name.to_string()));
     let ext = archive_extension(download_url);
     let dest = queue_dir.join(format!("{timestamp}-{slug}.{ext}"));
     forge.download_file(download_url, &dest).await?;
@@ -550,10 +559,7 @@ async fn stage_update_inner(
         tx.commit()?;
     }
 
-    Ok(StageResult {
-        queued_count: staged_ops.len(),
-        dep_count,
-    })
+    Ok(StageResult { dep_count })
 }
 
 // ── Stage + queue: addons ────────────────────────────────────────────
@@ -593,7 +599,7 @@ pub async fn stage_and_queue_addon(
     })?;
 
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let slug = addon.slug.as_deref().unwrap_or("addon");
+    let slug = sanitize_slug(addon.slug.as_deref().unwrap_or("addon"));
     let ext = archive_extension(download_url);
     let dest = queue_dir.join(format!("{timestamp}-{slug}.{ext}"));
     forge.download_file(download_url, &dest).await?;
@@ -721,5 +727,27 @@ mod tests {
         assert_eq!(archive_extension("https://example.com/mod.zip"), "zip");
         assert_eq!(archive_extension("https://example.com/mod.tar.gz"), "zip");
         assert_eq!(archive_extension("https://example.com/mod"), "zip");
+    }
+
+    #[test]
+    fn sanitize_slug_replaces_path_separators() {
+        assert_eq!(sanitize_slug("safe-slug"), "safe-slug");
+        assert_eq!(sanitize_slug("../../../etc/passwd"), "------etc-passwd");
+        assert_eq!(sanitize_slug("foo/bar"), "foo-bar");
+        assert_eq!(sanitize_slug("foo\\bar"), "foo-bar");
+        assert_eq!(sanitize_slug("normal"), "normal");
+    }
+
+    #[test]
+    fn extract_queued_for_parses_array() {
+        let meta = r#"{"version":"1.0","queued_for":[42,99]}"#;
+        assert_eq!(extract_queued_for(Some(meta)), vec![42, 99]);
+    }
+
+    #[test]
+    fn extract_queued_for_handles_missing() {
+        assert!(extract_queued_for(None).is_empty());
+        assert!(extract_queued_for(Some(r#"{"version":"1.0"}"#)).is_empty());
+        assert!(extract_queued_for(Some("bad json")).is_empty());
     }
 }

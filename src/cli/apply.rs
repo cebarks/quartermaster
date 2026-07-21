@@ -256,27 +256,54 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                         .unwrap_or_else(|| "unknown".to_string());
                 let source = crate::ops::ModSource::parse(&op.source)
                     .unwrap_or(crate::ops::ModSource::Forge);
+                let queued_for = crate::queue::extract_queued_for(op.metadata.as_deref());
 
-                if let Err(e) = crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
-                    db: &ctx.db,
-                    dirs: &ctx.dirs,
-                    config: &ctx.config,
-                    forge_mod_id,
-                    version_id,
-                    name: &op.mod_name,
-                    slug: None,
-                    version: &version_str,
-                    archive_path: archive,
-                    source,
-                    source_url: op.source_url.as_deref(),
-                }) {
-                    let remaining = pending.len() - applied - 1;
-                    eprintln!("\n  Error: {e:#}");
-                    eprintln!(
-                        "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
-                    );
-                    return Err(e);
+                let installed_db_id = match crate::ops::install_mod_from_archive(
+                    &crate::ops::InstallRequest {
+                        db: &ctx.db,
+                        dirs: &ctx.dirs,
+                        config: &ctx.config,
+                        forge_mod_id,
+                        version_id,
+                        name: &op.mod_name,
+                        slug: None,
+                        version: &version_str,
+                        archive_path: archive,
+                        source,
+                        source_url: op.source_url.as_deref(),
+                    },
+                ) {
+                    Ok(db_id) => db_id,
+                    Err(e) => {
+                        let remaining = pending.len() - applied - 1;
+                        eprintln!("\n  Error: {e:#}");
+                        eprintln!(
+                            "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                        );
+                        return Err(e);
+                    }
+                };
+
+                // Record dependency edges: if this op was queued as a dep
+                // (has queued_for), each entry is a parent forge_mod_id.
+                for parent_forge_mod_id in &queued_for {
+                    if let Ok(Some(parent)) = ctx.db.get_mod_by_forge_id(*parent_forge_mod_id) {
+                        match ctx.db.insert_dependency(parent.id, installed_db_id, None) {
+                            Ok(_) => {}
+                            Err(rusqlite::Error::SqliteFailure(err, _))
+                                if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}
+                            Err(e) => {
+                                tracing::warn!(
+                                    parent_id = parent.id,
+                                    dep_id = installed_db_id,
+                                    err = %e,
+                                    "failed to record dependency edge from queue"
+                                );
+                            }
+                        }
+                    }
                 }
+
                 println!("    Installed {} from {}", op.mod_name, op.source);
             }
             crate::db::users::QueueAction::Remove => {

@@ -2567,7 +2567,19 @@ pub async fn install_addon(
     };
 
     // Check if the operation should be queued
-    let parent_forge_mod_id = parent_mod.forge_mod_id.unwrap_or(0);
+    let parent_forge_mod_id = match parent_mod.forge_mod_id {
+        Some(id) => id,
+        None => {
+            set_flash(
+                &session,
+                "Cannot queue addon for a mod installed from URL/file (no Forge ID)",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", parent_mod_db_id)))
+                .finish());
+        }
+    };
     if let Some(resp) = try_queue_addon_op(
         &state,
         &session,
@@ -2714,13 +2726,25 @@ pub async fn update_addon(
 
     // Look up parent mod's forge_mod_id for staging
     let parent_mod_db_id = addon.parent_mod_id;
-    let parent_forge_mod_id = {
+    let parent_forge_mod_id_opt = {
         let db = state.db.lock();
         db.get_mod(parent_mod_db_id)
             .ok()
             .flatten()
             .and_then(|m| m.forge_mod_id)
-            .unwrap_or(0)
+    };
+    let parent_forge_mod_id = match parent_forge_mod_id_opt {
+        Some(id) => id,
+        None => {
+            set_flash(
+                &session,
+                "Cannot queue addon update for a mod installed from URL/file (no Forge ID)",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", addon.parent_mod_id)))
+                .finish());
+        }
     };
 
     // Fetch latest version

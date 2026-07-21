@@ -480,7 +480,6 @@ impl Database {
         Ok(count > 0)
     }
 
-    #[allow(dead_code)] // used in Task 5
     pub fn has_pending_addon_op(
         &self,
         forge_addon_id: i64,

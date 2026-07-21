@@ -239,6 +239,17 @@ async fn trigger_install_for_request(
             .unwrap_or(false);
 
     if should_queue {
+        // Check if already queued to prevent duplicate downloads
+        {
+            let db = state.db.lock();
+            if db
+                .has_pending_op(forge_mod_id, crate::db::users::QueueAction::Install)
+                .unwrap_or(false)
+            {
+                return Ok("Already queued for install.".to_string());
+            }
+        }
+
         let version_id = version.id;
         let request_id = request.id;
         let metadata = serde_json::json!({"request_id": request_id}).to_string();

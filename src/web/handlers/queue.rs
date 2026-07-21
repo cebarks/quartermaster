@@ -412,6 +412,8 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let version_str = crate::queue::extract_version_from_metadata(op.metadata.as_deref())
         .unwrap_or_else(|| "unknown".to_string());
 
+    let queued_for = crate::queue::extract_queued_for(op.metadata.as_deref());
+
     let db = state.db.clone();
     let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
@@ -419,7 +421,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
     let source_url = op.source_url.clone();
     let archive_owned = archive.to_path_buf();
 
-    web::block(move || {
+    let installed_db_id = web::block(move || {
         let db = db.lock();
         crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
             db: &db,
@@ -436,6 +438,29 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
         })
     })
     .await??;
+
+    // Record dependency edges: if this op was queued as a dep (has queued_for),
+    // each entry is a parent forge_mod_id that depends on us.
+    if !queued_for.is_empty() {
+        let db = state.db.lock();
+        for parent_forge_mod_id in &queued_for {
+            if let Ok(Some(parent)) = db.get_mod_by_forge_id(*parent_forge_mod_id) {
+                match db.insert_dependency(parent.id, installed_db_id, None) {
+                    Ok(_) => {}
+                    Err(rusqlite::Error::SqliteFailure(err, _))
+                        if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            parent_id = parent.id,
+                            dep_id = installed_db_id,
+                            err = %e,
+                            "failed to record dependency edge from queue"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }
