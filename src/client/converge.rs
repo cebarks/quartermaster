@@ -40,6 +40,10 @@ static FORCE_IP_RE: LazyLock<regex::Regex> =
 static UPNP_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(Use UPnP\s*=\s*)\S+").expect("valid regex"));
 
+/// Regex for editing Last Version in Fika client config ([Hidden] section)
+static LAST_VERSION_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?m)^(Last Version\s*=\s*).*$").expect("valid regex"));
+
 #[cfg(test)]
 fn is_fika_client_present(install_dir: &Path) -> bool {
     let plugins_dir = install_dir.join("BepInEx/plugins");
@@ -292,7 +296,8 @@ fn write_fika_udp_port(overlay_dir: &Path, port: u16) -> Result<()> {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create config dir {}", parent.display()))?;
         }
-        let seed = format!("[Network]\nForce IP = \nUDP Port = {port}\n");
+        let seed =
+            format!("[Network]\nForce IP = \nUDP Port = {port}\n\n[Hidden]\nLast Version = \n");
         std::fs::write(&cfg_path, &seed)
             .with_context(|| format!("failed to seed {}", cfg_path.display()))?;
         debug!(
@@ -387,6 +392,47 @@ fn write_fika_force_ip(overlay_dir: &Path, force_ip: &str) -> Result<()> {
     Ok(())
 }
 
+/// Write the Last Version setting into the Fika client config's [Hidden] section.
+///
+/// Fika's TOS dialog fires when `Last Version` doesn't match the running Fika version.
+/// Under Wine the dialog crashes (async void → ThreadPool → main-thread check fails),
+/// so we pre-set it to the installed Fika version to suppress the dialog entirely.
+fn write_fika_last_version(overlay_dir: &Path, version: &str) -> Result<()> {
+    let cfg_path = overlay_dir.join("BepInEx/config/com.fika.core.cfg");
+    if !cfg_path.exists() {
+        debug!(
+            "Fika config not found at {}, skipping Last Version write",
+            cfg_path.display()
+        );
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&cfg_path)
+        .with_context(|| format!("failed to read {}", cfg_path.display()))?;
+
+    if !LAST_VERSION_RE.is_match(&content) {
+        // Append [Hidden] section if it doesn't exist
+        let mut updated = content;
+        updated.push_str(&format!("\n[Hidden]\nLast Version = {version}\n"));
+        std::fs::write(&cfg_path, &updated)
+            .with_context(|| format!("failed to write {}", cfg_path.display()))?;
+        debug!(
+            "Appended [Hidden] section with Last Version = {version} in {}",
+            cfg_path.display()
+        );
+        return Ok(());
+    }
+
+    let updated = LAST_VERSION_RE
+        .replace(&content, format!("${{1}}{version}"))
+        .to_string();
+    std::fs::write(&cfg_path, &updated)
+        .with_context(|| format!("failed to write {}", cfg_path.display()))?;
+
+    debug!("Set Last Version to {version} in {}", cfg_path.display());
+    Ok(())
+}
+
 /// Patch `Game.ini` to control EFT's CPU affinity behaviour.
 ///
 /// EFT's `SetAffinityToLogicalCores` is confusingly named:
@@ -432,6 +478,7 @@ fn write_game_ini_affinity(install_dir: &Path, physical_cores_only: bool) -> Res
 /// (the SPT server data directory) when possible. Note: `install_dir` may still be
 /// inside `spt_dir` — the wine-prefix mount uses `:z` (Shared) instead of `:Z`
 /// (Private) to avoid SELinux MCS conflicts with the SPT server container's chown.
+#[allow(clippy::too_many_arguments)]
 pub fn setup_client_overlay(
     install_dir: &Path,
     index: u32,
@@ -440,6 +487,7 @@ pub fn setup_client_overlay(
     force_ip: Option<&str>,
     use_upnp: bool,
     physical_cores_only: bool,
+    fika_version: Option<&str>,
 ) -> Result<()> {
     let overlay_dir = client_overlay_dir(install_dir, index);
 
@@ -494,6 +542,9 @@ pub fn setup_client_overlay(
         write_fika_force_ip(&overlay_dir, ip)?;
     }
     write_fika_upnp(&overlay_dir, use_upnp)?;
+    if let Some(ver) = fika_version {
+        write_fika_last_version(&overlay_dir, ver)?;
+    }
 
     // Game.ini is shared (not per-client overlay), so only patch once.
     if index == 1 {
@@ -832,6 +883,16 @@ pub async fn converge(
         }
     }
 
+    // Look up installed Fika version for Last Version overlay
+    let fika_version = {
+        let db_guard = db.lock();
+        db_guard
+            .get_mod_by_forge_id(crate::config::FIKA_CLIENT_FORGE_ID)
+            .ok()
+            .flatten()
+            .map(|m| m.version)
+    };
+
     // Scale up or down
     if current_count < desired_count {
         ensure_clients(
@@ -844,6 +905,7 @@ pub async fn converge(
             desired_count,
             ntsync_available,
             &topology,
+            fika_version.as_deref(),
         )
         .await?;
     } else if current_count > desired_count {
@@ -929,6 +991,7 @@ pub async fn converge(
             &effective_paths,
             ntsync_available,
             &topology,
+            fika_version.as_deref(),
         )
         .await?;
     }
@@ -945,6 +1008,7 @@ pub async fn converge(
             headless_config.force_ip.as_deref(),
             headless_config.use_upnp,
             headless_config.physical_cores_only,
+            fika_version.as_deref(),
         )?;
     }
 
@@ -1052,6 +1116,7 @@ async fn ensure_clients(
     desired_count: u32,
     ntsync_available: bool,
     topology: &NumaTopology,
+    fika_version: Option<&str>,
 ) -> Result<()> {
     info!("Ensuring clients: {current_count} → {desired_count}");
 
@@ -1127,6 +1192,7 @@ async fn ensure_clients(
             &effective_paths,
             ntsync_available,
             topology,
+            fika_version,
         )
         .await?;
     }
@@ -1297,6 +1363,7 @@ async fn create_client_container(
     effective_paths: &[String],
     ntsync_available: bool,
     topology: &NumaTopology,
+    fika_version: Option<&str>,
 ) -> Result<()> {
     let name = client_container_name(index);
     let overlay_dir = client_overlay_dir(&headless_config.install_dir, index);
@@ -1310,6 +1377,7 @@ async fn create_client_container(
         headless_config.force_ip.as_deref(),
         headless_config.use_upnp,
         headless_config.physical_cores_only,
+        fika_version,
     )?;
 
     // Build volume mounts
@@ -1534,6 +1602,7 @@ mod tests {
             None,
             false,
             false,
+            None,
         )
         .unwrap();
 
@@ -1569,6 +1638,7 @@ mod tests {
             None,
             false,
             false,
+            None,
         )
         .unwrap();
 
@@ -1602,6 +1672,7 @@ mod tests {
             None,
             false,
             false,
+            None,
         )
         .unwrap();
 
@@ -1616,6 +1687,7 @@ mod tests {
             None,
             false,
             false,
+            None,
         )
         .unwrap();
 

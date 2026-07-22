@@ -148,6 +148,14 @@ pub async fn proxy_handler(
         None
     };
 
+    // Fix headless CRC: the headless sends crc32=0 when creating raids because
+    // Fika's RunChecks() fails silently under Wine. The headless talks directly
+    // to the SPT server (bypassing this proxy), so we fix it on the response
+    // side: when a game client joins a raid via /fika/raid/join, we check the
+    // response and replace crc32=0 with the real CRC32C from Fika.Core.dll.
+    let fix_crc_response =
+        req.method() == actix_web::http::Method::POST && req.path() == "/fika/raid/join";
+
     let start = Instant::now();
     let upstream_resp = state
         .proxy_client
@@ -334,6 +342,12 @@ pub async fn proxy_handler(
                         Ok(builder.body(raw_body))
                     }
                 }
+            } else if fix_crc_response && status.is_success() {
+                let raw_body = resp.bytes().await.map_err(|e| {
+                    actix_web::error::ErrorBadGateway(format!("failed to read response body: {e}"))
+                })?;
+                let fixed = fix_headless_crc(raw_body, &state.dirs);
+                Ok(builder.body(fixed))
             } else {
                 let stream = resp.bytes_stream().map(|result| {
                     result.map_err(|e| actix_web::error::PayloadError::Io(std::io::Error::other(e)))
@@ -495,6 +509,96 @@ fn handle_player_registration(
     }
 }
 
+/// Compute CRC32C (Castagnoli) of a byte slice — same algorithm Fika uses.
+fn crc32c(data: &[u8]) -> u32 {
+    static TABLE: std::sync::LazyLock<[u32; 256]> = std::sync::LazyLock::new(|| {
+        let mut table = [0u32; 256];
+        for i in 0..256u32 {
+            let mut crc = i;
+            for _ in 0..8 {
+                if crc & 1 != 0 {
+                    crc = (crc >> 1) ^ 0x82F6_3B78;
+                } else {
+                    crc >>= 1;
+                }
+            }
+            table[i as usize] = crc;
+        }
+        table
+    });
+
+    let mut crc = 0xFFFF_FFFFu32;
+    for &b in data {
+        crc = TABLE[((crc ^ b as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    crc ^ 0xFFFF_FFFF
+}
+
+/// If the response body contains `"crc32":0`, compute the real CRC32C from the
+/// Fika.Core.dll on disk and substitute it. This works around a Fika bug where
+/// the headless client's `RunChecks()` silently fails under Wine, leaving
+/// `FikaPlugin.Crc32 = 0`. Applied to `/fika/raid/join` responses so game
+/// clients see the correct host CRC even when the headless reported 0.
+fn fix_headless_crc(body: web::Bytes, dirs: &crate::dirs::QumaDirs) -> web::Bytes {
+    // Try zlib decompression first, fall back to raw bytes
+    let (json_bytes, compressed) = {
+        let mut decoder = ZlibDecoder::new(&body[..]);
+        let mut buf = Vec::new();
+        match decoder.read_to_end(&mut buf) {
+            Ok(_) => (buf, true),
+            Err(_) => (body.to_vec(), false),
+        }
+    };
+
+    let json_str = match std::str::from_utf8(&json_bytes) {
+        Ok(s) => s,
+        Err(_) => return body,
+    };
+
+    // Fast check: only rewrite if crc32 is literally 0
+    if !json_str.contains("\"crc32\":0")
+        && !json_str.contains("\"crc32\": 0")
+        && !json_str.contains("\"crc32\" : 0")
+    {
+        return body;
+    }
+
+    // Compute CRC from the Fika.Core.dll in the headless install dir
+    let dll_path = dirs.headless.join("BepInEx/plugins/Fika/Fika.Core.dll");
+    let dll_bytes = match std::fs::read(&dll_path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(err = %e, path = %dll_path.display(), "failed to read Fika.Core.dll for CRC fix");
+            return body;
+        }
+    };
+    let real_crc = crc32c(&dll_bytes);
+    tracing::info!(
+        crc = real_crc,
+        "fixing headless crc32=0 in /fika/raid/join response"
+    );
+
+    // Replace the zero CRC with the real value
+    let fixed = json_str
+        .replace("\"crc32\":0", &format!("\"crc32\":{real_crc}"))
+        .replace("\"crc32\": 0", &format!("\"crc32\":{real_crc}"))
+        .replace("\"crc32\" : 0", &format!("\"crc32\":{real_crc}"));
+
+    let new_bytes = fixed.into_bytes();
+    if compressed {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        if encoder.write_all(&new_bytes).is_err() {
+            return body;
+        }
+        match encoder.finish() {
+            Ok(compressed_bytes) => web::Bytes::from(compressed_bytes),
+            Err(_) => body,
+        }
+    } else {
+        web::Bytes::from(new_bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,5 +690,16 @@ mod tests {
             &actix_web::http::Method::POST,
             "/client/match/local/start"
         ));
+    }
+
+    #[test]
+    fn crc32c_known_value() {
+        // "123456789" has a well-known CRC32C of 0xE3069283
+        assert_eq!(crc32c(b"123456789"), 0xE306_9283);
+    }
+
+    #[test]
+    fn crc32c_empty() {
+        assert_eq!(crc32c(b""), 0);
     }
 }
