@@ -63,11 +63,7 @@ fn get_client_file_checksums(
         .collect())
 }
 
-fn get_bundle_checksums(
-    spt_dir: &Path,
-    db: &Database,
-    mod_id: i64,
-) -> BTreeMap<String, String> {
+fn get_bundle_checksums(spt_dir: &Path, db: &Database, mod_id: i64) -> BTreeMap<String, String> {
     let files = match db.get_files_for_mod_ids(&[mod_id]) {
         Ok(f) => f,
         Err(e) => {
@@ -76,9 +72,11 @@ fn get_bundle_checksums(
         }
     };
 
-    let mod_dir = files.iter()
+    let mod_dir = files
+        .iter()
         .filter_map(|f| {
-            f.file_path.strip_prefix("SPT/user/mods/")
+            f.file_path
+                .strip_prefix("SPT/user/mods/")
                 .and_then(|rest| rest.split('/').next())
         })
         .next();

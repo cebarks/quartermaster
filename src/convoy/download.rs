@@ -47,7 +47,9 @@ pub fn get_or_build_convoy_zip(
     let bundles = discover_mod_bundles(spt_dir, &files);
 
     if !bundles_only
-        && files.iter().all(|f| f.file_path.starts_with("SPT/user/mods/"))
+        && files
+            .iter()
+            .all(|f| f.file_path.starts_with("SPT/user/mods/"))
         && bundles.is_empty()
     {
         anyhow::bail!("no downloadable client files found for requested mod IDs");
@@ -86,7 +88,10 @@ struct BundleManifestEntry {
     key: String,
 }
 
-fn discover_mod_bundles(spt_dir: &Path, files: &[crate::db::mods::InstalledFile]) -> Vec<BundleFile> {
+fn discover_mod_bundles(
+    spt_dir: &Path,
+    files: &[crate::db::mods::InstalledFile],
+) -> Vec<BundleFile> {
     let mut mod_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
     for f in files {
         if let Some(rest) = f.file_path.strip_prefix("SPT/user/mods/") {
@@ -98,7 +103,10 @@ fn discover_mod_bundles(spt_dir: &Path, files: &[crate::db::mods::InstalledFile]
 
     let mut bundles = Vec::new();
     for mod_dir in &mod_dirs {
-        let bundles_json = spt_dir.join("SPT/user/mods").join(mod_dir).join("bundles.json");
+        let bundles_json = spt_dir
+            .join("SPT/user/mods")
+            .join(mod_dir)
+            .join("bundles.json");
         if !bundles_json.is_file() {
             continue;
         }
@@ -152,8 +160,8 @@ fn build_convoy_zip_to_file(
 
     let file = BufWriter::new(std::fs::File::create(dest)?);
     let mut zip = zip::ZipWriter::new(file);
-    let options =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
 
     if !bundles_only {
         for f in files {
