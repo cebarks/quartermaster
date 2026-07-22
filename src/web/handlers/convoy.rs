@@ -229,6 +229,8 @@ pub async fn catalog(
 #[derive(Deserialize)]
 pub struct DownloadRequest {
     pub mods: Vec<i64>,
+    #[serde(default)]
+    pub bundles_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -262,10 +264,11 @@ pub async fn download(
     let db = state.db.clone();
     let spt_dir = state.dirs.spt_server.clone();
     let mod_ids = body.mods.clone();
+    let bundles_only = body.bundles_only;
 
     let zip_path = web::block(move || {
         let db = db.lock();
-        crate::convoy::download::get_or_build_convoy_zip(&db, &spt_dir, &mod_ids)
+        crate::convoy::download::get_or_build_convoy_zip(&db, &spt_dir, &mod_ids, bundles_only)
     })
     .await
     .map_err(|e| {
@@ -326,7 +329,7 @@ pub async fn single_mod_archive(
 
     let zip_path = web::block(move || {
         let db = db.lock();
-        crate::convoy::download::get_or_build_convoy_zip(&db, &spt_dir, &[mod_id])
+        crate::convoy::download::get_or_build_convoy_zip(&db, &spt_dir, &[mod_id], false)
     })
     .await
     .map_err(|e| {
