@@ -4,33 +4,21 @@
 - mod requests expansion isn't clear, add a little arrow to the row to show that it can be expanded
 - videos/screenshots and README cleanup
 - zip/url mod update flow
-- mod queue should download and make a mod staged and ready to be copied,
 
 ## Quick Wins
-- mod update card has no link to the forge versions page that has the changelog on it
-- SVM preset upload size limit too low (256 KB `FormConfig` on `/svm/preset/import`)
-- rejecting an approved mod leaves behind an empty row
-- display profile id on profile page
 - infinite use invite codes (no multi-use support, only single-use)
-- SVM presets list should refresh from disk on page load
-- check for updates button on `/quma/mods`
 
 ## Bugs
-- config editor flash message displays twice after save (once in base.html layout, once in template)
-- SPT profile generation on account creation doesn't work
-    - account creation dropdown missing SPT dev profiles (toggleable?)
 - server-wide stats page has no PMC/Scav raid breakdown (per-user profile already tracks both)
-- no auto-refresh when scaling/converging/restarting clients
 - restarting a headless client from the main headless page causes you to end up at that headless' info page
 - headless client start/stop/restart buttons on `/quma/headless` go past the card length
 - currency items (USD, EUR) displayed as roubles instead of as currency balances (Stash)
-- deleting a user doesn't actually take affect
-- requesting a mod that's already installed fail
+- typo in update changelog: versions url should use `/#versions` hash anchor, not `/versions` path segment (current URL 404s on Forge)
 
 ## Convoy
 - user config file sync
 - user specific mods
-- optional mod selection
+- optional mod selection (server-side `tier` field exists on `CatalogGroup`, but no client-side UI for players to select/deselect optional groups)
 - player sync status should be able to know if the last "up to date" sync was for the current catalog or not
 
 ## Core Architecture
@@ -50,9 +38,9 @@
 - headless recent raid stats should be linked to the existing raids list
 - add client should add a new row to the list with the client name column editable, and a save or cancel button replacing the existing buttons in the actions column
 - headless client actions
-- container cpu/memory stats doesn't work
+- container cpu stats don't work (`cpu_percent` is never populated — always `None`; memory stats work)
 - ability to pull files to overlay in webui
-- headless mods/config don't stay in sync with quartermaster
+- headless config files don't stay in sync with quartermaster (`BepInEx/config/` excluded from sync; mod files sync correctly)
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
@@ -71,7 +59,7 @@
 
 ### UX Improvements
 - clean up mod file list, add collapsable folder tree, file viewer (editor too maybe; need to investigate)
-- 404 page
+- 404 page (catch-all route goes to proxy, not styled error template)
 - cleanup tab and folder structure
 - move most things from polling to pushing
 - Stash UX needs rework
@@ -82,15 +70,8 @@
 - no global HTMX error handling
 
 ## Features
-- replace mongoid's with actual name across whole app
-- implement `https://db.sp-tarkov.com/search` like functionality except based on the modded local database
-- windows support
-- configurable backups
-- custom headless instances
-- fika.jsonc: set client force ip (needs research first if this is the right approach)
-- better fika integration
-    - all players list
-    - online players
+- implement `https://db.sp-tarkov.com/search` like functionality (give-items has local item search, but no standalone general-purpose item browser page)
+- better SVM editor: default values shown alongside current, file-based preset upload (section tabs, header toggles, field name/subtext, preset toggle/export already done)
 - last logged for players (both into webui and into spt)
 - user sorting
 - better metrics: dynamic `by prefix` sorting, graphs
@@ -98,9 +79,8 @@
     - quests
     - items (scan for broken; remove; move)
 - MOTD
-- better formatting for SVM editor: section breakdown with header toggles, field name vs subtext, default value shown, download/upload preset, preset toggle
 - discord integration:
     - use discord member list to define SVM AI PMC Names
 - RaidReview support
-- container deployment
-- full server folder backups 
+- container deployment (for Quartermaster itself, not SPT server)
+- full server folder backups (current backups only cover quma-managed artifacts: mods, addons, profiles, config)
