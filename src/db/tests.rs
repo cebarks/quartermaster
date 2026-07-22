@@ -484,25 +484,35 @@ fn pending_operations_crud() {
     use crate::db::users::QueueAction;
 
     let op_id = db
-        .insert_pending_op(
-            QueueAction::Install,
-            1001,
-            Some(2001),
-            "Cool Mod",
-            Some("{\"source\":\"web\"}"),
-            Some("admin"),
-        )
+        .insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: QueueAction::Install,
+            forge_mod_id: Some(1001),
+            forge_version_id: Some(2001),
+            mod_name: "Cool Mod",
+            metadata: Some("{\"source\":\"web\"}"),
+            queued_by: Some("admin"),
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: None,
+            source: "forge",
+            source_url: None,
+        })
         .unwrap();
     assert!(op_id > 0);
 
-    db.insert_pending_op(
-        QueueAction::Update,
-        1002,
-        Some(2002),
-        "Other Mod",
-        None,
-        None,
-    )
+    db.insert_pending_op(&crate::db::users::InsertPendingOp {
+        action: QueueAction::Update,
+        forge_mod_id: Some(1002),
+        forge_version_id: Some(2002),
+        mod_name: "Other Mod",
+        metadata: None,
+        queued_by: None,
+        item_type: "mod",
+        forge_addon_id: None,
+        archive_path: None,
+        source: "forge",
+        source_url: None,
+    })
     .unwrap();
 
     let ops = db.list_pending_ops().unwrap();
@@ -524,14 +534,19 @@ fn pending_operations_crud() {
 fn pending_op_with_no_version() {
     let db = test_db();
     let op_id = db
-        .insert_pending_op(
-            crate::db::users::QueueAction::Remove,
-            1001,
-            None,
-            "Removed Mod",
-            None,
-            None,
-        )
+        .insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: crate::db::users::QueueAction::Remove,
+            forge_mod_id: Some(1001),
+            forge_version_id: None,
+            mod_name: "Removed Mod",
+            metadata: None,
+            queued_by: None,
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: None,
+            source: "forge",
+            source_url: None,
+        })
         .unwrap();
     let ops = db.list_pending_ops().unwrap();
     assert_eq!(ops.len(), 1);
@@ -1185,8 +1200,20 @@ fn has_pending_op_check() {
     assert!(!db.has_pending_op(42, QueueAction::Install).unwrap());
 
     // Insert an Install op for forge_mod_id=42
-    db.insert_pending_op(QueueAction::Install, 42, Some(100), "Test Mod", None, None)
-        .unwrap();
+    db.insert_pending_op(&crate::db::users::InsertPendingOp {
+        action: QueueAction::Install,
+        forge_mod_id: Some(42),
+        forge_version_id: Some(100),
+        mod_name: "Test Mod",
+        metadata: None,
+        queued_by: None,
+        item_type: "mod",
+        forge_addon_id: None,
+        archive_path: None,
+        source: "forge",
+        source_url: None,
+    })
+    .unwrap();
 
     // Same mod_id + action → true
     assert!(db.has_pending_op(42, QueueAction::Install).unwrap());
@@ -1489,4 +1516,124 @@ fn set_request_resolver() {
     let req = db.get_mod_request(req_id).unwrap().unwrap();
     assert_eq!(req.resolved_by, Some(user2)); // unchanged
     assert_eq!(req.resolve_comment.as_deref(), Some("resolving")); // unchanged
+}
+
+#[test]
+fn insert_pending_op_stores_all_fields() {
+    use crate::db::users::{InsertPendingOp, QueueAction};
+
+    let db = test_db();
+    db.insert_pending_op(&InsertPendingOp {
+        action: QueueAction::Install,
+        forge_mod_id: Some(42),
+        forge_version_id: Some(100),
+        mod_name: "TestMod",
+        metadata: Some("{\"version\":\"1.0.0\"}"),
+        queued_by: Some("testuser"),
+        item_type: "mod",
+        forge_addon_id: None,
+        archive_path: Some("/tmp/test.zip"),
+        source: "forge",
+        source_url: Some("https://forge.sp-tarkov.com/dl/123"),
+    })
+    .unwrap();
+
+    let ops = db.list_pending_ops().unwrap();
+    assert_eq!(ops.len(), 1);
+    let op = &ops[0];
+    assert_eq!(op.forge_mod_id, Some(42));
+    assert_eq!(op.archive_path.as_deref(), Some("/tmp/test.zip"));
+    assert_eq!(op.source, "forge");
+    assert_eq!(
+        op.source_url.as_deref(),
+        Some("https://forge.sp-tarkov.com/dl/123")
+    );
+}
+
+#[test]
+fn list_dep_ops_for_parent_filters_correctly() {
+    use crate::db::users::{InsertPendingOp, QueueAction};
+
+    let db = test_db();
+    // Insert a dep op queued for parent forge_mod_id 42 (SAIN)
+    db.insert_pending_op(&InsertPendingOp {
+        action: QueueAction::Install,
+        forge_mod_id: Some(10),
+        forge_version_id: Some(1),
+        mod_name: "BigBrain",
+        metadata: Some("{\"version\":\"1.0\",\"queued_for\":[42]}"),
+        queued_by: None,
+        item_type: "mod",
+        forge_addon_id: None,
+        archive_path: Some("/tmp/bigbrain.zip"),
+        source: "forge",
+        source_url: None,
+    })
+    .unwrap();
+    // Insert a non-dep op (no queued_for)
+    db.insert_pending_op(&InsertPendingOp {
+        action: QueueAction::Install,
+        forge_mod_id: Some(20),
+        forge_version_id: Some(2),
+        mod_name: "OtherMod",
+        metadata: None,
+        queued_by: None,
+        item_type: "mod",
+        forge_addon_id: None,
+        archive_path: Some("/tmp/other.zip"),
+        source: "forge",
+        source_url: None,
+    })
+    .unwrap();
+
+    let deps = db.list_dep_ops_for_parent(42).unwrap();
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0].mod_name, "BigBrain");
+
+    // No deps for parent 99
+    let deps = db.list_dep_ops_for_parent(99).unwrap();
+    assert_eq!(deps.len(), 0);
+}
+
+#[test]
+fn cascade_cancel_removes_parent_from_queued_for() {
+    use crate::db::users::{InsertPendingOp, QueueAction};
+
+    let db = test_db();
+    // Dep queued for two parents: 42 and 55
+    db.insert_pending_op(&InsertPendingOp {
+        action: QueueAction::Install,
+        forge_mod_id: Some(10),
+        forge_version_id: Some(1),
+        mod_name: "SharedDep",
+        metadata: Some("{\"version\":\"1.0\",\"queued_for\":[42,55]}"),
+        queued_by: None,
+        item_type: "mod",
+        forge_addon_id: None,
+        archive_path: Some("/tmp/shared.zip"),
+        source: "forge",
+        source_url: None,
+    })
+    .unwrap();
+
+    // Simulate cancelling parent 42: remove from queued_for
+    let deps = db.list_dep_ops_for_parent(42).unwrap();
+    assert_eq!(deps.len(), 1);
+
+    let dep = &deps[0];
+    let mut meta: serde_json::Value = serde_json::from_str(dep.metadata.as_ref().unwrap()).unwrap();
+    let arr = meta.get_mut("queued_for").unwrap().as_array_mut().unwrap();
+    arr.retain(|v| v.as_i64() != Some(42));
+    assert_eq!(arr.len(), 1); // still has parent 55
+
+    db.update_pending_op_metadata(dep.id, &serde_json::to_string(&meta).unwrap())
+        .unwrap();
+
+    // Now parent 42 should find no deps
+    let deps = db.list_dep_ops_for_parent(42).unwrap();
+    assert_eq!(deps.len(), 0);
+
+    // Parent 55 still finds the dep
+    let deps = db.list_dep_ops_for_parent(55).unwrap();
+    assert_eq!(deps.len(), 1);
 }

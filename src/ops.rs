@@ -176,7 +176,6 @@ pub struct InstallRequest<'a> {
 }
 
 /// Parameters for installing an addon from a downloaded archive.
-#[allow(dead_code)] // Used in Task 5
 pub struct InstallAddonRequest<'a> {
     pub db: &'a Database,
     pub dirs: &'a QumaDirs,
@@ -190,6 +189,7 @@ pub struct InstallAddonRequest<'a> {
     pub mod_version_constraint: Option<&'a str>,
     pub archive_path: &'a Path,
     pub source: ModSource,
+    #[allow(dead_code)] // addon source tracking deferred
     pub source_url: Option<&'a str>,
 }
 
@@ -254,7 +254,6 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     Ok(db_id)
 }
 
-#[allow(dead_code)] // Used in Task 5
 pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> {
     tracing::info!(
         addon_name = req.name,
@@ -379,7 +378,6 @@ pub fn update_mod_from_archive(
     Ok(())
 }
 
-#[allow(dead_code)] // Used in Task 5
 #[allow(clippy::too_many_arguments)]
 pub fn update_addon_from_archive(
     db: &Database,

@@ -1,10 +1,26 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::common::CliContext;
+
+/// Helper to extract a typed field from pending op metadata JSON.
+fn metadata_i64(metadata: Option<&str>, key: &str) -> Option<i64> {
+    metadata
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get(key)?.as_i64())
+}
+
+fn metadata_str(metadata: Option<&str>, key: &str) -> Option<String> {
+    metadata
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get(key)?.as_str().map(String::from))
+}
 
 /// Apply all pending operations without prompting for confirmation.
 /// Returns the number of operations successfully applied.
 /// Used by `quma apply` (after confirmation) and auto-drain (server lifecycle).
+///
+/// All install/update ops are expected to have `archive_path` set (pre-staged by
+/// the queue/staging functions). No Forge API calls are made at apply time.
 pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
     let pending = ctx.db.list_pending_ops()?;
     let mut applied = 0;
@@ -19,174 +35,156 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
 
             match op.action {
                 crate::db::users::QueueAction::Install => {
-                    if let Some(version_id) = op.forge_version_id {
-                        // Resolve addon from Forge API
-                        let addon = match ctx.forge.get_addon(forge_addon_id, true).await {
-                            Ok(a) => a,
-                            Err(e) => {
-                                eprintln!("    Error: failed to fetch addon from Forge: {e:#}");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
+                    let version_id = match op.forge_version_id {
+                        Some(id) => id,
+                        None => {
+                            println!("    Skipped — no version ID for install operation");
+                            ctx.db.delete_pending_op(op.id)?;
+                            continue;
+                        }
+                    };
 
-                        let parent_forge_mod_id = match addon.mod_id {
+                    let archive_path = match op.archive_path.as_deref() {
+                        Some(p) => p,
+                        None => {
+                            eprintln!(
+                                "    Error: queued addon install for {} has no archive_path",
+                                op.mod_name
+                            );
+                            ctx.db.delete_pending_op(op.id)?;
+                            continue;
+                        }
+                    };
+                    let archive = std::path::Path::new(archive_path);
+                    if !archive.exists() {
+                        eprintln!("    Error: queued archive not found at {archive_path}");
+                        ctx.db.delete_pending_op(op.id)?;
+                        continue;
+                    }
+
+                    // Skip if already installed
+                    if ctx.db.get_addon_by_forge_id(forge_addon_id)?.is_some() {
+                        println!("    Skipped — already installed");
+                        ctx.db.delete_pending_op(op.id)?;
+                        applied += 1;
+                        continue;
+                    }
+
+                    // Extract parent mod ID and version from metadata
+                    let parent_forge_mod_id =
+                        match metadata_i64(op.metadata.as_deref(), "parent_forge_mod_id") {
                             Some(id) => id,
                             None => {
-                                eprintln!("    Error: detached addons are not supported");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
-
-                        let parent = match ctx.db.get_mod_by_forge_id(parent_forge_mod_id)? {
-                            Some(p) => p,
-                            None => {
                                 eprintln!(
-                                    "    Error: parent mod not installed for addon {}",
-                                    addon.name
+                                    "    Error: addon op missing parent_forge_mod_id in metadata"
                                 );
                                 ctx.db.delete_pending_op(op.id)?;
                                 continue;
                             }
                         };
 
-                        let version = match addon
-                            .versions
-                            .as_ref()
-                            .and_then(|vs| vs.iter().find(|v| v.id == version_id))
-                        {
-                            Some(v) => v,
-                            None => {
-                                eprintln!("    Error: addon version not found");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
-
-                        let download_url = match version.link.as_deref() {
-                            Some(url) => url,
-                            None => {
-                                eprintln!("    Error: no download URL for addon version");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
-
-                        // Download and install
-                        let tmp_dir = match tempfile::tempdir() {
-                            Ok(d) => d,
-                            Err(e) => {
-                                eprintln!("    Error: failed to create temp dir: {e:#}");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
-                        let archive_path = tmp_dir.path().join("addon.zip");
-                        if let Err(e) = ctx.forge.download_file(download_url, &archive_path).await {
-                            eprintln!("    Error: failed to download addon: {e:#}");
+                    let parent = match ctx.db.get_mod_by_forge_id(parent_forge_mod_id)? {
+                        Some(p) => p,
+                        None => {
+                            eprintln!(
+                                "    Error: parent mod not installed (forge_id {})",
+                                parent_forge_mod_id
+                            );
                             ctx.db.delete_pending_op(op.id)?;
                             continue;
                         }
+                    };
 
-                        if let Err(e) = crate::ops::install_addon_from_archive(
-                            &crate::ops::InstallAddonRequest {
-                                db: &ctx.db,
-                                dirs: &ctx.dirs,
-                                config: &ctx.config,
-                                forge_addon_id: Some(forge_addon_id),
-                                parent_mod_id: parent.id,
-                                version_id: Some(version_id),
-                                name: &addon.name,
-                                slug: addon.slug.as_deref(),
-                                version: &version.version,
-                                mod_version_constraint: version.mod_version_constraint.as_deref(),
-                                archive_path: &archive_path,
-                                source: crate::ops::ModSource::Forge,
-                                source_url: None,
-                            },
-                        ) {
-                            let remaining = pending.len() - applied - 1;
-                            eprintln!("\n  Error: {e:#}");
-                            eprintln!(
-                                "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
-                            );
-                            return Err(e);
-                        }
-                    } else {
-                        println!("    Skipped — no version ID for install operation");
-                        ctx.db.delete_pending_op(op.id)?;
-                        continue;
+                    let version_str =
+                        crate::queue::extract_version_from_metadata(op.metadata.as_deref())
+                            .unwrap_or_else(|| "unknown".to_string());
+                    let mod_version_constraint =
+                        metadata_str(op.metadata.as_deref(), "mod_version_constraint");
+
+                    if let Err(e) =
+                        crate::ops::install_addon_from_archive(&crate::ops::InstallAddonRequest {
+                            db: &ctx.db,
+                            dirs: &ctx.dirs,
+                            config: &ctx.config,
+                            forge_addon_id: Some(forge_addon_id),
+                            parent_mod_id: parent.id,
+                            version_id: Some(version_id),
+                            name: &op.mod_name,
+                            slug: None,
+                            version: &version_str,
+                            mod_version_constraint: mod_version_constraint.as_deref(),
+                            archive_path: archive,
+                            source: crate::ops::ModSource::Forge,
+                            source_url: None,
+                        })
+                    {
+                        let remaining = pending.len() - applied - 1;
+                        eprintln!("\n  Error: {e:#}");
+                        eprintln!(
+                            "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                        );
+                        return Err(e);
                     }
                 }
                 crate::db::users::QueueAction::Update => {
-                    if let (Some(installed), Some(version_id)) = (
-                        ctx.db.get_addon_by_forge_id(forge_addon_id)?,
-                        op.forge_version_id,
-                    ) {
-                        let versions = match ctx.forge.get_addon_versions(forge_addon_id).await {
-                            Ok(v) => v,
-                            Err(e) => {
-                                eprintln!("    Error: failed to fetch addon versions: {e:#}");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
-
-                        let version = match versions.iter().find(|v| v.id == version_id) {
-                            Some(v) => v,
-                            None => {
-                                eprintln!("    Error: addon version not found");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
-
-                        let download_url = match version.link.as_deref() {
-                            Some(url) => url,
-                            None => {
-                                eprintln!("    Error: no download URL for addon version");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
-
-                        let tmp_dir = match tempfile::tempdir() {
-                            Ok(d) => d,
-                            Err(e) => {
-                                eprintln!("    Error: failed to create temp dir: {e:#}");
-                                ctx.db.delete_pending_op(op.id)?;
-                                continue;
-                            }
-                        };
-                        let archive_path = tmp_dir.path().join("addon.zip");
-                        if let Err(e) = ctx.forge.download_file(download_url, &archive_path).await {
-                            eprintln!("    Error: failed to download addon: {e:#}");
+                    let version_id = match op.forge_version_id {
+                        Some(id) => id,
+                        None => {
+                            println!("    Skipped — no version ID for update operation");
                             ctx.db.delete_pending_op(op.id)?;
                             continue;
                         }
+                    };
 
-                        if let Err(e) = crate::ops::update_addon_from_archive(
-                            &ctx.db,
-                            &ctx.dirs,
-                            &ctx.config,
-                            installed.id,
-                            version_id,
-                            &version.version,
-                            version.mod_version_constraint.as_deref(),
-                            &archive_path,
-                        ) {
-                            let remaining = pending.len() - applied - 1;
-                            eprintln!("\n  Error: {e:#}");
-                            eprintln!(
-                                "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
-                            );
-                            return Err(e);
+                    let installed = match ctx.db.get_addon_by_forge_id(forge_addon_id)? {
+                        Some(a) => a,
+                        None => {
+                            println!("    Skipped — addon not found in database");
+                            ctx.db.delete_pending_op(op.id)?;
+                            continue;
                         }
-                    } else {
-                        println!("    Skipped — addon not found or no version ID");
+                    };
+
+                    let archive_path = match op.archive_path.as_deref() {
+                        Some(p) => p,
+                        None => {
+                            eprintln!(
+                                "    Error: queued addon update for {} has no archive_path",
+                                op.mod_name
+                            );
+                            ctx.db.delete_pending_op(op.id)?;
+                            continue;
+                        }
+                    };
+                    let archive = std::path::Path::new(archive_path);
+                    if !archive.exists() {
+                        eprintln!("    Error: queued archive not found at {archive_path}");
                         ctx.db.delete_pending_op(op.id)?;
                         continue;
+                    }
+
+                    let version_str =
+                        crate::queue::extract_version_from_metadata(op.metadata.as_deref())
+                            .unwrap_or_else(|| "unknown".to_string());
+                    let mod_version_constraint =
+                        metadata_str(op.metadata.as_deref(), "mod_version_constraint");
+
+                    if let Err(e) = crate::ops::update_addon_from_archive(
+                        &ctx.db,
+                        &ctx.dirs,
+                        &ctx.config,
+                        installed.id,
+                        version_id,
+                        &version_str,
+                        mod_version_constraint.as_deref(),
+                        archive,
+                    ) {
+                        let remaining = pending.len() - applied - 1;
+                        eprintln!("\n  Error: {e:#}");
+                        eprintln!(
+                            "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                        );
+                        return Err(e);
                     }
                 }
                 crate::db::users::QueueAction::Remove => {
@@ -213,6 +211,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                 }
             }
 
+            crate::queue::cleanup_queued_archive(op);
             ctx.db.delete_pending_op(op.id)?;
             applied += 1;
             continue;
@@ -220,31 +219,62 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
 
         match op.action {
             crate::db::users::QueueAction::Install => {
-                if let Some(ref archive_path) = op.archive_path {
-                    // URL/file install — archive already downloaded
-                    let archive = std::path::Path::new(archive_path);
-                    if !archive.exists() {
-                        eprintln!("    Error: queued archive not found at {archive_path}");
+                let archive_path = match op.archive_path.as_deref() {
+                    Some(p) => p,
+                    None => {
+                        eprintln!(
+                            "    Error: queued install for {} has no archive_path",
+                            op.mod_name
+                        );
                         ctx.db.delete_pending_op(op.id)?;
                         continue;
                     }
-                    let source = crate::ops::ModSource::parse(&op.source)
-                        .unwrap_or(crate::ops::ModSource::Forge);
-                    if let Err(e) =
-                        crate::ops::install_mod_from_archive(&crate::ops::InstallRequest {
-                            db: &ctx.db,
-                            dirs: &ctx.dirs,
-                            config: &ctx.config,
-                            forge_mod_id: None,
-                            version_id: None,
-                            name: &op.mod_name,
-                            slug: None,
-                            version: "unknown",
-                            archive_path: archive,
-                            source,
-                            source_url: op.source_url.as_deref(),
-                        })
-                    {
+                };
+                let archive = std::path::Path::new(archive_path);
+                if !archive.exists() {
+                    eprintln!("    Error: queued archive not found at {archive_path}");
+                    ctx.db.delete_pending_op(op.id)?;
+                    continue;
+                }
+
+                let forge_mod_id = op.forge_mod_id;
+                let version_id = op.forge_version_id;
+
+                // Skip if already installed (dep may have been installed by a previous op)
+                if let Some(fid) = forge_mod_id {
+                    if ctx.db.get_mod_by_forge_id(fid)?.is_some() {
+                        println!("    Skipped — already installed");
+                        crate::queue::cleanup_queued_archive(op);
+                        ctx.db.delete_pending_op(op.id)?;
+                        applied += 1;
+                        continue;
+                    }
+                }
+
+                let version_str =
+                    crate::queue::extract_version_from_metadata(op.metadata.as_deref())
+                        .unwrap_or_else(|| "unknown".to_string());
+                let source = crate::ops::ModSource::parse(&op.source)
+                    .unwrap_or(crate::ops::ModSource::Forge);
+                let queued_for = crate::queue::extract_queued_for(op.metadata.as_deref());
+
+                let installed_db_id = match crate::ops::install_mod_from_archive(
+                    &crate::ops::InstallRequest {
+                        db: &ctx.db,
+                        dirs: &ctx.dirs,
+                        config: &ctx.config,
+                        forge_mod_id,
+                        version_id,
+                        name: &op.mod_name,
+                        slug: None,
+                        version: &version_str,
+                        archive_path: archive,
+                        source,
+                        source_url: op.source_url.as_deref(),
+                    },
+                ) {
+                    Ok(db_id) => db_id,
+                    Err(e) => {
                         let remaining = pending.len() - applied - 1;
                         eprintln!("\n  Error: {e:#}");
                         eprintln!(
@@ -252,36 +282,29 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                         );
                         return Err(e);
                     }
-                    // Clean up cached archive
-                    let _ = std::fs::remove_file(archive);
-                    println!("    Installed {} from {}", op.mod_name, op.source);
-                } else {
-                    // Existing Forge install path
-                    let forge_mod_id = op
-                        .forge_mod_id
-                        .expect("mod operation must have forge_mod_id");
+                };
 
-                    if let Some(version_id) = op.forge_version_id {
-                        if let Err(e) =
-                            crate::cli::install::install_with_deps(ctx, forge_mod_id, version_id)
-                                .await
-                                .with_context(|| {
-                                    format!("failed to apply queued install of {}", op.mod_name)
-                                })
-                        {
-                            let remaining = pending.len() - applied - 1;
-                            eprintln!("\n  Error: {e:#}");
-                            eprintln!(
-                                "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
-                            );
-                            return Err(e);
+                // Record dependency edges: if this op was queued as a dep
+                // (has queued_for), each entry is a parent forge_mod_id.
+                for parent_forge_mod_id in &queued_for {
+                    if let Ok(Some(parent)) = ctx.db.get_mod_by_forge_id(*parent_forge_mod_id) {
+                        match ctx.db.insert_dependency(parent.id, installed_db_id, None) {
+                            Ok(_) => {}
+                            Err(rusqlite::Error::SqliteFailure(err, _))
+                                if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}
+                            Err(e) => {
+                                tracing::warn!(
+                                    parent_id = parent.id,
+                                    dep_id = installed_db_id,
+                                    err = %e,
+                                    "failed to record dependency edge from queue"
+                                );
+                            }
                         }
-                    } else {
-                        println!("    Skipped — no version ID for install operation");
-                        ctx.db.delete_pending_op(op.id)?;
-                        continue;
                     }
                 }
+
+                println!("    Installed {} from {}", op.mod_name, op.source);
             }
             crate::db::users::QueueAction::Remove => {
                 let forge_mod_id = op.forge_mod_id.expect("mod remove must have forge_mod_id");
@@ -321,34 +344,74 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                 }
             }
             crate::db::users::QueueAction::Update => {
-                let forge_mod_id = op.forge_mod_id.expect("mod update must have forge_mod_id");
-
-                if let (Some(installed), Some(version_id)) = (
-                    ctx.db.get_mod_by_forge_id(forge_mod_id)?,
-                    op.forge_version_id,
-                ) {
-                    if let Err(e) =
-                        crate::cli::update::apply_update_by_version(ctx, &installed, version_id)
-                            .await
-                            .with_context(|| {
-                                format!("failed to apply queued update of {}", op.mod_name)
-                            })
-                    {
-                        let remaining = pending.len() - applied - 1;
-                        eprintln!("\n  Error: {e:#}");
-                        eprintln!(
-                            "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
-                        );
-                        return Err(e);
+                let forge_mod_id = match op.forge_mod_id {
+                    Some(id) => id,
+                    None => {
+                        eprintln!("    Error: update op missing forge_mod_id");
+                        ctx.db.delete_pending_op(op.id)?;
+                        continue;
                     }
-                } else {
-                    println!("    Skipped — mod not found or no version ID");
+                };
+                let version_id = match op.forge_version_id {
+                    Some(id) => id,
+                    None => {
+                        println!("    Skipped — mod not found or no version ID");
+                        ctx.db.delete_pending_op(op.id)?;
+                        continue;
+                    }
+                };
+
+                let installed = match ctx.db.get_mod_by_forge_id(forge_mod_id)? {
+                    Some(m) => m,
+                    None => {
+                        println!("    Skipped — mod not found in database");
+                        ctx.db.delete_pending_op(op.id)?;
+                        continue;
+                    }
+                };
+
+                let archive_path = match op.archive_path.as_deref() {
+                    Some(p) => p,
+                    None => {
+                        eprintln!(
+                            "    Error: queued update for {} has no archive_path",
+                            op.mod_name
+                        );
+                        ctx.db.delete_pending_op(op.id)?;
+                        continue;
+                    }
+                };
+                let archive = std::path::Path::new(archive_path);
+                if !archive.exists() {
+                    eprintln!("    Error: queued archive not found at {archive_path}");
                     ctx.db.delete_pending_op(op.id)?;
                     continue;
+                }
+
+                let version_str =
+                    crate::queue::extract_version_from_metadata(op.metadata.as_deref())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                if let Err(e) = crate::ops::update_mod_from_archive(
+                    &ctx.db,
+                    &ctx.dirs,
+                    &ctx.config,
+                    installed.id,
+                    version_id,
+                    &version_str,
+                    archive,
+                ) {
+                    let remaining = pending.len() - applied - 1;
+                    eprintln!("\n  Error: {e:#}");
+                    eprintln!(
+                        "  {applied} operation(s) applied, 1 failed, {remaining} remaining in queue."
+                    );
+                    return Err(e);
                 }
             }
         }
 
+        crate::queue::cleanup_queued_archive(op);
         ctx.db.delete_pending_op(op.id)?;
         applied += 1;
     }

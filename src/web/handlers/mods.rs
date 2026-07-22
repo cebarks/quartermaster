@@ -366,47 +366,112 @@ async fn try_queue_mod_op(
     if !should_queue_operation(state).await {
         return Ok(None);
     }
-    let db = state.db.clone();
-    let action_clone = action;
-    let mod_name_owned = mod_name.to_string();
-    let already_queued = web::block(move || {
-        let db = db.lock();
-        if db.has_pending_op(forge_mod_id, action_clone)? {
-            return Ok::<bool, rusqlite::Error>(true);
-        }
-        db.insert_pending_op(
-            action_clone,
-            forge_mod_id,
-            version_id,
-            &mod_name_owned,
-            None,
-            None,
-        )?;
-        Ok(false)
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
 
-    let action_str = match action {
-        QueueAction::Install => "install",
-        QueueAction::Update => "update",
-        QueueAction::Remove => "removal",
-    };
-    if already_queued {
-        set_flash(
-            session,
-            &format!("This mod is already queued for {action_str}"),
-            FlashType::Warning,
-        );
-    } else {
-        let past = match action {
-            QueueAction::Install => "Mod queued for install",
-            QueueAction::Update => "Update queued",
-            QueueAction::Remove => "Mod queued for removal",
-        };
-        set_flash(session, past, FlashType::Success);
+    // Check if already queued
+    {
+        let db = state.db.lock();
+        if db.has_pending_op(forge_mod_id, action)? {
+            let action_str = match action {
+                QueueAction::Install => "install",
+                QueueAction::Update => "update",
+                QueueAction::Remove => "removal",
+            };
+            set_flash(
+                session,
+                &format!("This mod is already queued for {action_str}"),
+                FlashType::Warning,
+            );
+            return Ok(Some(
+                HttpResponse::SeeOther()
+                    .insert_header(("Location", redirect_url))
+                    .finish(),
+            ));
+        }
     }
+
+    match action {
+        QueueAction::Remove => {
+            // Remove doesn't need downloading
+            let db = state.db.clone();
+            let mod_name_owned = mod_name.to_string();
+            web::block(move || {
+                let db = db.lock();
+                db.insert_pending_op(&crate::db::users::InsertPendingOp {
+                    action: QueueAction::Remove,
+                    forge_mod_id: Some(forge_mod_id),
+                    forge_version_id: None,
+                    mod_name: &mod_name_owned,
+                    metadata: None,
+                    queued_by: None,
+                    item_type: "mod",
+                    forge_addon_id: None,
+                    archive_path: None,
+                    source: "forge",
+                    source_url: None,
+                })
+            })
+            .await
+            .map_err(WebError::from)?
+            .map_err(WebError::from)?;
+            set_flash(session, "Mod queued for removal", FlashType::Success);
+        }
+        QueueAction::Install => {
+            let version_id = version_id.ok_or(WebError::BadRequest("missing version_id".into()))?;
+            let result = crate::queue::stage_and_queue_mod(
+                &state.forge,
+                &state.db,
+                &state.dirs,
+                &crate::queue::StageRequest {
+                    forge_mod_id,
+                    version_id,
+                    mod_name,
+                    slug: None,
+                    queued_by: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .map_err(WebError::from)?;
+
+            if result.dep_count > 0 {
+                set_flash(
+                    session,
+                    &format!(
+                        "Mod queued for install (+ {} dependency/ies)",
+                        result.dep_count
+                    ),
+                    FlashType::Success,
+                );
+            } else {
+                set_flash(session, "Mod queued for install", FlashType::Success);
+            }
+        }
+        QueueAction::Update => {
+            let version_id = version_id.ok_or(WebError::BadRequest("missing version_id".into()))?;
+            let result = crate::queue::stage_and_queue_update(
+                &state.forge,
+                &state.db,
+                &state.dirs,
+                forge_mod_id,
+                version_id,
+                mod_name,
+                None,
+            )
+            .await
+            .map_err(WebError::from)?;
+
+            if result.dep_count > 0 {
+                set_flash(
+                    session,
+                    &format!("Update queued (+ {} new dependency/ies)", result.dep_count),
+                    FlashType::Success,
+                );
+            } else {
+                set_flash(session, "Update queued", FlashType::Success);
+            }
+        }
+    }
+
     Ok(Some(
         HttpResponse::SeeOther()
             .insert_header(("Location", redirect_url))
@@ -425,53 +490,87 @@ async fn try_queue_addon_op(
     forge_addon_id: i64,
     version_id: Option<i64>,
     addon_name: &str,
+    parent_forge_mod_id: i64,
     redirect_url: &str,
 ) -> Result<Option<HttpResponse>, WebError> {
     if !should_queue_operation(state).await {
         return Ok(None);
     }
-    let db = state.db.clone();
-    let action_clone = action;
-    let addon_name_owned = addon_name.to_string();
-    let username = user.username.clone();
-    let already_queued = web::block(move || {
-        let db = db.lock();
-        if db.has_pending_addon_op(forge_addon_id, action_clone)? {
-            return Ok::<bool, rusqlite::Error>(true);
-        }
-        db.insert_pending_addon_op(
-            action_clone,
-            forge_addon_id,
-            version_id,
-            &addon_name_owned,
-            None,
-            Some(&username),
-        )?;
-        Ok(false)
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
 
-    let action_str = match action {
-        QueueAction::Install => "install",
-        QueueAction::Update => "update",
-        QueueAction::Remove => "removal",
-    };
-    if already_queued {
-        set_flash(
-            session,
-            &format!("This addon is already queued for {action_str}"),
-            FlashType::Warning,
-        );
-    } else {
-        let past = match action {
-            QueueAction::Install => "Addon queued for install",
-            QueueAction::Update => "Addon queued for update",
-            QueueAction::Remove => "Addon queued for removal",
-        };
-        set_flash(session, past, FlashType::Success);
+    // Check if already queued
+    {
+        let db = state.db.lock();
+        if db.has_pending_addon_op(forge_addon_id, action)? {
+            let action_str = match action {
+                QueueAction::Install => "install",
+                QueueAction::Update => "update",
+                QueueAction::Remove => "removal",
+            };
+            set_flash(
+                session,
+                &format!("This addon is already queued for {action_str}"),
+                FlashType::Warning,
+            );
+            return Ok(Some(
+                HttpResponse::SeeOther()
+                    .insert_header(("Location", redirect_url))
+                    .finish(),
+            ));
+        }
     }
+
+    match action {
+        QueueAction::Remove => {
+            // No download needed for remove
+            let db = state.db.clone();
+            let addon_name_owned = addon_name.to_string();
+            let username = user.username.clone();
+            web::block(move || {
+                let db = db.lock();
+                db.insert_pending_op(&crate::db::users::InsertPendingOp {
+                    action: QueueAction::Remove,
+                    forge_mod_id: None,
+                    forge_version_id: None,
+                    mod_name: &addon_name_owned,
+                    metadata: None,
+                    queued_by: Some(&username),
+                    item_type: "addon",
+                    forge_addon_id: Some(forge_addon_id),
+                    archive_path: None,
+                    source: "forge",
+                    source_url: None,
+                })
+            })
+            .await
+            .map_err(WebError::from)?
+            .map_err(WebError::from)?;
+            set_flash(session, "Addon queued for removal", FlashType::Success);
+        }
+        QueueAction::Install | QueueAction::Update => {
+            let version_id = version_id.ok_or(WebError::BadRequest("missing version_id".into()))?;
+            crate::queue::stage_and_queue_addon(
+                &state.forge,
+                &state.db,
+                &state.dirs,
+                action,
+                forge_addon_id,
+                version_id,
+                addon_name,
+                parent_forge_mod_id,
+                Some(&user.username),
+            )
+            .await
+            .map_err(WebError::from)?;
+
+            let msg = match action {
+                QueueAction::Install => "Addon queued for install",
+                QueueAction::Update => "Addon update queued",
+                _ => unreachable!(),
+            };
+            set_flash(session, msg, FlashType::Success);
+        }
+    }
+
     Ok(Some(
         HttpResponse::SeeOther()
             .insert_header(("Location", redirect_url))
@@ -1101,14 +1200,19 @@ async fn install_mod_from_url(
         let url_owned = url.to_string();
         let _ = web::block(move || {
             let db = db.lock();
-            db.insert_pending_url_op(
-                crate::db::users::QueueAction::Install,
-                &mod_name_q,
-                &dest_str,
-                "url",
-                Some(&url_owned),
-                None,
-            )
+            db.insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Install,
+                forge_mod_id: None,
+                forge_version_id: None,
+                mod_name: &mod_name_q,
+                metadata: None,
+                queued_by: None,
+                item_type: "mod",
+                forge_addon_id: None,
+                archive_path: Some(&dest_str),
+                source: "url",
+                source_url: Some(&url_owned),
+            })
         })
         .await
         .map_err(WebError::from)?
@@ -1846,28 +1950,69 @@ pub async fn update_all_mods(
 
     // Check if operations should be queued (server running + queue enabled)
     if should_queue_operation(&state).await {
-        let db = state.db.clone();
-        web::block(move || {
-            let db = db.lock();
-            for update in &results.updates {
-                if !db.has_pending_op(update.current_version.mod_id, QueueAction::Update)? {
-                    db.insert_pending_op(
-                        QueueAction::Update,
-                        update.current_version.mod_id,
-                        Some(update.recommended_version.id),
-                        &update.current_version.name,
-                        None,
-                        None,
-                    )?;
+        let task_id = match state.tasks.start_if_no_active(
+            "Queueing updates",
+            &format!("{} updates", results.updates.len()),
+            0,
+        ) {
+            Some(id) => id,
+            None => {
+                set_flash(
+                    &session,
+                    "Please wait for current operations",
+                    FlashType::Warning,
+                );
+                return Ok(HttpResponse::SeeOther()
+                    .insert_header(("Location", "/quma/mods"))
+                    .finish());
+            }
+        };
+        let tasks = state.tasks.clone();
+        let state_clone = state.clone();
+        let updates = results.updates.clone();
+
+        tokio::spawn(async move {
+            let total = updates.len();
+            let mut queued = 0;
+            for (i, update) in updates.iter().enumerate() {
+                tasks.update_message(
+                    task_id,
+                    format!(
+                        "Downloading {}/{}: {}",
+                        i + 1,
+                        total,
+                        update.current_version.name
+                    ),
+                );
+                match crate::queue::stage_and_queue_update(
+                    &state_clone.forge,
+                    &state_clone.db,
+                    &state_clone.dirs,
+                    update.current_version.mod_id,
+                    update.recommended_version.id,
+                    &update.current_version.name,
+                    None,
+                )
+                .await
+                {
+                    Ok(_) => queued += 1,
+                    Err(e) => {
+                        tracing::error!(
+                            mod_name = %update.current_version.name,
+                            err = %e,
+                            "failed to queue update"
+                        );
+                    }
                 }
             }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
+            tasks.complete(task_id, format!("{queued} update(s) queued"));
+        });
 
-        set_flash(&session, "All updates queued", FlashType::Success);
+        set_flash(
+            &session,
+            "Downloading and queueing updates...",
+            FlashType::Success,
+        );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods#queue"))
             .finish());
@@ -2342,7 +2487,7 @@ pub async fn install_addon(
     .map_err(WebError::from)?
     .map_err(WebError::from)?;
 
-    let _parent_mod = match parent_mod {
+    let parent_mod = match parent_mod {
         Some(m) => m,
         None => {
             set_flash(&session, "Parent mod not found", FlashType::Error);
@@ -2422,6 +2567,19 @@ pub async fn install_addon(
     };
 
     // Check if the operation should be queued
+    let parent_forge_mod_id = match parent_mod.forge_mod_id {
+        Some(id) => id,
+        None => {
+            set_flash(
+                &session,
+                "Cannot queue addon for a mod installed from URL/file (no Forge ID)",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", parent_mod_db_id)))
+                .finish());
+        }
+    };
     if let Some(resp) = try_queue_addon_op(
         &state,
         &session,
@@ -2430,6 +2588,7 @@ pub async fn install_addon(
         addon_forge_id,
         Some(version.id),
         &addon_info.name,
+        parent_forge_mod_id,
         &format!("/quma/mods/{}#queue", parent_mod_db_id),
     )
     .await?
@@ -2565,6 +2724,29 @@ pub async fn update_addon(
         }
     };
 
+    // Look up parent mod's forge_mod_id for staging
+    let parent_mod_db_id = addon.parent_mod_id;
+    let parent_forge_mod_id_opt = {
+        let db = state.db.lock();
+        db.get_mod(parent_mod_db_id)
+            .ok()
+            .flatten()
+            .and_then(|m| m.forge_mod_id)
+    };
+    let parent_forge_mod_id = match parent_forge_mod_id_opt {
+        Some(id) => id,
+        None => {
+            set_flash(
+                &session,
+                "Cannot queue addon update for a mod installed from URL/file (no Forge ID)",
+                FlashType::Error,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", format!("/quma/mods/{}", addon.parent_mod_id)))
+                .finish());
+        }
+    };
+
     // Fetch latest version
     let versions = match state.forge.get_addon_versions(addon.forge_addon_id).await {
         Ok(v) => v,
@@ -2611,6 +2793,7 @@ pub async fn update_addon(
         addon.forge_addon_id,
         Some(latest_version.id),
         &addon.name,
+        parent_forge_mod_id,
         &format!("/quma/mods/{}#queue", addon.parent_mod_id),
     )
     .await?

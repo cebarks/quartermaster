@@ -9,59 +9,12 @@ use crate::spt::mods::{detect_mod_type, ModType};
 
 use super::common::{confirm, resolve_mod, CliContext};
 
-/// Resolve dependencies and install a mod plus all its deps.
-/// Used by both the interactive `install` command and `apply::drain_all`.
-pub async fn install_with_deps(ctx: &CliContext, forge_mod_id: i64, version_id: i64) -> Result<()> {
-    let forge_mod = ctx.forge.get_mod(forge_mod_id, false).await?;
-
-    if let Some(existing) = ctx.db.get_mod_by_forge_id(forge_mod.id)? {
-        println!(
-            "  {} already installed (v{}), skipping",
-            existing.name, existing.version
-        );
-        return Ok(());
-    }
-
-    let versions = ctx.forge.get_versions(forge_mod_id, None).await?;
-
-    let selected = versions
-        .iter()
-        .find(|v| v.id == version_id)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "version ID {} not found for {} on Forge",
-                version_id,
-                forge_mod.name
-            )
-        })?
-        .clone();
-
-    let (to_install, skipped_conflicts) = resolve_deps(ctx, &forge_mod, &selected).await?;
-    if !skipped_conflicts.is_empty() {
-        tracing::warn!(
-            "Skipped {} conflicting dependency(ies) for {}: {}",
-            skipped_conflicts.len(),
-            forge_mod.name,
-            skipped_conflicts.join(", "),
-        );
-    }
-    install_deps(ctx, &to_install).await?;
-    let db_id = install_main_mod(ctx, &forge_mod, &selected).await?;
-    record_dependency_edges(ctx, db_id, &to_install)?;
-
-    println!(
-        "  {} v{} installed successfully.",
-        forge_mod.name, selected.version
-    );
-    Ok(())
-}
-
 /// A dependency that needs to be installed.
-struct PendingInstall {
-    mod_id: i64,
-    version_id: i64,
-    name: String,
-    version: String,
+pub(crate) struct PendingInstall {
+    pub(crate) mod_id: i64,
+    pub(crate) version_id: i64,
+    pub(crate) name: String,
+    pub(crate) version: String,
 }
 
 pub async fn run(
@@ -115,17 +68,134 @@ pub async fn run(
 
     if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
-        ctx.db.insert_pending_op(
-            crate::db::users::QueueAction::Install,
-            forge_mod.id,
-            Some(selected_version.id),
-            &forge_mod.name,
-            None,
-            None,
-        )?;
-        println!(
-            "Server is running — operation queued. It will be applied on next server restart."
-        );
+        // Pre-download archive and deps to queue dir.
+        // Collect-then-batch-insert: download all archives first, then insert
+        // all DB rows in a single transaction. On download failure, clean up
+        // archives and return error — DB never touched.
+        let queue_dir = ctx.dirs.queue_dir();
+        std::fs::create_dir_all(&queue_dir)?;
+
+        struct StagedCliOp {
+            forge_mod_id: Option<i64>,
+            forge_version_id: Option<i64>,
+            mod_name: String,
+            metadata: String,
+            archive_path: std::path::PathBuf,
+            source_url: String,
+        }
+        let mut staged: Vec<StagedCliOp> = Vec::new();
+        let mut downloaded: Vec<std::path::PathBuf> = Vec::new();
+
+        let stage_result: anyhow::Result<()> = async {
+            // Download deps first
+            for dep in &to_install {
+                if ctx
+                    .db
+                    .has_pending_op(dep.mod_id, crate::db::users::QueueAction::Install)?
+                {
+                    continue;
+                }
+                let dep_versions = ctx.forge.get_versions(dep.mod_id, None).await?;
+                let dep_ver = dep_versions
+                    .iter()
+                    .find(|v| v.id == dep.version_id)
+                    .ok_or_else(|| anyhow::anyhow!("dep version not found for {}", dep.name))?;
+                let dep_url = dep_ver
+                    .link
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("no download link for dep {}", dep.name))?;
+
+                let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+                let dep_mod = ctx.forge.get_mod(dep.mod_id, false).await?;
+                let dep_slug = dep_mod.slug.as_deref().unwrap_or(&dep.name);
+                let ext = crate::queue::archive_extension(dep_url);
+                let dest = queue_dir.join(format!("{timestamp}-{dep_slug}.{ext}"));
+                println!("  Downloading dependency: {} v{}", dep.name, dep.version);
+                ctx.forge.download_file(dep_url, &dest).await?;
+                downloaded.push(dest.clone());
+
+                let dep_metadata = crate::queue::build_dep_metadata(&dep.version, forge_mod.id);
+                staged.push(StagedCliOp {
+                    forge_mod_id: Some(dep.mod_id),
+                    forge_version_id: Some(dep.version_id),
+                    mod_name: dep.name.clone(),
+                    metadata: dep_metadata,
+                    archive_path: dest,
+                    source_url: dep_url.to_string(),
+                });
+            }
+
+            // Download main mod
+            let download_url = selected_version.link.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no download link for {} v{}",
+                    forge_mod.name,
+                    selected_version.version
+                )
+            })?;
+            let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+            let slug = forge_mod.slug.as_deref().unwrap_or("mod");
+            let ext = crate::queue::archive_extension(download_url);
+            let dest = queue_dir.join(format!("{timestamp}-{slug}.{ext}"));
+            println!(
+                "  Downloading {} v{}...",
+                forge_mod.name, selected_version.version
+            );
+            ctx.forge.download_file(download_url, &dest).await?;
+            downloaded.push(dest.clone());
+
+            let main_metadata = crate::queue::build_metadata(&selected_version.version, None);
+            staged.push(StagedCliOp {
+                forge_mod_id: Some(forge_mod.id),
+                forge_version_id: Some(selected_version.id),
+                mod_name: forge_mod.name.clone(),
+                metadata: main_metadata,
+                archive_path: dest,
+                source_url: download_url.to_string(),
+            });
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = stage_result {
+            for path in &downloaded {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(e);
+        }
+
+        // All downloads succeeded — batch-insert in a single transaction
+        let dep_count = staged.len().saturating_sub(1);
+        let tx = ctx.db.conn().unchecked_transaction()?;
+        for op in &staged {
+            ctx.db
+                .insert_pending_op(&crate::db::users::InsertPendingOp {
+                    action: crate::db::users::QueueAction::Install,
+                    forge_mod_id: op.forge_mod_id,
+                    forge_version_id: op.forge_version_id,
+                    mod_name: &op.mod_name,
+                    metadata: Some(&op.metadata),
+                    queued_by: None,
+                    item_type: "mod",
+                    forge_addon_id: None,
+                    archive_path: Some(op.archive_path.to_str().expect("valid UTF-8 path")),
+                    source: "forge",
+                    source_url: Some(&op.source_url),
+                })?;
+        }
+        tx.commit()?;
+
+        if dep_count > 0 {
+            println!(
+                "Server is running — operation queued (+ {} dependency/ies).",
+                dep_count
+            );
+        } else {
+            println!(
+                "Server is running — operation queued. It will be applied on next server restart."
+            );
+        }
         return Ok(());
     }
 
@@ -197,14 +267,44 @@ async fn run_addon_install(
 
     if crate::queue::should_queue(&ctx.config, force, &ctx.dirs, ctx.container_mgr.as_ref()).await?
     {
-        ctx.db.insert_pending_addon_op(
-            crate::db::users::QueueAction::Install,
-            forge_addon.id,
-            Some(selected_version.id),
-            &forge_addon.name,
-            None,
-            None,
-        )?;
+        let queue_dir = ctx.dirs.queue_dir();
+        std::fs::create_dir_all(&queue_dir)?;
+
+        let download_url = selected_version
+            .link
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("no download link for addon"))?;
+        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let slug = forge_addon.slug.as_deref().unwrap_or("addon");
+        let ext = crate::queue::archive_extension(download_url);
+        let dest = queue_dir.join(format!("{timestamp}-{slug}.{ext}"));
+        println!(
+            "  Downloading {} v{}...",
+            forge_addon.name, selected_version.version
+        );
+        ctx.forge.download_file(download_url, &dest).await?;
+
+        // Store parent_forge_mod_id and version in metadata for offline apply
+        let metadata = serde_json::json!({
+            "version": selected_version.version,
+            "parent_forge_mod_id": parent_forge_mod_id,
+        })
+        .to_string();
+
+        ctx.db
+            .insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Install,
+                forge_mod_id: None,
+                forge_version_id: Some(selected_version.id),
+                mod_name: &forge_addon.name,
+                metadata: Some(&metadata),
+                queued_by: None,
+                item_type: "addon",
+                forge_addon_id: Some(forge_addon.id),
+                archive_path: Some(dest.to_str().expect("valid UTF-8 path")),
+                source: "forge",
+                source_url: Some(download_url),
+            })?;
         println!(
             "Server is running — operation queued. It will be applied on next server restart."
         );
@@ -625,7 +725,7 @@ fn check_fika_compat(mod_name: &str, version: &ForgeVersion) -> Result<()> {
     Ok(())
 }
 
-fn collect_deps_to_install(
+pub(crate) fn collect_deps_to_install(
     nodes: &[DependencyNode],
     db: &crate::db::Database,
     out: &mut Vec<PendingInstall>,
@@ -952,14 +1052,20 @@ async fn queue_url_install(ctx: &CliContext, url: &str, mod_name: &str) -> Resul
     println!("Downloading archive for queue...");
     ctx.forge.download_file(url, &dest).await?;
 
-    ctx.db.insert_pending_url_op(
-        crate::db::users::QueueAction::Install,
-        mod_name,
-        dest.to_str().expect("valid UTF-8 path"),
-        "url",
-        Some(url),
-        None,
-    )?;
+    ctx.db
+        .insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: crate::db::users::QueueAction::Install,
+            forge_mod_id: None,
+            forge_version_id: None,
+            mod_name,
+            metadata: None,
+            queued_by: None,
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: Some(dest.to_str().expect("valid UTF-8 path")),
+            source: "url",
+            source_url: Some(url),
+        })?;
 
     println!("Server is running — operation queued. It will be applied on next server restart.");
     Ok(())
@@ -982,14 +1088,20 @@ async fn queue_file_install(
 
     std::fs::copy(archive_path, &dest).context("failed to copy archive to queue dir")?;
 
-    ctx.db.insert_pending_url_op(
-        crate::db::users::QueueAction::Install,
-        mod_name,
-        dest.to_str().expect("valid UTF-8 path"),
-        "file",
-        None,
-        None,
-    )?;
+    ctx.db
+        .insert_pending_op(&crate::db::users::InsertPendingOp {
+            action: crate::db::users::QueueAction::Install,
+            forge_mod_id: None,
+            forge_version_id: None,
+            mod_name,
+            metadata: None,
+            queued_by: None,
+            item_type: "mod",
+            forge_addon_id: None,
+            archive_path: Some(dest.to_str().expect("valid UTF-8 path")),
+            source: "file",
+            source_url: None,
+        })?;
 
     println!("Server is running — operation queued. It will be applied on next server restart.");
     Ok(())

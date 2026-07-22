@@ -39,14 +39,20 @@ pub async fn run(
             }
         }
 
-        ctx.db.insert_pending_op(
-            crate::db::users::QueueAction::Remove,
-            installed.forge_mod_id.expect("checked above"), // ponytail: safe, None bails earlier
-            None,
-            &installed.name,
-            None,
-            None,
-        )?;
+        ctx.db
+            .insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Remove,
+                forge_mod_id: Some(installed.forge_mod_id.expect("checked above")), // ponytail: safe, None bails earlier
+                forge_version_id: None,
+                mod_name: &installed.name,
+                metadata: None,
+                queued_by: None,
+                item_type: "mod",
+                forge_addon_id: None,
+                archive_path: None,
+                source: "forge",
+                source_url: None,
+            })?;
         println!(
             "Server is running — removal of {} queued. It will be applied on next server restart.",
             installed.name
@@ -165,14 +171,20 @@ async fn run_addon_remove(addon_ref: &str, force: bool, yes: bool, ctx: &CliCont
             }
         }
 
-        ctx.db.insert_pending_addon_op(
-            crate::db::users::QueueAction::Remove,
-            installed.forge_addon_id,
-            None,
-            &installed.name,
-            None,
-            None,
-        )?;
+        ctx.db
+            .insert_pending_op(&crate::db::users::InsertPendingOp {
+                action: crate::db::users::QueueAction::Remove,
+                forge_mod_id: None,
+                forge_version_id: None,
+                mod_name: &installed.name,
+                metadata: None,
+                queued_by: None,
+                item_type: "addon",
+                forge_addon_id: Some(installed.forge_addon_id),
+                archive_path: None,
+                source: "forge",
+                source_url: None,
+            })?;
         println!(
             "Server is running — removal of {} queued. It will be applied on next server restart.",
             installed.name
