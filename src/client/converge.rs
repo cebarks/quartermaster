@@ -433,6 +433,44 @@ fn write_fika_last_version(overlay_dir: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
+/// Apply Fika config values (Force IP, UPnP, Last Version) to an overlay config.
+///
+/// Separated from `setup_client_overlay` so the supervisor can re-apply values
+/// after Fika regenerates the config on first boot. Fika's BepInEx config binding
+/// overwrites our seed config with a full config containing default (empty) values,
+/// so we need to re-apply after the container has booted.
+fn apply_fika_overlay_config(
+    overlay_dir: &Path,
+    force_ip: Option<&str>,
+    use_upnp: bool,
+    fika_version: Option<&str>,
+) -> Result<()> {
+    if let Some(ip) = force_ip {
+        write_fika_force_ip(overlay_dir, ip)?;
+    }
+    write_fika_upnp(overlay_dir, use_upnp)?;
+    if let Some(ver) = fika_version {
+        write_fika_last_version(overlay_dir, ver)?;
+    }
+    Ok(())
+}
+
+/// Re-apply Fika overlay config values for a specific client.
+///
+/// Called by the supervisor after a container starts/restarts, with a delay
+/// to let Fika generate the full BepInEx config. Without this, the seed config
+/// written by `setup_client_overlay` gets overwritten by Fika on first boot.
+pub fn reapply_fika_config(
+    install_dir: &Path,
+    index: u32,
+    force_ip: Option<&str>,
+    use_upnp: bool,
+    fika_version: Option<&str>,
+) -> Result<()> {
+    let overlay_dir = client_overlay_dir(install_dir, index);
+    apply_fika_overlay_config(&overlay_dir, force_ip, use_upnp, fika_version)
+}
+
 /// Patch `Game.ini` to control EFT's CPU affinity behaviour.
 ///
 /// EFT's `SetAffinityToLogicalCores` is confusingly named:
@@ -538,13 +576,7 @@ pub fn setup_client_overlay(
 
     let port = client_port(base_udp_port, index)?;
     write_fika_udp_port(&overlay_dir, port)?;
-    if let Some(ip) = force_ip {
-        write_fika_force_ip(&overlay_dir, ip)?;
-    }
-    write_fika_upnp(&overlay_dir, use_upnp)?;
-    if let Some(ver) = fika_version {
-        write_fika_last_version(&overlay_dir, ver)?;
-    }
+    apply_fika_overlay_config(&overlay_dir, force_ip, use_upnp, fika_version)?;
 
     // Game.ini is shared (not per-client overlay), so only patch once.
     if index == 1 {
