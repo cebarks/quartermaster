@@ -13,7 +13,7 @@ Built for Linux hosts running SPT in a Podman container.
 - **Multi-user auth** — Invite-based registration, admin/player roles, session cookies
 - **Fika support** — Dedicated headless client management, scaling, and Fika settings configuration
 - **HTTPS/WSS proxy** — Transparent reverse proxy to SPT server so clients connect through Quartermaster
-- **NarcoNet integration** — Auto-manages NarcoNet `config.yaml` from installed mod state for client mod syncing
+- **Convoy mod distribution** — Built-in mod distribution system for syncing mods to connected clients (replaces NarcoNet/modsync)
 - **Player profiles** — View player profiles with quest, trader, and hideout progress, plus stash viewer
 - **Raid statistics** — Per-raid stats tracking via proxy interception, with leaderboard
 - **Server Value Modifiers (SVM)** — Browse and configure server value modifiers from the web UI
@@ -65,9 +65,12 @@ Commands:
   invite      Generate an invite code for a player
   backup      Backup mods, profiles, and config
   restore     Restore from a backup
+  spt         Manage the SPT server installation (version, check, update)
+  apply       Apply queued mod operations
+  migrate     Migrate from legacy directory layout to new layout
 
 Options:
-  --spt-dir <SPT_DIR>        Explicit SPT server directory
+  --quma-dir <QUMA_DIR>      Explicit Quartermaster data directory
   --config <CONFIG>          Config file path override
   -v, --verbose              Increase verbosity (-v debug, -vv trace)
   --log-level <LOG_LEVEL>    Set log level (trace, debug, info, warn, error)
@@ -91,7 +94,7 @@ Config lives at `<spt_dir>/quartermaster.toml`. All settings can be overridden w
 
 ```bash
 # Override via environment
-QUMA_SPT_DIR=~/spt-server quma status
+QUMA_DIR=~/spt-server quma status
 ```
 
 ## Documentation
@@ -143,14 +146,16 @@ Single Rust binary — the CLI and actix-web server share the same codebase.
 | `src/fika/` | Fika API client, fika.jsonc config, headless session stats |
 | `src/spt/` | SPT directory interaction, archive extraction, profiles, game data |
 | `src/client/` | Fika headless client supervisor and convergence |
+| `src/headless/` | Headless client service layer (scaling, lifecycle, operation tracking) |
 | `src/svm/` | Server Value Modifier browsing and configuration |
 | `src/config_mgmt/` | Git-backed mod config history and diffing |
 | `src/ops.rs` | Core mod operations (install/update/remove) |
 | `src/backup.rs` | Mod backup/restore (per-mod and full snapshots) |
 | `src/health.rs` | Health check system |
 | `src/queue.rs` | Change queue for deferred mod operations |
-| `src/modsync.rs` | NarcoNet config.yaml auto-management |
+| `src/convoy/` | Convoy mod distribution catalog, downloads, and migration |
 | `src/container.rs` | Podman container management |
+| `src/dirs.rs` | Directory layout resolution (`QumaDirs`) with legacy migration |
 | `src/headless_sync.rs` | Fika headless file sync to client overlays |
 | `src/numa.rs` | NUMA-aware container CPU pinning |
 | `src/logging/` | Structured logging (console, file, SQLite, SSE broadcast) |
