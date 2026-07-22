@@ -110,7 +110,51 @@ fn move_staged_files(staging_dir: &Path, dest_root: &Path, files: &[ExtractedFil
         }
         std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(|_| ()))?;
     }
+    restore_selinux_context(dest_root, files);
     Ok(())
+}
+
+/// On SELinux-enabled systems, newly created files may not inherit the parent
+/// directory's security context (e.g. `container_file_t` needed for Podman
+/// bind mounts). Run `restorecon -R` on affected directories so the system
+/// policy assigns the correct labels.
+fn restore_selinux_context(dest_root: &Path, files: &[ExtractedFile]) {
+    let mut dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    for file in files {
+        let dst = dest_root.join(&file.path);
+        if let Some(parent) = dst.parent() {
+            dirs.insert(parent.to_path_buf());
+        }
+    }
+
+    // Deduplicate: if a parent is an ancestor of another, keep only the ancestor
+    let dirs_vec: Vec<PathBuf> = dirs.into_iter().collect();
+    let mut roots: Vec<&Path> = Vec::new();
+    for dir in &dirs_vec {
+        if !roots.iter().any(|r| dir.starts_with(r)) {
+            roots.push(dir.as_path());
+        }
+    }
+
+    for dir in roots {
+        match std::process::Command::new("restorecon")
+            .args(["-R", "-F"])
+            .arg(dir)
+            .output()
+        {
+            Ok(output) if !output.status.success() => {
+                tracing::debug!(
+                    dir = %dir.display(),
+                    stderr = %String::from_utf8_lossy(&output.stderr).trim(),
+                    "restorecon failed (SELinux may not be enabled)"
+                );
+            }
+            Err(_) => {
+                // restorecon not available — not an SELinux system
+            }
+            Ok(_) => {}
+        }
+    }
 }
 
 /// Compute which files from `old_paths` are not present in `new_files`, delete
