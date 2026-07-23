@@ -1053,7 +1053,7 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(429)
                     .set_body_json(&body_429)
-                    .insert_header("Retry-After", "0"),
+                    .insert_header("Retry-After", "1"),
             )
             .up_to_n_times(1)
             .expect(1)

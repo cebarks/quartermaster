@@ -104,11 +104,7 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
             .map(|(id, ver)| (id.as_str(), ver.as_str()))
             .collect();
 
-        let all_dep_nodes = ctx
-            .forge
-            .get_dependencies(&dep_pair_refs)
-            .await
-            .unwrap_or_default();
+        let all_dep_nodes = ctx.forge.get_dependencies(&dep_pair_refs).await?;
 
         let mut dep_nodes_by_forge_id: std::collections::HashMap<
             i64,
