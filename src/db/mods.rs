@@ -495,7 +495,6 @@ impl Database {
         rows.collect()
     }
 
-    #[allow(dead_code)] // Used by later tasks for dependency graph
     pub fn get_all_dependencies(&self) -> rusqlite::Result<Vec<ModDependency>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, mod_id, depends_on_mod_id, depends_on_forge_id, depends_on_name, version_constraint
