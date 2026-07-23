@@ -90,14 +90,7 @@ RUN /build/wine/configure \
 RUN make -j$(nproc)
 RUN make install DESTDIR=/staging
 
-# ponytail: no staging copy for Xvfb/mesa/fonts — fedora-minimal
-# runtime installs them natively via microdnf, avoiding the fragile
-# manual lib-copying that broke repeatedly with distroless
-
 # Stage 2: Minimal runtime
-# ponytail: Hummingbird distroless lacks too many system files Wine needs
-# (/etc/machine-id, fontconfig, xkb data). fedora-minimal has them and
-# is still small (~100MB). Slim down further once boot is proven.
 FROM registry.fedoraproject.org/fedora-minimal:latest
 
 # Runtime deps only — no -devel, no build tools
