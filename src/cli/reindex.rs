@@ -192,3 +192,66 @@ fn reindex_mod_from_archive(
 
     Ok(count)
 }
+
+pub async fn run_deps(apply: bool, ctx: &CliContext) -> Result<()> {
+    let mods = ctx.db.list_mods()?;
+    let forge_mods: Vec<&InstalledMod> = mods.iter().filter(|m| m.forge_mod_id.is_some()).collect();
+
+    if forge_mods.is_empty() {
+        println!("No Forge-installed mods found.");
+        return Ok(());
+    }
+
+    println!(
+        "Resolving dependencies for {} mod(s){}...",
+        forge_mods.len(),
+        if !apply { " (dry run)" } else { "" }
+    );
+
+    let mut total_edges = 0u64;
+
+    for m in &forge_mods {
+        let forge_mod_id = m.forge_mod_id.expect("filtered above");
+        let version = &m.version;
+
+        let dep_nodes = match ctx
+            .forge
+            .get_dependencies(&[(&forge_mod_id.to_string(), version)])
+            .await
+        {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                println!("  {} — failed to resolve: {e}", m.name);
+                continue;
+            }
+        };
+
+        let edge_count = count_dep_nodes(&dep_nodes);
+        if edge_count > 0 {
+            println!("  {} — {} dependency edge(s)", m.name, edge_count);
+            total_edges += edge_count as u64;
+
+            if apply {
+                crate::cli::install::record_dependency_edges_from_tree(&ctx.db, m.id, &dep_nodes);
+            }
+        }
+    }
+
+    if total_edges == 0 {
+        println!("\nNo dependency edges found.");
+    } else if apply {
+        println!("\nRecorded {total_edges} dependency edge(s).");
+    } else {
+        println!("\nWould record {total_edges} edge(s). Run with --apply to commit.");
+    }
+
+    Ok(())
+}
+
+fn count_dep_nodes(nodes: &[crate::forge::models::DependencyNode]) -> usize {
+    nodes
+        .iter()
+        .filter(|n| !n.conflict)
+        .map(|n| 1 + count_dep_nodes(&n.dependencies))
+        .sum()
+}

@@ -1855,7 +1855,7 @@ pub fn collect_all_reverse_deps(db: &Database, mod_db_id: i64) -> Result<Vec<Ins
 ///
 /// Reuses `download_and_install_with_arc` for each dependency so we get
 /// staging-directory safety and proper DB recording. Returns the DB IDs
-/// of installed dependencies for recording edges.
+/// of installed dependencies and the raw `DependencyNode` tree for edge recording.
 pub async fn resolve_and_install_deps(
     forge: &crate::forge::client::ForgeClient,
     db: &Arc<parking_lot::Mutex<crate::db::Database>>,
@@ -1863,7 +1863,7 @@ pub async fn resolve_and_install_deps(
     config: &crate::config::Config,
     forge_mod_id: i64,
     selected_version: &crate::forge::models::ForgeVersion,
-) -> Result<Vec<i64>> {
+) -> Result<(Vec<i64>, Vec<crate::forge::models::DependencyNode>)> {
     let dep_nodes = forge
         .get_dependencies(&[(&forge_mod_id.to_string(), &selected_version.version)])
         .await?;
@@ -1939,24 +1939,48 @@ pub async fn resolve_and_install_deps(
         installed_db_ids.push(db_id);
     }
 
-    Ok(installed_db_ids)
+    Ok((installed_db_ids, dep_nodes))
 }
 
-/// Record dependency edges in the database (parent mod depends on each dep).
-pub fn record_dep_edges(
+/// Record dependency edges from a full `DependencyNode` tree.
+///
+/// Walks the tree recursively, recording edges for all deps — including those
+/// that were already installed before this batch. Stores `depends_on_forge_id`
+/// and `depends_on_name` for every edge, even if the dep mod isn't installed locally.
+pub fn record_dep_edges_from_tree(
     db: &Arc<parking_lot::Mutex<crate::db::Database>>,
     main_mod_db_id: i64,
-    dep_db_ids: &[i64],
+    dep_nodes: &[crate::forge::models::DependencyNode],
 ) {
     let db = db.lock();
-    for dep_db_id in dep_db_ids {
-        match db.insert_dependency(main_mod_db_id, *dep_db_id, None) {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}
-            Err(e) => {
-                tracing::warn!(main_mod_db_id, dep_db_id, err = %e, "failed to record dependency edge");
-            }
+    record_dep_edges_from_tree_inner(&db, main_mod_db_id, dep_nodes);
+}
+
+fn record_dep_edges_from_tree_inner(
+    db: &crate::db::Database,
+    main_mod_db_id: i64,
+    dep_nodes: &[crate::forge::models::DependencyNode],
+) {
+    for node in dep_nodes {
+        if node.conflict {
+            continue;
+        }
+
+        let dep_mod = db.get_mod_by_forge_id(node.id).ok().flatten();
+        let depends_on_mod_id = dep_mod.as_ref().map(|m| m.id);
+
+        let _ = db.insert_dependency(
+            main_mod_db_id,
+            depends_on_mod_id,
+            Some(node.id),
+            Some(&node.name),
+            None,
+        );
+
+        // Recurse into transitive dependencies — record them as deps of
+        // the *child* node (not the root), preserving the tree structure
+        if let Some(child_mod) = &dep_mod {
+            record_dep_edges_from_tree_inner(db, child_mod.id, &node.dependencies);
         }
     }
 }

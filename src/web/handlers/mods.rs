@@ -683,7 +683,10 @@ pub async fn mod_detail(
         let deps = db.get_dependencies(mod_id)?;
         let mut dep_entries = Vec::new();
         for dep in deps {
-            let dep_mod = db.get_mod(dep.depends_on_mod_id)?;
+            let dep_mod = match dep.depends_on_mod_id {
+                Some(id) => db.get_mod(id)?,
+                None => None,
+            };
             dep_entries.push(DepEntry { dep, dep_mod });
         }
         let addons = db.list_addons_for_mod(mod_id)?;
@@ -1551,7 +1554,7 @@ pub async fn install_mod(
     tokio::spawn(async move {
         let result = async {
             // Install dependencies first
-            let dep_db_ids =
+            let (_dep_db_ids, dep_nodes) =
                 crate::ops::resolve_and_install_deps(&forge, &db, &dirs, &config, mod_id, &version)
                     .await?;
 
@@ -1569,8 +1572,8 @@ pub async fn install_mod(
             )
             .await?;
 
-            // Record dependency edges
-            crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
+            // Record dependency edges from full tree
+            crate::ops::record_dep_edges_from_tree(&db_edges, db_id, &dep_nodes);
 
             // Regenerate convoy catalog if enabled
             state_clone.regenerate_convoy();
@@ -1703,7 +1706,7 @@ pub async fn update_mod(
 
     tokio::spawn(async move {
         let result = async {
-            let dep_db_ids = crate::ops::resolve_and_install_deps(
+            let (_dep_db_ids, dep_nodes) = crate::ops::resolve_and_install_deps(
                 &forge,
                 &db,
                 &dirs,
@@ -1746,7 +1749,7 @@ pub async fn update_mod(
             )
             .await?;
 
-            crate::ops::record_dep_edges(&db, mod_db_id, &dep_db_ids);
+            crate::ops::record_dep_edges_from_tree(&db, mod_db_id, &dep_nodes);
 
             // Regenerate convoy catalog if enabled
             state_clone.regenerate_convoy();

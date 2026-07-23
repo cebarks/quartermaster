@@ -288,7 +288,13 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                 // (has queued_for), each entry is a parent forge_mod_id.
                 for parent_forge_mod_id in &queued_for {
                     if let Ok(Some(parent)) = ctx.db.get_mod_by_forge_id(*parent_forge_mod_id) {
-                        match ctx.db.insert_dependency(parent.id, installed_db_id, None) {
+                        match ctx.db.insert_dependency(
+                            parent.id,
+                            Some(installed_db_id),
+                            op.forge_mod_id,
+                            Some(&op.mod_name),
+                            None,
+                        ) {
                             Ok(_) => {}
                             Err(rusqlite::Error::SqliteFailure(err, _))
                                 if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}

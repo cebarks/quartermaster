@@ -136,9 +136,9 @@ async fn main() -> Result<()> {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::remove::run(mod_ref, *force, *yes, *addon, &ctx).await
         }
-        Command::List { json } => {
+        Command::List { json, tree } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::list::run(*json, &ctx)
+            cli::list::run(*json, tree.as_ref().copied(), &ctx)
         }
         Command::Check => {
             let ctx = init_context(&cli, &reload_handles)?;
@@ -170,9 +170,13 @@ async fn main() -> Result<()> {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::invite::run(expires.as_deref(), &ctx)
         }
-        Command::Reindex { apply } => {
+        Command::Reindex { apply, deps } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::reindex::run(!apply, &ctx).await
+            if *deps {
+                cli::reindex::run_deps(*apply, &ctx).await
+            } else {
+                cli::reindex::run(!apply, &ctx).await
+            }
         }
         Command::Backup { mod_ref, list } => {
             let ctx = init_context(&cli, &reload_handles)?;

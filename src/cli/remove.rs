@@ -386,15 +386,20 @@ mod tests {
             .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
             .unwrap();
         // B depends on C
-        ctx.db.insert_dependency(mod_b, mod_c, None).unwrap();
+        ctx.db
+            .insert_dependency(mod_b, Some(mod_c), Some(100), Some("ModC"), None)
+            .unwrap();
 
-        // Removing C directly should succeed (CASCADE on depends_on_mod_id cleans up the dep row)
+        // Removing C directly should succeed (SET NULL on depends_on_mod_id keeps the dep row)
         remove_single_mod(&ctx.db.get_mod(mod_c).unwrap().unwrap(), &ctx).unwrap();
 
         assert!(ctx.db.get_mod(mod_c).unwrap().is_none());
-        // B still exists but its dependency row on C is gone
+        // B still exists and its dependency row persists with depends_on_mod_id=NULL
         assert!(ctx.db.get_mod(mod_b).unwrap().is_some());
-        assert!(ctx.db.get_dependencies(mod_b).unwrap().is_empty());
+        let deps = ctx.db.get_dependencies(mod_b).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].depends_on_mod_id, None);
+        assert_eq!(deps[0].depends_on_forge_id, Some(100));
     }
 
     #[test]
@@ -415,8 +420,12 @@ mod tests {
             .insert_mod(Some(102), Some(202), "ModA", None, "1.0.0", "forge", None)
             .unwrap();
         // A depends on B, B depends on C
-        ctx.db.insert_dependency(mod_a, mod_b, None).unwrap();
-        ctx.db.insert_dependency(mod_b, mod_c, None).unwrap();
+        ctx.db
+            .insert_dependency(mod_a, Some(mod_b), None, None, None)
+            .unwrap();
+        ctx.db
+            .insert_dependency(mod_b, Some(mod_c), None, None, None)
+            .unwrap();
 
         let deps = collect_all_reverse_deps(mod_c, &ctx).unwrap();
         assert_eq!(deps.len(), 2);

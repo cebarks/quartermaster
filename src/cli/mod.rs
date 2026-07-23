@@ -141,6 +141,9 @@ pub enum Command {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Display dependency tree (deps = what each mod needs, rdeps = what needs each mod)
+        #[arg(long, default_missing_value = "deps", num_args = 0..=1)]
+        tree: Option<list::TreeMode>,
     },
 
     /// Check all installed mods for updates
@@ -208,6 +211,9 @@ pub enum Command {
         /// Actually apply changes (dry-run by default)
         #[arg(long)]
         apply: bool,
+        /// Re-resolve and record dependency edges from Forge
+        #[arg(long)]
+        deps: bool,
     },
 
     /// Restore from a backup

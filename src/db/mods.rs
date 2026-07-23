@@ -46,7 +46,9 @@ pub struct InstalledFile {
 pub struct ModDependency {
     pub id: i64,
     pub mod_id: i64,
-    pub depends_on_mod_id: i64,
+    pub depends_on_mod_id: Option<i64>,
+    pub depends_on_forge_id: Option<i64>,
+    pub depends_on_name: Option<String>,
     pub version_constraint: Option<String>,
 }
 
@@ -462,20 +464,22 @@ impl Database {
     pub fn insert_dependency(
         &self,
         mod_id: i64,
-        depends_on_mod_id: i64,
+        depends_on_mod_id: Option<i64>,
+        depends_on_forge_id: Option<i64>,
+        depends_on_name: Option<&str>,
         version_constraint: Option<&str>,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO mod_dependencies (mod_id, depends_on_mod_id, version_constraint)
-             VALUES (?1, ?2, ?3)",
-            params![mod_id, depends_on_mod_id, version_constraint],
+            "INSERT OR IGNORE INTO mod_dependencies (mod_id, depends_on_mod_id, depends_on_forge_id, depends_on_name, version_constraint)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![mod_id, depends_on_mod_id, depends_on_forge_id, depends_on_name, version_constraint],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn get_dependencies(&self, mod_id: i64) -> rusqlite::Result<Vec<ModDependency>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, depends_on_mod_id, version_constraint
+            "SELECT id, mod_id, depends_on_mod_id, depends_on_forge_id, depends_on_name, version_constraint
              FROM mod_dependencies WHERE mod_id = ?1",
         )?;
         let rows = stmt.query_map(params![mod_id], row_to_mod_dependency)?;
@@ -484,10 +488,19 @@ impl Database {
 
     pub fn get_reverse_dependencies(&self, mod_id: i64) -> rusqlite::Result<Vec<ModDependency>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, depends_on_mod_id, version_constraint
+            "SELECT id, mod_id, depends_on_mod_id, depends_on_forge_id, depends_on_name, version_constraint
              FROM mod_dependencies WHERE depends_on_mod_id = ?1",
         )?;
         let rows = stmt.query_map(params![mod_id], row_to_mod_dependency)?;
+        rows.collect()
+    }
+
+    pub fn get_all_dependencies(&self) -> rusqlite::Result<Vec<ModDependency>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, mod_id, depends_on_mod_id, depends_on_forge_id, depends_on_name, version_constraint
+             FROM mod_dependencies",
+        )?;
+        let rows = stmt.query_map([], row_to_mod_dependency)?;
         rows.collect()
     }
 
@@ -771,7 +784,9 @@ fn row_to_mod_dependency(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModDepende
         id: row.get(0)?,
         mod_id: row.get(1)?,
         depends_on_mod_id: row.get(2)?,
-        version_constraint: row.get(3)?,
+        depends_on_forge_id: row.get(3)?,
+        depends_on_name: row.get(4)?,
+        version_constraint: row.get(5)?,
     })
 }
 

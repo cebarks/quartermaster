@@ -143,7 +143,14 @@ fn delete_mod_cascades_to_files_and_deps() {
         .unwrap();
     db.insert_file(mod_a, "plugins/a.json", Some("def456"), Some(512))
         .unwrap();
-    db.insert_dependency(mod_a, mod_b, Some(">=1.0.0")).unwrap();
+    db.insert_dependency(
+        mod_a,
+        Some(mod_b),
+        Some(200),
+        Some("Mod B"),
+        Some(">=1.0.0"),
+    )
+    .unwrap();
 
     assert_eq!(db.get_files_for_mod(mod_a).unwrap().len(), 2);
     assert_eq!(db.get_dependencies(mod_a).unwrap().len(), 1);
@@ -260,12 +267,20 @@ fn insert_and_query_dependency() {
         )
         .unwrap();
 
-    let dep_id = db.insert_dependency(mod_a, mod_b, Some(">=1.0.0")).unwrap();
+    let dep_id = db
+        .insert_dependency(
+            mod_a,
+            Some(mod_b),
+            Some(200),
+            Some("Mod B"),
+            Some(">=1.0.0"),
+        )
+        .unwrap();
     assert!(dep_id > 0);
 
     let deps = db.get_dependencies(mod_a).unwrap();
     assert_eq!(deps.len(), 1);
-    assert_eq!(deps[0].depends_on_mod_id, mod_b);
+    assert_eq!(deps[0].depends_on_mod_id, Some(mod_b));
     assert_eq!(deps[0].version_constraint.as_deref(), Some(">=1.0.0"));
 
     let deleted = db.delete_dependencies_for_mod(mod_a).unwrap();
@@ -310,8 +325,10 @@ fn reverse_dependencies() {
         )
         .unwrap();
 
-    db.insert_dependency(mod_a, mod_b, None).unwrap();
-    db.insert_dependency(mod_c, mod_b, Some(">=2.0.0")).unwrap();
+    db.insert_dependency(mod_a, Some(mod_b), None, None, None)
+        .unwrap();
+    db.insert_dependency(mod_c, Some(mod_b), None, None, Some(">=2.0.0"))
+        .unwrap();
 
     let rev = db.get_reverse_dependencies(mod_b).unwrap();
     assert_eq!(rev.len(), 2);
@@ -319,6 +336,52 @@ fn reverse_dependencies() {
     let dependent_ids: Vec<i64> = rev.iter().map(|d| d.mod_id).collect();
     assert!(dependent_ids.contains(&mod_a));
     assert!(dependent_ids.contains(&mod_c));
+}
+
+#[test]
+fn get_all_dependencies_returns_all_edges() {
+    let db = test_db();
+    let mod_a = db
+        .insert_mod(
+            Some(100),
+            Some(1),
+            "Mod A",
+            Some("mod-a"),
+            "1.0",
+            "forge",
+            None,
+        )
+        .unwrap();
+    let mod_b = db
+        .insert_mod(
+            Some(200),
+            Some(2),
+            "Mod B",
+            Some("mod-b"),
+            "1.0",
+            "forge",
+            None,
+        )
+        .unwrap();
+    let mod_c = db
+        .insert_mod(
+            Some(300),
+            Some(3),
+            "Mod C",
+            Some("mod-c"),
+            "1.0",
+            "forge",
+            None,
+        )
+        .unwrap();
+
+    db.insert_dependency(mod_a, Some(mod_b), Some(200), Some("Mod B"), None)
+        .unwrap();
+    db.insert_dependency(mod_b, Some(mod_c), Some(300), Some("Mod C"), None)
+        .unwrap();
+
+    let all = db.get_all_dependencies().unwrap();
+    assert_eq!(all.len(), 2);
 }
 
 #[test]

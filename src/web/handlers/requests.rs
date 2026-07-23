@@ -322,7 +322,7 @@ async fn trigger_install_for_request(
         tokio::spawn(async move {
             let result = async {
                 // Install dependencies first
-                let dep_db_ids = crate::ops::resolve_and_install_deps(
+                let (_dep_db_ids, dep_nodes) = crate::ops::resolve_and_install_deps(
                     &forge,
                     &db,
                     &dirs,
@@ -346,8 +346,8 @@ async fn trigger_install_for_request(
                 )
                 .await?;
 
-                // Record dependency edges
-                crate::ops::record_dep_edges(&db_edges, db_id, &dep_db_ids);
+                // Record dependency edges from full tree
+                crate::ops::record_dep_edges_from_tree(&db_edges, db_id, &dep_nodes);
 
                 state_clone.regenerate_convoy();
 
