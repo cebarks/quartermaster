@@ -291,8 +291,8 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                         match ctx.db.insert_dependency(
                             parent.id,
                             Some(installed_db_id),
-                            None,
-                            None,
+                            op.forge_mod_id,
+                            Some(&op.mod_name),
                             None,
                         ) {
                             Ok(_) => {}
