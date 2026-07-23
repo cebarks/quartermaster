@@ -445,7 +445,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
         let db = state.db.lock();
         for parent_forge_mod_id in &queued_for {
             if let Ok(Some(parent)) = db.get_mod_by_forge_id(*parent_forge_mod_id) {
-                match db.insert_dependency(parent.id, installed_db_id, None) {
+                match db.insert_dependency(parent.id, Some(installed_db_id), None, None, None) {
                     Ok(_) => {}
                     Err(rusqlite::Error::SqliteFailure(err, _))
                         if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}

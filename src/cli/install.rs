@@ -558,7 +558,10 @@ fn record_dependency_edges(
             None => continue,
         };
 
-        match ctx.db.insert_dependency(main_mod_db_id, dep_db_id, None) {
+        match ctx
+            .db
+            .insert_dependency(main_mod_db_id, Some(dep_db_id), None, None, None)
+        {
             Ok(_) => {}
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}

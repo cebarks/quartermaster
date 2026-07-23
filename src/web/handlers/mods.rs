@@ -683,7 +683,10 @@ pub async fn mod_detail(
         let deps = db.get_dependencies(mod_id)?;
         let mut dep_entries = Vec::new();
         for dep in deps {
-            let dep_mod = db.get_mod(dep.depends_on_mod_id)?;
+            let dep_mod = match dep.depends_on_mod_id {
+                Some(id) => db.get_mod(id)?,
+                None => None,
+            };
             dep_entries.push(DepEntry { dep, dep_mod });
         }
         let addons = db.list_addons_for_mod(mod_id)?;

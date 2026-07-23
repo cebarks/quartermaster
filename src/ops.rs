@@ -1950,7 +1950,7 @@ pub fn record_dep_edges(
 ) {
     let db = db.lock();
     for dep_db_id in dep_db_ids {
-        match db.insert_dependency(main_mod_db_id, *dep_db_id, None) {
+        match db.insert_dependency(main_mod_db_id, Some(*dep_db_id), None, None, None) {
             Ok(_) => {}
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}

@@ -77,7 +77,15 @@
                     {% if let Some(dep_mod) = &dep.dep_mod %}
                     <a href="/quma/mods/{{ dep_mod.id }}">{{ dep_mod.name }}</a>
                     {% else %}
-                    <span class="text-muted">Unknown (ID: {{ dep.dep.depends_on_mod_id }})</span>
+                        {% if let Some(forge_id) = dep.dep.depends_on_forge_id %}
+                            {% if let Some(name) = &dep.dep.depends_on_name %}
+                            <span class="text-muted">{{ name }} (Forge ID: {{ forge_id }}, not installed)</span>
+                            {% else %}
+                            <span class="text-muted">Forge ID: {{ forge_id }} (not installed)</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">Unknown dependency</span>
+                        {% endif %}
                     {% endif %}
                 </td>
                 <td class="text-muted">{{ dep.dep.version_constraint.as_deref().unwrap_or("any") }}</td>
