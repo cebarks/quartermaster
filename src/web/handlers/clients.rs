@@ -102,6 +102,7 @@ struct ClientsStatusPartialTemplate {
     clients: Vec<ClientView>,
     user: SessionUser,
     csrf_token: String,
+    headless_converging: bool,
 }
 
 #[derive(Template)]
@@ -349,10 +350,14 @@ pub async fn client_restart(
     }
 
     let index = path.into_inner();
+    let is_htmx = req.headers().get("HX-Request").is_some();
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
             set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                return Ok(HttpResponse::NoContent().finish());
+            }
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
@@ -371,6 +376,9 @@ pub async fn client_restart(
         Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
     }
 
+    if is_htmx {
+        return Ok(HttpResponse::NoContent().finish());
+    }
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", format!("/quma/headless/{index}")))
         .finish())
@@ -390,10 +398,14 @@ pub async fn client_graceful_restart(
     }
 
     let index = path.into_inner();
+    let is_htmx = req.headers().get("HX-Request").is_some();
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
             set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                return Ok(HttpResponse::NoContent().finish());
+            }
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
@@ -425,6 +437,9 @@ pub async fn client_graceful_restart(
         }
     }
 
+    if is_htmx {
+        return Ok(HttpResponse::NoContent().finish());
+    }
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/headless"))
         .finish())
@@ -444,10 +459,14 @@ pub async fn client_stop(
     }
 
     let index = path.into_inner();
+    let is_htmx = req.headers().get("HX-Request").is_some();
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
             set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                return Ok(HttpResponse::NoContent().finish());
+            }
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
@@ -463,6 +482,9 @@ pub async fn client_stop(
         Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
     }
 
+    if is_htmx {
+        return Ok(HttpResponse::NoContent().finish());
+    }
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", format!("/quma/headless/{index}")))
         .finish())
@@ -482,10 +504,14 @@ pub async fn client_start(
     }
 
     let index = path.into_inner();
+    let is_htmx = req.headers().get("HX-Request").is_some();
     let service = match state.headless_service() {
         Ok(s) => s,
         Err(e) => {
             set_flash(&session, &e.to_string(), FlashType::Error);
+            if is_htmx {
+                return Ok(HttpResponse::NoContent().finish());
+            }
             return Ok(HttpResponse::SeeOther()
                 .insert_header(("Location", "/quma/headless"))
                 .finish());
@@ -504,6 +530,9 @@ pub async fn client_start(
         Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
     }
 
+    if is_htmx {
+        return Ok(HttpResponse::NoContent().finish());
+    }
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", format!("/quma/headless/{index}")))
         .finish())
@@ -797,6 +826,7 @@ pub async fn client_status_partial(
         None => vec![],
     };
 
+    let headless_converging = state.converging.load(std::sync::atomic::Ordering::Relaxed);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let dirs = Arc::clone(&state.dirs);
     let profile_names = build_profile_names(&dirs);
@@ -806,6 +836,7 @@ pub async fn client_status_partial(
         clients,
         user,
         csrf_token,
+        headless_converging,
     };
     Ok(web::Html::new(tmpl.render().map_err(WebError::from)?))
 }
