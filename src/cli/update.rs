@@ -82,6 +82,42 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
         let queue_dir = ctx.dirs.queue_dir();
         std::fs::create_dir_all(&queue_dir)?;
 
+        // Pre-resolve dependencies for all updates in a single API call
+        let dep_pairs: Vec<(String, String)> = results
+            .updates
+            .iter()
+            .filter_map(|u| {
+                let installed = mods_to_check
+                    .iter()
+                    .find(|m| m.forge_mod_id == Some(u.current_version.mod_id));
+                installed.map(|m| {
+                    (
+                        m.forge_mod_id.expect("filtered").to_string(),
+                        u.recommended_version.version.clone(),
+                    )
+                })
+            })
+            .collect();
+
+        let dep_pair_refs: Vec<(&str, &str)> = dep_pairs
+            .iter()
+            .map(|(id, ver)| (id.as_str(), ver.as_str()))
+            .collect();
+
+        let all_dep_nodes = ctx
+            .forge
+            .get_dependencies(&dep_pair_refs)
+            .await
+            .unwrap_or_default();
+
+        let mut dep_nodes_by_forge_id: std::collections::HashMap<
+            i64,
+            Vec<&crate::forge::models::DependencyNode>,
+        > = std::collections::HashMap::new();
+        for node in &all_dep_nodes {
+            dep_nodes_by_forge_id.entry(node.id).or_default().push(node);
+        }
+
         // Each update (+ its deps) is collected and batch-inserted per mod.
         // If any single update's downloads fail, that update is skipped
         // (archives cleaned up), but other updates proceed.
@@ -117,11 +153,12 @@ pub async fn run(mod_ref: Option<&str>, force: bool, addon: bool, ctx: &CliConte
                         .as_deref()
                         .ok_or_else(|| anyhow::anyhow!("no download link"))?;
 
-                    // Resolve deps for new version
-                    let dep_nodes = ctx
-                        .forge
-                        .get_dependencies(&[(&forge_mod_id.to_string(), &version.version)])
-                        .await?;
+                    // Resolve deps for new version (already pre-fetched above)
+                    let dep_nodes: Vec<crate::forge::models::DependencyNode> =
+                        dep_nodes_by_forge_id
+                            .get(&forge_mod_id)
+                            .map(|nodes| nodes.iter().map(|n| (*n).clone()).collect())
+                            .unwrap_or_default();
                     let mut deps_to_install = Vec::new();
                     let mut skipped = Vec::new();
                     crate::cli::install::collect_deps_to_install(
