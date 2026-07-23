@@ -977,13 +977,6 @@ pub async fn converge(
         .await?;
     } else {
         info!("Already at desired count ({desired_count}), checking for overlay updates");
-
-        // Restart running containers to pick up lower-layer changes from mod sync.
-        // Modifying the lower layer while overlay mounts are active is undefined
-        // behavior — restarting gives each container a fresh overlay mount.
-        if current_count > 0 {
-            restart_running_clients(container_mgr, current_count).await?;
-        }
     }
 
     // Reconcile NUMA pinning on containers that existed before this convergence.
