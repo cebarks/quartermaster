@@ -6,15 +6,21 @@ use tokio::io::AsyncWriteExt;
 
 use super::cache::ForgeResponseCache;
 use super::models::*;
+use super::rate_limit::RateLimiter;
 
 const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
-const MAX_RETRIES: u32 = 2;
+const MAX_RETRIES: u32 = 3;
 const MAX_DOWNLOAD_SIZE: u64 = 500 * 1024 * 1024; // 500 MB
 
 #[cfg(test)]
 const EXTERNAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 #[cfg(not(test))]
 const EXTERNAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+#[cfg(test)]
+const MIN_REQUEST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(0);
+#[cfg(not(test))]
+const MIN_REQUEST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(serde::Deserialize)]
 struct DataWrapper<T> {
@@ -34,6 +40,7 @@ pub struct ForgeClient {
     client: reqwest::Client,
     base_url: String,
     cache: ForgeResponseCache,
+    rate_limiter: RateLimiter,
 }
 
 impl ForgeClient {
@@ -64,6 +71,7 @@ impl ForgeClient {
             client,
             base_url,
             cache: ForgeResponseCache::new(256, 300),
+            rate_limiter: RateLimiter::new(MIN_REQUEST_INTERVAL),
         })
     }
 
@@ -71,6 +79,8 @@ impl ForgeClient {
         let mut last_error = None;
 
         for attempt in 0..=MAX_RETRIES {
+            self.rate_limiter.acquire().await;
+
             let req = request
                 .try_clone()
                 .ok_or_else(|| anyhow::anyhow!("request not cloneable (has streaming body)"))?
@@ -91,7 +101,7 @@ impl ForgeClient {
                         .and_then(|v| v.to_str().ok())
                         .and_then(|v| v.parse::<u64>().ok())
                         .unwrap_or(5);
-                    let wait = retry_after.min(60);
+                    let wait = retry_after.clamp(1, 60);
                     tracing::warn!(
                         attempt = attempt + 1,
                         retry_after = wait,
@@ -836,7 +846,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/mods"))
             .respond_with(ResponseTemplate::new(500))
-            .expect(3) // initial + 2 retries (5xx is now retried)
+            .expect(4) // initial + 3 retries (5xx is now retried)
             .mount(&server)
             .await;
 
@@ -1043,7 +1053,7 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(429)
                     .set_body_json(&body_429)
-                    .insert_header("Retry-After", "0"),
+                    .insert_header("Retry-After", "1"),
             )
             .up_to_n_times(1)
             .expect(1)
@@ -1065,6 +1075,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retry_after_zero_still_waits() {
+        let server = MockServer::start().await;
+        let body_429 = serde_json::json!({
+            "success": false,
+            "code": "RATE_LIMITED",
+            "message": "Too many requests."
+        });
+        let body_ok = serde_json::json!({
+            "data": [{"id": 1, "name": "Test Mod"}]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .set_body_json(&body_429)
+                    .insert_header("Retry-After", "0"),
+            )
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/mods"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body_ok))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).await;
+        let start = std::time::Instant::now();
+        let mods = client.search_mods("test").await.unwrap();
+
+        assert_eq!(mods.len(), 1);
+        // With rate limiter at 0ms in tests + retry_after clamped to 1s,
+        // total time should be >= 1s
+        assert!(
+            start.elapsed() >= std::time::Duration::from_millis(900),
+            "should have waited at least ~1s for retry_after=0 (clamped to 1)"
+        );
+    }
+
+    #[tokio::test]
     async fn gives_up_after_max_retries_on_429() {
         let server = MockServer::start().await;
         let body_429 = serde_json::json!({
@@ -1081,7 +1135,7 @@ mod tests {
                     .set_body_json(&body_429)
                     .insert_header("Retry-After", "0"),
             )
-            .expect(3) // initial + 2 retries
+            .expect(4) // initial + 3 retries
             .mount(&server)
             .await;
 
@@ -1132,7 +1186,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/mods"))
             .respond_with(ResponseTemplate::new(500))
-            .expect(3) // initial + 2 retries
+            .expect(4) // initial + 3 retries
             .mount(&server)
             .await;
 
