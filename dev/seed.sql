@@ -77,8 +77,12 @@ INSERT INTO installed_files (id, mod_id, file_path, file_hash, file_size, source
 -- ============================================================
 -- Mod dependencies
 -- ============================================================
-INSERT INTO mod_dependencies (id, mod_id, depends_on_mod_id, version_constraint) VALUES
-  (1, 2, 1, '>=2.3.0');
+DELETE FROM mod_dependencies;
+
+INSERT INTO mod_dependencies (id, mod_id, depends_on_mod_id, depends_on_forge_id, depends_on_name, version_constraint) VALUES
+  (1, 2, 1, 2326, 'Fika Server', '>=2.3.0'),
+  (2, 5, 2, 2357, 'Fika Client', NULL),
+  (3, 5, 1, 2326, 'Fika Server', NULL);
 
 -- ============================================================
 -- Raids (25 completed raids across 3 players)
