@@ -280,6 +280,23 @@ impl ContainerManager {
         Ok(())
     }
 
+    /// Ensure a container image is available locally, pulling it if necessary.
+    ///
+    /// Idempotent: if the image already exists locally, this is a fast no-op.
+    /// Network errors during pull propagate as errors.
+    pub async fn ensure_image(&self, image: &str) -> Result<()> {
+        match self.docker.inspect_image(image).await {
+            Ok(_) => {
+                tracing::debug!(image, "container image already available locally");
+                Ok(())
+            }
+            Err(_) => {
+                tracing::info!(image, "container image not found locally, pulling");
+                self.pull_image(image).await
+            }
+        }
+    }
+
     pub async fn create_container(&self, opts: CreateContainerOpts) -> Result<String> {
         let env: Vec<String> = opts.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
         let binds: Vec<String> = opts.volumes.iter().map(|v| v.to_bind_string()).collect();

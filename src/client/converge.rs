@@ -864,6 +864,24 @@ pub async fn converge(
         }
     }
 
+    // Ensure all required container images are available locally before
+    // modifying any state. Collect unique images (global + per-client overrides).
+    {
+        let mut images: Vec<&str> = vec![&headless_config.image];
+        for client in &headless_config.clients {
+            if let Some(ref img) = client.image {
+                if !images.contains(&img.as_str()) {
+                    images.push(img);
+                }
+            }
+        }
+        for image in &images {
+            container_mgr.ensure_image(image).await.with_context(|| {
+                format!("failed to ensure headless image '{image}' is available")
+            })?;
+        }
+    }
+
     let desired_count = headless_config.client_count();
     info!("Starting convergence: desired count = {desired_count}");
 
@@ -1517,30 +1535,7 @@ async fn create_client_container(
         });
     }
 
-    // Pass through DRI render nodes so the EFT Unity engine can initialize.
-    // Without a GPU device, Unity hangs during graphics init even with -nographics.
-    for entry in std::fs::read_dir("/dev/dri")
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with("card") || name.starts_with("renderD") {
-            let path = entry.path().to_string_lossy().to_string();
-            devices.push(DeviceMapping {
-                path_on_host: Some(path.clone()),
-                path_in_container: Some(path),
-                cgroup_permissions: Some("rwm".to_string()),
-            });
-        }
-    }
-
-    let security_opt = if devices.is_empty() {
-        vec![]
-    } else {
-        vec!["label=disable".to_string()]
-    };
+    let security_opt = vec![];
 
     // Resolve NUMA pinning
     let client_index = (index - 1) as usize;
