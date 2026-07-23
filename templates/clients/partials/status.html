@@ -1,5 +1,13 @@
 {% import "clients/partials/badges.html" as badges %}
 {% import "partials/icons.html" as icons %}
+{% if headless_converging %}
+<div style="background-color: var(--warning-bg); border-left: 4px solid var(--warning); padding: 0.75rem; border-radius: 4px; margin-bottom: 0.5rem">
+    <div class="flex gap-1" style="align-items: center">
+        <span class="loading-pulse" style="display: inline-block; width: 1rem; height: 1rem; border-radius: 50%; background: var(--warning)"></span>
+        <span><strong>Converging...</strong> Scaling clients to target count.</span>
+    </div>
+</div>
+{% endif %}
 {% if clients.is_empty() %}
 <div class="empty-state">
     <p>No headless clients configured.</p>
@@ -59,18 +67,18 @@
             </td>
             {% if user.can("headless.manage") %}
             <td>
-                <div class="flex gap-1">
-                    <form method="post" action="/quma/headless/{{ client.state.index }}/start" style="display:inline">
+                <div class="action-buttons">
+                    <form method="post" action="/quma/headless/{{ client.state.index }}/start" hx-post="/quma/headless/{{ client.state.index }}/start" hx-swap="none" style="display:inline">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-sm btn-success" title="Start"{% if client.state.container_status == crate::client::ContainerStatus::Running %} disabled{% endif %}>{% call icons::play() %}{% endcall %}</button>
                     </form>
-                    <form method="post" action="/quma/headless/{{ client.state.index }}/stop" style="display:inline"
-                          onsubmit="return confirm('Stop client {{ client.state.index }}?')">
+                    <form method="post" action="/quma/headless/{{ client.state.index }}/stop" hx-post="/quma/headless/{{ client.state.index }}/stop" hx-swap="none" style="display:inline"
+                          hx-confirm="Stop client {{ client.state.index }}?">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-sm btn-danger" title="Stop"{% if client.state.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::stop() %}{% endcall %}</button>
                     </form>
-                    <form method="post" action="/quma/headless/{{ client.state.index }}/restart" style="display:inline"
-                          onsubmit="return confirm('Restart client {{ client.state.index }}?')">
+                    <form method="post" action="/quma/headless/{{ client.state.index }}/restart" hx-post="/quma/headless/{{ client.state.index }}/restart" hx-swap="none" style="display:inline"
+                          hx-confirm="Restart client {{ client.state.index }}?">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-sm btn-warning" title="Restart"{% if client.state.container_status == crate::client::ContainerStatus::Stopped %} disabled{% endif %}>{% call icons::refresh() %}{% endcall %}</button>
                     </form>
