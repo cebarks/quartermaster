@@ -4,6 +4,7 @@
 - mod requests expansion isn't clear, add a little arrow to the row to show that it can be expanded
 - videos/screenshots and README cleanup
 - zip/url mod update flow
+- github release support
 
 ## Quick Wins
 - infinite use invite codes (no multi-use support, only single-use)
@@ -14,6 +15,8 @@
 - headless client start/stop/restart buttons on `/quma/headless` go past the card length
 - currency items (USD, EUR) displayed as roubles instead of as currency balances (Stash)
 - typo in update changelog: versions url should use `/#versions` hash anchor, not `/versions` path segment (current URL 404s on Forge)
+- no auto-refresh when scaling/converging clients
+- typo in update changelog: versions url should be like this `https://forge.sp-tarkov.com/mod/2310/wtt-commonlib/#versions` (`#version` is the important part)
 
 ## Convoy
 - user config file sync
