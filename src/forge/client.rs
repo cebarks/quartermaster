@@ -6,6 +6,7 @@ use tokio::io::AsyncWriteExt;
 
 use super::cache::ForgeResponseCache;
 use super::models::*;
+use super::rate_limit::RateLimiter;
 
 const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
 const MAX_RETRIES: u32 = 2;
@@ -15,6 +16,11 @@ const MAX_DOWNLOAD_SIZE: u64 = 500 * 1024 * 1024; // 500 MB
 const EXTERNAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 #[cfg(not(test))]
 const EXTERNAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+#[cfg(test)]
+const MIN_REQUEST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(0);
+#[cfg(not(test))]
+const MIN_REQUEST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(serde::Deserialize)]
 struct DataWrapper<T> {
@@ -34,6 +40,7 @@ pub struct ForgeClient {
     client: reqwest::Client,
     base_url: String,
     cache: ForgeResponseCache,
+    rate_limiter: RateLimiter,
 }
 
 impl ForgeClient {
@@ -64,6 +71,7 @@ impl ForgeClient {
             client,
             base_url,
             cache: ForgeResponseCache::new(256, 300),
+            rate_limiter: RateLimiter::new(MIN_REQUEST_INTERVAL),
         })
     }
 
@@ -71,6 +79,8 @@ impl ForgeClient {
         let mut last_error = None;
 
         for attempt in 0..=MAX_RETRIES {
+            self.rate_limiter.acquire().await;
+
             let req = request
                 .try_clone()
                 .ok_or_else(|| anyhow::anyhow!("request not cloneable (has streaming body)"))?
