@@ -6,9 +6,7 @@ use anyhow::{Context, Result};
 pub struct QumaDirs {
     pub root: PathBuf,
     pub spt_server: PathBuf,
-    #[allow(dead_code)] // ponytail: used once converge.rs migrates to new layout
     pub headless: PathBuf,
-    #[allow(dead_code)] // ponytail: used once converge.rs migrates to new layout
     pub overlay: PathBuf,
     legacy: bool,
 }
@@ -214,7 +212,6 @@ impl QumaDirs {
 
     // -- Headless paths --
 
-    #[allow(dead_code)] // ponytail: used once converge.rs migrates to new layout
     pub fn client_overlay(&self, index: u32) -> PathBuf {
         self.overlay.join(format!("client-{index}"))
     }

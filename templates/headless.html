@@ -261,11 +261,6 @@
             <input type="text" id="clients_image" name="image" value="{% if let Some(c) = &config.headless %}{{ c.image }}{% else %}ghcr.io/cebarks/quartermaster/headless:latest{% endif %}">
         </div>
 
-        <div class="form-group">
-            <label for="clients_isolated_paths">Isolated Paths (one per line)</label>
-            <textarea id="clients_isolated_paths" name="isolated_paths" rows="3" class="form-control" placeholder="BepInEx/config">{% if let Some(c) = &config.headless %}{{ c.isolated_paths.join("\n") }}{% else %}BepInEx/config{% endif %}</textarea>
-        </div>
-
         {% if !numa_nodes.is_empty() %}
         <h3 style="margin-top: 1.5rem">NUMA Scheduling</h3>
         <div class="form-group">

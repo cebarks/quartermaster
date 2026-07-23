@@ -147,7 +147,6 @@ pub struct HeadlessSettingsForm {
     server_ready_timeout: u64,
     base_udp_port: u16,
     image: String,
-    isolated_paths: String,
     #[serde(default)]
     numa_policy: String,
     numa_node: Option<u32>,
@@ -401,13 +400,6 @@ pub async fn save_headless_settings(
 
     let restart_policy: RestartPolicy = form.restart_policy.parse().unwrap_or(RestartPolicy::Auto);
 
-    let isolated: Vec<String> = form
-        .isolated_paths
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
-
     let _guard = state.config_lock.lock();
     let mut config = Config::load(&state.config_path).map_err(WebError::from)?;
     let existing = config.headless.as_ref();
@@ -432,7 +424,6 @@ pub async fn save_headless_settings(
         base_udp_port: form.base_udp_port,
         force_ip: existing.and_then(|h| h.force_ip.clone()),
         image: form.image.trim().to_string(),
-        isolated_paths: isolated,
         numa_auto,
         numa_node,
         clients: existing.map(|h| h.clients.clone()).unwrap_or_default(),

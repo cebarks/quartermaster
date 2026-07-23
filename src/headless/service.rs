@@ -579,7 +579,7 @@ impl HeadlessService {
                 }
             }
 
-            let overlay = crate::client::converge::client_overlay_dir(&dirs.headless, index);
+            let overlay = dirs.client_overlay(index);
             if overlay.exists() {
                 let _ = std::fs::remove_dir_all(&overlay);
             }
@@ -668,9 +668,8 @@ impl HeadlessService {
                 return;
             }
 
-            let clients_dir = dirs.headless.join(".quma/clients");
-            if clients_dir.is_dir() {
-                let _ = std::fs::remove_dir_all(&clients_dir);
+            if dirs.overlay.is_dir() {
+                let _ = std::fs::remove_dir_all(&dirs.overlay);
             }
 
             converging.store(false, std::sync::atomic::Ordering::Release);

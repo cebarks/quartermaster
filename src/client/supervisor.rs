@@ -472,8 +472,8 @@ async fn exit_watcher_loop(
     backoff_cap: u64,
     converging: Arc<AtomicBool>,
     cancel_token: CancellationToken,
-    config: Arc<parking_lot::RwLock<Config>>,
-    db: Arc<parking_lot::Mutex<crate::db::Database>>,
+    _config: Arc<parking_lot::RwLock<Config>>,
+    _db: Arc<parking_lot::Mutex<crate::db::Database>>,
 ) {
     let mut retry_delay = Duration::from_secs(1);
     let max_retry_delay = Duration::from_secs(30);
@@ -666,18 +666,6 @@ async fn exit_watcher_loop(
                 }
                 tracing::info!(container = %container_name, "Restarted successfully");
 
-                // Re-apply Fika overlay config after a delay — Fika overwrites
-                // the seed config with a full BepInEx config on first boot,
-                // resetting our Force IP, Last Version, etc. to defaults.
-                let config_clone = Arc::clone(&config);
-                let db_clone = Arc::clone(&db);
-                let reapply_index = index;
-                tokio::spawn(reapply_fika_config_after_boot(
-                    config_clone,
-                    db_clone,
-                    reapply_index,
-                ));
-
                 // Continue loop to watch again
             }
             Err(e) => {
@@ -742,42 +730,6 @@ pub fn backoff_duration(failures: u32, cap: u64) -> Duration {
     let exponential = base.saturating_mul(power);
     let capped = exponential.min(cap);
     Duration::from_secs(capped)
-}
-
-/// Re-apply Fika overlay config values after a container boots.
-///
-/// Fika's BepInEx config binding regenerates com.fika.core.cfg on first boot,
-/// overwriting our seed values with defaults. We wait 15 seconds for Fika to
-/// finish generating the config, then re-apply Force IP, Last Version, etc.
-#[allow(deprecated)]
-async fn reapply_fika_config_after_boot(
-    config: Arc<parking_lot::RwLock<Config>>,
-    db: Arc<parking_lot::Mutex<crate::db::Database>>,
-    index: u32,
-) {
-    tokio::time::sleep(Duration::from_secs(15)).await;
-    let cfg = config.read();
-    if let Some(ref hc) = cfg.headless {
-        let fika_version = {
-            let db_guard = db.lock();
-            db_guard
-                .get_mod_by_forge_id(crate::config::FIKA_CLIENT_FORGE_ID)
-                .ok()
-                .flatten()
-                .map(|m| m.version)
-        };
-        if let Err(e) = crate::client::converge::reapply_fika_config(
-            &hc.install_dir,
-            index,
-            hc.force_ip.as_deref(),
-            hc.use_upnp,
-            fika_version.as_deref(),
-        ) {
-            tracing::warn!(err = %e, "Failed to re-apply Fika overlay config after restart");
-        } else {
-            tracing::debug!("Re-applied Fika overlay config for client {index}");
-        }
-    }
 }
 
 #[cfg(test)]
