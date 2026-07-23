@@ -26,10 +26,8 @@
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
 
 ## Headless Client
-- SELinux `label=disable` still applied when GPU devices are present (volumes use `:z` shared label otherwise — #232)
 - shared RW volume mount for base game dir (`converge.rs`)
 - too-many-arguments on convergence functions (clippy lint suppressed)
-- ensure headless + spt-server images have been pulled on startup
 - better health client detection
 - don't delete headless overlay by default, allow selection of which existing, not already in use overlay to use on new client creation (or when editing a client)
 - be able to `podman rm` and re-init the client without wiping anything else
