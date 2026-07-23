@@ -53,7 +53,8 @@ pub async fn run(
     let selected_version = pick_version(ctx, &forge_mod, version).await?;
     check_fika_compat(&forge_mod.name, &selected_version)?;
 
-    let (to_install, skipped_conflicts) = resolve_deps(ctx, &forge_mod, &selected_version).await?;
+    let (to_install, skipped_conflicts, dep_nodes) =
+        resolve_deps(ctx, &forge_mod, &selected_version).await?;
     display_install_plan(
         &forge_mod.name,
         &selected_version.version,
@@ -203,7 +204,7 @@ pub async fn run(
 
     install_deps(ctx, &to_install).await?;
     let db_id = install_main_mod(ctx, &forge_mod, &selected_version).await?;
-    record_dependency_edges(ctx, db_id, &to_install)?;
+    record_dependency_edges_from_tree(&ctx.db, db_id, &dep_nodes);
 
     println!(
         "\n{} v{} installed successfully.",
@@ -451,7 +452,11 @@ async fn resolve_deps(
     ctx: &CliContext,
     forge_mod: &crate::forge::models::ForgeMod,
     selected_version: &ForgeVersion,
-) -> Result<(Vec<PendingInstall>, Vec<String>)> {
+) -> Result<(
+    Vec<PendingInstall>,
+    Vec<String>,
+    Vec<crate::forge::models::DependencyNode>,
+)> {
     let dep_nodes = ctx
         .forge
         .get_dependencies(&[(&forge_mod.id.to_string(), &selected_version.version)])
@@ -460,7 +465,7 @@ async fn resolve_deps(
     let mut to_install = Vec::new();
     let mut skipped_conflicts = Vec::new();
     collect_deps_to_install(&dep_nodes, &ctx.db, &mut to_install, &mut skipped_conflicts)?;
-    Ok((to_install, skipped_conflicts))
+    Ok((to_install, skipped_conflicts, dep_nodes))
 }
 
 fn display_install_plan(
@@ -546,30 +551,36 @@ async fn install_main_mod(
     .await
 }
 
-fn record_dependency_edges(
-    ctx: &CliContext,
+/// Walk the full Forge `DependencyNode` tree and record all edges, including
+/// deps that were already installed before this batch. Stores forge_id and name
+/// for every edge, even if the dep mod isn't installed locally.
+fn record_dependency_edges_from_tree(
+    db: &crate::db::Database,
     main_mod_db_id: i64,
-    deps: &[PendingInstall],
-) -> Result<()> {
-    for dep in deps {
-        let dep_installed = ctx.db.get_mod_by_forge_id(dep.mod_id)?;
-        let dep_db_id = match dep_installed {
-            Some(m) => m.id,
-            None => continue,
-        };
+    dep_nodes: &[crate::forge::models::DependencyNode],
+) {
+    for node in dep_nodes {
+        if node.conflict {
+            continue;
+        }
 
-        match ctx
-            .db
-            .insert_dependency(main_mod_db_id, Some(dep_db_id), None, None, None)
-        {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {}
-            Err(e) => return Err(e.into()),
+        let dep_mod = db.get_mod_by_forge_id(node.id).ok().flatten();
+        let depends_on_mod_id = dep_mod.as_ref().map(|m| m.id);
+
+        let _ = db.insert_dependency(
+            main_mod_db_id,
+            depends_on_mod_id,
+            Some(node.id),
+            Some(&node.name),
+            None,
+        );
+
+        // Recurse into transitive dependencies — record them as deps of
+        // the *child* node (not the root), preserving the tree structure
+        if let Some(child_mod) = &dep_mod {
+            record_dependency_edges_from_tree(db, child_mod.id, &node.dependencies);
         }
     }
-
-    Ok(())
 }
 
 /// Metadata needed to install a single mod from Forge.
