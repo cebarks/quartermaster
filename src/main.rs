@@ -136,9 +136,9 @@ async fn main() -> Result<()> {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::remove::run(mod_ref, *force, *yes, *addon, &ctx).await
         }
-        Command::List { json } => {
+        Command::List { json, tree } => {
             let ctx = init_context(&cli, &reload_handles)?;
-            cli::list::run(*json, &ctx)
+            cli::list::run(*json, tree.as_ref().copied(), &ctx)
         }
         Command::Check => {
             let ctx = init_context(&cli, &reload_handles)?;
