@@ -1550,6 +1550,7 @@ async fn create_client_container(
         image: headless_config.resolve_image(client_index).to_string(),
         env,
         volumes,
+        overlay_mounts: vec![],
         ports,
         labels,
         user: None,

@@ -366,6 +366,7 @@ pub(crate) fn create_container_opts(
             read_only: false,
             selinux: SelinuxLabel::Private,
         }],
+        overlay_mounts: vec![],
         ports: vec![PortMapping {
             host_port: DEFAULT_SPT_PORT,
             container_port: DEFAULT_SPT_PORT,
