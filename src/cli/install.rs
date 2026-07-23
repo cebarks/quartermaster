@@ -554,7 +554,7 @@ async fn install_main_mod(
 /// Walk the full Forge `DependencyNode` tree and record all edges, including
 /// deps that were already installed before this batch. Stores forge_id and name
 /// for every edge, even if the dep mod isn't installed locally.
-fn record_dependency_edges_from_tree(
+pub fn record_dependency_edges_from_tree(
     db: &crate::db::Database,
     main_mod_db_id: i64,
     dep_nodes: &[crate::forge::models::DependencyNode],

@@ -211,6 +211,9 @@ pub enum Command {
         /// Actually apply changes (dry-run by default)
         #[arg(long)]
         apply: bool,
+        /// Re-resolve and record dependency edges from Forge
+        #[arg(long)]
+        deps: bool,
     },
 
     /// Restore from a backup
