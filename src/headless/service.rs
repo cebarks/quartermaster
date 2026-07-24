@@ -579,7 +579,7 @@ impl HeadlessService {
                 }
             }
 
-            let overlay = dirs.client_overlay(index);
+            let overlay = dirs.headless_overlay(index);
             if overlay.exists() {
                 let _ = std::fs::remove_dir_all(&overlay);
             }
@@ -668,8 +668,8 @@ impl HeadlessService {
                 return;
             }
 
-            if dirs.overlay.is_dir() {
-                let _ = std::fs::remove_dir_all(&dirs.overlay);
+            if dirs.overlays.is_dir() {
+                let _ = std::fs::remove_dir_all(&dirs.overlays);
             }
 
             converging.store(false, std::sync::atomic::Ordering::Release);

@@ -832,7 +832,7 @@ pub async fn converge(
              re-applied manually after migration. You can remove the old directories \
              once verified.",
             legacy_overlay.display(),
-            dirs.overlay.display()
+            dirs.overlays.display()
         );
     }
 
@@ -1054,7 +1054,7 @@ pub async fn converge(
     // Update overlays for all defined clients
     for (i, _client_def) in headless_config.clients.iter().enumerate() {
         let index = (i + 1) as u32;
-        let overlay_dir = dirs.client_overlay(index);
+        let overlay_dir = dirs.headless_overlay(index);
         setup_client_overlay(
             &headless_config.install_dir,
             &overlay_dir,
@@ -1279,7 +1279,7 @@ async fn remove_excess_clients(
 
     // Clean up overlay directories for removed clients
     for i in (desired_count + 1)..=current_count {
-        let overlay = dirs.client_overlay(i);
+        let overlay = dirs.headless_overlay(i);
         if overlay.exists() {
             if let Err(e) = std::fs::remove_dir_all(&overlay) {
                 warn!("Failed to clean overlay dir for client {i}: {e}");
@@ -1415,7 +1415,7 @@ async fn create_client_container(
     fika_version: Option<&str>,
 ) -> Result<()> {
     let name = client_container_name(index);
-    let overlay_dir = dirs.client_overlay(index);
+    let overlay_dir = dirs.headless_overlay(index);
 
     // Set up overlay directory
     setup_client_overlay(

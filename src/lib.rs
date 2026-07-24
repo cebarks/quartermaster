@@ -18,6 +18,7 @@ pub mod invite;
 pub mod logging;
 pub mod numa;
 pub mod ops;
+pub mod overlay;
 pub mod queue;
 pub mod server_detect;
 pub mod spt;

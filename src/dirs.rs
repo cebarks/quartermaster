@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 pub struct QumaDirs {
     pub root: PathBuf,
     pub spt_server: PathBuf,
-    pub headless: PathBuf,
-    pub overlay: PathBuf,
+    pub headless_base: PathBuf,
+    pub overlays: PathBuf,
     legacy: bool,
 }
 
@@ -15,8 +15,8 @@ impl QumaDirs {
     pub fn from_root(root: PathBuf) -> Self {
         Self {
             spt_server: root.join("spt-server"),
-            headless: root.join("headless"),
-            overlay: root.join("headless-overlay"),
+            headless_base: root.join("headless"),
+            overlays: root.join("overlays"),
             root,
             legacy: false,
         }
@@ -25,8 +25,8 @@ impl QumaDirs {
     pub fn from_legacy(spt_dir: PathBuf) -> Self {
         Self {
             spt_server: spt_dir.clone(),
-            headless: PathBuf::new(),
-            overlay: PathBuf::new(),
+            headless_base: PathBuf::new(),
+            overlays: PathBuf::new(),
             root: spt_dir,
             legacy: true,
         }
@@ -179,7 +179,11 @@ impl QumaDirs {
     // -- SPT server paths --
 
     pub fn mod_file_path(&self, rel: &str) -> PathBuf {
-        self.spt_server.join(rel)
+        if self.legacy {
+            self.spt_server.join(rel)
+        } else {
+            self.mod_overlay().join(rel)
+        }
     }
 
     pub fn server_mods_dir(&self) -> PathBuf {
@@ -210,10 +214,69 @@ impl QumaDirs {
             .join("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
     }
 
-    // -- Headless paths --
+    // -- Overlay paths --
 
-    pub fn client_overlay(&self, index: u32) -> PathBuf {
-        self.overlay.join(format!("client-{index}"))
+    pub fn mod_overlay(&self) -> PathBuf {
+        self.overlays.join("mod")
+    }
+
+    pub fn runtime_overlay(&self) -> PathBuf {
+        self.overlays.join("runtime")
+    }
+
+    pub fn runtime_upper(&self) -> PathBuf {
+        self.overlays.join("runtime/upper")
+    }
+
+    pub fn runtime_work(&self) -> PathBuf {
+        self.overlays.join("runtime/work")
+    }
+
+    pub fn headless_overlay(&self, index: u32) -> PathBuf {
+        self.overlays.join(format!("headless/client-{index}"))
+    }
+
+    pub fn headless_upper(&self, index: u32) -> PathBuf {
+        self.overlays.join(format!("headless/client-{index}/upper"))
+    }
+
+    pub fn headless_work(&self, index: u32) -> PathBuf {
+        self.overlays.join(format!("headless/client-{index}/work"))
+    }
+
+    pub fn headless_wine_prefix(&self, index: u32) -> PathBuf {
+        self.overlays
+            .join(format!("headless/client-{index}/wine-prefix"))
+    }
+
+    // -- Runtime merge points --
+
+    pub fn spt_runtime(&self) -> PathBuf {
+        self.root.join("runtimes/spt-server")
+    }
+
+    pub fn headless_runtime(&self, index: u32) -> PathBuf {
+        self.root.join(format!("runtimes/headless/client-{index}"))
+    }
+
+    // -- OverlayMount constructors --
+
+    pub fn spt_overlay(&self) -> crate::overlay::OverlayMount {
+        crate::overlay::OverlayMount {
+            lower_dirs: vec![self.spt_server.clone(), self.mod_overlay()],
+            upper_dir: self.runtime_upper(),
+            work_dir: self.runtime_work(),
+            merged_dir: self.spt_runtime(),
+        }
+    }
+
+    pub fn headless_overlay_mount(&self, index: u32) -> crate::overlay::OverlayMount {
+        crate::overlay::OverlayMount {
+            lower_dirs: vec![self.headless_base.clone(), self.mod_overlay()],
+            upper_dir: self.headless_upper(index),
+            work_dir: self.headless_work(index),
+            merged_dir: self.headless_runtime(index),
+        }
     }
 }
 
@@ -227,8 +290,8 @@ mod tests {
         let dirs = QumaDirs::from_root(PathBuf::from("/opt/quma"));
         assert_eq!(dirs.root, PathBuf::from("/opt/quma"));
         assert_eq!(dirs.spt_server, PathBuf::from("/opt/quma/spt-server"));
-        assert_eq!(dirs.headless, PathBuf::from("/opt/quma/headless"));
-        assert_eq!(dirs.overlay, PathBuf::from("/opt/quma/headless-overlay"));
+        assert_eq!(dirs.headless_base, PathBuf::from("/opt/quma/headless"));
+        assert_eq!(dirs.overlays, PathBuf::from("/opt/quma/overlays"));
     }
 
     #[test]
@@ -269,20 +332,60 @@ mod tests {
         );
         assert_eq!(
             dirs.mod_file_path("SPT/user/mods/test"),
-            PathBuf::from("/opt/quma/spt-server/SPT/user/mods/test")
+            PathBuf::from("/opt/quma/overlays/mod/SPT/user/mods/test")
         );
     }
 
     #[test]
-    fn headless_overlay_paths() {
+    fn overlay_paths() {
         let dirs = QumaDirs::from_root(PathBuf::from("/opt/quma"));
+        assert_eq!(dirs.mod_overlay(), PathBuf::from("/opt/quma/overlays/mod"));
         assert_eq!(
-            dirs.client_overlay(0),
-            PathBuf::from("/opt/quma/headless-overlay/client-0")
+            dirs.runtime_upper(),
+            PathBuf::from("/opt/quma/overlays/runtime/upper")
         );
         assert_eq!(
-            dirs.client_overlay(3),
-            PathBuf::from("/opt/quma/headless-overlay/client-3")
+            dirs.headless_overlay(1),
+            PathBuf::from("/opt/quma/overlays/headless/client-1")
+        );
+        assert_eq!(
+            dirs.headless_upper(2),
+            PathBuf::from("/opt/quma/overlays/headless/client-2/upper")
+        );
+        assert_eq!(
+            dirs.headless_wine_prefix(1),
+            PathBuf::from("/opt/quma/overlays/headless/client-1/wine-prefix")
+        );
+    }
+
+    #[test]
+    fn runtime_merge_points() {
+        let dirs = QumaDirs::from_root(PathBuf::from("/opt/quma"));
+        assert_eq!(
+            dirs.spt_runtime(),
+            PathBuf::from("/opt/quma/runtimes/spt-server")
+        );
+        assert_eq!(
+            dirs.headless_runtime(1),
+            PathBuf::from("/opt/quma/runtimes/headless/client-1")
+        );
+    }
+
+    #[test]
+    fn mod_file_path_routes_to_overlay() {
+        let dirs = QumaDirs::from_root(PathBuf::from("/opt/quma"));
+        assert_eq!(
+            dirs.mod_file_path("SPT/user/mods/TestMod/package.json"),
+            PathBuf::from("/opt/quma/overlays/mod/SPT/user/mods/TestMod/package.json")
+        );
+    }
+
+    #[test]
+    fn mod_file_path_legacy_routes_to_spt_server() {
+        let dirs = QumaDirs::from_legacy(PathBuf::from("/home/user/spt-server"));
+        assert_eq!(
+            dirs.mod_file_path("SPT/user/mods/TestMod/package.json"),
+            PathBuf::from("/home/user/spt-server/SPT/user/mods/TestMod/package.json")
         );
     }
 
@@ -291,6 +394,8 @@ mod tests {
         let dirs = QumaDirs::from_legacy(PathBuf::from("/home/user/spt-server"));
         assert_eq!(dirs.root, PathBuf::from("/home/user/spt-server"));
         assert_eq!(dirs.spt_server, PathBuf::from("/home/user/spt-server"));
+        assert!(dirs.headless_base.as_os_str().is_empty());
+        assert!(dirs.overlays.as_os_str().is_empty());
         assert_eq!(
             dirs.db_path(),
             PathBuf::from("/home/user/spt-server/quartermaster.db")

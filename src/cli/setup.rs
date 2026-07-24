@@ -477,10 +477,14 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, _cli: &Cli) -> Resu
     let dirs = crate::dirs::QumaDirs::from_root(p.data_dir.clone());
     std::fs::create_dir_all(&dirs.spt_server)
         .with_context(|| format!("failed to create directory {}", dirs.spt_server.display()))?;
-    std::fs::create_dir_all(&dirs.headless)
-        .with_context(|| format!("failed to create directory {}", dirs.headless.display()))?;
-    std::fs::create_dir_all(&dirs.overlay)
-        .with_context(|| format!("failed to create directory {}", dirs.overlay.display()))?;
+    std::fs::create_dir_all(&dirs.headless_base).with_context(|| {
+        format!(
+            "failed to create directory {}",
+            dirs.headless_base.display()
+        )
+    })?;
+    std::fs::create_dir_all(&dirs.overlays)
+        .with_context(|| format!("failed to create directory {}", dirs.overlays.display()))?;
     println!("Created {}", p.data_dir.display());
 
     // 2. Download and extract SPT server
