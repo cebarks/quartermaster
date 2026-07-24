@@ -29,7 +29,6 @@
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
 
 ## Headless Client
-- shared RW volume mount for base game dir (`converge.rs`)
 - too-many-arguments on convergence functions (clippy lint suppressed)
 - better health client detection
 - don't delete headless overlay by default, allow selection of which existing, not already in use overlay to use on new client creation (or when editing a client)
@@ -41,7 +40,6 @@
 - headless client actions
 - container cpu stats don't work (`cpu_percent` is never populated — always `None`; memory stats work)
 - ability to pull files to overlay in webui
-- headless config files don't stay in sync with quartermaster (`BepInEx/config/` excluded from sync; mod files sync correctly)
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)

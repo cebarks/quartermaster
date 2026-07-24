@@ -75,6 +75,27 @@ impl VolumeMount {
 }
 
 #[derive(Debug, Clone)]
+pub struct OverlayMount {
+    pub lower_dir: PathBuf,
+    pub upper_dir: PathBuf,
+    pub work_dir: PathBuf,
+}
+
+impl OverlayMount {
+    const CONTAINER_PATH: &str = "/opt/tarkov";
+
+    pub fn to_bind_string(&self) -> String {
+        format!(
+            "{}:{}:O,upperdir={},workdir={}",
+            self.lower_dir.display(),
+            Self::CONTAINER_PATH,
+            self.upper_dir.display(),
+            self.work_dir.display(),
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum Protocol {
     Tcp,
@@ -104,6 +125,7 @@ pub struct CreateContainerOpts {
     pub image: String,
     pub env: Vec<(String, String)>,
     pub volumes: Vec<VolumeMount>,
+    pub overlay_mounts: Vec<OverlayMount>,
     pub ports: Vec<PortMapping>,
     pub labels: Vec<(String, String)>,
     pub user: Option<String>,
@@ -299,7 +321,8 @@ impl ContainerManager {
 
     pub async fn create_container(&self, opts: CreateContainerOpts) -> Result<String> {
         let env: Vec<String> = opts.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
-        let binds: Vec<String> = opts.volumes.iter().map(|v| v.to_bind_string()).collect();
+        let mut binds: Vec<String> = opts.volumes.iter().map(|v| v.to_bind_string()).collect();
+        binds.extend(opts.overlay_mounts.iter().map(|o| o.to_bind_string()));
         let labels: HashMap<String, String> = opts.all_labels().into_iter().collect();
 
         let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
@@ -504,6 +527,7 @@ mod tests {
             image: "test:latest".to_string(),
             env: vec![],
             volumes: vec![],
+            overlay_mounts: vec![],
             ports: vec![],
             labels: vec![("custom".to_string(), "value".to_string())],
             user: None,
@@ -525,6 +549,7 @@ mod tests {
             image: "test:latest".to_string(),
             env: vec![],
             volumes: vec![],
+            overlay_mounts: vec![],
             ports: vec![],
             labels: vec![],
             user: None,
@@ -545,6 +570,7 @@ mod tests {
             image: "test:latest".to_string(),
             env: vec![],
             volumes: vec![],
+            overlay_mounts: vec![],
             ports: vec![],
             labels: vec![],
             user: None,
@@ -570,5 +596,18 @@ mod tests {
         );
         assert_eq!(filter_started_at(Some(String::new())), None);
         assert_eq!(filter_started_at(None), None);
+    }
+
+    #[test]
+    fn overlay_mount_to_bind_string() {
+        let mount = OverlayMount {
+            lower_dir: PathBuf::from("/opt/fika-client"),
+            upper_dir: PathBuf::from("/data/overlay/client-1/upper"),
+            work_dir: PathBuf::from("/data/overlay/client-1/work"),
+        };
+        assert_eq!(
+            mount.to_bind_string(),
+            "/opt/fika-client:/opt/tarkov:O,upperdir=/data/overlay/client-1/upper,workdir=/data/overlay/client-1/work"
+        );
     }
 }

@@ -299,9 +299,6 @@ fn default_base_udp_port() -> u16 {
 fn default_headless_image() -> String {
     "ghcr.io/cebarks/quartermaster/headless:latest".to_string()
 }
-fn default_isolated_paths() -> Vec<String> {
-    vec!["BepInEx/config".to_string()]
-}
 fn default_ntsync() -> bool {
     true
 }
@@ -570,8 +567,6 @@ pub struct HeadlessClientDef {
     #[serde(default)]
     pub image: Option<String>,
     #[serde(default)]
-    pub extra_isolated_paths: Vec<String>,
-    #[serde(default)]
     pub numa_node: Option<u32>,
     #[serde(default)]
     pub cpuset_cpus: Option<String>,
@@ -596,8 +591,6 @@ pub struct HeadlessConfig {
     pub base_udp_port: u16,
     #[serde(default = "default_headless_image")]
     pub image: String,
-    #[serde(default = "default_isolated_paths")]
-    pub isolated_paths: Vec<String>,
     #[serde(default)]
     pub clients: Vec<HeadlessClientDef>,
     #[serde(default = "default_ntsync")]
@@ -634,7 +627,6 @@ impl Default for HeadlessConfig {
             restart_backoff_cap: 300,
             base_udp_port: 25565,
             image: default_headless_image(),
-            isolated_paths: default_isolated_paths(),
             clients: Vec::new(),
             ntsync: default_ntsync(),
             esync: false,
@@ -656,14 +648,6 @@ pub const MAX_HEADLESS_CLIENTS: u32 = 16;
 impl HeadlessConfig {
     pub fn client_count(&self) -> u32 {
         self.clients.len() as u32
-    }
-
-    pub fn effective_isolated_paths(&self, index: usize) -> Vec<String> {
-        let mut paths = self.isolated_paths.clone();
-        if let Some(client) = self.clients.get(index) {
-            paths.extend(client.extra_isolated_paths.clone());
-        }
-        paths
     }
 
     pub fn resolve_image(&self, client_index: usize) -> &str {
@@ -1629,7 +1613,6 @@ max_restart_attempts = 10
 restart_backoff_cap = 600
 base_udp_port = 25565
 image = "ghcr.io/zhliau/fika-headless-docker:v2.1.0"
-isolated_paths = ["BepInEx/config", "BepInEx/cache"]
 ntsync = false
 esync = true
 fsync = false
@@ -1639,7 +1622,6 @@ physical_cores_only = true
 [[headless.clients]]
 
 [[headless.clients]]
-extra_isolated_paths = ["BepInEx/plugins/testing"]
 "#;
         let config: Config = toml::from_str(toml_str).expect("should parse");
         let headless = config.headless.unwrap();
@@ -1649,16 +1631,7 @@ extra_isolated_paths = ["BepInEx/plugins/testing"]
         assert_eq!(headless.restart_backoff_cap, 600);
         assert_eq!(headless.base_udp_port, 25565);
         assert_eq!(headless.image, "ghcr.io/zhliau/fika-headless-docker:v2.1.0");
-        assert_eq!(
-            headless.isolated_paths,
-            vec!["BepInEx/config", "BepInEx/cache"]
-        );
         assert_eq!(headless.clients.len(), 2);
-        assert!(headless.clients[0].extra_isolated_paths.is_empty());
-        assert_eq!(
-            headless.clients[1].extra_isolated_paths,
-            vec!["BepInEx/plugins/testing"]
-        );
         assert!(!headless.ntsync);
         assert!(headless.esync);
         assert!(!headless.fsync);
@@ -1685,7 +1658,6 @@ install_dir = "/opt/fika"
             headless.image,
             "ghcr.io/cebarks/quartermaster/headless:latest"
         );
-        assert_eq!(headless.isolated_paths, vec!["BepInEx/config".to_string()]);
         assert_eq!(headless.server_ready_timeout, 120);
     }
 
@@ -1709,32 +1681,6 @@ install_dir = "/opt/fika"
         assert!(!config.fsync);
         assert!(!config.physical_cores_only);
         assert_eq!(config.server_ready_timeout, 120);
-    }
-
-    #[test]
-    fn headless_effective_isolated_paths_merges() {
-        let headless = HeadlessConfig {
-            isolated_paths: vec!["BepInEx/config".to_string()],
-            clients: vec![
-                HeadlessClientDef {
-                    extra_isolated_paths: vec![],
-                    ..Default::default()
-                },
-                HeadlessClientDef {
-                    extra_isolated_paths: vec!["BepInEx/cache".to_string()],
-                    ..Default::default()
-                },
-            ],
-            ..HeadlessConfig::default()
-        };
-        assert_eq!(
-            headless.effective_isolated_paths(0),
-            vec!["BepInEx/config".to_string()]
-        );
-        assert_eq!(
-            headless.effective_isolated_paths(1),
-            vec!["BepInEx/config".to_string(), "BepInEx/cache".to_string()]
-        );
     }
 
     #[test]
@@ -2193,7 +2139,6 @@ install_dir = "/opt/client"
 numa_node = 2
 
 [[headless.clients]]
-extra_isolated_paths = []
 
 [[headless.clients]]
 numa_node = 3
@@ -2278,7 +2223,6 @@ numa_node = 1
 install_dir = "/opt/client"
 
 [[headless.clients]]
-extra_isolated_paths = ["BepInEx/plugins"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let h = config.headless.unwrap();

@@ -1,5 +1,7 @@
 use crate::config::{Config, HeadlessConfig};
-use crate::container::{ContainerManager, CreateContainerOpts, SelinuxLabel, VolumeMount};
+use crate::container::{
+    ContainerManager, CreateContainerOpts, OverlayMount, SelinuxLabel, VolumeMount,
+};
 use crate::forge::client::ForgeClient;
 use crate::numa::NumaTopology;
 use crate::spt::profiles;
@@ -7,7 +9,7 @@ use crate::spt::server::SptClient;
 use anyhow::{bail, Context, Result};
 use bollard::models::DeviceMapping;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::dirs::QumaDirs;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -455,20 +457,54 @@ fn apply_fika_overlay_config(
     Ok(())
 }
 
-/// Re-apply Fika overlay config values for a specific client.
+/// Poll for Fika config generation after first boot.
 ///
-/// Called by the supervisor after a container starts/restarts, with a delay
-/// to let Fika generate the full BepInEx config. Without this, the seed config
-/// written by `setup_client_overlay` gets overwritten by Fika on first boot.
-pub fn reapply_fika_config(
-    install_dir: &Path,
-    index: u32,
-    force_ip: Option<&str>,
-    use_upnp: bool,
-    fika_version: Option<&str>,
+/// Checks every second for `com.fika.core.cfg` to appear in the overlay's
+/// upper directory. Also monitors container liveness — if the container
+/// exits before the config appears, returns immediately with an error.
+async fn await_fika_config(
+    container_mgr: &ContainerManager,
+    container_name: &str,
+    upper_dir: &Path,
+    timeout_secs: u64,
 ) -> Result<()> {
-    let overlay_dir = client_overlay_dir(install_dir, index);
-    apply_fika_overlay_config(&overlay_dir, force_ip, use_upnp, fika_version)
+    let cfg_path = upper_dir.join("BepInEx/config/com.fika.core.cfg");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        if cfg_path.exists()
+            && std::fs::metadata(&cfg_path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
+        {
+            debug!("Fika config generated at {}", cfg_path.display());
+            return Ok(());
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "Fika did not generate config within {timeout_secs}s. \
+                 Expected config at {}",
+                cfg_path.display()
+            );
+        }
+
+        // Check if container is still running
+        match container_mgr.is_running(container_name).await {
+            Ok(false) => {
+                bail!(
+                    "Container {container_name} exited before Fika generated config. \
+                     Check container logs for errors."
+                );
+            }
+            Err(e) => {
+                warn!("Failed to check container status: {e}");
+            }
+            Ok(true) => {}
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
 }
 
 /// Patch `Game.ini` to control EFT's CPU affinity behaviour.
@@ -506,30 +542,27 @@ fn write_game_ini_affinity(install_dir: &Path, physical_cores_only: bool) -> Res
     Ok(())
 }
 
-/// Set up overlay directory for a client, copying isolated paths from the install directory.
+/// Set up overlay directory for a headless client.
 ///
-/// Creates `<install_dir>/.quma/clients/<index>/` and recursively copies any paths from
-/// `isolated_paths` that don't already exist in the overlay. This preserves user
-/// customizations in the overlay while ensuring new isolated paths are populated.
-///
-/// Overlays live under `install_dir` (the game client directory) rather than `spt_dir`
-/// (the SPT server data directory) when possible. Note: `install_dir` may still be
-/// inside `spt_dir` — the wine-prefix mount uses `:z` (Shared) instead of `:Z`
-/// (Private) to avoid SELinux MCS conflicts with the SPT server container's chown.
-#[allow(clippy::too_many_arguments)]
+/// Creates the overlay subdirectories (upper, work, wine-prefix) at
+/// `overlay_dir` and stubs GPU DLLs into the upper layer. The overlayfs
+/// mount itself is handled by Podman via `OverlayMount` — this function
+/// only prepares the host-side directories.
 pub fn setup_client_overlay(
     install_dir: &Path,
+    overlay_dir: &Path,
     index: u32,
-    isolated_paths: &[String],
-    base_udp_port: u16,
-    force_ip: Option<&str>,
-    use_upnp: bool,
     physical_cores_only: bool,
-    fika_version: Option<&str>,
 ) -> Result<()> {
-    let overlay_dir = client_overlay_dir(install_dir, index);
-
+    let upper_dir = overlay_dir.join("upper");
+    let work_dir = overlay_dir.join("work");
     let wine_prefix_dir = overlay_dir.join("wine-prefix");
+
+    std::fs::create_dir_all(&upper_dir)
+        .with_context(|| format!("failed to create upper dir {}", upper_dir.display()))?;
+    std::fs::create_dir_all(&work_dir)
+        .with_context(|| format!("failed to create work dir {}", work_dir.display()))?;
+
     if !wine_prefix_dir.exists() {
         std::fs::create_dir_all(&wine_prefix_dir).with_context(|| {
             format!(
@@ -537,56 +570,18 @@ pub fn setup_client_overlay(
                 wine_prefix_dir.display()
             )
         })?;
-        debug!("Created wine-prefix directory for client {index}");
+        debug!("Created wine-prefix directory at {}", overlay_dir.display());
     }
 
     ensure_wine_registry(&wine_prefix_dir)?;
 
-    for isolated_path in isolated_paths {
-        let src = install_dir.join(isolated_path);
-        let dst = overlay_dir.join(isolated_path);
-
-        // Skip if destination already exists (preserve user customizations)
-        if dst.exists() {
-            continue;
-        }
-
-        // Ensure parent directory exists
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create parent dir {}", parent.display()))?;
-        }
-
-        // Copy recursively if source is a directory, or just copy the file
-        if src.is_dir() {
-            copy_dir_recursive(&src, &dst).with_context(|| {
-                format!("failed to copy {} to {}", src.display(), dst.display())
-            })?;
-        } else if src.is_file() {
-            std::fs::copy(&src, &dst).with_context(|| {
-                format!("failed to copy {} to {}", src.display(), dst.display())
-            })?;
-        } else {
-            debug!(
-                "Isolated path {} does not exist in install dir, skipping",
-                isolated_path
-            );
-        }
-    }
-
-    let port = client_port(base_udp_port, index)?;
-    write_fika_udp_port(&overlay_dir, port)?;
-    apply_fika_overlay_config(&overlay_dir, force_ip, use_upnp, fika_version)?;
+    // Stub GPU DLLs into upper layer
+    stub_gpu_dlls(install_dir, &upper_dir)?;
 
     // Game.ini is shared (not per-client overlay), so only patch once.
     if index == 1 {
         write_game_ini_affinity(install_dir, physical_cores_only)?;
     }
-
-    // Stub out GPU-specific DLLs that crash in headless (no-GPU) containers.
-    // DLSSImporter.dll dereferences a null pointer when no GPU is present,
-    // which hangs Wine's crash handler and prevents the game from starting.
-    stub_gpu_dlls(install_dir, &overlay_dir)?;
 
     debug!(
         "Set up overlay for client {index} at {}",
@@ -703,43 +698,9 @@ fn stub_gpu_dlls(install_dir: &Path, overlay_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Recursively copy a directory. Symlinks are skipped to prevent cycles
-/// and avoid copying sensitive files outside the intended tree.
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)
-        .with_context(|| format!("failed to create dir {}", dst.display()))?;
-
-    for entry in
-        std::fs::read_dir(src).with_context(|| format!("failed to read dir {}", src.display()))?
-    {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
-            tracing::debug!(path = %entry.path().display(), "skipping symlink during directory copy");
-            continue;
-        }
-
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-
-        if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-
-    Ok(())
-}
-
 /// Generate the container name for a client at the given index.
 pub fn client_container_name(index: u32) -> String {
     format!("fika-headless-{index}")
-}
-
-/// Return the overlay directory for a client at the given index.
-pub fn client_overlay_dir(install_dir: &Path, index: u32) -> PathBuf {
-    install_dir.join(".quma/clients").join(index.to_string())
 }
 
 /// Calculate the UDP port for a client at the given index.
@@ -802,7 +763,7 @@ pub fn find_name_conflicts(
 /// 2. Detects currently managed containers by label
 /// 3. Checks for name conflicts with unmanaged containers
 /// 4. Scales up or down as needed to match desired count
-/// 5. Updates isolated_paths overlays for existing clients
+/// 5. Updates overlay directories for existing clients
 /// 6. Clears the converging flag
 ///
 /// The `converging` flag is an Arc<AtomicBool> that prevents concurrent convergence
@@ -829,6 +790,51 @@ pub async fn converge(
     }
 
     let _guard = ConvergingGuard(converging.clone());
+
+    // Legacy layout guard — overlay paths are empty in legacy mode
+    if dirs.is_legacy() {
+        bail!(
+            "Headless client management requires the new directory layout. \
+             Run `quma migrate` to update from the legacy layout."
+        );
+    }
+
+    // Check Podman version — overlay mounts with custom upperdir/workdir require 4.1+
+    match container_mgr.docker().version().await {
+        Ok(version_info) => {
+            if let Some(ref ver) = version_info.version {
+                let parts: Vec<&str> = ver.split('.').collect();
+                if let (Some(major), Some(minor)) = (
+                    parts.first().and_then(|s| s.parse::<u32>().ok()),
+                    parts.get(1).and_then(|s| s.parse::<u32>().ok()),
+                ) {
+                    if major < 4 || (major == 4 && minor < 1) {
+                        bail!(
+                            "Podman {ver} detected — overlay mounts with custom upperdir/workdir \
+                             require Podman 4.1+. Please upgrade Podman."
+                        );
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to check container runtime version: {e}");
+        }
+    }
+
+    // Warn about legacy overlay directories
+    let legacy_overlay = headless_config.install_dir.join(".quma/clients");
+    if legacy_overlay.is_dir() {
+        warn!(
+            "Old headless overlay directories found at {}. \
+             These are no longer used — overlays now live at {}. \
+             Any user-customized Fika settings in the old overlays will need to be \
+             re-applied manually after migration. You can remove the old directories \
+             once verified.",
+            legacy_overlay.display(),
+            dirs.overlay.display()
+        );
+    }
 
     let ntsync_available = std::path::Path::new("/dev/ntsync").exists();
     if !ntsync_available {
@@ -1031,14 +1037,13 @@ pub async fn converge(
             .await
             .with_context(|| format!("failed to remove client {i} for NUMA reconciliation"))?;
 
-        let effective_paths = headless_config.effective_isolated_paths(client_index);
         create_client_container(
             container_mgr,
             headless_config,
             config,
+            dirs,
             i,
             profile_id,
-            &effective_paths,
             ntsync_available,
             &topology,
             fika_version.as_deref(),
@@ -1046,19 +1051,15 @@ pub async fn converge(
         .await?;
     }
 
-    // Update overlays for all defined clients (using effective paths)
+    // Update overlays for all defined clients
     for (i, _client_def) in headless_config.clients.iter().enumerate() {
         let index = (i + 1) as u32;
-        let effective_paths = headless_config.effective_isolated_paths(i);
+        let overlay_dir = dirs.client_overlay(index);
         setup_client_overlay(
             &headless_config.install_dir,
+            &overlay_dir,
             index,
-            &effective_paths,
-            headless_config.base_udp_port,
-            headless_config.force_ip.as_deref(),
-            headless_config.use_upnp,
             headless_config.physical_cores_only,
-            fika_version.as_deref(),
         )?;
     }
 
@@ -1231,15 +1232,13 @@ async fn ensure_clients(
     // 5. Create containers for new clients
     for (offset, profile_id) in profile_assignments.into_iter().enumerate() {
         let i = current_count + 1 + offset as u32;
-        let client_index = (i - 1) as usize;
-        let effective_paths = headless_config.effective_isolated_paths(client_index);
         create_client_container(
             container_mgr,
             headless_config,
             config,
+            dirs,
             i,
             profile_id,
-            &effective_paths,
             ntsync_available,
             topology,
             fika_version,
@@ -1254,7 +1253,6 @@ async fn ensure_clients(
 ///
 /// In-raid checks are now handled by the CLI `headless delete` command before calling
 /// converge, so this function simply stops and removes excess containers.
-#[allow(deprecated)]
 async fn remove_excess_clients(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
@@ -1281,7 +1279,7 @@ async fn remove_excess_clients(
 
     // Clean up overlay directories for removed clients
     for i in (desired_count + 1)..=current_count {
-        let overlay = client_overlay_dir(&headless_config.install_dir, i);
+        let overlay = dirs.client_overlay(i);
         if overlay.exists() {
             if let Err(e) = std::fs::remove_dir_all(&overlay) {
                 warn!("Failed to clean overlay dir for client {i}: {e}");
@@ -1400,87 +1398,60 @@ fn resolve_numa_cpuset(
 /// the CLI status command and supervisor to correlate this container with the Fika
 /// headless API (which keys its response by profile/session ID).
 ///
-/// `effective_paths` is the merged list of global `isolated_paths` + per-client
-/// `extra_isolated_paths`, computed by the caller via `HeadlessConfig::effective_isolated_paths`.
+/// The game directory is mounted via Podman's overlay mount (`:O`), giving each
+/// container a private writable layer over the shared install_dir. A first-boot
+/// flow waits for Fika to generate its config before patching and restarting.
 #[allow(clippy::too_many_arguments)]
 #[allow(deprecated)]
 async fn create_client_container(
     container_mgr: &ContainerManager,
     headless_config: &HeadlessConfig,
     config: &Config,
+    dirs: &QumaDirs,
     index: u32,
     profile_id: Option<String>,
-    effective_paths: &[String],
     ntsync_available: bool,
     topology: &NumaTopology,
     fika_version: Option<&str>,
 ) -> Result<()> {
     let name = client_container_name(index);
-    let overlay_dir = client_overlay_dir(&headless_config.install_dir, index);
+    let overlay_dir = dirs.client_overlay(index);
 
-    // Set up overlay directory first
+    // Set up overlay directory
     setup_client_overlay(
         &headless_config.install_dir,
+        &overlay_dir,
         index,
-        effective_paths,
-        headless_config.base_udp_port,
-        headless_config.force_ip.as_deref(),
-        headless_config.use_upnp,
         headless_config.physical_cores_only,
-        fika_version,
     )?;
 
-    // Build volume mounts
-    let mut volumes = vec![
-        // Game client directory — mounted read-write because the headless image
-        // entrypoint writes wine.log, BepInEx logs, etc. directly into this tree.
-        VolumeMount {
-            host_path: headless_config.install_dir.clone(),
-            container_path: "/opt/tarkov".to_string(),
-            read_only: false,
-            selinux: SelinuxLabel::Shared,
-        },
-    ];
+    let upper_dir = overlay_dir.join("upper");
+    let work_dir = overlay_dir.join("work");
 
-    // Mount each isolated path from the overlay on top of the base install,
-    // so per-client config/state shadows the shared copy.
-    for isolated_path in effective_paths {
-        let p = std::path::Path::new(isolated_path);
-        if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
-            bail!("isolated_path contains traversal sequence: {isolated_path:?}");
-        }
-        let overlay_subdir = overlay_dir.join(isolated_path);
-        let container_subdir = format!("/opt/tarkov/{isolated_path}");
-        volumes.push(VolumeMount {
-            host_path: overlay_subdir,
-            container_path: container_subdir,
-            read_only: false,
-            selinux: SelinuxLabel::Shared,
-        });
+    // Workdir must be empty before overlayfs mount — clean it here,
+    // not in setup_client_overlay, because the overlay update loop in
+    // converge() also calls setup_client_overlay for running containers.
+    if work_dir.exists() {
+        std::fs::remove_dir_all(&work_dir)
+            .with_context(|| format!("failed to clean work dir {}", work_dir.display()))?;
+        std::fs::create_dir_all(&work_dir)
+            .with_context(|| format!("failed to recreate work dir {}", work_dir.display()))?;
     }
 
-    // ponytail: Shared not Private — `:Z` gives each headless container unique MCS
-    // categories, but the SPT server entrypoint chowns the whole spt_dir tree and
-    // can't traverse dirs relabeled by a different container's `:Z`.
-    volumes.push(VolumeMount {
+    // Build volume mounts — wine prefix only (game dir uses overlay mount)
+    let volumes = vec![VolumeMount {
         host_path: overlay_dir.join("wine-prefix"),
         container_path: "/.wine".to_string(),
         read_only: false,
         selinux: SelinuxLabel::Shared,
-    });
+    }];
 
-    // Mount stubbed GPU DLLs over the originals so headless clients
-    // don't crash from missing GPU hardware.
-    let gpu_stub = overlay_dir.join("EscapeFromTarkov_Data/Plugins/x86_64/DLSSImporter.dll");
-    if gpu_stub.exists() {
-        volumes.push(VolumeMount {
-            host_path: gpu_stub,
-            container_path: "/opt/tarkov/EscapeFromTarkov_Data/Plugins/x86_64/DLSSImporter.dll"
-                .to_string(),
-            read_only: true,
-            selinux: SelinuxLabel::Shared,
-        });
-    }
+    // Overlay mount for game directory
+    let overlay_mounts = vec![OverlayMount {
+        lower_dir: headless_config.install_dir.clone(),
+        upper_dir: upper_dir.clone(),
+        work_dir,
+    }];
 
     // Environment variables
     let mut env = vec![(
@@ -1550,6 +1521,7 @@ async fn create_client_container(
         image: headless_config.resolve_image(client_index).to_string(),
         env,
         volumes,
+        overlay_mounts,
         ports,
         labels,
         user: None,
@@ -1564,7 +1536,36 @@ async fn create_client_container(
     let container_id = container_mgr.create_container(opts).await?;
     info!("Created container {name} (id: {container_id})");
 
-    // Start the container
+    // First-boot config flow: check if Fika config already exists in upper layer
+    let fika_cfg = upper_dir.join("BepInEx/config/com.fika.core.cfg");
+    if !fika_cfg.exists() {
+        // First boot: let Fika generate the config
+        info!("First boot for client {index} — waiting for Fika config generation");
+        container_mgr.start(&name).await?;
+
+        match await_fika_config(container_mgr, &name, &upper_dir, 60).await {
+            Ok(()) => {
+                container_mgr.stop(&name).await?;
+            }
+            Err(e) => {
+                // Stop container if still running
+                let _ = container_mgr.stop(&name).await;
+                return Err(e);
+            }
+        }
+    }
+
+    // Patch Fika config with quma-managed values
+    let port = client_port(headless_config.base_udp_port, index)?;
+    write_fika_udp_port(&upper_dir, port)?;
+    apply_fika_overlay_config(
+        &upper_dir,
+        headless_config.force_ip.as_deref(),
+        headless_config.use_upnp,
+        fika_version,
+    )?;
+
+    // Start the container for real
     container_mgr.start(&name).await?;
     info!("Started container {name}");
 
@@ -1614,31 +1615,6 @@ mod tests {
     }
 
     #[test]
-    fn setup_client_overlay_copies_isolated_paths() {
-        let tmp = tempfile::tempdir().unwrap();
-        let install_dir = tmp.path().join("install");
-
-        std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
-        std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
-
-        setup_client_overlay(
-            &install_dir,
-            1,
-            &["BepInEx/config".to_string()],
-            25565,
-            None,
-            false,
-            false,
-            None,
-        )
-        .unwrap();
-
-        let overlay_file = install_dir.join(".quma/clients/1/BepInEx/config/test.cfg");
-        assert!(overlay_file.exists());
-        assert_eq!(std::fs::read_to_string(overlay_file).unwrap(), "key=value");
-    }
-
-    #[test]
     fn container_name_for_index() {
         assert_eq!(client_container_name(1), "fika-headless-1");
         assert_eq!(client_container_name(10), "fika-headless-10");
@@ -1651,27 +1627,18 @@ mod tests {
     }
 
     #[test]
-    fn setup_client_overlay_creates_wine_prefix_dir() {
+    fn setup_client_overlay_creates_dirs() {
         let tmp = tempfile::tempdir().unwrap();
         let install_dir = tmp.path().join("install");
+        let overlay_dir = tmp.path().join("overlay/client-1");
 
-        std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
+        std::fs::create_dir_all(&install_dir).unwrap();
 
-        setup_client_overlay(
-            &install_dir,
-            1,
-            &["BepInEx/config".to_string()],
-            25565,
-            None,
-            false,
-            false,
-            None,
-        )
-        .unwrap();
+        setup_client_overlay(&install_dir, &overlay_dir, 1, false).unwrap();
 
-        let wine_prefix_dir = install_dir.join(".quma/clients/1/wine-prefix");
-        assert!(wine_prefix_dir.exists());
-        assert!(wine_prefix_dir.is_dir());
+        assert!(overlay_dir.join("upper").is_dir());
+        assert!(overlay_dir.join("work").is_dir());
+        assert!(overlay_dir.join("wine-prefix").is_dir());
     }
 
     #[test]
@@ -1681,50 +1648,6 @@ mod tests {
         let conflicts = find_name_conflicts(&managed, &all_matching_name, 3);
         // fika-headless-2 exists but isn't managed, fika-headless-3 doesn't exist
         assert_eq!(conflicts, vec!["fika-headless-2"]);
-    }
-
-    #[test]
-    fn update_overlay_copies_new_paths() {
-        let tmp = tempfile::tempdir().unwrap();
-        let install_dir = tmp.path().join("install");
-
-        // Existing overlay from initial setup
-        std::fs::create_dir_all(install_dir.join("BepInEx/config")).unwrap();
-        std::fs::write(install_dir.join("BepInEx/config/test.cfg"), "key=value").unwrap();
-        setup_client_overlay(
-            &install_dir,
-            1,
-            &["BepInEx/config".to_string()],
-            25565,
-            None,
-            false,
-            false,
-            None,
-        )
-        .unwrap();
-
-        // Now add a new isolated path
-        std::fs::create_dir_all(install_dir.join("BepInEx/cache")).unwrap();
-        std::fs::write(install_dir.join("BepInEx/cache/data.bin"), "cached").unwrap();
-        setup_client_overlay(
-            &install_dir,
-            1,
-            &["BepInEx/config".to_string(), "BepInEx/cache".to_string()],
-            25565,
-            None,
-            false,
-            false,
-            None,
-        )
-        .unwrap();
-
-        // Both paths should exist in overlay
-        assert!(install_dir
-            .join(".quma/clients/1/BepInEx/config/test.cfg")
-            .exists());
-        assert!(install_dir
-            .join(".quma/clients/1/BepInEx/cache/data.bin")
-            .exists());
     }
 
     #[test]
