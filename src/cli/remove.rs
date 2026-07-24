@@ -335,8 +335,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ctx = make_test_ctx(&tmp);
 
-        // Create mod files on disk
-        let mod_dir = ctx.dirs.spt_server.join("SPT/user/mods/TestMod");
+        // Create mod files on disk (in mod overlay for non-legacy layout)
+        let mod_dir = ctx.dirs.mod_file_path("SPT/user/mods/TestMod");
         std::fs::create_dir_all(&mod_dir).unwrap();
         std::fs::write(mod_dir.join("package.json"), b"{}").unwrap();
 

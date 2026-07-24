@@ -12,7 +12,6 @@ mod dirs;
 mod fika;
 mod forge;
 mod headless;
-mod headless_sync;
 mod health;
 mod invite;
 mod logging;

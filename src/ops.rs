@@ -54,6 +54,13 @@ pub fn cleanup_staging(dirs: &QumaDirs) {
     }
 }
 
+/// A "client file" is anything that belongs in the game client install —
+/// everything EXCEPT server-side mods (`SPT/user/mods/`) and BepInEx config
+/// (per-client overlay).
+pub fn is_client_file(path: &str) -> bool {
+    !path.starts_with("SPT/") && !path.starts_with("BepInEx/config/")
+}
+
 /// Check if a mod is in a convoy group with `exclude_headless = true`.
 pub fn is_excluded_from_headless(db: &Database, mod_id: i64) -> bool {
     let Ok(Some(m)) = db.get_mod(mod_id) else {
