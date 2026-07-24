@@ -18,6 +18,7 @@ mod invite;
 mod logging;
 mod numa;
 mod ops;
+mod overlay;
 mod queue;
 mod server_detect;
 mod spt;
