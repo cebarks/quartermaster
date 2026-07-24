@@ -1548,8 +1548,10 @@ async fn create_client_container(
                 container_mgr.stop(&name).await?;
             }
             Err(e) => {
-                // Stop container if still running
+                // Stop and remove the container so re-convergence will
+                // recreate it rather than finding a stale unpatched container.
                 let _ = container_mgr.stop(&name).await;
+                let _ = container_mgr.remove_container(&name).await;
                 return Err(e);
             }
         }
