@@ -799,6 +799,9 @@ pub async fn converge(
         );
     }
 
+    // Verify fuse-overlayfs and fusermount3 are installed
+    crate::overlay::check_prerequisites()?;
+
     // Check Podman version — overlay mounts with custom upperdir/workdir require 4.1+
     match container_mgr.docker().version().await {
         Ok(version_info) => {
@@ -920,23 +923,17 @@ pub async fn converge(
     // Determine current count
     let current_count = managed.len() as u32;
 
-    // Only ensure headless plugin and sync mods when we'll actually have containers
+    // Only ensure headless plugin when we'll actually have containers.
+    // Mod sync is no longer needed — headless clients see mods via the
+    // overlay (mod_overlay is a lower layer in the headless mount), so
+    // changes from install/update/remove are visible automatically.
     if desired_count > 0 {
-        // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge)
+        // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge).
+        // TODO(refactor): ensure_fika_headless writes to headless_config.install_dir
+        // (the base headless directory). This is infrastructure setup, not a runtime
+        // mod, so it's acceptable for now. In a future refactor, route this to
+        // dirs.mod_overlay() so the base stays truly pristine.
         ensure_fika_headless(forge, &headless_config.install_dir).await?;
-
-        // Reconcile headless mod files on every convergence
-        {
-            let db = db.lock();
-            if let Err(e) = crate::headless_sync::sync_headless(
-                &db,
-                config,
-                dirs,
-                crate::headless_sync::HeadlessSyncScope::Full,
-            ) {
-                warn!(err = %e, "Failed to reconcile headless mod files — containers may have stale mods");
-            }
-        }
     }
 
     // Look up installed Fika version for Last Version overlay
@@ -1277,8 +1274,13 @@ async fn remove_excess_clients(
         container_mgr.remove_container(&name).await?;
     }
 
-    // Clean up overlay directories for removed clients
+    // Clean up overlay mounts and directories for removed clients
     for i in (desired_count + 1)..=current_count {
+        // Unmount the overlay before removing the directory tree
+        if let Err(e) = dirs.headless_overlay_mount(i).unmount() {
+            warn!("Failed to unmount overlay for client {i}: {e}");
+        }
+
         let overlay = dirs.headless_overlay(i);
         if overlay.exists() {
             if let Err(e) = std::fs::remove_dir_all(&overlay) {

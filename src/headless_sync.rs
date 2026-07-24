@@ -13,12 +13,18 @@ pub fn is_client_file(path: &str) -> bool {
     !path.starts_with("SPT/") && !path.starts_with("BepInEx/config/")
 }
 
+// The sync functions below are dead code since headless clients now see mods
+// through the overlay stack (mod_overlay is a lower layer). Retained for
+// potential future use in CLI commands or non-overlay fallback paths.
+
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncOp {
     Install,
     Remove,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct SyncReport {
     pub copied: usize,
@@ -26,10 +32,10 @@ pub struct SyncReport {
     pub errors: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum HeadlessSyncScope {
     /// Reconcile one mod and all its addons.
-    #[allow(dead_code)]
     Mod(i64),
     /// Full reconcile — all mods and all addons.
     Full,
@@ -41,6 +47,7 @@ pub enum HeadlessSyncScope {
 /// - `Mod(id)`: after a single mod/addon operation in ops.rs
 /// - `Full`: during convergence
 #[allow(deprecated)]
+#[allow(dead_code)]
 pub fn sync_headless(
     db: &Database,
     config: &Config,
@@ -134,6 +141,7 @@ pub fn sync_headless(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn sync_client_files_to_headless(
     spt_dir: &Path,
     install_dir: &Path,
@@ -199,6 +207,7 @@ pub fn sync_client_files_to_headless(
 
 /// Walk up from the file's parent directory, removing empty dirs.
 /// Stops before removing top-level BepInEx subdirs (plugins, patchers, etc).
+#[allow(dead_code)]
 fn cleanup_empty_parents(install_dir: &Path, file_path: &str) {
     let full = install_dir.join(file_path);
     let bepinex = install_dir.join("BepInEx");
