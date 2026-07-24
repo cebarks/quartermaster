@@ -4,6 +4,8 @@ use anyhow::{bail, Context, Result};
 use regex::Regex;
 
 use crate::config::Config;
+use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::spt::detect::validate_spt_dir;
 
 pub async fn run(dry_run: bool, cli: &crate::cli::Cli) -> Result<()> {
@@ -70,6 +72,14 @@ pub async fn run(dry_run: bool, cli: &crate::cli::Cli) -> Result<()> {
 
     // Update config file
     update_config(&root)?;
+
+    // Migrate to overlay layout if not in legacy mode
+    let dirs = QumaDirs::from_root(root.clone());
+    let db_path = dirs.db_path();
+    if db_path.exists() {
+        let db = Database::open(&db_path).context("failed to open database")?;
+        migrate_to_overlay_layout(&db, &dirs).context("failed to migrate to overlay layout")?;
+    }
 
     // Remove marker
     let _ = std::fs::remove_file(&marker);
@@ -291,6 +301,109 @@ fn update_config(root: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn migrate_to_overlay_layout(db: &Database, dirs: &QumaDirs) -> Result<()> {
+    if dirs.is_legacy() {
+        bail!("Cannot migrate to overlay layout from legacy layout. Run the standard migration first.");
+    }
+
+    let mod_overlay = dirs.mod_overlay();
+    if mod_overlay.exists() && std::fs::read_dir(&mod_overlay)?.next().is_some() {
+        tracing::info!("overlays/mod/ already populated, skipping overlay migration");
+        return Ok(());
+    }
+
+    tracing::info!("Migrating mod files from spt-server/ to overlays/mod/");
+
+    // Move all DB-tracked mod files
+    let mods = db.list_mods()?;
+    for m in &mods {
+        let files = db.get_files_for_mod(m.id)?;
+        for f in &files {
+            let src = dirs.spt_server.join(&f.file_path);
+            let dst = mod_overlay.join(&f.file_path);
+            if src.exists() {
+                if let Some(parent) = dst.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                move_file_or_fallback(&src, &dst)?;
+            }
+        }
+
+        // Also move addon files
+        let addons = db.list_addons_for_mod(m.id)?;
+        for addon in &addons {
+            let addon_files = db.get_files_for_addon(addon.id)?;
+            for f in &addon_files {
+                let src = dirs.spt_server.join(&f.file_path);
+                let dst = mod_overlay.join(&f.file_path);
+                if src.exists() {
+                    if let Some(parent) = dst.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    move_file_or_fallback(&src, &dst)?;
+                }
+            }
+        }
+    }
+
+    // Move runtime state to runtime overlay
+    let runtime_upper = dirs.runtime_upper();
+    let runtime_dirs = [
+        "SPT/user/profiles",
+        "SPT/user/cache",
+        "BepInEx/config",
+        "BepInEx/cache",
+    ];
+    for dir in &runtime_dirs {
+        let src = dirs.spt_server.join(dir);
+        let dst = runtime_upper.join(dir);
+        if src.exists() && src.is_dir() {
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            match std::fs::rename(&src, &dst) {
+                Ok(()) => {}
+                Err(_) => {
+                    // Cross-device: copy then remove
+                    copy_dir_all(&src, &dst)?;
+                    std::fs::remove_dir_all(&src)?;
+                }
+            }
+        }
+    }
+
+    // Create runtimes/ merge point directories
+    std::fs::create_dir_all(dirs.spt_runtime())?;
+
+    tracing::info!("Overlay migration complete");
+    Ok(())
+}
+
+fn move_file_or_fallback(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::rename(src, dst).or_else(|_| {
+        std::fs::copy(src, dst)?;
+        std::fs::remove_file(src)?;
+        Ok(())
+    })
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,5 +484,119 @@ mod tests {
         assert!(is_quma_owned(".mcp.json"));
         assert!(is_quma_owned(".quartermaster"));
         assert!(is_quma_owned("quartermaster.db.bak-20260628-135941"));
+    }
+
+    #[test]
+    fn migrate_to_overlay_moves_mod_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        // Set up new layout structure
+        let dirs = QumaDirs::from_root(root.to_path_buf());
+        std::fs::create_dir_all(&dirs.spt_server).expect("mkdir spt_server");
+        std::fs::create_dir_all(&dirs.overlays).expect("mkdir overlays");
+
+        // Create DB with a mod that has files
+        let db = Database::open(&dirs.db_path()).expect("open db");
+        let mod_id = db
+            .insert_mod(
+                Some(123),
+                Some(456),
+                "TestMod",
+                Some("test-mod"),
+                "1.0.0",
+                "forge",
+                None,
+            )
+            .expect("insert mod");
+        db.insert_file(
+            mod_id,
+            "SPT/user/mods/test-mod/package.json",
+            Some("abc123"),
+            Some(100),
+        )
+        .expect("insert file");
+        db.insert_file(
+            mod_id,
+            "BepInEx/plugins/test-mod.dll",
+            Some("def456"),
+            Some(200),
+        )
+        .expect("insert file");
+
+        // Create the actual files in spt_server/
+        std::fs::create_dir_all(dirs.spt_server.join("SPT/user/mods/test-mod")).expect("mkdir");
+        std::fs::create_dir_all(dirs.spt_server.join("BepInEx/plugins")).expect("mkdir");
+        std::fs::write(
+            dirs.spt_server.join("SPT/user/mods/test-mod/package.json"),
+            "{}",
+        )
+        .expect("write package.json");
+        std::fs::write(dirs.spt_server.join("BepInEx/plugins/test-mod.dll"), "dll")
+            .expect("write dll");
+
+        // Create runtime state
+        std::fs::create_dir_all(dirs.spt_server.join("SPT/user/profiles")).expect("mkdir");
+        std::fs::create_dir_all(dirs.spt_server.join("BepInEx/config")).expect("mkdir");
+        std::fs::write(
+            dirs.spt_server.join("SPT/user/profiles/profile1.json"),
+            "{}",
+        )
+        .expect("write profile");
+        std::fs::write(dirs.spt_server.join("BepInEx/config/test.cfg"), "config")
+            .expect("write config");
+
+        // Run migration
+        super::migrate_to_overlay_layout(&db, &dirs).expect("migrate");
+
+        // Assert mod files moved to mod_overlay()
+        assert!(
+            dirs.mod_overlay()
+                .join("SPT/user/mods/test-mod/package.json")
+                .exists(),
+            "package.json should be in mod_overlay"
+        );
+        assert!(
+            dirs.mod_overlay()
+                .join("BepInEx/plugins/test-mod.dll")
+                .exists(),
+            "test-mod.dll should be in mod_overlay"
+        );
+
+        // Assert runtime state moved to runtime_upper()
+        assert!(
+            dirs.runtime_upper()
+                .join("SPT/user/profiles/profile1.json")
+                .exists(),
+            "profile should be in runtime_upper"
+        );
+        assert!(
+            dirs.runtime_upper()
+                .join("BepInEx/config/test.cfg")
+                .exists(),
+            "config should be in runtime_upper"
+        );
+
+        // Assert spt_runtime() directory was created
+        assert!(
+            dirs.spt_runtime().exists(),
+            "spt_runtime directory should exist"
+        );
+
+        // Assert original files are gone
+        assert!(
+            !dirs
+                .spt_server
+                .join("SPT/user/mods/test-mod/package.json")
+                .exists(),
+            "package.json should be removed from spt_server"
+        );
+        assert!(
+            !dirs
+                .spt_server
+                .join("BepInEx/plugins/test-mod.dll")
+                .exists(),
+            "test-mod.dll should be removed from spt_server"
+        );
     }
 }
