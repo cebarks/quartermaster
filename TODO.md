@@ -39,7 +39,7 @@
 - add client should add a new row to the list with the client name column editable, and a save or cancel button replacing the existing buttons in the actions column
 - headless client actions
 - container cpu stats don't work (`cpu_percent` is never populated — always `None`; memory stats work)
-- ability to pull files to overlay in webui
+- `ensure_fika_headless` writes to base headless dir — should move to `mod_overlay()` for proper layering
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
@@ -69,6 +69,7 @@
 - no global HTMX error handling
 
 ## Features
+- mod overlay profiles: run the same base SPT with different mod sets (different overlay dirs for different mod profiles/presets)
 - implement `https://db.sp-tarkov.com/search` like functionality (give-items has local item search, but no standalone general-purpose item browser page)
 - better SVM editor: default values shown alongside current, file-based preset upload (section tabs, header toggles, field name/subtext, preset toggle/export already done)
 - last logged for players (both into webui and into spt)
