@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use crate::db::mods::InstalledMod;
 use crate::db::Database;
 use crate::dirs::QumaDirs;
-use crate::headless_sync::{sync_client_files_to_headless, HeadlessSyncScope, SyncOp};
 use crate::spt::mods::ExtractedFile;
 
 /// Derive a mod name from a URL by extracting the filename and stripping extensions.
@@ -265,21 +264,13 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     tx.commit()?;
 
     // DB committed — now move files from staging to the live directory.
-    move_staged_files(staging_dir.path(), &req.dirs.spt_server, &extracted)?;
+    move_staged_files(staging_dir.path(), &req.dirs.mod_overlay(), &extracted)?;
 
     tracing::debug!(
         db_id,
         file_count = extracted.len(),
         "mod installed, files recorded"
     );
-    if let Err(e) = crate::headless_sync::sync_headless(
-        req.db,
-        req.config,
-        req.dirs,
-        HeadlessSyncScope::Mod(db_id),
-    ) {
-        tracing::warn!(err = %e, "headless sync failed after mod install");
-    }
 
     // Transition matching request to installed
     if let Some(forge_mod_id) = req.forge_mod_id {
@@ -333,21 +324,13 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
     tx.commit()?;
 
     // DB committed — now move files from staging to the live directory.
-    move_staged_files(staging_dir.path(), &req.dirs.spt_server, &extracted)?;
+    move_staged_files(staging_dir.path(), &req.dirs.mod_overlay(), &extracted)?;
 
     tracing::debug!(
         db_id,
         file_count = extracted.len(),
         "addon installed, files recorded"
     );
-    if let Err(e) = crate::headless_sync::sync_headless(
-        req.db,
-        req.config,
-        req.dirs,
-        HeadlessSyncScope::Mod(req.parent_mod_id),
-    ) {
-        tracing::warn!(err = %e, "headless sync failed after addon install");
-    }
     Ok(db_id)
 }
 
@@ -382,15 +365,6 @@ pub fn update_mod_from_archive(
         .ok_or_else(|| anyhow::anyhow!("mod not found for update"))?;
     let effective_root = resolve_mod_root(dirs, mod_info.disabled);
 
-    // Compute stale paths for headless sync before remove_stale_files consumes old_paths
-    let new_paths_set: std::collections::HashSet<&str> =
-        extracted.iter().map(|f| f.path.as_str()).collect();
-    let stale_paths_for_headless: Vec<String> = old_paths
-        .iter()
-        .filter(|p| !new_paths_set.contains(p.as_str()))
-        .cloned()
-        .collect();
-
     // Copy new files first (overwriting any shared with old version), so that
     // if copying fails mid-way the old files that weren't overwritten remain
     // intact. This is strictly safer than delete-all-then-copy-all.
@@ -402,23 +376,6 @@ pub fn update_mod_from_archive(
     record_extracted_files(db, mod_db_id, &extracted)?;
     db.update_mod(mod_db_id, version_id, version_str)?;
     tx.commit()?;
-    // Remove stale files from headless, then sync the updated state
-    #[allow(deprecated)]
-    if let Some(install_dir) = config.headless.as_ref().map(|h| &h.install_dir) {
-        if let Err(e) = sync_client_files_to_headless(
-            &dirs.spt_server,
-            install_dir,
-            &stale_paths_for_headless,
-            SyncOp::Remove,
-        ) {
-            tracing::warn!(err = %e, "headless sync failed removing stale files for mod update");
-        }
-    }
-    if let Err(e) =
-        crate::headless_sync::sync_headless(db, config, dirs, HeadlessSyncScope::Mod(mod_db_id))
-    {
-        tracing::warn!(err = %e, "headless sync failed after mod update");
-    }
     Ok(())
 }
 
@@ -457,15 +414,6 @@ pub fn update_addon_from_archive(
 
     let effective_root = resolve_mod_root(dirs, addon.disabled);
 
-    // Compute stale paths for headless sync before remove_stale_files consumes old_paths
-    let new_paths_set: std::collections::HashSet<&str> =
-        extracted.iter().map(|f| f.path.as_str()).collect();
-    let stale_addon_paths: Vec<String> = old_paths
-        .iter()
-        .filter(|p| !new_paths_set.contains(p.as_str()))
-        .cloned()
-        .collect();
-
     // Copy new files first (overwriting any shared with old version), so that
     // if copying fails mid-way the old files that weren't overwritten remain
     // intact. This is strictly safer than delete-all-then-copy-all.
@@ -477,26 +425,6 @@ pub fn update_addon_from_archive(
     record_extracted_addon_files(db, addon_db_id, &extracted)?;
     db.update_addon(addon_db_id, version_id, version_str, mod_version_constraint)?;
     tx.commit()?;
-    // Remove stale files from headless, then sync the updated state
-    #[allow(deprecated)]
-    if let Some(install_dir) = config.headless.as_ref().map(|h| &h.install_dir) {
-        if let Err(e) = sync_client_files_to_headless(
-            &dirs.spt_server,
-            install_dir,
-            &stale_addon_paths,
-            SyncOp::Remove,
-        ) {
-            tracing::warn!(err = %e, "headless sync failed removing stale files for addon update");
-        }
-    }
-    if let Err(e) = crate::headless_sync::sync_headless(
-        db,
-        config,
-        dirs,
-        HeadlessSyncScope::Mod(addon.parent_mod_id),
-    ) {
-        tracing::warn!(err = %e, "headless sync failed after addon update");
-    }
     Ok(())
 }
 
@@ -528,11 +456,6 @@ pub async fn apply_mod_update(
     // Serialize file metadata for the pending_updates marker
     let new_files_json =
         serde_json::to_string(&extracted).context("failed to serialize new file paths")?;
-
-    // Clone db, config, dirs for headless sync step (step 4) before they're moved
-    let db_sync = db.clone();
-    let config_sync = config.clone();
-    let dirs_sync = dirs.clone();
 
     // Step 1: Read old file paths, auto-backup, and write pending marker (brief DB lock)
     let db_step1 = db.clone();
@@ -576,19 +499,11 @@ pub async fn apply_mod_update(
     // Copy new files first, then delete stale-only old files. If copying
     // fails partway, old files that weren't overwritten remain intact.
     let dirs_fs = dirs.clone();
-    let old_paths_fs = old_paths.clone();
-    let (extracted, stale_paths) = actix_web::web::block(move || {
+    let extracted = actix_web::web::block(move || {
         let effective_root = resolve_mod_root(&dirs_fs, is_disabled);
         move_staged_files(&staging_path, &effective_root, &extracted)?;
-        // Compute stale paths before remove_stale_files consumes old_paths_fs
-        let new_paths_set: std::collections::HashSet<&str> =
-            extracted.iter().map(|f| f.path.as_str()).collect();
-        let stale: Vec<String> = old_paths_fs
-            .into_iter()
-            .filter(|p| !new_paths_set.contains(p.as_str()))
-            .collect();
         remove_stale_files(&effective_root, old_paths, &extracted)?;
-        Ok::<_, anyhow::Error>((extracted, stale))
+        Ok::<_, anyhow::Error>(extracted)
     })
     .await??;
 
@@ -616,35 +531,6 @@ pub async fn apply_mod_update(
              A pending_updates record (id={}) exists — recovery will run on next startup.",
             pending_id
         );
-    }
-
-    // Step 4: Headless sync (best-effort, brief DB lock)
-    if result.is_ok() && config_sync.headless.is_some() {
-        let _ = actix_web::web::block(move || {
-            let db = db_sync.lock();
-            // Remove stale files from headless, then sync the updated state
-            #[allow(deprecated)]
-            if let Some(install_dir) = config_sync.headless.as_ref().map(|h| &h.install_dir) {
-                if let Err(e) = sync_client_files_to_headless(
-                    &dirs_sync.spt_server,
-                    install_dir,
-                    &stale_paths,
-                    SyncOp::Remove,
-                ) {
-                    tracing::warn!(err = %e, "headless sync failed removing stale files for async mod update");
-                }
-            }
-            if let Err(e) = crate::headless_sync::sync_headless(
-                &db,
-                &config_sync,
-                &dirs_sync,
-                HeadlessSyncScope::Mod(mod_db_id),
-            ) {
-                tracing::warn!(err = %e, "headless sync failed after async mod update");
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await;
     }
 
     result
@@ -680,11 +566,6 @@ pub async fn apply_addon_update(
     // Serialize file metadata for the pending_updates marker
     let new_files_json =
         serde_json::to_string(&extracted).context("failed to serialize new file paths")?;
-
-    // Clone db, config, dirs for headless sync step (step 4) before they're moved
-    let db_sync = db.clone();
-    let config_sync = config.clone();
-    let dirs_sync = dirs.clone();
 
     // Step 1: Read old file paths, auto-backup, and write pending marker (brief DB lock)
     let db_step1 = db.clone();
@@ -733,19 +614,11 @@ pub async fn apply_addon_update(
     // Copy new files first, then delete stale-only old files. If copying
     // fails partway, old files that weren't overwritten remain intact.
     let dirs_fs = dirs;
-    let old_paths_fs = old_paths.clone();
-    let (extracted, stale_paths) = actix_web::web::block(move || {
+    let extracted = actix_web::web::block(move || {
         let effective_root = resolve_mod_root(&dirs_fs, is_disabled);
         move_staged_files(&staging_path, &effective_root, &extracted)?;
-        // Compute stale paths before remove_stale_files consumes old_paths_fs
-        let new_paths_set: std::collections::HashSet<&str> =
-            extracted.iter().map(|f| f.path.as_str()).collect();
-        let stale: Vec<String> = old_paths_fs
-            .into_iter()
-            .filter(|p| !new_paths_set.contains(p.as_str()))
-            .collect();
         remove_stale_files(&effective_root, old_paths, &extracted)?;
-        Ok::<_, anyhow::Error>((extracted, stale))
+        Ok::<_, anyhow::Error>(extracted)
     })
     .await??;
 
@@ -782,42 +655,6 @@ pub async fn apply_addon_update(
              A pending_updates record (id={}) exists — recovery will run on next startup.",
             pending_id
         );
-    }
-
-    // Step 4: Headless sync (best-effort, brief DB lock)
-    if result.is_ok() && config_sync.headless.is_some() {
-        let _ = actix_web::web::block(move || {
-            let db = db_sync.lock();
-            let parent_mod_id = db
-                .get_addon(addon_db_id)
-                .ok()
-                .flatten()
-                .map(|a| a.parent_mod_id);
-            if let Some(parent_id) = parent_mod_id {
-                // Remove stale files from headless, then sync the updated state
-                #[allow(deprecated)]
-                if let Some(install_dir) = config_sync.headless.as_ref().map(|h| &h.install_dir) {
-                    if let Err(e) = sync_client_files_to_headless(
-                        &dirs_sync.spt_server,
-                        install_dir,
-                        &stale_paths,
-                        SyncOp::Remove,
-                    ) {
-                        tracing::warn!(err = %e, "headless sync failed removing stale files for async addon update");
-                    }
-                }
-                if let Err(e) = crate::headless_sync::sync_headless(
-                    &db,
-                    &config_sync,
-                    &dirs_sync,
-                    HeadlessSyncScope::Mod(parent_id),
-                ) {
-                    tracing::warn!(err = %e, "headless sync failed after async addon update");
-                }
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await;
     }
 
     result
@@ -1121,21 +958,6 @@ pub fn remove_mod_by_id(
     let delete_root = resolve_mod_root(dirs, is_disabled);
     crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
 
-    // Remove client files from headless before DB delete loses the file list
-    #[allow(deprecated)]
-    if !is_excluded_from_headless(db, mod_db_id) {
-        if let Some(install_dir) = config.headless.as_ref().map(|h| &h.install_dir) {
-            if let Err(e) = sync_client_files_to_headless(
-                &dirs.spt_server,
-                install_dir,
-                &file_paths,
-                SyncOp::Remove,
-            ) {
-                tracing::warn!(err = %e, "headless sync failed during mod removal");
-            }
-        }
-    }
-
     let tx = db.begin_transaction()?;
     db.delete_mod(mod_db_id)?;
     tx.commit()?;
@@ -1179,21 +1001,6 @@ pub fn remove_addon_by_id(
     tracing::debug!(file_count = file_paths.len(), "deleting addon files");
     let delete_root = resolve_mod_root(dirs, addon.disabled);
     crate::spt::mods::delete_mod_files(&delete_root, &file_paths)?;
-
-    // Remove client files from headless before DB delete loses the file list
-    #[allow(deprecated)]
-    if !is_excluded_from_headless(db, addon.parent_mod_id) {
-        if let Some(install_dir) = config.headless.as_ref().map(|h| &h.install_dir) {
-            if let Err(e) = sync_client_files_to_headless(
-                &dirs.spt_server,
-                install_dir,
-                &file_paths,
-                SyncOp::Remove,
-            ) {
-                tracing::warn!(err = %e, "headless sync failed during addon removal");
-            }
-        }
-    }
 
     let tx = db.begin_transaction()?;
     db.delete_addon(addon_db_id)?; // CASCADE deletes file records
@@ -1243,7 +1050,7 @@ pub fn resolve_mod_root(dirs: &QumaDirs, disabled: bool) -> PathBuf {
     if disabled {
         dirs.disabled_dir()
     } else {
-        dirs.spt_server.clone()
+        dirs.mod_overlay()
     }
 }
 
@@ -1549,13 +1356,13 @@ pub fn disable_mod(
     let stash = dirs.disabled_dir();
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for dir in &exclusive_dirs {
-        renames.push((dirs.spt_server.join(dir), stash.join(dir)));
+        renames.push((dirs.mod_overlay().join(dir), stash.join(dir)));
     }
     for loose_path in &loose {
-        renames.push((dirs.spt_server.join(loose_path), stash.join(loose_path)));
+        renames.push((dirs.mod_overlay().join(loose_path), stash.join(loose_path)));
     }
     for file_path in &shared_files {
-        renames.push((dirs.spt_server.join(file_path), stash.join(file_path)));
+        renames.push((dirs.mod_overlay().join(file_path), stash.join(file_path)));
     }
 
     // Handle stash collisions: remove stale stash entries before moving
@@ -1588,11 +1395,6 @@ pub fn disable_mod(
     }
 
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod disabled");
-    if let Err(e) =
-        crate::headless_sync::sync_headless(db, config, dirs, HeadlessSyncScope::Mod(mod_db_id))
-    {
-        tracing::warn!(err = %e, "headless sync failed after mod disable");
-    }
     Ok(())
 }
 
@@ -1633,21 +1435,21 @@ pub fn enable_mod(
     for dir in &top_dirs {
         let stash_dir = stash.join(dir);
         if stash_dir.is_dir() {
-            renames.push((stash_dir, dirs.spt_server.join(dir)));
+            renames.push((stash_dir, dirs.mod_overlay().join(dir)));
         } else {
             // Per-file fallback: move individual files that belong to this dir
             for file in &files {
                 if file.file_path.starts_with(dir.as_str()) {
                     let src = stash.join(&file.file_path);
                     if src.exists() {
-                        renames.push((src, dirs.spt_server.join(&file.file_path)));
+                        renames.push((src, dirs.mod_overlay().join(&file.file_path)));
                     }
                 }
             }
         }
     }
     for loose_path in &loose {
-        renames.push((stash.join(loose_path), dirs.spt_server.join(loose_path)));
+        renames.push((stash.join(loose_path), dirs.mod_overlay().join(loose_path)));
     }
 
     // Create parent directories at canonical locations
@@ -1676,12 +1478,6 @@ pub fn enable_mod(
     cleanup_empty_stash_dirs(dirs, &all_paths);
 
     tracing::info!(mod_db_id, mod_name = %mod_info.name, "mod enabled");
-
-    if let Err(e) =
-        crate::headless_sync::sync_headless(db, config, dirs, HeadlessSyncScope::Mod(mod_db_id))
-    {
-        tracing::warn!(err = %e, "headless sync failed after mod enable");
-    }
     Ok(())
 }
 
@@ -1717,7 +1513,7 @@ pub fn disable_addon(
     let stash = dirs.disabled_dir();
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file in &files {
-        let src = dirs.spt_server.join(&file.file_path);
+        let src = dirs.mod_overlay().join(&file.file_path);
         let dst = stash.join(&file.file_path);
         renames.push((src, dst));
     }
@@ -1751,14 +1547,6 @@ pub fn disable_addon(
     }
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon disabled");
-    if let Err(e) = crate::headless_sync::sync_headless(
-        db,
-        config,
-        dirs,
-        HeadlessSyncScope::Mod(addon_info.parent_mod_id),
-    ) {
-        tracing::warn!(err = %e, "headless sync failed after addon disable");
-    }
     Ok(())
 }
 
@@ -1793,7 +1581,7 @@ pub fn enable_addon(
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file in &files {
         let src = stash.join(&file.file_path);
-        let dst = dirs.spt_server.join(&file.file_path);
+        let dst = dirs.mod_overlay().join(&file.file_path);
         renames.push((src, dst));
     }
 
@@ -1816,14 +1604,6 @@ pub fn enable_addon(
     cleanup_empty_stash_dirs(dirs, &file_paths);
 
     tracing::info!(addon_db_id, addon_name = %addon_info.name, "addon enabled");
-    if let Err(e) = crate::headless_sync::sync_headless(
-        db,
-        config,
-        dirs,
-        HeadlessSyncScope::Mod(addon_info.parent_mod_id),
-    ) {
-        tracing::warn!(err = %e, "headless sync failed after addon enable");
-    }
     Ok(())
 }
 

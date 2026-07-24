@@ -217,7 +217,11 @@ impl QumaDirs {
     // -- Overlay paths --
 
     pub fn mod_overlay(&self) -> PathBuf {
-        self.overlays.join("mod")
+        if self.legacy {
+            self.spt_server.clone()
+        } else {
+            self.overlays.join("mod")
+        }
     }
 
     pub fn runtime_overlay(&self) -> PathBuf {
