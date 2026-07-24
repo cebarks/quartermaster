@@ -124,6 +124,7 @@ impl OverlayMount {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn ensure_mounted(&self) -> Result<()> {
         if !self.is_mounted()? {
             self.mount()?;

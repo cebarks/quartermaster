@@ -29,6 +29,7 @@ pub struct SyncReport {
 #[derive(Debug, Clone)]
 pub enum HeadlessSyncScope {
     /// Reconcile one mod and all its addons.
+    #[allow(dead_code)]
     Mod(i64),
     /// Full reconcile — all mods and all addons.
     Full,

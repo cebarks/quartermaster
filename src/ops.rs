@@ -207,6 +207,7 @@ impl ModSource {
 pub struct InstallRequest<'a> {
     pub db: &'a Database,
     pub dirs: &'a QumaDirs,
+    #[allow(dead_code)]
     pub config: &'a crate::config::Config,
     pub forge_mod_id: Option<i64>,
     pub version_id: Option<i64>,
@@ -222,6 +223,7 @@ pub struct InstallRequest<'a> {
 pub struct InstallAddonRequest<'a> {
     pub db: &'a Database,
     pub dirs: &'a QumaDirs,
+    #[allow(dead_code)]
     pub config: &'a crate::config::Config,
     pub forge_addon_id: Option<i64>,
     pub parent_mod_id: i64,

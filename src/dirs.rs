@@ -224,6 +224,7 @@ impl QumaDirs {
         }
     }
 
+    #[allow(dead_code)]
     pub fn runtime_overlay(&self) -> PathBuf {
         self.overlays.join("runtime")
     }
@@ -236,18 +237,22 @@ impl QumaDirs {
         self.overlays.join("runtime/work")
     }
 
+    #[allow(dead_code)]
     pub fn headless_overlay(&self, index: u32) -> PathBuf {
         self.overlays.join(format!("headless/client-{index}"))
     }
 
+    #[allow(dead_code)]
     pub fn headless_upper(&self, index: u32) -> PathBuf {
         self.overlays.join(format!("headless/client-{index}/upper"))
     }
 
+    #[allow(dead_code)]
     pub fn headless_work(&self, index: u32) -> PathBuf {
         self.overlays.join(format!("headless/client-{index}/work"))
     }
 
+    #[allow(dead_code)]
     pub fn headless_wine_prefix(&self, index: u32) -> PathBuf {
         self.overlays
             .join(format!("headless/client-{index}/wine-prefix"))
@@ -259,6 +264,7 @@ impl QumaDirs {
         self.root.join("runtimes/spt-server")
     }
 
+    #[allow(dead_code)]
     pub fn headless_runtime(&self, index: u32) -> PathBuf {
         self.root.join(format!("runtimes/headless/client-{index}"))
     }
@@ -274,6 +280,7 @@ impl QumaDirs {
         }
     }
 
+    #[allow(dead_code)]
     pub fn headless_overlay_mount(&self, index: u32) -> crate::overlay::OverlayMount {
         crate::overlay::OverlayMount {
             lower_dirs: vec![self.headless_base.clone(), self.mod_overlay()],

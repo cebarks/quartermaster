@@ -23,6 +23,11 @@ async fn start(ctx: &CliContext, timeout_secs: u64) -> Result<()> {
         drain_if_pending(ctx).await?;
     }
 
+    if !ctx.dirs.is_legacy() {
+        crate::overlay::check_prerequisites()?;
+        ctx.dirs.spt_overlay().mount()?;
+    }
+
     println!("Starting SPT server container...");
     mgr.start(container).await?;
 
@@ -35,6 +40,12 @@ async fn stop(ctx: &CliContext) -> Result<()> {
     println!("Stopping SPT server container...");
     mgr.stop(container).await?;
     println!("Server stopped.");
+
+    if !ctx.dirs.is_legacy() {
+        if let Err(e) = ctx.dirs.spt_overlay().unmount() {
+            tracing::warn!(err = %e, "failed to unmount SPT overlay");
+        }
+    }
 
     if ctx.config.auto_drain_on_lifecycle {
         drain_if_pending(ctx).await?;
@@ -50,6 +61,12 @@ async fn restart(ctx: &CliContext, force_drain: bool, skip_queue: bool) -> Resul
     mgr.stop(container).await?;
     println!("Server stopped.");
 
+    if !ctx.dirs.is_legacy() {
+        if let Err(e) = ctx.dirs.spt_overlay().unmount() {
+            tracing::warn!(err = %e, "failed to unmount SPT overlay");
+        }
+    }
+
     let should_drain = if skip_queue {
         false
     } else if force_drain {
@@ -60,6 +77,11 @@ async fn restart(ctx: &CliContext, force_drain: bool, skip_queue: bool) -> Resul
 
     if should_drain {
         drain_if_pending(ctx).await?;
+    }
+
+    if !ctx.dirs.is_legacy() {
+        crate::overlay::check_prerequisites()?;
+        ctx.dirs.spt_overlay().mount()?;
     }
 
     println!("Starting SPT server container...");
@@ -148,7 +170,7 @@ async fn recreate(ctx: &CliContext, pull: bool) -> Result<()> {
         mgr.pull_image(SPT_SERVER_IMAGE).await?;
     }
 
-    let opts = super::setup::create_container_opts(&ctx.dirs.spt_server, &container_name);
+    let opts = super::setup::create_container_opts(&ctx.dirs, &container_name);
     mgr.create_container(opts).await?;
     println!("Container '{container_name}' recreated.");
     println!("Run `quma server start` to start it.");

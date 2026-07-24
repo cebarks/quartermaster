@@ -62,6 +62,35 @@ pub async fn start_server(
     state.set_server_transition(Some("starting"));
     let _ = state.events.send(ServerEvent::ServerTransition);
 
+    if !state.dirs.is_legacy() {
+        if let Err(e) = crate::overlay::check_prerequisites() {
+            tracing::error!(err = %e, "overlay prerequisites check failed");
+            set_flash(
+                &session,
+                &format!("Failed to start server: {e}"),
+                FlashType::Error,
+            );
+            state.set_server_transition(None);
+            let _ = state.events.send(ServerEvent::ServerTransition);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/"))
+                .finish());
+        }
+        if let Err(e) = state.dirs.spt_overlay().mount() {
+            tracing::error!(err = %e, "failed to mount SPT overlay");
+            set_flash(
+                &session,
+                &format!("Failed to mount SPT overlay: {e}"),
+                FlashType::Error,
+            );
+            state.set_server_transition(None);
+            let _ = state.events.send(ServerEvent::ServerTransition);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/"))
+                .finish());
+        }
+    }
+
     if let Err(e) = mgr.start(&container).await {
         tracing::error!(container, err = %e, "failed to start server");
         set_flash(
@@ -113,6 +142,13 @@ pub async fn stop_server(
         );
     } else {
         tracing::info!(container, "server stopped");
+
+        if !state.dirs.is_legacy() {
+            if let Err(e) = state.dirs.spt_overlay().unmount() {
+                tracing::warn!(err = %e, "failed to unmount SPT overlay");
+            }
+        }
+
         set_flash(&session, "Server stopped", FlashType::Success);
     }
 
@@ -156,6 +192,12 @@ pub async fn restart_server(
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/"))
             .finish());
+    }
+
+    if !state.dirs.is_legacy() {
+        if let Err(e) = state.dirs.spt_overlay().unmount() {
+            tracing::warn!(err = %e, "failed to unmount SPT overlay");
+        }
     }
 
     // Drain queue if configured. Errors here are non-fatal — the server is
@@ -203,6 +245,35 @@ pub async fn restart_server(
     }
 
     // Start
+    if !state.dirs.is_legacy() {
+        if let Err(e) = crate::overlay::check_prerequisites() {
+            tracing::error!(err = %e, "overlay prerequisites check failed");
+            set_flash(
+                &session,
+                &format!("Failed to start server: {e}"),
+                FlashType::Error,
+            );
+            state.set_server_transition(None);
+            let _ = state.events.send(ServerEvent::ServerTransition);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/"))
+                .finish());
+        }
+        if let Err(e) = state.dirs.spt_overlay().mount() {
+            tracing::error!(err = %e, "failed to mount SPT overlay");
+            set_flash(
+                &session,
+                &format!("Failed to mount SPT overlay: {e}"),
+                FlashType::Error,
+            );
+            state.set_server_transition(None);
+            let _ = state.events.send(ServerEvent::ServerTransition);
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/"))
+                .finish());
+        }
+    }
+
     if let Err(e) = mgr.start(&container).await {
         tracing::error!(container, err = %e, "failed to start server after restart");
         set_flash(
