@@ -1441,7 +1441,7 @@ async fn create_client_container(
         host_path: overlay_dir.join("wine-prefix"),
         container_path: "/.wine".to_string(),
         read_only: false,
-        selinux: SelinuxLabel::Shared,
+        selinux: SelinuxLabel::Private,
     }];
 
     // Overlay mount for game directory — use dirs.headless_base (the migrated
