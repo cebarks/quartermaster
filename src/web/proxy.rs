@@ -564,7 +564,9 @@ fn fix_headless_crc(body: web::Bytes, dirs: &crate::dirs::QumaDirs) -> web::Byte
     }
 
     // Compute CRC from the Fika.Core.dll in the headless install dir
-    let dll_path = dirs.headless.join("BepInEx/plugins/Fika/Fika.Core.dll");
+    let dll_path = dirs
+        .headless_base
+        .join("BepInEx/plugins/Fika/Fika.Core.dll");
     let dll_bytes = match std::fs::read(&dll_path) {
         Ok(b) => b,
         Err(e) => {

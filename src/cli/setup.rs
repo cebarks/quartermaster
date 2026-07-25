@@ -11,6 +11,7 @@ use crate::container::{
     DEFAULT_CONTAINER_NAME, DEFAULT_SPT_PORT, SPT_SERVER_IMAGE,
 };
 use crate::db::Database;
+use crate::dirs::QumaDirs;
 use crate::spt::detect::{read_spt_version, validate_spt_dir};
 use crate::web::auth::hash_password;
 
@@ -352,16 +353,17 @@ async fn prompt_spt_version(explicit: Option<&str>) -> Result<crate::spt::releas
         .ok_or_else(|| anyhow::anyhow!("selection out of range"))
 }
 
-pub(crate) fn create_container_opts(
-    spt_server_dir: &Path,
-    container_name: &str,
-) -> CreateContainerOpts {
+pub(crate) fn create_container_opts(dirs: &QumaDirs, container_name: &str) -> CreateContainerOpts {
     CreateContainerOpts {
         name: container_name.to_string(),
         image: SPT_SERVER_IMAGE.to_string(),
         env: vec![],
         volumes: vec![VolumeMount {
-            host_path: spt_server_dir.to_path_buf(),
+            host_path: if dirs.is_legacy() {
+                dirs.spt_server.clone()
+            } else {
+                dirs.spt_runtime()
+            },
             container_path: "/opt/server".to_string(),
             read_only: false,
             selinux: SelinuxLabel::Private,
@@ -477,10 +479,14 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, _cli: &Cli) -> Resu
     let dirs = crate::dirs::QumaDirs::from_root(p.data_dir.clone());
     std::fs::create_dir_all(&dirs.spt_server)
         .with_context(|| format!("failed to create directory {}", dirs.spt_server.display()))?;
-    std::fs::create_dir_all(&dirs.headless)
-        .with_context(|| format!("failed to create directory {}", dirs.headless.display()))?;
-    std::fs::create_dir_all(&dirs.overlay)
-        .with_context(|| format!("failed to create directory {}", dirs.overlay.display()))?;
+    std::fs::create_dir_all(&dirs.headless_base).with_context(|| {
+        format!(
+            "failed to create directory {}",
+            dirs.headless_base.display()
+        )
+    })?;
+    std::fs::create_dir_all(&dirs.overlays)
+        .with_context(|| format!("failed to create directory {}", dirs.overlays.display()))?;
     println!("Created {}", p.data_dir.display());
 
     // 2. Download and extract SPT server
@@ -527,7 +533,7 @@ async fn bootstrap(mgr: &ContainerManager, p: ResolvedSetup, _cli: &Cli) -> Resu
     println!("Image pulled.");
 
     // 5. Create container (files already on disk — no first-boot needed)
-    let opts = create_container_opts(&dirs.spt_server, &p.container_name);
+    let opts = create_container_opts(&dirs, &p.container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", p.container_name);
 
@@ -644,7 +650,7 @@ async fn detect_or_create_container(
     println!("Pulling {}...", SPT_SERVER_IMAGE);
     mgr.pull_image(SPT_SERVER_IMAGE).await?;
 
-    let opts = create_container_opts(&dirs.spt_server, container_name);
+    let opts = create_container_opts(dirs, container_name);
     mgr.create_container(opts).await?;
     println!("Container '{}' created.", container_name);
 
@@ -782,8 +788,9 @@ mod tests {
 
     #[test]
     fn create_container_opts_defaults() {
-        let dir = PathBuf::from("/data/spt");
-        let opts = create_container_opts(&dir, DEFAULT_CONTAINER_NAME);
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let opts = create_container_opts(&dirs, DEFAULT_CONTAINER_NAME);
         assert_eq!(opts.name, "spt-server");
         assert_eq!(opts.image, SPT_SERVER_IMAGE);
         assert!(
@@ -796,8 +803,9 @@ mod tests {
 
     #[test]
     fn create_container_opts_dev_name() {
-        let dir = PathBuf::from("/data/spt");
-        let opts = create_container_opts(&dir, DEV_CONTAINER_NAME);
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let opts = create_container_opts(&dirs, DEV_CONTAINER_NAME);
         assert_eq!(opts.name, "spt-server-dev");
     }
 }

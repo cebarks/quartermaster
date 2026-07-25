@@ -94,6 +94,13 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                         }
                         Ok(false) => {
                             tracing::info!(container, "auto-starting server container");
+                            if !dirs.is_legacy() {
+                                if let Err(e) = crate::overlay::check_prerequisites() {
+                                    tracing::warn!(err = %e, "overlay prerequisites check failed — web UI will start anyway");
+                                } else if let Err(e) = dirs.spt_overlay().mount() {
+                                    tracing::warn!(err = %e, "failed to mount SPT overlay — web UI will start anyway");
+                                }
+                            }
                             if let Err(e) = mgr.start(container).await {
                                 tracing::warn!(container, err = %e, "failed to auto-start server container — web UI will start anyway");
                             }
