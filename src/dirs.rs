@@ -186,6 +186,35 @@ impl QumaDirs {
         }
     }
 
+    /// Resolve a mod-relative path by searching overlay layers in priority order.
+    ///
+    /// Mirrors overlayfs resolution: runtime upper (copy-up'd files the server
+    /// modified) → mod overlay (quma-installed) → spt_server base. Returns the
+    /// first existing path, or falls back to mod_overlay for new/missing files.
+    pub fn resolve_mod_file(&self, rel: &str) -> PathBuf {
+        if self.legacy {
+            return self.spt_server.join(rel);
+        }
+
+        let runtime = self.runtime_upper().join(rel);
+        if runtime.exists() {
+            return runtime;
+        }
+
+        let overlay = self.mod_overlay().join(rel);
+        if overlay.exists() {
+            return overlay;
+        }
+
+        let base = self.spt_server.join(rel);
+        if base.exists() {
+            return base;
+        }
+
+        // Default to mod overlay for error messages / new file creation
+        overlay
+    }
+
     pub fn server_mods_dir(&self) -> PathBuf {
         self.spt_server.join("SPT/user/mods")
     }
@@ -210,7 +239,7 @@ impl QumaDirs {
 
     #[allow(dead_code)] // ponytail: callers currently use fika::config::fika_config_path
     pub fn fika_config(&self) -> PathBuf {
-        self.mod_file_path("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
+        self.resolve_mod_file("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
     }
 
     // -- Overlay paths --
@@ -511,6 +540,44 @@ mod tests {
                 assert!(!dirs.is_legacy());
                 assert_eq!(dirs.root, root.to_path_buf());
             },
+        );
+    }
+
+    #[test]
+    fn resolve_mod_file_prefers_runtime_upper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+
+        let rel = "SPT/user/mods/fika-server/assets/configs/fika.jsonc";
+
+        // No file anywhere → falls back to mod overlay path
+        assert_eq!(dirs.resolve_mod_file(rel), dirs.mod_overlay().join(rel));
+
+        // File in spt_server only
+        let base_path = dirs.spt_server.join(rel);
+        std::fs::create_dir_all(base_path.parent().unwrap()).unwrap();
+        std::fs::write(&base_path, "base").unwrap();
+        assert_eq!(dirs.resolve_mod_file(rel), base_path);
+
+        // File in mod overlay (shadows spt_server)
+        let overlay_path = dirs.mod_overlay().join(rel);
+        std::fs::create_dir_all(overlay_path.parent().unwrap()).unwrap();
+        std::fs::write(&overlay_path, "overlay").unwrap();
+        assert_eq!(dirs.resolve_mod_file(rel), overlay_path);
+
+        // File in runtime upper (shadows both)
+        let runtime_path = dirs.runtime_upper().join(rel);
+        std::fs::create_dir_all(runtime_path.parent().unwrap()).unwrap();
+        std::fs::write(&runtime_path, "runtime").unwrap();
+        assert_eq!(dirs.resolve_mod_file(rel), runtime_path);
+    }
+
+    #[test]
+    fn resolve_mod_file_legacy_always_spt_server() {
+        let dirs = QumaDirs::from_legacy(PathBuf::from("/home/user/spt-server"));
+        assert_eq!(
+            dirs.resolve_mod_file("SPT/user/mods/test/config.json"),
+            PathBuf::from("/home/user/spt-server/SPT/user/mods/test/config.json")
         );
     }
 
