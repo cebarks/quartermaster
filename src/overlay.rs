@@ -25,6 +25,16 @@ impl OverlayMount {
             .join(":")
     }
 
+    pub fn mount_opts(&self) -> String {
+        let lowerdir = self.lowerdir_arg();
+        format!(
+            "lowerdir={},upperdir={},workdir={},squash_to_root",
+            lowerdir,
+            self.upper_dir.display(),
+            self.work_dir.display(),
+        )
+    }
+
     pub fn prepare_dirs(&self) -> Result<()> {
         std::fs::create_dir_all(&self.upper_dir)
             .with_context(|| format!("failed to create upper dir {}", self.upper_dir.display()))?;
@@ -64,13 +74,7 @@ impl OverlayMount {
 
         self.prepare_dirs()?;
 
-        let lowerdir = self.lowerdir_arg();
-        let opts = format!(
-            "lowerdir={},upperdir={},workdir={}",
-            lowerdir,
-            self.upper_dir.display(),
-            self.work_dir.display(),
-        );
+        let opts = self.mount_opts();
 
         let status = std::process::Command::new("fuse-overlayfs")
             .arg("-o")
@@ -220,5 +224,20 @@ mod tests {
         mount.prepare_dirs().expect("prepare_dirs");
         assert!(work.exists());
         assert!(!work.join("stale").exists());
+    }
+
+    #[test]
+    fn mount_opts_include_squash_to_root() {
+        let mount = OverlayMount {
+            lower_dirs: vec![PathBuf::from("/base")],
+            upper_dir: PathBuf::from("/upper"),
+            work_dir: PathBuf::from("/work"),
+            merged_dir: PathBuf::from("/merged"),
+        };
+        let opts = mount.mount_opts();
+        assert!(
+            opts.contains("squash_to_root"),
+            "mount options should include squash_to_root, got: {opts}"
+        );
     }
 }
