@@ -5,8 +5,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Canonical path to fika.jsonc, overlay-aware.
+///
+/// Resolves through overlay layers (runtime upper → mod overlay → spt base)
+/// because the SPT server may copy-up fika.jsonc to the runtime upper layer
+/// when it modifies the config at startup.
 pub fn fika_config_path(dirs: &crate::dirs::QumaDirs) -> std::path::PathBuf {
-    dirs.mod_file_path("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
+    dirs.resolve_mod_file("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
 }
 
 /// Parse fika.jsonc text into typed config.
