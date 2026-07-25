@@ -747,6 +747,7 @@ impl HeadlessConfig {
 
 pub fn is_fika_installed(dirs: &crate::dirs::QumaDirs) -> bool {
     dirs.mod_file_path("SPT/user/mods/fika-server").is_dir()
+        || dirs.spt_server.join("SPT/user/mods/fika-server").is_dir()
 }
 
 pub const FIKA_CLIENT_FORGE_ID: i64 = 2326;
@@ -1726,6 +1727,18 @@ install_dir = "/opt/fika"
         let result = headless.validate(&config, &dirs);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Fika"));
+    }
+
+    #[test]
+    fn is_fika_installed_finds_fika_in_spt_server() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = crate::dirs::QumaDirs::from_root(tmp.path().to_path_buf());
+        // Fika in spt-server/ (pre-migration or base layer), NOT in overlays/mod/
+        std::fs::create_dir_all(dirs.spt_server.join("SPT/user/mods/fika-server")).unwrap();
+        assert!(
+            is_fika_installed(&dirs),
+            "should detect fika-server in spt-server/ even when not in mod overlay"
+        );
     }
 
     #[test]
