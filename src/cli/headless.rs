@@ -232,8 +232,8 @@ impl HeadlessApiClient {
     }
 }
 
-pub async fn run(action: &HeadlessAction, spt_dir: &Path) -> Result<()> {
-    if !is_fika_installed(spt_dir) {
+pub async fn run(action: &HeadlessAction, dirs: &crate::dirs::QumaDirs) -> Result<()> {
+    if !is_fika_installed(dirs) {
         bail!(
             "Fika server mod is not installed.\n\
              Install Fika with: quma install fika-server\n\
@@ -241,7 +241,7 @@ pub async fn run(action: &HeadlessAction, spt_dir: &Path) -> Result<()> {
         );
     }
 
-    let api = match HeadlessApiClient::new(spt_dir) {
+    let api = match HeadlessApiClient::new(&dirs.spt_server) {
         Ok(api) => api,
         Err(_) => bail!("Web server is not running. Start it with 'quma serve' first."),
     };

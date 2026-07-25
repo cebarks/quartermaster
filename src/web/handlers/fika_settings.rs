@@ -37,9 +37,9 @@ pub async fn fika_settings_page(
     let flash = take_flash(&session);
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
-    let spt_dir = state.dirs.spt_server.clone();
+    let dirs = state.dirs.clone();
     let config = actix_web::web::block(move || {
-        let path = fika_config_path(&spt_dir);
+        let path = fika_config_path(&dirs);
         read_fika_config(&path)
     })
     .await
@@ -139,12 +139,12 @@ pub async fn fika_settings_save(
         return Err(WebError::Forbidden.into());
     }
 
-    let spt_dir = state.dirs.spt_server.clone();
+    let dirs = state.dirs.clone();
     let form_data = form.into_inner();
 
     let result = actix_web::web::block(move || {
         let _guard = state.fika_config_lock.lock();
-        let path = fika_config_path(&spt_dir);
+        let path = fika_config_path(&dirs);
 
         // Read CST (ALL CST ops must happen in this sync block)
         let cst = read_fika_cst(&path)?;

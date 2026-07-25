@@ -695,10 +695,10 @@ impl HeadlessConfig {
             }
         }
 
-        if !is_fika_installed(&dirs.spt_server) {
+        if !is_fika_installed(dirs) {
             bail!(
                 "Fika server mod not found at {}. Dedicated client management requires Fika.",
-                dirs.spt_server.join("SPT/user/mods/fika-server").display()
+                dirs.mod_file_path("SPT/user/mods/fika-server").display()
             );
         }
         // In legacy mode, headless install_dir must not be inside spt_server
@@ -745,8 +745,8 @@ impl HeadlessConfig {
     }
 }
 
-pub fn is_fika_installed(spt_dir: &Path) -> bool {
-    spt_dir.join("SPT/user/mods/fika-server").is_dir()
+pub fn is_fika_installed(dirs: &crate::dirs::QumaDirs) -> bool {
+    dirs.mod_file_path("SPT/user/mods/fika-server").is_dir()
 }
 
 pub const FIKA_CLIENT_FORGE_ID: i64 = 2326;
@@ -1772,9 +1772,10 @@ install_dir = "/opt/fika"
     #[test]
     fn fika_detection() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(!is_fika_installed(tmp.path()));
-        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/fika-server")).unwrap();
-        assert!(is_fika_installed(tmp.path()));
+        let dirs = crate::dirs::QumaDirs::from_root(tmp.path().to_path_buf());
+        assert!(!is_fika_installed(&dirs));
+        std::fs::create_dir_all(dirs.mod_file_path("SPT/user/mods/fika-server")).unwrap();
+        assert!(is_fika_installed(&dirs));
     }
 
     #[test]
