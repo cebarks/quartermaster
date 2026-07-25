@@ -249,13 +249,13 @@ impl HeadlessService {
                 .ok_or(HeadlessError::ClientNotFound(index))?
         };
 
-        let spt_dir = self.dirs.spt_server.clone();
+        let dirs = Arc::clone(&self.dirs);
         let new_name = name.trim().to_string();
         let fika_config_lock = Arc::clone(&self.fika_config_lock);
 
         tokio::task::spawn_blocking(move || {
             let _guard = fika_config_lock.lock();
-            let path = crate::fika::config::fika_config_path(&spt_dir);
+            let path = crate::fika::config::fika_config_path(&dirs);
 
             let config = crate::fika::config::read_fika_config(&path)
                 .map_err(|e| HeadlessError::ConfigError(e.to_string()))?;

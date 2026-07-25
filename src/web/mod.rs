@@ -1007,7 +1007,7 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
 
     // Initialize FikaClient if fika.jsonc exists and has an API key
     let fika_client = if fika_installed {
-        let fika_config_path = crate::fika::config::fika_config_path(&dirs.spt_server);
+        let fika_config_path = crate::fika::config::fika_config_path(&dirs);
         match crate::fika::config::read_fika_config(&fika_config_path) {
             Ok(fika_config) if !fika_config.server.api_key.is_empty() => {
                 let base_url = format!(

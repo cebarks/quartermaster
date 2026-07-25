@@ -137,8 +137,8 @@ fn build_profile_names(dirs: &QumaDirs) -> HashMap<String, String> {
         .collect()
 }
 
-fn build_client_aliases(spt_dir: &std::path::Path) -> HashMap<String, String> {
-    let path = crate::fika::config::fika_config_path(spt_dir);
+fn build_client_aliases(dirs: &crate::dirs::QumaDirs) -> HashMap<String, String> {
+    let path = crate::fika::config::fika_config_path(dirs);
     crate::fika::config::read_fika_config(&path)
         .map(|c| c.headless.profiles.aliases)
         .unwrap_or_default()
@@ -255,7 +255,7 @@ pub async fn headless_page(
 
     let dirs = Arc::clone(&state.dirs);
     let profile_names = build_profile_names(&dirs);
-    let aliases = build_client_aliases(&state.dirs.spt_server);
+    let aliases = build_client_aliases(&state.dirs);
     let headless_clients = resolve_clients(headless_clients, &profile_names, &aliases);
     let tmpl = HeadlessPageTemplate {
         user,
@@ -301,7 +301,7 @@ pub async fn client_detail(
 
     let dirs = Arc::clone(&state.dirs);
     let profile_names = build_profile_names(&dirs);
-    let aliases = build_client_aliases(&state.dirs.spt_server);
+    let aliases = build_client_aliases(&state.dirs);
     let client = resolve_clients(vec![client], &profile_names, &aliases)
         .into_iter()
         .next()
@@ -830,7 +830,7 @@ pub async fn client_status_partial(
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
     let dirs = Arc::clone(&state.dirs);
     let profile_names = build_profile_names(&dirs);
-    let aliases = build_client_aliases(&state.dirs.spt_server);
+    let aliases = build_client_aliases(&state.dirs);
     let clients = resolve_clients(clients, &profile_names, &aliases);
     let tmpl = ClientsStatusPartialTemplate {
         clients,
@@ -1194,7 +1194,7 @@ pub async fn dashboard_clients_status_partial(
 
     let dirs = Arc::clone(&state.dirs);
     let names = build_profile_names(&dirs);
-    let aliases = build_client_aliases(&state.dirs.spt_server);
+    let aliases = build_client_aliases(&state.dirs);
     let clients = resolve_clients(raw_clients.clone(), &names, &aliases);
 
     let healthy_count = raw_clients

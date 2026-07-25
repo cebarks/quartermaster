@@ -4,9 +4,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Canonical path to fika.jsonc relative to SPT dir.
-pub fn fika_config_path(spt_dir: &Path) -> std::path::PathBuf {
-    spt_dir.join("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
+/// Canonical path to fika.jsonc, overlay-aware.
+pub fn fika_config_path(dirs: &crate::dirs::QumaDirs) -> std::path::PathBuf {
+    dirs.mod_file_path("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
 }
 
 /// Parse fika.jsonc text into typed config.

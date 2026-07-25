@@ -208,10 +208,9 @@ impl QumaDirs {
         self.spt_server.join("SPT/SPT_Data/configs/http.json")
     }
 
-    #[allow(dead_code)] // ponytail: used once fika module migrates
+    #[allow(dead_code)] // ponytail: callers currently use fika::config::fika_config_path
     pub fn fika_config(&self) -> PathBuf {
-        self.spt_server
-            .join("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
+        self.mod_file_path("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
     }
 
     // -- Overlay paths --

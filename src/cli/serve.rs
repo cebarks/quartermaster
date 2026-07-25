@@ -122,7 +122,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
 
     let forge = ForgeClient::new()?;
 
-    let fika_installed = is_fika_installed(&dirs.spt_server);
+    let fika_installed = is_fika_installed(&dirs);
     let converging = Arc::new(AtomicBool::new(false));
     let config_arc = Arc::new(parking_lot::RwLock::new(config));
 
