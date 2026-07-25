@@ -929,11 +929,7 @@ pub async fn converge(
     // changes from install/update/remove are visible automatically.
     if desired_count > 0 {
         // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge).
-        // TODO(refactor): ensure_fika_headless writes to headless_config.install_dir
-        // (the base headless directory). This is infrastructure setup, not a runtime
-        // mod, so it's acceptable for now. In a future refactor, route this to
-        // dirs.mod_overlay() so the base stays truly pristine.
-        ensure_fika_headless(forge, &headless_config.install_dir).await?;
+        ensure_fika_headless(forge, &dirs.headless_base).await?;
     }
 
     // Look up installed Fika version for Last Version overlay
@@ -1053,7 +1049,7 @@ pub async fn converge(
         let index = (i + 1) as u32;
         let overlay_dir = dirs.headless_overlay(index);
         setup_client_overlay(
-            &headless_config.install_dir,
+            &dirs.headless_base,
             &overlay_dir,
             index,
             headless_config.physical_cores_only,
@@ -1421,7 +1417,7 @@ async fn create_client_container(
 
     // Set up overlay directory
     setup_client_overlay(
-        &headless_config.install_dir,
+        &dirs.headless_base,
         &overlay_dir,
         index,
         headless_config.physical_cores_only,
@@ -1448,9 +1444,10 @@ async fn create_client_container(
         selinux: SelinuxLabel::Shared,
     }];
 
-    // Overlay mount for game directory
+    // Overlay mount for game directory — use dirs.headless_base (the migrated
+    // location) rather than headless_config.install_dir (the pre-migration path).
     let overlay_mounts = vec![OverlayMount {
-        lower_dir: headless_config.install_dir.clone(),
+        lower_dir: dirs.headless_base.clone(),
         upper_dir: upper_dir.clone(),
         work_dir,
     }];
