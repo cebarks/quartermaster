@@ -27,11 +27,16 @@ impl OverlayMount {
 
     pub fn mount_opts(&self) -> String {
         let lowerdir = self.lowerdir_arg();
+        // SAFETY: getuid/getgid are always safe — no preconditions, no failure mode.
+        let uid = unsafe { libc::getuid() };
+        let gid = unsafe { libc::getgid() };
         format!(
-            "lowerdir={},upperdir={},workdir={},squash_to_root",
+            "lowerdir={},upperdir={},workdir={},squash_to_uid={},squash_to_gid={}",
             lowerdir,
             self.upper_dir.display(),
             self.work_dir.display(),
+            uid,
+            gid,
         )
     }
 
@@ -227,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn mount_opts_include_squash_to_root() {
+    fn mount_opts_include_squash_to_uid_gid() {
         let mount = OverlayMount {
             lower_dirs: vec![PathBuf::from("/base")],
             upper_dir: PathBuf::from("/upper"),
@@ -236,8 +241,12 @@ mod tests {
         };
         let opts = mount.mount_opts();
         assert!(
-            opts.contains("squash_to_root"),
-            "mount options should include squash_to_root, got: {opts}"
+            opts.contains("squash_to_uid="),
+            "mount options should include squash_to_uid, got: {opts}"
+        );
+        assert!(
+            opts.contains("squash_to_gid="),
+            "mount options should include squash_to_gid, got: {opts}"
         );
     }
 }
