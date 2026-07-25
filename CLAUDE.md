@@ -40,14 +40,17 @@ just sync-svm-metadata  # check SVM metadata coverage against upstream C# models
 **Local dev environment** (SPT dev environment at `.dev-server/`, bootstrapped via `quma setup`):
 
 ```bash
-just dev-init       # bootstrap SPT dev environment at .dev-server/ via quma setup
-just dev-serve      # build & run web UI against .dev-server/
-just dev-cli <ARGS> # run any quma command against .dev-server/
-just dev-watch      # auto-rebuild & restart dev server on file changes (needs cargo-watch)
-just dev-seed       # seed dev database with test data (wipes & repopulates)
-just dev-reset-db   # wipe .dev-server/ database (keeps config & structure)
-just dev-clean      # remove .dev-server/ and container entirely
-just dev-info       # show dev environment settings (port, container, worktree)
+just dev-check       # verify prerequisites (podman, fuse-overlayfs, cargo, sqlite3)
+just dev-init        # bootstrap SPT dev environment at .dev-server/ via quma setup (includes Fika)
+just dev-serve       # build & run web UI against .dev-server/
+just dev-cli <ARGS>  # run any quma command against .dev-server/
+just dev-watch       # auto-rebuild & restart dev server on file changes (needs cargo-watch)
+just dev-seed        # seed dev database with test data (wipes & repopulates)
+just dev-reset-db    # wipe .dev-server/ database (keeps config & structure)
+just dev-clean       # remove .dev-server/, container, and any headless containers
+just dev-headless-init [PATH]  # configure headless client (default: ~/Games/SPTarkov/)
+just dev-headless-clean        # stop headless containers and remove overlay data
+just dev-info        # show dev environment settings (port, container, overlay, headless)
 ```
 
 **Worktree-safe parallel dev environments**: The `dev-*` recipes auto-detect git worktrees and derive unique port/container names so multiple agents can work in parallel without conflicts:
@@ -59,7 +62,7 @@ just dev-info       # show dev environment settings (port, container, worktree)
 
 Run a single test: `cargo test <test_name>` or `cargo test -p quartermaster <test_name>`
 
-**Environment for testing**: Set `QUMA_SPT_DIR=~/spt-server` to point at the local SPT install. The database lives at `<spt_dir>/quartermaster.db`, config at `<spt_dir>/quartermaster.toml`.
+**Environment for testing**: Set `QUMA_DIR=~/spt-server` (or the legacy `QUMA_SPT_DIR`) to point at the local quma install. The database lives at `<quma_dir>/quartermaster.db`, config at `<quma_dir>/quartermaster.toml`.
 
 ## Architecture
 
