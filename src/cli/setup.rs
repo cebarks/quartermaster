@@ -46,7 +46,13 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
 
     // --- Collect input ---
     let data_dir = resolve_data_dir(args.effective_dir())?;
-    let install_fika = if args.no_fika { false } else { prompt_fika()? };
+    let install_fika = if args.no_fika {
+        false
+    } else if args.dev {
+        true
+    } else {
+        prompt_fika()?
+    };
     let admin_password = match args.admin_password {
         Some(pw) => {
             if pw.len() < 8 {
@@ -296,6 +302,14 @@ async fn prompt_spt_version(explicit: Option<&str>) -> Result<crate::spt::releas
     use crate::spt::releases;
 
     if let Some(version) = explicit {
+        if version == "latest" {
+            println!("Fetching latest SPT version...");
+            let releases = releases::list_releases().await?;
+            return releases
+                .into_iter()
+                .find(|r| r.download_url.is_some())
+                .ok_or_else(|| anyhow::anyhow!("no SPT releases with valid download URLs found"));
+        }
         let releases = releases::list_releases().await?;
         return releases
             .into_iter()
