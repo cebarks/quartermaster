@@ -28,6 +28,7 @@ pub struct ContainerManager {
 #[derive(Debug, Clone)]
 pub enum SelinuxLabel {
     Private,
+    #[allow(dead_code)]
     Shared,
     #[allow(dead_code)]
     None,

@@ -346,6 +346,56 @@ pub fn migrate_to_overlay_layout(db: &Database, dirs: &QumaDirs) -> Result<()> {
         }
     }
 
+    // Move any remaining mod directories not covered by DB tracking.
+    // The DB may have stale file lists (e.g., mod was updated outside quma)
+    // or mods installed manually without quma tracking.
+    let server_mods_dir = dirs.spt_server.join("SPT/user/mods");
+    if server_mods_dir.is_dir() {
+        let mod_overlay_mods = mod_overlay.join("SPT/user/mods");
+        std::fs::create_dir_all(&mod_overlay_mods)?;
+        for entry in std::fs::read_dir(&server_mods_dir)?.flatten() {
+            if !entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+                continue;
+            }
+            let name = entry.file_name();
+            let dst = mod_overlay_mods.join(&name);
+            if !dst.exists() {
+                // Directory move — use rename or copy+remove
+                match std::fs::rename(entry.path(), &dst) {
+                    Ok(()) => {}
+                    Err(_) => {
+                        copy_dir_all(&entry.path(), &dst)?;
+                        std::fs::remove_dir_all(entry.path())?;
+                    }
+                }
+            }
+        }
+    }
+
+    // Same for BepInEx/plugins/ — move client-side mod files
+    let server_plugins_dir = dirs.spt_server.join("BepInEx/plugins");
+    if server_plugins_dir.is_dir() {
+        let mod_overlay_plugins = mod_overlay.join("BepInEx/plugins");
+        std::fs::create_dir_all(&mod_overlay_plugins)?;
+        for entry in std::fs::read_dir(&server_plugins_dir)?.flatten() {
+            let name = entry.file_name();
+            let dst = mod_overlay_plugins.join(&name);
+            if !dst.exists() {
+                if entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+                    match std::fs::rename(entry.path(), &dst) {
+                        Ok(()) => {}
+                        Err(_) => {
+                            copy_dir_all(&entry.path(), &dst)?;
+                            std::fs::remove_dir_all(entry.path())?;
+                        }
+                    }
+                } else {
+                    move_file_or_fallback(&entry.path(), &dst)?;
+                }
+            }
+        }
+    }
+
     // Move runtime state to runtime overlay
     let runtime_upper = dirs.runtime_upper();
     let runtime_dirs = [
@@ -597,6 +647,98 @@ mod tests {
                 .join("BepInEx/plugins/test-mod.dll")
                 .exists(),
             "test-mod.dll should be removed from spt_server"
+        );
+    }
+
+    #[test]
+    fn migrate_to_overlay_moves_untracked_mod_dirs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        let dirs = QumaDirs::from_root(root.to_path_buf());
+        std::fs::create_dir_all(&dirs.spt_server).expect("mkdir spt_server");
+        std::fs::create_dir_all(&dirs.overlays).expect("mkdir overlays");
+
+        // Create DB with NO mods tracked
+        let db = Database::open(&dirs.db_path()).expect("open db");
+
+        // Create untracked mod directories in spt-server/
+        let fika_dir = dirs
+            .spt_server
+            .join("SPT/user/mods/fika-server/assets/configs");
+        std::fs::create_dir_all(&fika_dir).expect("mkdir fika");
+        std::fs::write(fika_dir.join("fika.jsonc"), "{}").expect("write fika.jsonc");
+
+        let other_mod = dirs.spt_server.join("SPT/user/mods/some-other-mod");
+        std::fs::create_dir_all(&other_mod).expect("mkdir other");
+        std::fs::write(other_mod.join("package.json"), "{}").expect("write package.json");
+
+        // Create untracked BepInEx/plugins entries (file and directory)
+        let bepinex_plugins = dirs.spt_server.join("BepInEx/plugins");
+        std::fs::create_dir_all(&bepinex_plugins).expect("mkdir BepInEx/plugins");
+        std::fs::write(bepinex_plugins.join("untracked.dll"), "dll content")
+            .expect("write untracked.dll");
+
+        let plugin_subdir = bepinex_plugins.join("UnTrackedPlugin");
+        std::fs::create_dir_all(&plugin_subdir).expect("mkdir UnTrackedPlugin");
+        std::fs::write(plugin_subdir.join("plugin.dll"), "plugin dll").expect("write plugin.dll");
+
+        // Run migration
+        migrate_to_overlay_layout(&db, &dirs).expect("migrate");
+
+        // Untracked mods should be moved to mod overlay
+        assert!(
+            dirs.mod_overlay()
+                .join("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
+                .exists(),
+            "fika-server should be in mod_overlay"
+        );
+        assert!(
+            dirs.mod_overlay()
+                .join("SPT/user/mods/some-other-mod/package.json")
+                .exists(),
+            "some-other-mod should be in mod_overlay"
+        );
+
+        // BepInEx entries should be moved to mod overlay
+        assert!(
+            dirs.mod_overlay()
+                .join("BepInEx/plugins/untracked.dll")
+                .exists(),
+            "untracked.dll should be in mod_overlay"
+        );
+        assert!(
+            dirs.mod_overlay()
+                .join("BepInEx/plugins/UnTrackedPlugin/plugin.dll")
+                .exists(),
+            "UnTrackedPlugin/plugin.dll should be in mod_overlay"
+        );
+
+        // Original locations should be empty
+        assert!(
+            !dirs.spt_server.join("SPT/user/mods/fika-server").exists(),
+            "fika-server should be removed from spt_server"
+        );
+        assert!(
+            !dirs
+                .spt_server
+                .join("SPT/user/mods/some-other-mod")
+                .exists(),
+            "some-other-mod should be removed from spt_server"
+        );
+        assert!(
+            !dirs
+                .spt_server
+                .join("BepInEx/plugins/untracked.dll")
+                .exists(),
+            "untracked.dll should be removed from spt_server"
+        );
+        assert!(
+            !dirs
+                .spt_server
+                .join("BepInEx/plugins/UnTrackedPlugin")
+                .exists(),
+            "UnTrackedPlugin should be removed from spt_server"
         );
     }
 }

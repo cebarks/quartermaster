@@ -3865,6 +3865,7 @@ dependencies = [
  "futures-util",
  "globset",
  "jsonc-parser",
+ "libc",
  "local-ip-address",
  "mini-moka",
  "parking_lot",

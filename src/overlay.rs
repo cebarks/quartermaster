@@ -25,6 +25,21 @@ impl OverlayMount {
             .join(":")
     }
 
+    pub fn mount_opts(&self) -> String {
+        let lowerdir = self.lowerdir_arg();
+        // SAFETY: getuid/getgid are always safe — no preconditions, no failure mode.
+        let uid = unsafe { libc::getuid() };
+        let gid = unsafe { libc::getgid() };
+        format!(
+            "lowerdir={},upperdir={},workdir={},squash_to_uid={},squash_to_gid={}",
+            lowerdir,
+            self.upper_dir.display(),
+            self.work_dir.display(),
+            uid,
+            gid,
+        )
+    }
+
     pub fn prepare_dirs(&self) -> Result<()> {
         std::fs::create_dir_all(&self.upper_dir)
             .with_context(|| format!("failed to create upper dir {}", self.upper_dir.display()))?;
@@ -64,13 +79,7 @@ impl OverlayMount {
 
         self.prepare_dirs()?;
 
-        let lowerdir = self.lowerdir_arg();
-        let opts = format!(
-            "lowerdir={},upperdir={},workdir={}",
-            lowerdir,
-            self.upper_dir.display(),
-            self.work_dir.display(),
-        );
+        let opts = self.mount_opts();
 
         let status = std::process::Command::new("fuse-overlayfs")
             .arg("-o")
@@ -220,5 +229,24 @@ mod tests {
         mount.prepare_dirs().expect("prepare_dirs");
         assert!(work.exists());
         assert!(!work.join("stale").exists());
+    }
+
+    #[test]
+    fn mount_opts_include_squash_to_uid_gid() {
+        let mount = OverlayMount {
+            lower_dirs: vec![PathBuf::from("/base")],
+            upper_dir: PathBuf::from("/upper"),
+            work_dir: PathBuf::from("/work"),
+            merged_dir: PathBuf::from("/merged"),
+        };
+        let opts = mount.mount_opts();
+        assert!(
+            opts.contains("squash_to_uid="),
+            "mount options should include squash_to_uid, got: {opts}"
+        );
+        assert!(
+            opts.contains("squash_to_gid="),
+            "mount options should include squash_to_gid, got: {opts}"
+        );
     }
 }
