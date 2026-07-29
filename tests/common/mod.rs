@@ -215,6 +215,7 @@ impl TestAppBuilder {
             config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(
                 &spt_quartermaster::dirs::QumaDirs::from_legacy(spt_dir.clone()),
             ),
+            sse_connections: std::sync::atomic::AtomicUsize::new(0),
         });
 
         let api_token_state = Some(web::Data::new(

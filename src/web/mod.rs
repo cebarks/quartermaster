@@ -1109,6 +1109,7 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         catalog_cache,
         fika_items: Arc::new(parking_lot::Mutex::new(None)),
         headless_service,
+        sse_connections: std::sync::atomic::AtomicUsize::new(0),
     });
 
     // Pre-warm mod ZIP cache in background

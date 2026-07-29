@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -61,6 +61,8 @@ pub struct AppState {
         Arc<parking_lot::Mutex<Option<Arc<HashMap<String, crate::fika::client::FikaItemInfo>>>>>,
     #[allow(dead_code)] // ponytail: used in later tasks
     pub headless_service: Option<HeadlessService>,
+    // ponytail: cap concurrent SSE connections; 128 is generous for a single-server tool
+    pub sse_connections: AtomicUsize,
 }
 
 impl AppState {

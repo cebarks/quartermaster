@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use actix_web::web::Data;
@@ -8,6 +9,20 @@ use tokio::sync::broadcast;
 
 use crate::web::auth::require_auth;
 use crate::web::state::AppState;
+
+/// ponytail: 128 concurrent SSE connections; single-server tool won't need more.
+/// Raise if needed — this just prevents runaway tab accumulation.
+const MAX_SSE_CONNECTIONS: usize = 128;
+
+/// Drop guard that decrements the SSE connection counter when the stream task ends.
+/// Holds a `Data<AppState>` (which is `Arc<AppState>`) so the counter reference stays valid.
+struct SseConnectionGuard(Data<AppState>);
+
+impl Drop for SseConnectionGuard {
+    fn drop(&mut self) {
+        self.0.sse_connections.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum ServerEvent {
@@ -42,10 +57,20 @@ pub async fn events_stream(
 ) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
     require_auth(&req)?;
 
+    let prev = state.sse_connections.fetch_add(1, Ordering::Relaxed);
+    if prev >= MAX_SSE_CONNECTIONS {
+        state.sse_connections.fetch_sub(1, Ordering::Relaxed);
+        return Err(actix_web::error::ErrorTooManyRequests(
+            "too many SSE connections",
+        ));
+    }
+    let guard = SseConnectionGuard(state.clone());
+
     let mut rx = state.events.subscribe();
     let (tx, channel_rx) = tokio::sync::mpsc::channel::<sse::Event>(64);
 
     tokio::spawn(async move {
+        let _guard = guard;
         loop {
             match rx.recv().await {
                 Ok(event) => {
