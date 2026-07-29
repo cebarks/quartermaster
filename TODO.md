@@ -9,14 +9,6 @@
 ## Quick Wins
 - infinite use invite codes (no multi-use support, only single-use)
 
-## Bugs
-- restarting a headless client from the main headless page causes you to end up at that headless' info page
-- headless client start/stop/restart buttons on `/quma/headless` go past the card length
-- typo in update changelog: versions url should use `/#versions` hash anchor, not `/versions` path segment (current URL 404s on Forge)
-- typo in update changelog: versions url should be like this `https://forge.sp-tarkov.com/mod/2310/wtt-commonlib/#versions` (`#version` is the important part)
-- mod queue allows duplicate pending operations (operations on mods should be exlcusive in the queue)
-- spt server profile creation is broken on user signup
-
 ## Convoy
 - user config file sync
 - user specific mods
@@ -43,6 +35,7 @@
 - headless client numa scheduling section has shitty formatting
 
 ## Robustness
+- SPT profile can be orphaned if QM DB transaction fails after SPT registration succeeds (`join.rs` — existing `TODO(debt)`)
 - no mutual exclusion on server start/stop/restart (`server.rs`)
 - TOCTOU on duplicate mod install/update check (`mods.rs` — task-manager dedup mitigates double-click, but concurrent installs from different paths can still race past the pre-spawn check)
 - no limit on concurrent SSE connections (`sse.rs`)
