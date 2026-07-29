@@ -16,11 +16,11 @@
     </div>
 </div>
 
-<div hx-get="/quma/api/dashboard/server" hx-trigger="load, every 3s, sse:serverStateChanged" hx-swap="innerHTML">
+<div hx-get="/quma/api/dashboard/server" hx-trigger="load, every 30s, sse:serverStateChanged" hx-swap="innerHTML">
     <div class="hero-card"><div class="hero-status"><span class="text-muted loading-pulse">Loading server status...</span></div></div>
 </div>
 
-<div hx-get="/quma/api/dashboard/mods" hx-trigger="load, every 60s" hx-swap="innerHTML">
+<div hx-get="/quma/api/dashboard/mods" hx-trigger="load, every 60s, sse:modsChanged" hx-swap="innerHTML">
     <div class="card"><h3>Mods</h3><span class="loading-pulse">Loading...</span></div>
 </div>
 
@@ -28,7 +28,7 @@
     <div class="card-header"><h3>Online Players</h3></div>
     <div class="card-body"
          hx-get="/quma/api/dashboard/players"
-         hx-trigger="load, every 15s"
+         hx-trigger="load, every 60s, sse:playerRegistered, sse:raidStarted, sse:raidEnded"
          hx-swap="innerHTML">
         <p class="text-muted">Loading...</p>
     </div>
@@ -72,7 +72,7 @@
     {% if nav.fika_installed %}
     <a href="/quma/headless" class="stat-card" style="border-left-color: var(--border)">
         <div class="stat-label">Headless Clients</div>
-        <div hx-get="/quma/api/dashboard/headless-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+        <div hx-get="/quma/api/dashboard/headless-status" hx-trigger="load, every 30s, sse:headlessChanged" hx-swap="innerHTML">
             <span class="text-muted text-sm loading-pulse">Checking...</span>
         </div>
     </a>
