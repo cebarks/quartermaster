@@ -3348,7 +3348,7 @@ pub async fn groups_partial(
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsInstall)?;
+    require_permission(&user, Permission::ConvoyManage)?;
     let csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let html = render_groups_tab(&state, &csrf_token).await?;
@@ -3370,7 +3370,7 @@ pub async fn new_group_card(
     query: Query<NewGroupQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsInstall)?;
+    require_permission(&user, Permission::ConvoyManage)?;
     let _csrf_token = crate::web::csrf::get_or_create_token(&session);
 
     let all_mods = fetch_mods_with_client_files(&state).await?;
@@ -3447,7 +3447,7 @@ pub async fn save_groups(
     body: web::Json<SaveGroupsRequest>,
 ) -> actix_web::Result<HttpResponse> {
     let user = require_auth(&req)?;
-    require_permission(&user, Permission::ModsInstall)?;
+    require_permission(&user, Permission::ConvoyManage)?;
 
     if !crate::web::csrf::validate_token(&session, &body.csrf_token) {
         return Err(WebError::Forbidden.into());
