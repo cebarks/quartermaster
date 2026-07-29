@@ -303,6 +303,7 @@
     }
     var eventSource = new EventSource('/quma/events');
     eventSource.addEventListener('headlessChanged', function() {
+        resumePolling();
         htmx.trigger('#headless-clients-container', 'load');
         // Re-enable add button since SSE refresh wipes the inline row
         var btn = document.getElementById('add-client-btn');
@@ -311,11 +312,22 @@
     window.headlessEventSource = eventSource;
 })();
 
+// ponytail: pause/resume the 5s HTMX polling so the inline row isn't wiped mid-click
+function pausePolling() {
+    var el = document.getElementById('headless-clients-container');
+    if (el) el.setAttribute('hx-trigger', 'load');
+}
+function resumePolling() {
+    var el = document.getElementById('headless-clients-container');
+    if (el) { el.setAttribute('hx-trigger', 'load, every 5s'); htmx.process(el); }
+}
+
 // ponytail: name input is disabled — rename requires profile_id which only exists
 // after the container starts and registers with Fika. Apply name from detail page.
 function showAddClientRow() {
     var btn = document.getElementById('add-client-btn');
     if (btn) btn.disabled = true;
+    pausePolling();
     var tbody = document.querySelector('#headless-clients-container table tbody');
     if (!tbody) {
         // No table yet (empty state) — submit create directly
@@ -359,6 +371,7 @@ function cancelAddClient() {
     if (row) row.remove();
     var btn = document.getElementById('add-client-btn');
     if (btn) btn.disabled = false;
+    resumePolling();
 }
 </script>
 {% endblock %}
