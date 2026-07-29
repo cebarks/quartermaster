@@ -55,6 +55,10 @@ struct StashCategoryDisplay {
     items: Vec<StashItemDisplay>,
     total_value: i64,
     item_count: usize,
+    // Per-currency subtotals (only populated for Money category)
+    rub_total: i64,
+    usd_total: i64,
+    eur_total: i64,
 }
 
 #[derive(Template)]
@@ -545,17 +549,41 @@ pub async fn stash_partial(
         }
     }
 
-    // Build sorted category list
+    // Build sorted category list with per-currency subtotals
     let mut categories: Vec<StashCategoryDisplay> = items_by_category
         .into_iter()
         .map(|(name, items)| {
             let total_value = items.iter().map(|i| i.total_value).sum();
             let item_count = items.len();
+            // ponytail: only calculate currency subtotals for Money category
+            let (rub_total, usd_total, eur_total) = if name == "Money" {
+                let rub = items
+                    .iter()
+                    .filter(|i| i.currency_type.as_deref() == Some("RUB"))
+                    .map(|i| i.count)
+                    .sum();
+                let usd = items
+                    .iter()
+                    .filter(|i| i.currency_type.as_deref() == Some("USD"))
+                    .map(|i| i.count)
+                    .sum();
+                let eur = items
+                    .iter()
+                    .filter(|i| i.currency_type.as_deref() == Some("EUR"))
+                    .map(|i| i.count)
+                    .sum();
+                (rub, usd, eur)
+            } else {
+                (0, 0, 0)
+            };
             StashCategoryDisplay {
                 name,
                 items,
                 total_value,
                 item_count,
+                rub_total,
+                usd_total,
+                eur_total,
             }
         })
         .collect();
