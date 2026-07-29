@@ -1064,6 +1064,7 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
                 fika_client.clone(),
                 Arc::clone(&fika_config_lock),
                 forge.clone(),
+                events_tx.clone(),
             ))
         } else {
             None

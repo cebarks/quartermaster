@@ -300,11 +300,15 @@
 </form>
 
 <script>
-document.addEventListener('DOMContentLoaded', () => {
+(function() {
+    if (window.headlessEventSource) {
+        window.headlessEventSource.close();
+    }
     const eventSource = new EventSource('/quma/events');
     eventSource.addEventListener('headlessChanged', () => {
         htmx.trigger('#headless-clients-container', 'load');
     });
-});
+    window.headlessEventSource = eventSource;
+})();
 </script>
 {% endblock %}
