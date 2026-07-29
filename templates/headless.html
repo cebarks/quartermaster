@@ -19,11 +19,7 @@
                 <input type="hidden" name="force" value="false">
                 <button type="submit" class="btn btn-sm btn-primary">Scale</button>
             </form>
-            <form method="post" action="/quma/headless/create" style="display:inline"
-                  hx-post="/quma/headless/create" hx-target="#operation-status" hx-swap="outerHTML">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="btn btn-sm btn-success">+ Add Client</button>
-            </form>
+            <button type="button" class="btn btn-sm btn-success" id="add-client-btn" onclick="showAddClientRow()">+ Add Client</button>
             <form method="post" action="/quma/headless/converge" style="display:inline"
                   hx-post="/quma/headless/converge" hx-target="#operation-status" hx-swap="outerHTML">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -305,11 +301,64 @@
     if (window.headlessEventSource) {
         window.headlessEventSource.close();
     }
-    const eventSource = new EventSource('/quma/events');
-    eventSource.addEventListener('headlessChanged', () => {
+    var eventSource = new EventSource('/quma/events');
+    eventSource.addEventListener('headlessChanged', function() {
         htmx.trigger('#headless-clients-container', 'load');
+        // Re-enable add button since SSE refresh wipes the inline row
+        var btn = document.getElementById('add-client-btn');
+        if (btn) btn.disabled = false;
     });
     window.headlessEventSource = eventSource;
 })();
+
+// ponytail: name input is disabled — rename requires profile_id which only exists
+// after the container starts and registers with Fika. Apply name from detail page.
+function showAddClientRow() {
+    var btn = document.getElementById('add-client-btn');
+    if (btn) btn.disabled = true;
+    var tbody = document.querySelector('#headless-clients-container table tbody');
+    if (!tbody) {
+        // No table yet (empty state) — submit create directly
+        var form = document.createElement('form');
+        form.method = 'post';
+        form.action = '/quma/headless/create';
+        form.style.display = 'none';
+        var csrf = document.createElement('input');
+        csrf.type = 'hidden';
+        csrf.name = 'csrf_token';
+        csrf.value = document.querySelector('input[name=csrf_token]').value;
+        form.appendChild(csrf);
+        document.body.appendChild(form);
+        form.setAttribute('hx-post', '/quma/headless/create');
+        form.setAttribute('hx-target', '#operation-status');
+        form.setAttribute('hx-swap', 'outerHTML');
+        htmx.process(form);
+        htmx.trigger(form, 'submit');
+        return;
+    }
+    var tr = document.createElement('tr');
+    tr.id = 'new-client-row';
+    var colCount = document.querySelectorAll('#headless-clients-container table thead th').length;
+    var html = '<td><input type="text" class="form-control form-control-sm" placeholder="Name (set from detail page)" style="max-width:180px" disabled></td>';
+    // Fill status columns with dashes (all columns except first and last)
+    for (var i = 1; i < colCount - 1; i++) html += '<td><span class="text-muted">—</span></td>';
+    html += '<td><div class="action-buttons">';
+    html += '<form method="post" action="/quma/headless/create" style="display:inline" hx-post="/quma/headless/create" hx-target="#operation-status" hx-swap="outerHTML">';
+    html += '<input type="hidden" name="csrf_token" value="' + document.querySelector('input[name=csrf_token]').value + '">';
+    html += '<button type="submit" class="btn btn-sm btn-success">Save</button>';
+    html += '</form> ';
+    html += '<button type="button" class="btn btn-sm btn-outline" onclick="cancelAddClient()">Cancel</button>';
+    html += '</div></td>';
+    tr.innerHTML = html;
+    tbody.appendChild(tr);
+    htmx.process(tr);
+}
+
+function cancelAddClient() {
+    var row = document.getElementById('new-client-row');
+    if (row) row.remove();
+    var btn = document.getElementById('add-client-btn');
+    if (btn) btn.disabled = false;
+}
 </script>
 {% endblock %}
