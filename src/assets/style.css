@@ -355,7 +355,7 @@ button.htmx-request .icon { animation: spin 0.8s linear infinite; }
 .tab-bar .tab:hover { color: var(--text); }
 
 .profile-card { line-height: 1.5; }
-.action-buttons { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.action-buttons { display: flex; gap: 0.25rem; flex-wrap: wrap; min-width: 10rem; }
 .reset-link-display { display: flex; gap: 0.25rem; align-items: center; }
 .reset-link-display input { font-family: monospace; font-size: 0.85rem; }
 
