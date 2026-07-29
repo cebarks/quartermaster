@@ -313,43 +313,18 @@ pub async fn join_submit(
         Ok(aid) => {
             let trimmed = aid.trim().trim_matches('"').to_string();
             if trimmed.is_empty() {
-                tracing::warn!(username = %username, "SPT returned empty AID, falling back to scan");
-                None
-            } else {
-                Some(trimmed)
+                tracing::error!(username = %username, "SPT server returned empty AID — profile creation failed");
+                return render_err(
+                    "Could not create your SPT profile — the server returned an invalid response. Please try again or contact an administrator.",
+                );
             }
+            trimmed
         }
         Err(e) => {
             tracing::warn!(err = %e, username = %username, "SPT profile registration failed");
             return render_err(
                 "Could not create your SPT profile. Make sure the SPT server is running.",
             );
-        }
-    };
-
-    // Fall back to filesystem scan if API didn't return a usable AID
-    let profile_aid = match profile_aid {
-        Some(aid) => Some(aid),
-        None => {
-            let spt_dir = state.dirs.spt_server.clone();
-            let username_for_scan = username.clone();
-            web::block(move || {
-                for attempt in 0..5 {
-                    if let Some(aid) = find_profile_by_username(&spt_dir, &username_for_scan) {
-                        return Some(aid);
-                    }
-                    if attempt < 4 {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                    }
-                }
-                tracing::warn!(
-                    username = %username_for_scan,
-                    "profile not found on disk after SPT registration — user will have no linked profile"
-                );
-                None
-            })
-            .await
-            .map_err(WebError::from)?
         }
     };
 
@@ -377,7 +352,7 @@ pub async fn join_submit(
         // Create user first so we have a real user_id for the FK on invite_codes.used_by
         let user_id = db.insert_user(
             &username,
-            profile_aid.as_deref(),
+            Some(&profile_aid),
             Some(&password_hash),
             "player",
             false,
@@ -472,44 +447,6 @@ pub async fn join_submit(
 
 /// Scan SPT profiles directory to find a profile by username.
 /// Returns the AID (filename stem) if found.
-fn find_profile_by_username(spt_dir: &std::path::Path, username: &str) -> Option<String> {
-    let profiles_dir = spt_dir.join("SPT/user/profiles");
-    let entries = match std::fs::read_dir(&profiles_dir) {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!(err = %e, "failed to read profiles directory after registration");
-            return None;
-        }
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let profile_id = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(id) if path.extension().and_then(|e| e.to_str()) == Some("json") => id.to_string(),
-            _ => continue,
-        };
-
-        let profile_json: serde_json::Value = match std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-        {
-            Some(v) => v,
-            None => continue,
-        };
-
-        let profile_username = profile_json
-            .pointer("/info/username")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        if profile_username == username {
-            return Some(profile_id);
-        }
-    }
-
-    None
-}
-
 pub async fn mod_archive(
     query: web::Query<JoinQuery>,
     state: web::Data<AppState>,
