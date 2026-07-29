@@ -40,7 +40,7 @@
 {% for cat in categories %}
 <details open style="margin-bottom:0.75rem">
     <summary style="cursor:pointer;font-weight:600;padding:0.5rem 0">
-        {{ cat.name }} <span class="text-muted text-sm">({{ cat.item_count }} items · {{ cat.total_value|format_roubles_i64 }})</span>
+        {{ cat.name }} <span class="text-muted text-sm">({{ cat.item_count }} items{% if cat.name == "Money" %}{% if cat.rub_total > 0 %} · ₽ {{ cat.rub_total|format_number }}{% endif %}{% if cat.usd_total > 0 %} · $ {{ cat.usd_total|format_number }}{% endif %}{% if cat.eur_total > 0 %} · € {{ cat.eur_total|format_number }}{% endif %}{% else %} · {{ cat.total_value|format_roubles_i64 }}{% endif %})</span>
     </summary>
     <table>
         <thead>
@@ -64,7 +64,7 @@
             <tr>
                 <td title="{{ item.name }}">{{ item.short_name }}</td>
                 <td style="text-align:right">{% if item.count > 1 %}{{ item.count }}{% else %}1{% endif %}</td>
-                <td style="text-align:right">{{ item.total_value|format_roubles_i64 }}</td>
+                <td style="text-align:right">{% match item.currency_type %}{% when Some with (c) %}{% if c == "USD" %}${% else if c == "EUR" %}€{% else %}₽{% endif %} {{ item.count|format_number }}{% when None %}{{ item.total_value|format_roubles_i64 }}{% endmatch %}</td>
             </tr>
             {% endfor %}
         </tbody>

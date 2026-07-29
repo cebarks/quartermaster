@@ -47,6 +47,7 @@ struct StashItemDisplay {
     short_name: String,
     count: i64,
     total_value: i64,
+    currency_type: Option<String>, // "RUB", "USD", or "EUR" for currency items
 }
 
 struct StashCategoryDisplay {
@@ -54,6 +55,10 @@ struct StashCategoryDisplay {
     items: Vec<StashItemDisplay>,
     total_value: i64,
     item_count: usize,
+    // Per-currency subtotals (only populated for Money category)
+    rub_total: i64,
+    usd_total: i64,
+    eur_total: i64,
 }
 
 #[derive(Template)]
@@ -478,6 +483,14 @@ pub async fn stash_partial(
         let unit_price = state.game_data.item_price(tpl).unwrap_or(0);
         let total_value = unit_price.saturating_mul(*count);
 
+        // ponytail: currency type detection by template ID
+        let currency_type = match tpl.as_str() {
+            "5449016a4bdc2d6f08b456f6" => Some("RUB".to_string()),
+            "5696686a4bdc2da3298b456a" => Some("USD".to_string()),
+            "569668774bdc2da2298b4568" => Some("EUR".to_string()),
+            _ => None,
+        };
+
         all_categories_set.insert(category.clone());
 
         if !search_lower.is_empty()
@@ -499,6 +512,7 @@ pub async fn stash_partial(
                 short_name,
                 count: *count,
                 total_value,
+                currency_type,
             });
     }
 
@@ -535,17 +549,41 @@ pub async fn stash_partial(
         }
     }
 
-    // Build sorted category list
+    // Build sorted category list with per-currency subtotals
     let mut categories: Vec<StashCategoryDisplay> = items_by_category
         .into_iter()
         .map(|(name, items)| {
             let total_value = items.iter().map(|i| i.total_value).sum();
             let item_count = items.len();
+            // ponytail: only calculate currency subtotals for Money category
+            let (rub_total, usd_total, eur_total) = if name == "Money" {
+                let rub = items
+                    .iter()
+                    .filter(|i| i.currency_type.as_deref() == Some("RUB"))
+                    .map(|i| i.count)
+                    .sum();
+                let usd = items
+                    .iter()
+                    .filter(|i| i.currency_type.as_deref() == Some("USD"))
+                    .map(|i| i.count)
+                    .sum();
+                let eur = items
+                    .iter()
+                    .filter(|i| i.currency_type.as_deref() == Some("EUR"))
+                    .map(|i| i.count)
+                    .sum();
+                (rub, usd, eur)
+            } else {
+                (0, 0, 0)
+            };
             StashCategoryDisplay {
                 name,
                 items,
                 total_value,
                 item_count,
+                rub_total,
+                usd_total,
+                eur_total,
             }
         })
         .collect();
