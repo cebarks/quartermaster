@@ -380,7 +380,7 @@ pub async fn client_restart(
         return Ok(HttpResponse::NoContent().finish());
     }
     Ok(HttpResponse::SeeOther()
-        .insert_header(("Location", format!("/quma/headless/{index}")))
+        .insert_header(("Location", "/quma/headless"))
         .finish())
 }
 
