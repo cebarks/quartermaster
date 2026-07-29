@@ -1178,6 +1178,28 @@ async fn install_mod_from_url(
 
     // Queue if server running
     if should_queue_operation(state).await {
+        // Check for duplicate URL operation
+        let db_check = state.db.clone();
+        let url_check = url.to_string();
+        let already_queued = web::block(move || {
+            let db = db_check.lock();
+            db.has_pending_url_op(&url_check, crate::db::users::QueueAction::Install)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if already_queued {
+            set_flash(
+                session,
+                "This URL is already queued for installation",
+                FlashType::Info,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+
         let queue_dir = state.dirs.queue_dir();
         let _ = std::fs::create_dir_all(&queue_dir);
 
@@ -1201,7 +1223,7 @@ async fn install_mod_from_url(
         let mod_name_q = mod_name.clone();
         let dest_str = dest.to_string_lossy().to_string();
         let url_owned = url.to_string();
-        let _ = web::block(move || {
+        match web::block(move || {
             let db = db.lock();
             db.insert_pending_op(&crate::db::users::InsertPendingOp {
                 action: crate::db::users::QueueAction::Install,
@@ -1218,14 +1240,27 @@ async fn install_mod_from_url(
             })
         })
         .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
+        {
+            Ok(Ok(_)) => {
+                set_flash(
+                    session,
+                    "Mod queued for install from URL",
+                    FlashType::Success,
+                );
+            }
+            Ok(Err(rusqlite::Error::SqliteFailure(err, msg)))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                set_flash(
+                    session,
+                    msg.as_deref().unwrap_or("Operation already queued"),
+                    FlashType::Info,
+                );
+            }
+            Ok(Err(e)) => return Err(WebError::from(e).into()),
+            Err(e) => return Err(WebError::from(e).into()),
+        }
 
-        set_flash(
-            session,
-            "Mod queued for install from URL",
-            FlashType::Success,
-        );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods"))
             .finish());
