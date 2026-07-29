@@ -518,16 +518,12 @@ impl Database {
         };
 
         // PMC stats
-        let pmc_raids: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 AND r.player_side = 'Pmc'",
+        let (pmc_raids, pmc_survived): (i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.exit_status = 'Survived' THEN 1 ELSE 0 END), 0)
+             FROM raids r JOIN users u ON r.user_id = u.id
+             WHERE u.is_headless = 0 AND r.player_side = 'Pmc'",
             [],
-            |row| row.get(0),
-        )?;
-
-        let pmc_survived: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 AND r.player_side = 'Pmc' AND r.exit_status = 'Survived'",
-            [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
 
         let pmc_survival_rate = if pmc_raids > 0 {
@@ -537,16 +533,12 @@ impl Database {
         };
 
         // Scav stats
-        let scav_raids: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 AND r.player_side = 'Savage'",
+        let (scav_raids, scav_survived): (i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.exit_status = 'Survived' THEN 1 ELSE 0 END), 0)
+             FROM raids r JOIN users u ON r.user_id = u.id
+             WHERE u.is_headless = 0 AND r.player_side = 'Savage'",
             [],
-            |row| row.get(0),
-        )?;
-
-        let scav_survived: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 AND r.player_side = 'Savage' AND r.exit_status = 'Survived'",
-            [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
 
         let scav_survival_rate = if scav_raids > 0 {
