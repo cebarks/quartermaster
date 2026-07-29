@@ -404,6 +404,45 @@ impl ContainerManager {
         }
     }
 
+    /// Query current CPU usage percentage of a running container.
+    /// Uses the delta between cpu_stats and precpu_stats from the stats API.
+    /// Returns None if the container is not running or stats are unavailable.
+    // ponytail: rounds to 1 decimal; one_shot(false) blocks ~1s per call,
+    // parallelize with join_all if >8 clients matter
+    pub async fn container_cpu_percent(&self, container: &str) -> Option<f64> {
+        use futures_util::StreamExt;
+        let mut stream = self.docker.stats(
+            container,
+            Some(
+                bollard::query_parameters::StatsOptionsBuilder::default()
+                    .stream(false)
+                    .one_shot(false)
+                    .build(),
+            ),
+        );
+        let stats = stream.next().await?.ok()?;
+
+        let cpu = stats.cpu_stats.as_ref()?;
+        let precpu = stats.precpu_stats.as_ref()?;
+
+        let cpu_delta = cpu
+            .cpu_usage
+            .as_ref()?
+            .total_usage?
+            .checked_sub(precpu.cpu_usage.as_ref()?.total_usage?)?;
+        let system_delta = cpu
+            .system_cpu_usage?
+            .checked_sub(precpu.system_cpu_usage?)?;
+
+        if system_delta == 0 {
+            return None;
+        }
+
+        let online_cpus = cpu.online_cpus.unwrap_or(1) as f64;
+        let percent = (cpu_delta as f64 / system_delta as f64) * online_cpus * 100.0;
+        Some((percent * 10.0).round() / 10.0)
+    }
+
     /// Check if a stopped container was OOM killed.
     pub async fn was_oom_killed(&self, container: &str) -> bool {
         self.inspect(container)
@@ -597,6 +636,18 @@ mod tests {
         );
         assert_eq!(filter_started_at(Some(String::new())), None);
         assert_eq!(filter_started_at(None), None);
+    }
+
+    #[test]
+    fn cpu_percent_calculation_logic() {
+        // cpu_delta=50M ns, system_delta=1B ns, online_cpus=4
+        // expected: (50M / 1B) * 4 * 100 = 20.0%
+        let cpu_delta = 50_000_000u64;
+        let system_delta = 1_000_000_000u64;
+        let online_cpus = 4.0f64;
+        let percent = (cpu_delta as f64 / system_delta as f64) * online_cpus * 100.0;
+        let rounded = (percent * 10.0).round() / 10.0;
+        assert!((rounded - 20.0).abs() < f64::EPSILON);
     }
 
     #[test]
