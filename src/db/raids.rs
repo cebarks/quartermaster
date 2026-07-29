@@ -87,6 +87,10 @@ pub struct ServerRaidStats {
     pub total_raids: i64,
     pub unique_players: i64,
     pub overall_survival_rate: f64,
+    pub pmc_raids: i64,
+    pub scav_raids: i64,
+    pub pmc_survival_rate: f64,
+    pub scav_survival_rate: f64,
     pub map_counts: Vec<(String, i64)>,
     pub top_killers: Vec<(String, i64)>,
     pub recent_raids: Vec<(Raid, String)>,
@@ -513,6 +517,36 @@ impl Database {
             0.0
         };
 
+        // PMC stats
+        let (pmc_raids, pmc_survived): (i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.exit_status = 'Survived' THEN 1 ELSE 0 END), 0)
+             FROM raids r JOIN users u ON r.user_id = u.id
+             WHERE u.is_headless = 0 AND r.player_side = 'Pmc'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        let pmc_survival_rate = if pmc_raids > 0 {
+            (pmc_survived as f64 / pmc_raids as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        // Scav stats
+        let (scav_raids, scav_survived): (i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.exit_status = 'Survived' THEN 1 ELSE 0 END), 0)
+             FROM raids r JOIN users u ON r.user_id = u.id
+             WHERE u.is_headless = 0 AND r.player_side = 'Savage'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        let scav_survival_rate = if scav_raids > 0 {
+            (scav_survived as f64 / scav_raids as f64) * 100.0
+        } else {
+            0.0
+        };
+
         let mut map_stmt = self.conn.prepare(
             "SELECT r.map, COUNT(DISTINCT COALESCE(r.server_id, 'solo_' || r.id)) as count FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 GROUP BY r.map ORDER BY count DESC",
         )?;
@@ -540,6 +574,10 @@ impl Database {
             total_raids,
             unique_players,
             overall_survival_rate,
+            pmc_raids,
+            scav_raids,
+            pmc_survival_rate,
+            scav_survival_rate,
             map_counts,
             top_killers,
             recent_raids,

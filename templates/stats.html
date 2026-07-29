@@ -28,6 +28,35 @@
             </div>
         </div>
 
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem">
+            <div class="card">
+                <h2>PMC</h2>
+                <div class="stat-card-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Raids</div>
+                        <div class="stat-value">{{ raid_stats.pmc_raids }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Survival Rate</div>
+                        <div class="stat-value">{{ raid_stats.pmc_survival_rate|fmt_pct }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Scav</h2>
+                <div class="stat-card-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Raids</div>
+                        <div class="stat-value">{{ raid_stats.scav_raids }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Survival Rate</div>
+                        <div class="stat-value">{{ raid_stats.scav_survival_rate|fmt_pct }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="card" style="margin-bottom:1.5rem">
             <h2>Active Raids</h2>
             <div id="active-raids" hx-get="/quma/api/raids/active" hx-trigger="sse:raidStarted, sse:raidEnded" hx-swap="innerHTML">
