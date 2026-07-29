@@ -14,7 +14,6 @@
 - restarting a headless client from the main headless page causes you to end up at that headless' info page
 - headless client start/stop/restart buttons on `/quma/headless` go past the card length
 - typo in update changelog: versions url should use `/#versions` hash anchor, not `/versions` path segment (current URL 404s on Forge)
-- no auto-refresh when scaling/converging clients
 - typo in update changelog: versions url should be like this `https://forge.sp-tarkov.com/mod/2310/wtt-commonlib/#versions` (`#version` is the important part)
 - mod queue allows duplicate pending operations (operations on mods should be exlcusive in the queue)
 - spt server profile creation is broken on user signup

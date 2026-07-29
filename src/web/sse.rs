@@ -15,6 +15,7 @@ pub enum ServerEvent {
     RaidStarted,
     RaidEnded,
     IntegrityChanged,
+    HeadlessChanged,
 }
 
 pub async fn events_stream(
@@ -37,6 +38,7 @@ pub async fn events_stream(
                         ServerEvent::RaidStarted => "event: raidStarted\ndata: \n\n",
                         ServerEvent::RaidEnded => "event: raidEnded\ndata: \n\n",
                         ServerEvent::IntegrityChanged => "event: integrityChanged\ndata: \n\n",
+                        ServerEvent::HeadlessChanged => "event: headlessChanged\ndata: \n\n",
                     };
                     return Some((Ok::<_, actix_web::Error>(web::Bytes::from(msg)), rx));
                 }

@@ -6,7 +6,7 @@ use bollard::container::LogOutput;
 use futures_util::StreamExt;
 use parking_lot::Mutex;
 use serde::Serialize;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::client::{ClientHealth, ClientState};
 use crate::config::Config;
@@ -17,6 +17,7 @@ use crate::fika::client::FikaClient;
 use crate::forge::client::ForgeClient;
 use crate::headless::{HeadlessError, OperationTracker};
 use crate::spt::headless::EHeadlessStatus;
+use crate::web::sse::ServerEvent;
 
 #[derive(Debug, Clone, Copy)]
 pub enum LifecycleAction {
@@ -51,6 +52,7 @@ pub struct HeadlessService {
     pub(crate) fika_config_lock: Arc<Mutex<()>>,
     pub(crate) forge: ForgeClient,
     pub(crate) operations: OperationTracker,
+    pub(crate) events: broadcast::Sender<ServerEvent>,
 }
 
 impl HeadlessService {
@@ -67,6 +69,7 @@ impl HeadlessService {
         fika_client: Option<Arc<FikaClient>>,
         fika_config_lock: Arc<Mutex<()>>,
         forge: ForgeClient,
+        events: broadcast::Sender<ServerEvent>,
     ) -> Self {
         Self {
             container_mgr,
@@ -81,6 +84,7 @@ impl HeadlessService {
             fika_config_lock,
             forge,
             operations: OperationTracker::new(),
+            events,
         }
     }
 
@@ -125,6 +129,7 @@ impl HeadlessService {
         let converging = Arc::clone(&self.converging);
         let db = Arc::clone(&self.db);
         let ops = self.operations.clone();
+        let events = self.events.clone();
 
         tokio::spawn(async move {
             match crate::client::converge::converge(
@@ -140,8 +145,14 @@ impl HeadlessService {
             )
             .await
             {
-                Ok(()) => ops.complete(&op_id),
-                Err(e) => ops.fail(&op_id, e.to_string()),
+                Ok(()) => {
+                    ops.complete(&op_id);
+                    let _ = events.send(ServerEvent::HeadlessChanged);
+                }
+                Err(e) => {
+                    ops.fail(&op_id, e.to_string());
+                    let _ = events.send(ServerEvent::HeadlessChanged);
+                }
             }
         });
         op_id
@@ -547,6 +558,7 @@ impl HeadlessService {
         let converging = Arc::clone(&self.converging);
         let db = Arc::clone(&self.db);
         let ops = self.operations.clone();
+        let events = self.events.clone();
 
         let mut updated_config = headless_config;
         updated_config.clients.remove((index - 1) as usize);
@@ -554,6 +566,7 @@ impl HeadlessService {
         tokio::spawn(async move {
             if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr).await {
                 ops.fail(&op_id, format!("Failed to remove containers: {e}"));
+                let _ = events.send(ServerEvent::HeadlessChanged);
                 return;
             }
 
@@ -568,12 +581,14 @@ impl HeadlessService {
                         }
                         if let Err(e) = fresh_config.save(&config_path) {
                             ops.fail(&op_id, format!("Failed to save config: {e}"));
+                            let _ = events.send(ServerEvent::HeadlessChanged);
                             return;
                         }
                         *config_handle.write() = fresh_config;
                     }
                     Err(e) => {
                         ops.fail(&op_id, format!("Failed to reload config: {e}"));
+                        let _ = events.send(ServerEvent::HeadlessChanged);
                         return;
                     }
                 }
@@ -597,8 +612,14 @@ impl HeadlessService {
             )
             .await
             {
-                Ok(()) => ops.complete(&op_id),
-                Err(e) => ops.fail(&op_id, e.to_string()),
+                Ok(()) => {
+                    ops.complete(&op_id);
+                    let _ = events.send(ServerEvent::HeadlessChanged);
+                }
+                Err(e) => {
+                    ops.fail(&op_id, e.to_string());
+                    let _ = events.send(ServerEvent::HeadlessChanged);
+                }
             }
         });
 
@@ -647,6 +668,7 @@ impl HeadlessService {
         let converging = Arc::clone(&self.converging);
         let db = Arc::clone(&self.db);
         let ops = self.operations.clone();
+        let events = self.events.clone();
 
         tokio::spawn(async move {
             if converging
@@ -659,12 +681,14 @@ impl HeadlessService {
                 .is_err()
             {
                 ops.fail(&op_id, "Convergence already in progress".into());
+                let _ = events.send(ServerEvent::HeadlessChanged);
                 return;
             }
 
             if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr).await {
                 converging.store(false, std::sync::atomic::Ordering::Release);
                 ops.fail(&op_id, format!("Failed to remove containers: {e}"));
+                let _ = events.send(ServerEvent::HeadlessChanged);
                 return;
             }
 
@@ -688,8 +712,14 @@ impl HeadlessService {
             )
             .await
             {
-                Ok(()) => ops.complete(&op_id),
-                Err(e) => ops.fail(&op_id, e.to_string()),
+                Ok(()) => {
+                    ops.complete(&op_id);
+                    let _ = events.send(ServerEvent::HeadlessChanged);
+                }
+                Err(e) => {
+                    ops.fail(&op_id, e.to_string());
+                    let _ = events.send(ServerEvent::HeadlessChanged);
+                }
             }
         });
 
