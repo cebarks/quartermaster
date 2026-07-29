@@ -125,26 +125,23 @@ impl HeadlessService {
         let dirs = Arc::clone(&self.dirs);
         let spt_client = self.spt_client();
         let forge = self.forge.clone();
-        let spt_version = "";
         let converging = Arc::clone(&self.converging);
         let db = Arc::clone(&self.db);
         let ops = self.operations.clone();
         let events = self.events.clone();
 
         tokio::spawn(async move {
-            match crate::client::converge::converge(
-                &mgr,
-                &headless_config,
-                &config,
-                &dirs,
-                &spt_client,
-                &forge,
-                spt_version,
-                converging,
-                &db,
-            )
-            .await
-            {
+            let ctx = crate::client::converge::ConvergeContext {
+                container_mgr: &mgr,
+                headless_config: &headless_config,
+                config: &config,
+                dirs: &dirs,
+                spt_client: &spt_client,
+                forge: &forge,
+                converging: &converging,
+                db: &db,
+            };
+            match crate::client::converge::converge(&ctx).await {
                 Ok(()) => {
                     ops.complete(&op_id);
                     let _ = events.send(ServerEvent::HeadlessChanged);
@@ -554,7 +551,6 @@ impl HeadlessService {
         let dirs = Arc::clone(&self.dirs);
         let spt_client = self.spt_client();
         let forge = self.forge.clone();
-        let spt_version = "";
         let converging = Arc::clone(&self.converging);
         let db = Arc::clone(&self.db);
         let ops = self.operations.clone();
@@ -599,19 +595,17 @@ impl HeadlessService {
                 let _ = std::fs::remove_dir_all(&overlay);
             }
 
-            match crate::client::converge::converge(
-                &mgr,
-                &updated_config,
-                &config,
-                &dirs,
-                &spt_client,
-                &forge,
-                spt_version,
-                converging,
-                &db,
-            )
-            .await
-            {
+            let ctx = crate::client::converge::ConvergeContext {
+                container_mgr: &mgr,
+                headless_config: &updated_config,
+                config: &config,
+                dirs: &dirs,
+                spt_client: &spt_client,
+                forge: &forge,
+                converging: &converging,
+                db: &db,
+            };
+            match crate::client::converge::converge(&ctx).await {
                 Ok(()) => {
                     ops.complete(&op_id);
                     let _ = events.send(ServerEvent::HeadlessChanged);
@@ -664,7 +658,6 @@ impl HeadlessService {
         let dirs = Arc::clone(&self.dirs);
         let spt_client = self.spt_client();
         let forge = self.forge.clone();
-        let spt_version = "";
         let converging = Arc::clone(&self.converging);
         let db = Arc::clone(&self.db);
         let ops = self.operations.clone();
@@ -699,19 +692,17 @@ impl HeadlessService {
 
             converging.store(false, std::sync::atomic::Ordering::Release);
 
-            match crate::client::converge::converge(
-                &mgr,
-                &headless_config,
-                &config,
-                &dirs,
-                &spt_client,
-                &forge,
-                spt_version,
-                converging,
-                &db,
-            )
-            .await
-            {
+            let ctx = crate::client::converge::ConvergeContext {
+                container_mgr: &mgr,
+                headless_config: &headless_config,
+                config: &config,
+                dirs: &dirs,
+                spt_client: &spt_client,
+                forge: &forge,
+                converging: &converging,
+                db: &db,
+            };
+            match crate::client::converge::converge(&ctx).await {
                 Ok(()) => {
                     ops.complete(&op_id);
                     let _ = events.send(ServerEvent::HeadlessChanged);

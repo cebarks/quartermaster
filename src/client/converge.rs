@@ -26,6 +26,18 @@ impl Drop for ConvergingGuard {
     }
 }
 
+/// Shared context for convergence operations, avoiding long argument lists.
+pub struct ConvergeContext<'a> {
+    pub container_mgr: &'a ContainerManager,
+    pub headless_config: &'a HeadlessConfig,
+    pub config: &'a Config,
+    pub dirs: &'a QumaDirs,
+    pub spt_client: &'a SptClient,
+    pub forge: &'a ForgeClient,
+    pub converging: &'a Arc<AtomicBool>,
+    pub db: &'a Arc<Mutex<crate::db::Database>>,
+}
+
 /// Label key for marking containers as managed by quartermaster
 pub const MANAGED_BY_LABEL: &str = "quma.managed-by";
 pub const MANAGED_BY_VALUE: &str = "quartermaster-clients";
@@ -768,28 +780,24 @@ pub fn find_name_conflicts(
 ///
 /// The `converging` flag is an Arc<AtomicBool> that prevents concurrent convergence
 /// operations and signals to the supervisor that state is in flux.
-#[allow(clippy::too_many_arguments)]
 #[allow(deprecated)]
-pub async fn converge(
-    container_mgr: &ContainerManager,
-    headless_config: &HeadlessConfig,
-    config: &Config,
-    dirs: &QumaDirs,
-    spt_client: &SptClient,
-    forge: &ForgeClient,
-    _spt_version: &str,
-    converging: Arc<AtomicBool>,
-    db: &Arc<Mutex<crate::db::Database>>,
-) -> Result<()> {
+pub async fn converge(ctx: &ConvergeContext<'_>) -> Result<()> {
     // Set converging flag (atomic compare-exchange for race-free check-and-set)
-    if converging
+    if ctx
+        .converging
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_err()
     {
         bail!("Convergence already in progress");
     }
 
-    let _guard = ConvergingGuard(converging.clone());
+    let _guard = ConvergingGuard(ctx.converging.clone());
+
+    let container_mgr = ctx.container_mgr;
+    let headless_config = ctx.headless_config;
+    let dirs = ctx.dirs;
+    let forge = ctx.forge;
+    let db = ctx.db;
 
     // Legacy layout guard — overlay paths are empty in legacy mode
     if dirs.is_legacy() {
@@ -929,7 +937,9 @@ pub async fn converge(
     // changes from install/update/remove are visible automatically.
     if desired_count > 0 {
         // Ensure Fika.Headless plugin is installed (GitHub-only, not on Forge).
-        ensure_fika_headless(forge, &dirs.headless_base).await?;
+        // Write to mod_overlay so it's visible to both SPT server and headless
+        // overlays without modifying the base headless install directory.
+        ensure_fika_headless(forge, &dirs.mod_overlay()).await?;
     }
 
     // Look up installed Fika version for Last Version overlay
@@ -945,11 +955,7 @@ pub async fn converge(
     // Scale up or down
     if current_count < desired_count {
         ensure_clients(
-            container_mgr,
-            headless_config,
-            config,
-            dirs,
-            spt_client,
+            ctx,
             current_count,
             desired_count,
             ntsync_available,
@@ -958,16 +964,7 @@ pub async fn converge(
         )
         .await?;
     } else if current_count > desired_count {
-        remove_excess_clients(
-            container_mgr,
-            headless_config,
-            config,
-            dirs,
-            spt_client,
-            current_count,
-            desired_count,
-        )
-        .await?;
+        remove_excess_clients(ctx, current_count, desired_count).await?;
     } else {
         info!("Already at desired count ({desired_count}), checking for overlay updates");
     }
@@ -1031,10 +1028,7 @@ pub async fn converge(
             .with_context(|| format!("failed to remove client {i} for NUMA reconciliation"))?;
 
         create_client_container(
-            container_mgr,
-            headless_config,
-            config,
-            dirs,
+            ctx,
             i,
             profile_id,
             ntsync_available,
@@ -1149,13 +1143,8 @@ async fn warn_active_players(spt_client: &SptClient, reason: &str) {
 }
 
 /// Ensure containers exist from current_count up to desired_count.
-#[allow(clippy::too_many_arguments)]
 async fn ensure_clients(
-    container_mgr: &ContainerManager,
-    headless_config: &HeadlessConfig,
-    config: &Config,
-    dirs: &QumaDirs,
-    spt_client: &SptClient,
+    ctx: &ConvergeContext<'_>,
     current_count: u32,
     desired_count: u32,
     ntsync_available: bool,
@@ -1168,46 +1157,47 @@ async fn ensure_clients(
     {
         // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
         // and the config UI save handler is the only other writer. Race window is narrow.
-        let fika_path = crate::fika::config::fika_config_path(dirs);
+        let fika_path = crate::fika::config::fika_config_path(ctx.dirs);
         let cst = crate::fika::config::read_fika_cst(&fika_path)?;
         crate::fika::config::set_headless_amount(&cst, desired_count);
         crate::fika::config::write_fika_cst(&cst, &fika_path)?;
     }
 
     // 2. Restart SPT server to pick up new headless count and generate profiles
-    let container = config
+    let container = ctx
+        .config
         .server_container
         .as_deref()
         .expect("server_container validated by HeadlessConfig::validate");
 
-    warn_active_players(spt_client, "scaling up headless clients").await;
+    warn_active_players(ctx.spt_client, "scaling up headless clients").await;
     info!("Stopping SPT server");
-    container_mgr
+    ctx.container_mgr
         .stop(container)
         .await
         .context("failed to stop SPT server for headless config update")?;
 
     info!("Starting SPT server");
-    container_mgr
+    ctx.container_mgr
         .start(container)
         .await
         .context("failed to start SPT server after headless config update")?;
 
     info!(
         "Waiting for SPT server to become ready (timeout: {}s)",
-        headless_config.server_ready_timeout
+        ctx.headless_config.server_ready_timeout
     );
-    if !await_server_ready(spt_client, headless_config.server_ready_timeout).await {
+    if !await_server_ready(ctx.spt_client, ctx.headless_config.server_ready_timeout).await {
         bail!(
             "SPT server did not become ready within {}s after restart. \
              Headless clients will not be started against a half-initialized server. \
              Increase headless.server_ready_timeout if your server needs more time to load.",
-            headless_config.server_ready_timeout
+            ctx.headless_config.server_ready_timeout
         );
     }
 
     // 3. Restart existing containers so they reconnect to the fresh server
-    restart_running_clients(container_mgr, current_count).await?;
+    restart_running_clients(ctx.container_mgr, current_count).await?;
 
     // 4. Discover available profiles for assignment
     // Headless profiles are created by the SPT server when it starts with Fika's
@@ -1215,28 +1205,19 @@ async fn ensure_clients(
     // since headless amount was increased), containers are created without PROFILE_ID
     // and will need a re-scale after the server generates the profiles.
     let new_count = desired_count - current_count;
-    let managed = container_mgr
+    let managed = ctx
+        .container_mgr
         .detect_containers_by_label(MANAGED_BY_LABEL, MANAGED_BY_VALUE)
         .await
         .unwrap_or_default();
     let profile_assignments =
-        select_profiles_for_assignment(container_mgr, dirs, &managed, new_count).await;
+        select_profiles_for_assignment(ctx.container_mgr, ctx.dirs, &managed, new_count).await;
 
     // 5. Create containers for new clients
     for (offset, profile_id) in profile_assignments.into_iter().enumerate() {
         let i = current_count + 1 + offset as u32;
-        create_client_container(
-            container_mgr,
-            headless_config,
-            config,
-            dirs,
-            i,
-            profile_id,
-            ntsync_available,
-            topology,
-            fika_version,
-        )
-        .await?;
+        create_client_container(ctx, i, profile_id, ntsync_available, topology, fika_version)
+            .await?;
     }
 
     Ok(())
@@ -1247,11 +1228,7 @@ async fn ensure_clients(
 /// In-raid checks are now handled by the CLI `headless delete` command before calling
 /// converge, so this function simply stops and removes excess containers.
 async fn remove_excess_clients(
-    container_mgr: &ContainerManager,
-    headless_config: &HeadlessConfig,
-    config: &Config,
-    dirs: &QumaDirs,
-    spt_client: &SptClient,
+    ctx: &ConvergeContext<'_>,
     current_count: u32,
     desired_count: u32,
 ) -> Result<()> {
@@ -1263,21 +1240,21 @@ async fn remove_excess_clients(
         info!("Removing container {name}");
 
         // Stop first if running
-        if container_mgr.is_running(&name).await? {
-            container_mgr.stop(&name).await?;
+        if ctx.container_mgr.is_running(&name).await? {
+            ctx.container_mgr.stop(&name).await?;
         }
 
-        container_mgr.remove_container(&name).await?;
+        ctx.container_mgr.remove_container(&name).await?;
     }
 
     // Clean up overlay mounts and directories for removed clients
     for i in (desired_count + 1)..=current_count {
         // Unmount the overlay before removing the directory tree
-        if let Err(e) = dirs.headless_overlay_mount(i).unmount() {
+        if let Err(e) = ctx.dirs.headless_overlay_mount(i).unmount() {
             warn!("Failed to unmount overlay for client {i}: {e}");
         }
 
-        let overlay = dirs.headless_overlay(i);
+        let overlay = ctx.dirs.headless_overlay(i);
         if overlay.exists() {
             if let Err(e) = std::fs::remove_dir_all(&overlay) {
                 warn!("Failed to clean overlay dir for client {i}: {e}");
@@ -1291,25 +1268,26 @@ async fn remove_excess_clients(
     {
         // ponytail: no fika_config_lock here — convergence is serialized by the converging flag,
         // and the config UI save handler is the only other writer. Race window is narrow.
-        let fika_path = crate::fika::config::fika_config_path(dirs);
+        let fika_path = crate::fika::config::fika_config_path(ctx.dirs);
         let cst = crate::fika::config::read_fika_cst(&fika_path)?;
         crate::fika::config::set_headless_amount(&cst, desired_count);
         crate::fika::config::write_fika_cst(&cst, &fika_path)?;
     }
 
     // 3. Restart SPT server to deregister removed clients
-    let container = config
+    let container = ctx
+        .config
         .server_container
         .as_deref()
         .expect("server_container validated by HeadlessConfig::validate");
 
-    warn_active_players(spt_client, "scaling down headless clients").await;
+    warn_active_players(ctx.spt_client, "scaling down headless clients").await;
     info!("Restarting SPT server to deregister removed headless clients");
-    container_mgr
+    ctx.container_mgr
         .stop(container)
         .await
         .context("failed to stop SPT server for client deregistration")?;
-    container_mgr
+    ctx.container_mgr
         .start(container)
         .await
         .context("failed to start SPT server after client deregistration")?;
@@ -1317,19 +1295,19 @@ async fn remove_excess_clients(
     // 4. Wait for server readiness before restarting remaining clients
     info!(
         "Waiting for SPT server to become ready (timeout: {}s)",
-        headless_config.server_ready_timeout
+        ctx.headless_config.server_ready_timeout
     );
-    if !await_server_ready(spt_client, headless_config.server_ready_timeout).await {
+    if !await_server_ready(ctx.spt_client, ctx.headless_config.server_ready_timeout).await {
         bail!(
             "SPT server did not become ready within {}s after restart. \
              Remaining clients will not be restarted against a half-initialized server. \
              Increase headless.server_ready_timeout if your server needs more time to load.",
-            headless_config.server_ready_timeout
+            ctx.headless_config.server_ready_timeout
         );
     }
 
     // 5. Restart remaining clients so they reconnect to the fresh server
-    restart_running_clients(container_mgr, desired_count).await?;
+    restart_running_clients(ctx.container_mgr, desired_count).await?;
 
     Ok(())
 }
@@ -1399,19 +1377,18 @@ fn resolve_numa_cpuset(
 /// The game directory is mounted via Podman's overlay mount (`:O`), giving each
 /// container a private writable layer over the shared install_dir. A first-boot
 /// flow waits for Fika to generate its config before patching and restarting.
-#[allow(clippy::too_many_arguments)]
-#[allow(deprecated)]
 async fn create_client_container(
-    container_mgr: &ContainerManager,
-    headless_config: &HeadlessConfig,
-    config: &Config,
-    dirs: &QumaDirs,
+    ctx: &ConvergeContext<'_>,
     index: u32,
     profile_id: Option<String>,
     ntsync_available: bool,
     topology: &NumaTopology,
     fika_version: Option<&str>,
 ) -> Result<()> {
+    let headless_config = ctx.headless_config;
+    let dirs = ctx.dirs;
+    let container_mgr = ctx.container_mgr;
+
     let name = client_container_name(index);
     let overlay_dir = dirs.headless_overlay(index);
 
@@ -1478,12 +1455,12 @@ async fn create_client_container(
     // Route through quma's HTTPS proxy.
     // Host-networked containers are on the host's network stack directly,
     // so use 127.0.0.1 instead of host.containers.internal.
-    let proxy_host = match config.web_bind.as_str() {
+    let proxy_host = match ctx.config.web_bind.as_str() {
         "0.0.0.0" | "127.0.0.1" | "localhost" | "" => "127.0.0.1",
         other => other,
     };
     env.push(("SERVER_URL".to_string(), proxy_host.to_string()));
-    env.push(("SERVER_PORT".to_string(), config.web_port.to_string()));
+    env.push(("SERVER_PORT".to_string(), ctx.config.web_port.to_string()));
 
     env.push(("ESYNC".to_string(), headless_config.esync.to_string()));
     env.push(("FSYNC".to_string(), headless_config.fsync.to_string()));

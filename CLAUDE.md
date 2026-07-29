@@ -91,7 +91,7 @@ Single Rust binary — the CLI and actix-web server share the same codebase. The
 - **`src/tls.rs`** — TLS certificate loading/generation for the HTTPS proxy.
 - **`src/dirs.rs`** — `QumaDirs` struct: resolves the directory layout (`spt-server/`, `headless/`, `overlay/`) with legacy flat-layout migration.
 - **`src/invite.rs`** — Invite code generation and expiry parsing.
-- **`src/client/`** — Fika headless client management. `supervisor.rs` runs the convergence loop, `converge.rs` handles container creation/scaling/overlay setup. Exit watchers cache restart policy/backoff values at spawn time (config changes to those require supervisor restart).
+- **`src/client/`** — Fika headless client management. `supervisor.rs` runs the convergence loop, `converge.rs` handles container creation/scaling/overlay setup. Exit watchers read restart policy/backoff values from config on each iteration, so config changes take effect without restarting the supervisor.
 - **`src/headless/`** — Headless client service layer. `service.rs` defines `HeadlessService` (scaling, lifecycle actions, status). `operations.rs` provides `OperationTracker` for async operation tracking. `error.rs` defines `HeadlessError`.
 - **`src/spt/headless.rs`** — SPT server API types for headless client queries.
 - **`src/spt/game_data.rs`** — Loads quest/trader/hideout metadata from SPT data files for profile display.
