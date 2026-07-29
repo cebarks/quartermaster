@@ -57,6 +57,7 @@ pub async fn events_stream(
 ) -> actix_web::Result<sse::Sse<impl futures_util::Stream<Item = Result<sse::Event, Infallible>>>> {
     require_auth(&req)?;
 
+    // Relaxed: soft cap, brief overshoot is harmless
     let prev = state.sse_connections.fetch_add(1, Ordering::Relaxed);
     if prev >= MAX_SSE_CONNECTIONS {
         state.sse_connections.fetch_sub(1, Ordering::Relaxed);
