@@ -87,6 +87,10 @@ pub struct ServerRaidStats {
     pub total_raids: i64,
     pub unique_players: i64,
     pub overall_survival_rate: f64,
+    pub pmc_raids: i64,
+    pub scav_raids: i64,
+    pub pmc_survival_rate: f64,
+    pub scav_survival_rate: f64,
     pub map_counts: Vec<(String, i64)>,
     pub top_killers: Vec<(String, i64)>,
     pub recent_raids: Vec<(Raid, String)>,
@@ -513,6 +517,44 @@ impl Database {
             0.0
         };
 
+        // PMC stats
+        let pmc_raids: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 AND r.player_side = 'Pmc'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let pmc_survived: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 AND r.player_side = 'Pmc' AND r.exit_status = 'Survived'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let pmc_survival_rate = if pmc_raids > 0 {
+            (pmc_survived as f64 / pmc_raids as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        // Scav stats
+        let scav_raids: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 AND r.player_side = 'Savage'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let scav_survived: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 AND r.player_side = 'Savage' AND r.exit_status = 'Survived'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let scav_survival_rate = if scav_raids > 0 {
+            (scav_survived as f64 / scav_raids as f64) * 100.0
+        } else {
+            0.0
+        };
+
         let mut map_stmt = self.conn.prepare(
             "SELECT r.map, COUNT(DISTINCT COALESCE(r.server_id, 'solo_' || r.id)) as count FROM raids r JOIN users u ON r.user_id = u.id WHERE u.is_headless = 0 GROUP BY r.map ORDER BY count DESC",
         )?;
@@ -540,6 +582,10 @@ impl Database {
             total_raids,
             unique_players,
             overall_survival_rate,
+            pmc_raids,
+            scav_raids,
+            pmc_survival_rate,
+            scav_survival_rate,
             map_counts,
             top_killers,
             recent_raids,

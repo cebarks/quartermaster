@@ -10,7 +10,6 @@
 - infinite use invite codes (no multi-use support, only single-use)
 
 ## Bugs
-- server-wide stats page has no PMC/Scav raid breakdown (per-user profile already tracks both)
 - restarting a headless client from the main headless page causes you to end up at that headless' info page
 - headless client start/stop/restart buttons on `/quma/headless` go past the card length
 - currency items (USD, EUR) displayed as roubles instead of as currency balances (Stash)
