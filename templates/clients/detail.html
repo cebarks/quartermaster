@@ -167,7 +167,10 @@
 
 {% if !session_stats.is_empty() %}
 <div class="card">
-    <h2>Recent Raids</h2>
+    <div class="flex-between">
+        <h2>Recent Raids</h2>
+        <a href="/quma/raids" class="btn btn-sm btn-outline">View all raids</a>
+    </div>
     <table>
         <thead>
             <tr>
