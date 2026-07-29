@@ -1,4 +1,7 @@
+use actix_web::body::BoxBody;
+use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::http::StatusCode;
+use actix_web::middleware::Next;
 use actix_web::{HttpResponse, ResponseError};
 use askama::Template;
 
@@ -10,6 +13,14 @@ struct ErrorTemplate {
     title: String,
     message: String,
     flash: Option<FlashMessage>,
+}
+
+/// Carried in response extensions so the API middleware can extract structured
+/// error info without re-parsing HTML.
+#[derive(Clone)]
+struct ApiErrorInfo {
+    title: String,
+    message: String,
 }
 
 #[derive(Debug)]
@@ -68,16 +79,68 @@ impl ResponseError for WebError {
 
         let tmpl = ErrorTemplate {
             title: title.clone(),
-            message,
+            message: message.clone(),
             flash: None,
         };
-        match tmpl.render() {
+        let mut resp = match tmpl.render() {
             Ok(body) => HttpResponse::build(self.status_code())
                 .content_type("text/html")
                 .body(body),
-            Err(_) => HttpResponse::build(self.status_code()).body(title),
-        }
+            Err(_) => HttpResponse::build(self.status_code()).body(title.clone()),
+        };
+        // Attach structured error info for the API JSON middleware to extract
+        resp.extensions_mut()
+            .insert(ApiErrorInfo { title, message });
+        resp
     }
+}
+
+/// Middleware that converts HTML error responses to JSON when the client
+/// prefers JSON (via Accept header) and is not an HTMX request.
+pub async fn api_json_errors(
+    req: ServiceRequest,
+    next: Next<BoxBody>,
+) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
+    let wants_json = !req.headers().contains_key("HX-Request")
+        && req
+            .headers()
+            .get("Accept")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.contains("application/json"));
+
+    let resp = next.call(req).await?;
+
+    let is_error = wants_json
+        && (resp.response().status().is_client_error()
+            || resp.response().status().is_server_error());
+
+    if is_error {
+        let status = resp.response().status();
+        // Prefer structured ApiErrorInfo from WebError; fall back to the
+        // status reason phrase for errors from other middleware (auth, etc.).
+        let (title, message) = resp
+            .response()
+            .extensions()
+            .get::<ApiErrorInfo>()
+            .map(|info| (info.title.clone(), info.message.clone()))
+            .unwrap_or_else(|| {
+                let reason = status.canonical_reason().unwrap_or("Error");
+                (reason.to_string(), reason.to_string())
+            });
+
+        let (req, _) = resp.into_parts();
+        let json = serde_json::json!({
+            "error": title,
+            "message": message,
+            "status": status.as_u16(),
+        });
+        let new_resp = HttpResponse::build(status)
+            .content_type("application/json")
+            .body(json.to_string());
+        return Ok(ServiceResponse::new(req, new_resp));
+    }
+
+    Ok(resp)
 }
 
 impl From<anyhow::Error> for WebError {

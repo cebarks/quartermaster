@@ -81,9 +81,13 @@ pub fn extract_session_id(req: &HttpRequest) -> Option<String> {
     None
 }
 
+/// Cap decompressed output to prevent zip-bomb DoS.
+// ponytail: 16 MB is generous for raid start/end JSON; raise if profiles grow
+const MAX_DECOMPRESSED: u64 = 16 * 1024 * 1024;
+
 /// Try zlib decompression, fall back to raw bytes. SPT clients send zlib-compressed request bodies.
 fn decompress_body(body: &[u8]) -> Vec<u8> {
-    let mut decoder = ZlibDecoder::new(body);
+    let mut decoder = ZlibDecoder::new(body).take(MAX_DECOMPRESSED);
     let mut buf = Vec::new();
     match decoder.read_to_end(&mut buf) {
         Ok(_) => buf,
