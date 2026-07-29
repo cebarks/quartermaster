@@ -394,7 +394,7 @@ async fn try_queue_mod_op(
             // Remove doesn't need downloading
             let db = state.db.clone();
             let mod_name_owned = mod_name.to_string();
-            web::block(move || {
+            match web::block(move || {
                 let db = db.lock();
                 db.insert_pending_op(&crate::db::users::InsertPendingOp {
                     action: QueueAction::Remove,
@@ -411,9 +411,22 @@ async fn try_queue_mod_op(
                 })
             })
             .await
-            .map_err(WebError::from)?
-            .map_err(WebError::from)?;
-            set_flash(session, "Mod queued for removal", FlashType::Success);
+            {
+                Ok(Ok(_)) => {
+                    set_flash(session, "Mod queued for removal", FlashType::Success);
+                }
+                Ok(Err(rusqlite::Error::SqliteFailure(err, _)))
+                    if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+                {
+                    set_flash(
+                        session,
+                        "This mod removal is already queued",
+                        FlashType::Info,
+                    );
+                }
+                Ok(Err(e)) => return Err(WebError::from(e)),
+                Err(e) => return Err(WebError::from(e)),
+            }
         }
         QueueAction::Install => {
             let version_id = version_id.ok_or(WebError::BadRequest("missing version_id".into()))?;
@@ -525,7 +538,7 @@ async fn try_queue_addon_op(
             let db = state.db.clone();
             let addon_name_owned = addon_name.to_string();
             let username = user.username.clone();
-            web::block(move || {
+            match web::block(move || {
                 let db = db.lock();
                 db.insert_pending_op(&crate::db::users::InsertPendingOp {
                     action: QueueAction::Remove,
@@ -542,9 +555,22 @@ async fn try_queue_addon_op(
                 })
             })
             .await
-            .map_err(WebError::from)?
-            .map_err(WebError::from)?;
-            set_flash(session, "Addon queued for removal", FlashType::Success);
+            {
+                Ok(Ok(_)) => {
+                    set_flash(session, "Addon queued for removal", FlashType::Success);
+                }
+                Ok(Err(rusqlite::Error::SqliteFailure(err, _)))
+                    if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+                {
+                    set_flash(
+                        session,
+                        "This addon removal is already queued",
+                        FlashType::Info,
+                    );
+                }
+                Ok(Err(e)) => return Err(WebError::from(e)),
+                Err(e) => return Err(WebError::from(e)),
+            }
         }
         QueueAction::Install | QueueAction::Update => {
             let version_id = version_id.ok_or(WebError::BadRequest("missing version_id".into()))?;
@@ -1178,6 +1204,28 @@ async fn install_mod_from_url(
 
     // Queue if server running
     if should_queue_operation(state).await {
+        // Check for duplicate URL operation
+        let db_check = state.db.clone();
+        let url_check = url.to_string();
+        let already_queued = web::block(move || {
+            let db = db_check.lock();
+            db.has_pending_url_op(&url_check, crate::db::users::QueueAction::Install)
+        })
+        .await
+        .map_err(WebError::from)?
+        .map_err(WebError::from)?;
+
+        if already_queued {
+            set_flash(
+                session,
+                "This URL is already queued for installation",
+                FlashType::Info,
+            );
+            return Ok(HttpResponse::SeeOther()
+                .insert_header(("Location", "/quma/mods"))
+                .finish());
+        }
+
         let queue_dir = state.dirs.queue_dir();
         let _ = std::fs::create_dir_all(&queue_dir);
 
@@ -1201,7 +1249,7 @@ async fn install_mod_from_url(
         let mod_name_q = mod_name.clone();
         let dest_str = dest.to_string_lossy().to_string();
         let url_owned = url.to_string();
-        let _ = web::block(move || {
+        match web::block(move || {
             let db = db.lock();
             db.insert_pending_op(&crate::db::users::InsertPendingOp {
                 action: crate::db::users::QueueAction::Install,
@@ -1218,14 +1266,27 @@ async fn install_mod_from_url(
             })
         })
         .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
+        {
+            Ok(Ok(_)) => {
+                set_flash(
+                    session,
+                    "Mod queued for install from URL",
+                    FlashType::Success,
+                );
+            }
+            Ok(Err(rusqlite::Error::SqliteFailure(err, msg)))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                set_flash(
+                    session,
+                    msg.as_deref().unwrap_or("Operation already queued"),
+                    FlashType::Info,
+                );
+            }
+            Ok(Err(e)) => return Err(WebError::from(e).into()),
+            Err(e) => return Err(WebError::from(e).into()),
+        }
 
-        set_flash(
-            session,
-            "Mod queued for install from URL",
-            FlashType::Success,
-        );
         return Ok(HttpResponse::SeeOther()
             .insert_header(("Location", "/quma/mods"))
             .finish());
@@ -2933,6 +2994,33 @@ pub async fn remove_addon(
     };
 
     let parent_mod_id = addon.parent_mod_id;
+
+    // Check if the operation should be queued
+    let parent_forge_mod_id_opt = {
+        let db = state.db.lock();
+        db.get_mod(parent_mod_id)
+            .ok()
+            .flatten()
+            .and_then(|m| m.forge_mod_id)
+    };
+    if let Some(parent_forge_mod_id) = parent_forge_mod_id_opt {
+        if let Some(resp) = try_queue_addon_op(
+            &state,
+            &session,
+            &user,
+            QueueAction::Remove,
+            addon.forge_addon_id,
+            None,
+            &addon.name,
+            parent_forge_mod_id,
+            &format!("/quma/mods/{}#queue", parent_mod_id),
+        )
+        .await?
+        {
+            return Ok(resp);
+        }
+    }
+
     let dirs = Arc::clone(&state.dirs);
     let config = state.config_cloned();
 

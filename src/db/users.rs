@@ -451,7 +451,7 @@ impl Database {
     // ── Pending Operations CRUD ───────────────────────────────────────
 
     pub fn insert_pending_op(&self, op: &InsertPendingOp<'_>) -> rusqlite::Result<i64> {
-        self.conn.execute(
+        match self.conn.execute(
             "INSERT INTO pending_operations (action, forge_mod_id, forge_version_id, mod_name, metadata, queued_by, item_type, forge_addon_id, archive_path, source, source_url)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
@@ -467,8 +467,18 @@ impl Database {
                 op.source,
                 op.source_url,
             ],
-        )?;
-        Ok(self.conn.last_insert_rowid())
+        ) {
+            Ok(_) => Ok(self.conn.last_insert_rowid()),
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                Err(rusqlite::Error::SqliteFailure(
+                    err,
+                    Some("Operation already queued".to_string()),
+                ))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn has_pending_op(&self, forge_mod_id: i64, action: QueueAction) -> rusqlite::Result<bool> {
@@ -488,6 +498,15 @@ impl Database {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM pending_operations WHERE forge_addon_id = ?1 AND action = ?2 AND item_type = 'addon'",
             params![forge_addon_id, action.as_str()],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn has_pending_url_op(&self, url: &str, action: QueueAction) -> rusqlite::Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM pending_operations WHERE source_url = ?1 AND action = ?2",
+            params![url, action.as_str()],
             |row| row.get(0),
         )?;
         Ok(count > 0)
