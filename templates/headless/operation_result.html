@@ -1,4 +1,4 @@
-<div id="operation-status">
+<div id="operation-status"{% if success %} hx-trigger="load" hx-get="/quma/api/headless/status-partial" hx-target="#headless-clients-container" hx-swap="innerHTML"{% endif %}>
     {% if success %}
     <div class="alert alert-success">{{ message }}</div>
     {% else %}

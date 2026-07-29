@@ -19,6 +19,7 @@ use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
 use crate::web::nav::NavContext;
+use crate::web::sse::ServerEvent;
 use crate::web::state::AppState;
 
 #[allow(unused_imports)]
@@ -368,11 +369,14 @@ pub async fn client_restart(
         .client_lifecycle(index, LifecycleAction::Restart)
         .await
     {
-        Ok(()) => set_flash(
-            &session,
-            &format!("Client {index} restarting"),
-            FlashType::Success,
-        ),
+        Ok(()) => {
+            let _ = state.events.send(ServerEvent::HeadlessChanged);
+            set_flash(
+                &session,
+                &format!("Client {index} restarting"),
+                FlashType::Success,
+            );
+        }
         Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
     }
 
@@ -414,6 +418,7 @@ pub async fn client_graceful_restart(
 
     match service.graceful_restart(index).await {
         Ok(result) => {
+            let _ = state.events.send(ServerEvent::HeadlessChanged);
             use crate::headless::service::GracefulResult;
             match result {
                 GracefulResult::Exited => {
@@ -474,11 +479,14 @@ pub async fn client_stop(
     };
 
     match service.client_lifecycle(index, LifecycleAction::Stop).await {
-        Ok(()) => set_flash(
-            &session,
-            &format!("Client {index} stopped"),
-            FlashType::Success,
-        ),
+        Ok(()) => {
+            let _ = state.events.send(ServerEvent::HeadlessChanged);
+            set_flash(
+                &session,
+                &format!("Client {index} stopped"),
+                FlashType::Success,
+            );
+        }
         Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
     }
 
@@ -522,11 +530,14 @@ pub async fn client_start(
         .client_lifecycle(index, LifecycleAction::Start)
         .await
     {
-        Ok(()) => set_flash(
-            &session,
-            &format!("Client {index} started"),
-            FlashType::Success,
-        ),
+        Ok(()) => {
+            let _ = state.events.send(ServerEvent::HeadlessChanged);
+            set_flash(
+                &session,
+                &format!("Client {index} started"),
+                FlashType::Success,
+            );
+        }
         Err(e) => set_flash(&session, &e.to_string(), FlashType::Error),
     }
 
