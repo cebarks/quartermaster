@@ -267,23 +267,24 @@
         </div>
 
         {% if !numa_nodes.is_empty() %}
-        <h3 style="margin-top: 1.5rem">NUMA Scheduling</h3>
+        <h3>NUMA Scheduling</h3>
         <div class="form-group">
             <label>NUMA Policy</label>
-            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem">
-                <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
-                    <input type="radio" name="numa_policy" value="none"{% if numa_policy == "none" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display='none'">
-                    Disabled <span class="text-muted text-sm">— no CPU pinning</span>
-                </label>
-                <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
-                    <input type="radio" name="numa_policy" value="auto"{% if numa_policy == "auto" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display='none'">
-                    Round-robin <span class="text-muted text-sm">— distribute clients across NUMA nodes automatically</span>
-                </label>
-                <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
-                    <input type="radio" name="numa_policy" value="node"{% if numa_policy == "node" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display=''">
-                    Pin to node <span class="text-muted text-sm">— all clients on one NUMA node</span>
-                </label>
-            </div>
+            <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
+                <input type="radio" name="numa_policy" value="none"{% if numa_policy == "none" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display='none'">
+                Disabled
+            </label>
+            <p class="text-muted text-sm mt-1">No CPU pinning</p>
+            <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
+                <input type="radio" name="numa_policy" value="auto"{% if numa_policy == "auto" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display='none'">
+                Round-robin
+            </label>
+            <p class="text-muted text-sm mt-1">Distribute clients across NUMA nodes automatically</p>
+            <label style="font-weight: normal; display: flex; align-items: center; gap: 0.5rem">
+                <input type="radio" name="numa_policy" value="node"{% if numa_policy == "node" %} checked{% endif %} onchange="document.getElementById('numa-node-select').style.display=''">
+                Pin to node
+            </label>
+            <p class="text-muted text-sm mt-1">All clients on one NUMA node</p>
         </div>
         <div class="form-group" id="numa-node-select"{% if numa_policy != "node" %} style="display:none"{% endif %}>
             <label for="clients_numa_node">NUMA Node</label>
