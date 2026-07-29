@@ -47,6 +47,7 @@ struct StashItemDisplay {
     short_name: String,
     count: i64,
     total_value: i64,
+    currency_type: Option<String>, // "RUB", "USD", or "EUR" for currency items
 }
 
 struct StashCategoryDisplay {
@@ -478,6 +479,14 @@ pub async fn stash_partial(
         let unit_price = state.game_data.item_price(tpl).unwrap_or(0);
         let total_value = unit_price.saturating_mul(*count);
 
+        // ponytail: currency type detection by template ID
+        let currency_type = match tpl.as_str() {
+            "5449016a4bdc2d6f08b456f6" => Some("RUB".to_string()),
+            "5696686a4bdc2da3298b456a" => Some("USD".to_string()),
+            "569668774bdc2da2298b4568" => Some("EUR".to_string()),
+            _ => None,
+        };
+
         all_categories_set.insert(category.clone());
 
         if !search_lower.is_empty()
@@ -499,6 +508,7 @@ pub async fn stash_partial(
                 short_name,
                 count: *count,
                 total_value,
+                currency_type,
             });
     }
 

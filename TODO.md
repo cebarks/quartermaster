@@ -13,10 +13,11 @@
 - server-wide stats page has no PMC/Scav raid breakdown (per-user profile already tracks both)
 - restarting a headless client from the main headless page causes you to end up at that headless' info page
 - headless client start/stop/restart buttons on `/quma/headless` go past the card length
-- currency items (USD, EUR) displayed as roubles instead of as currency balances (Stash)
 - typo in update changelog: versions url should use `/#versions` hash anchor, not `/versions` path segment (current URL 404s on Forge)
 - no auto-refresh when scaling/converging clients
 - typo in update changelog: versions url should be like this `https://forge.sp-tarkov.com/mod/2310/wtt-commonlib/#versions` (`#version` is the important part)
+- mod queue allows duplicate pending operations (operations on mods should be exlcusive in the queue)
+- spt server profile creation is broken on user signup
 
 ## Convoy
 - user config file sync
@@ -27,6 +28,7 @@
 ## Core Architecture
 - `WebError` always returns HTML even for API endpoints (`error.rs`)
 - blocking filesystem reads on async runtime (partially fixed — `svm::save_section` uses `web::block`, many others don't)
+- standardize all overlays ontop of host overlayfs instead of podman managed 
 
 ## Headless Client
 - too-many-arguments on convergence functions (clippy lint suppressed)
@@ -40,6 +42,7 @@
 - headless client actions
 - container cpu stats don't work (`cpu_percent` is never populated — always `None`; memory stats work)
 - `ensure_fika_headless` writes to base headless dir — should move to `mod_overlay()` for proper layering
+- headless client numa scheduling section has shitty formatting
 
 ## Robustness
 - no mutual exclusion on server start/stop/restart (`server.rs`)
