@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use sevenz_rust2::{ArchiveReader, Password};
-use sha2::{Digest, Sha256};
+use xxhash_rust::xxh3::Xxh3;
 use zip::ZipArchive;
 
 use crate::dirs::QumaDirs;
@@ -149,10 +149,10 @@ impl ExtractionLimits {
     }
 }
 
-/// Wraps a writer and computes SHA256 on the fly, enforcing a per-entry byte limit.
+/// Wraps a writer and computes xxHash3-64 on the fly, enforcing a per-entry byte limit.
 struct HashingWriter<W> {
     inner: W,
-    hasher: Sha256,
+    hasher: Xxh3,
     bytes_written: u64,
     max_bytes: u64,
 }
@@ -161,14 +161,14 @@ impl<W: Write> HashingWriter<W> {
     fn new(inner: W, max_bytes: u64) -> Self {
         Self {
             inner,
-            hasher: Sha256::new(),
+            hasher: Xxh3::new(),
             bytes_written: 0,
             max_bytes,
         }
     }
 
     fn finish(self) -> (u64, String) {
-        (self.bytes_written, hex_encode(&self.hasher.finalize()))
+        (self.bytes_written, format!("{:016x}", self.hasher.digest()))
     }
 }
 
@@ -536,7 +536,7 @@ pub fn compute_file_hash(path: &Path) -> Result<String> {
     let file = fs::File::open(path)
         .with_context(|| format!("failed to open file for hashing: {}", path.display()))?;
     let mut reader = std::io::BufReader::new(file);
-    let mut hasher = Sha256::new();
+    let mut hasher = Xxh3::new();
     let mut buf = [0u8; 8192];
     loop {
         let n = reader
@@ -547,7 +547,7 @@ pub fn compute_file_hash(path: &Path) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hex_encode(&hasher.finalize()))
+    Ok(format!("{:016x}", hasher.digest()))
 }
 
 /// Delete mod files from `spt_root` and clean up empty parent directories.
@@ -597,16 +597,13 @@ pub fn scan_mod_directories(dirs: &QumaDirs) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Compute SHA256 of a byte slice, returned as a lowercase hex string.
+/// Compute xxHash3-64 of a byte slice, returned as a lowercase hex string.
 pub fn compute_hash_public(data: &[u8]) -> String {
     compute_hash(data)
 }
 
 fn compute_hash(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-    hex_encode(&result)
+    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(data))
 }
 
 /// Recursively scan a directory, collecting file paths relative to `spt_root`.
@@ -650,15 +647,6 @@ fn scan_dir_recursive(dir: &Path, spt_root: &Path, out: &mut Vec<String>) -> Res
     }
 
     Ok(())
-}
-
-/// Encode bytes as a lowercase hex string (avoids pulling in the `hex` crate).
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 /// Given a full entry name from a ZIP, strip a wrapper directory if the
@@ -789,7 +777,7 @@ pub(crate) mod tests {
                 "hash should be hex: {}",
                 f.hash
             );
-            assert_eq!(f.hash.len(), 64, "SHA256 hex should be 64 chars");
+            assert_eq!(f.hash.len(), 16, "xxHash3-64 hex should be 16 chars");
         }
 
         // Verify sizes match content
@@ -806,10 +794,22 @@ pub(crate) mod tests {
         fs::write(tmp.path(), b"hello world").unwrap();
 
         let hash = compute_file_hash(tmp.path()).unwrap();
+        // xxHash3-64 of "hello world"
         assert_eq!(
             hash,
-            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+            format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"hello world"))
         );
+    }
+
+    #[test]
+    fn compute_hash_returns_xxh3() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        fs::write(tmp.path(), b"hello world").unwrap();
+        let hash = compute_file_hash(tmp.path()).unwrap();
+        // xxHash3-64 of "hello world" = 16-char hex
+        assert_eq!(hash.len(), 16, "hash should be 16 hex chars (xxHash3-64)");
+        // Verify it's valid hex
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -963,7 +963,7 @@ pub(crate) mod tests {
                 "hash should be hex: {}",
                 f.hash
             );
-            assert_eq!(f.hash.len(), 64, "SHA256 hex should be 64 chars");
+            assert_eq!(f.hash.len(), 16, "xxHash3-64 hex should be 16 chars");
         }
 
         let pkg = files
@@ -1017,7 +1017,7 @@ pub(crate) mod tests {
         assert_eq!(buf, b"hello world");
         assert_eq!(
             hash,
-            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+            format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"hello world"))
         );
     }
 

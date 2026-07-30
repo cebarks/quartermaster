@@ -42,7 +42,7 @@ tokio-util = "0.7"
 anyhow = "1"
 
 # Crypto & hashing
-sha2 = "0.11"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 rand = "0.10"
 subtle = "2"
 
