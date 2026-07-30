@@ -1,0 +1,32 @@
+# Stage 1: Download pre-built binary from GitHub release
+FROM registry.fedoraproject.org/fedora-minimal:latest AS download
+
+ARG QUMA_VERSION
+RUN test -n "$QUMA_VERSION" || { echo "ERROR: QUMA_VERSION build arg is required (e.g. v0.3.1)"; exit 1; }
+
+RUN microdnf install -y --nodocs --setopt=install_weak_deps=False \
+    curl tar xz \
+    && microdnf clean all
+
+WORKDIR /download
+RUN curl -fsSL -O "https://github.com/cebarks/quartermaster/releases/download/${QUMA_VERSION}/spt-quartermaster-x86_64-unknown-linux-gnu.tar.xz" \
+    -O "https://github.com/cebarks/quartermaster/releases/download/${QUMA_VERSION}/spt-quartermaster-x86_64-unknown-linux-gnu.tar.xz.sha256" \
+    && sha256sum -c spt-quartermaster-x86_64-unknown-linux-gnu.tar.xz.sha256 \
+    && tar xf spt-quartermaster-x86_64-unknown-linux-gnu.tar.xz --strip-components=1 \
+    && chmod +x quma
+
+# Stage 2: Minimal runtime
+FROM registry.fedoraproject.org/fedora-minimal:latest
+
+COPY --from=download /download/quma /usr/local/bin/quma
+
+ENV QUMA_DIR=/opt/spt
+
+VOLUME /opt/spt
+EXPOSE 9190
+
+LABEL quma.image-type="quma" \
+      org.opencontainers.image.title="quma" \
+      org.opencontainers.image.description="Quartermaster — mod manager for SPT/Fika dedicated servers"
+
+ENTRYPOINT ["quma", "serve"]
