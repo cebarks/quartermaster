@@ -633,6 +633,13 @@ async fn detect_or_create_container(
     dirs: &crate::dirs::QumaDirs,
     container_name: &str,
 ) -> Result<String> {
+    // Name-first: if a configured container already exists, use it directly.
+    // Avoids ambiguity when quma itself runs in a container mounting the same dir.
+    if !container_name.is_empty() && mgr.inspect(container_name).await.is_ok() {
+        println!("Using configured container: {}", container_name);
+        return Ok(container_name.to_string());
+    }
+
     let detected = mgr.detect_spt_containers(dirs).await?;
 
     if detected.len() == 1 {
