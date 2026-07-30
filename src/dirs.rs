@@ -479,8 +479,7 @@ mod tests {
         let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
         std::fs::create_dir_all(dirs.spt_server.join("SPT/SPT_Data/configs")).unwrap();
         std::fs::create_dir_all(dirs.spt_server.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(dirs.spt_server.join("BepInEx/plugins")).unwrap();
-        std::fs::write(dirs.spt_server.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(dirs.spt_server.join("SPT/SPT.Server.deps.json"), "{}").unwrap();
         std::fs::write(dirs.spt_server.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
 
         assert!(crate::spt::detect::validate_spt_dir(&dirs.spt_server).is_ok());
@@ -494,8 +493,7 @@ mod tests {
         let spt = root.join("spt-server");
         std::fs::create_dir_all(spt.join("SPT/SPT_Data/configs")).unwrap();
         std::fs::create_dir_all(spt.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(spt.join("BepInEx/plugins")).unwrap();
-        std::fs::write(spt.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(spt.join("SPT/SPT.Server.deps.json"), "{}").unwrap();
         std::fs::write(spt.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
 
         let dirs = QumaDirs::detect(Some(root), None).unwrap();
@@ -509,8 +507,7 @@ mod tests {
         let root = tmp.path();
         std::fs::create_dir_all(root.join("SPT/SPT_Data/configs")).unwrap();
         std::fs::create_dir_all(root.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(root.join("BepInEx/plugins")).unwrap();
-        std::fs::write(root.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(root.join("SPT/SPT.Server.deps.json"), "{}").unwrap();
         std::fs::write(root.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
 
         let dirs = QumaDirs::detect(Some(root), None).unwrap();
@@ -526,8 +523,7 @@ mod tests {
         let spt = root.join("spt-server");
         std::fs::create_dir_all(spt.join("SPT/SPT_Data/configs")).unwrap();
         std::fs::create_dir_all(spt.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(spt.join("BepInEx/plugins")).unwrap();
-        std::fs::write(spt.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(spt.join("SPT/SPT.Server.deps.json"), "{}").unwrap();
         std::fs::write(spt.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
 
         temp_env::with_vars(
@@ -587,8 +583,7 @@ mod tests {
         let root = tmp.path();
         std::fs::create_dir_all(root.join("SPT/SPT_Data/configs")).unwrap();
         std::fs::create_dir_all(root.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(root.join("BepInEx/plugins")).unwrap();
-        std::fs::write(root.join("SPT/SPT.Server.exe"), "").unwrap();
+        std::fs::write(root.join("SPT/SPT.Server.deps.json"), "{}").unwrap();
         std::fs::write(root.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
 
         temp_env::with_vars(

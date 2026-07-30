@@ -698,7 +698,7 @@ mod tests {
 
         // Create minimum SPT structure at root (legacy layout)
         std::fs::create_dir_all(spt_dir.join("SPT")).unwrap();
-        std::fs::write(spt_dir.join("SPT/SPT.Server.exe"), b"").unwrap();
+        std::fs::write(spt_dir.join("SPT/SPT.Server.deps.json"), b"{}").unwrap();
         let configs_dir = spt_dir.join("SPT/SPT_Data/configs");
         std::fs::create_dir_all(&configs_dir).unwrap();
         std::fs::write(
@@ -707,7 +707,6 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
         let state = classify_directory(spt_dir).unwrap();
         assert!(matches!(state, DirState::ExistingSptLegacy));
@@ -721,7 +720,7 @@ mod tests {
 
         // Create minimum SPT structure in spt-server/ subdir (new layout)
         std::fs::create_dir_all(spt_dir.join("SPT")).unwrap();
-        std::fs::write(spt_dir.join("SPT/SPT.Server.exe"), b"").unwrap();
+        std::fs::write(spt_dir.join("SPT/SPT.Server.deps.json"), b"{}").unwrap();
         let configs_dir = spt_dir.join("SPT/SPT_Data/configs");
         std::fs::create_dir_all(&configs_dir).unwrap();
         std::fs::write(
@@ -730,7 +729,6 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(spt_dir.join("SPT/user/mods")).unwrap();
-        std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
         let state = classify_directory(quma_root).unwrap();
         assert!(matches!(state, DirState::ExistingSptNew));
