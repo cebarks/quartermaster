@@ -256,7 +256,7 @@ async fn admin_create_invite() {
 
     // Create invite with never expiry
     let form_body = format!(
-        "expiry=never&csrf_token={}",
+        "expiry=never&max_uses=1&csrf_token={}",
         urlencoding::encode(&csrf_token)
     );
     let resp = app.post_form("/quma/api/admin/invites", &form_body).await;

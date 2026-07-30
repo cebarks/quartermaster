@@ -474,7 +474,7 @@ fn create_and_use_invite() {
         .unwrap();
 
     let invite_id = db
-        .create_invite("INVITE-123", Some(admin_id), None)
+        .create_invite("INVITE-123", Some(admin_id), None, Some(1))
         .unwrap();
     assert!(invite_id > 0);
 
@@ -508,7 +508,7 @@ fn create_and_use_invite() {
 #[test]
 fn create_invite_without_creator() {
     let db = test_db();
-    let invite_id = db.create_invite("ORPHAN-1", None, None).unwrap();
+    let invite_id = db.create_invite("ORPHAN-1", None, None, Some(1)).unwrap();
     let invite = db
         .get_invite("ORPHAN-1")
         .unwrap()
@@ -524,8 +524,13 @@ fn expired_invite_rejected() {
         .insert_user("admin", Some("adm-profile"), Some("pw"), "admin", false)
         .unwrap();
 
-    db.create_invite("EXPIRED-1", Some(admin_id), Some("2020-01-01 00:00:00"))
-        .unwrap();
+    db.create_invite(
+        "EXPIRED-1",
+        Some(admin_id),
+        Some("2020-01-01 00:00:00"),
+        Some(1),
+    )
+    .unwrap();
 
     let user_id = db
         .insert_user(
@@ -787,8 +792,9 @@ fn list_invite_codes_with_usernames() {
     let admin_id = db
         .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
-    db.create_invite("CODE-1", Some(admin_id), None).unwrap();
-    db.create_invite("CODE-2", None, None).unwrap();
+    db.create_invite("CODE-1", Some(admin_id), None, Some(1))
+        .unwrap();
+    db.create_invite("CODE-2", None, None, Some(1)).unwrap();
 
     let codes = db.list_invite_codes().unwrap();
     assert_eq!(codes.len(), 2);
@@ -1377,7 +1383,7 @@ fn delete_user_sets_invite_created_by_null() {
         .insert_user("player", Some("p2"), Some("pw"), "player", false)
         .unwrap();
 
-    db.create_invite("CODE-BY-PLAYER", Some(player), None)
+    db.create_invite("CODE-BY-PLAYER", Some(player), None, Some(1))
         .unwrap();
 
     let result = db.delete_user(player).unwrap();
@@ -1401,7 +1407,9 @@ fn delete_invite_unused() {
     let admin = db
         .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
-    let invite_id = db.create_invite("CODE-DEL", Some(admin), None).unwrap();
+    let invite_id = db
+        .create_invite("CODE-DEL", Some(admin), None, Some(1))
+        .unwrap();
 
     let result = db.delete_invite(invite_id).unwrap();
     assert!(matches!(result, DeleteInviteResult::Deleted));
@@ -1416,7 +1424,9 @@ fn delete_invite_already_used() {
     let admin = db
         .insert_user("admin", Some("p1"), Some("pw"), "admin", false)
         .unwrap();
-    let invite_id = db.create_invite("CODE-USED", Some(admin), None).unwrap();
+    let invite_id = db
+        .create_invite("CODE-USED", Some(admin), None, Some(1))
+        .unwrap();
     let player = db
         .insert_user("player", Some("p2"), Some("pw"), "player", false)
         .unwrap();
