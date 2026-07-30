@@ -371,6 +371,7 @@ mod tests {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
         db.insert_file(
@@ -410,6 +411,7 @@ mod tests {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
         db.insert_file(1, "SPT/user/mods/a/package.json", Some("h1"), Some(10))
@@ -437,6 +439,7 @@ mod tests {
                 Some("mod-b"),
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -606,6 +609,7 @@ mod tests {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
         db.insert_file(1, "BepInEx/plugins/mod/mod.dll", Some("aaa"), Some(11))
@@ -650,6 +654,7 @@ mod tests {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
         db.insert_file(1, "BepInEx/plugins/mod/mod.dll", Some("aaa"), Some(7))
@@ -687,6 +692,7 @@ mod tests {
             Some("test-mod"),
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();

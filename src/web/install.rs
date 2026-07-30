@@ -47,6 +47,7 @@ pub async fn web_download_extract_and_record(
             archive_path: &archive_path,
             source: crate::ops::ModSource::Forge,
             source_url: None,
+            guid: None,
         })
     })
     .await??;
@@ -85,6 +86,7 @@ pub async fn web_install_from_url(
             archive_path: &archive_path,
             source: crate::ops::ModSource::Url,
             source_url: Some(&url_owned),
+            guid: None,
         })
     })
     .await??;

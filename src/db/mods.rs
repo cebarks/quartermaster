@@ -17,6 +17,7 @@ pub struct InstalledMod {
     pub source: String,
     pub source_url: Option<String>,
     pub group_id: Option<i64>,
+    pub guid: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,11 +94,12 @@ impl Database {
         version: &str,
         source: &str,
         source_url: Option<&str>,
+        guid: Option<&str>,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO installed_mods (forge_mod_id, forge_version_id, name, slug, version, source, source_url)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![forge_mod_id, forge_version_id, name, slug, version, source, source_url],
+            "INSERT INTO installed_mods (forge_mod_id, forge_version_id, name, slug, version, source, source_url, guid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![forge_mod_id, forge_version_id, name, slug, version, source, source_url, guid],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -105,7 +107,7 @@ impl Database {
     pub fn get_mod(&self, id: i64) -> rusqlite::Result<Option<InstalledMod>> {
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id, guid
                  FROM installed_mods WHERE id = ?1",
                 params![id],
                 row_to_installed_mod,
@@ -116,7 +118,7 @@ impl Database {
     pub fn get_mod_by_forge_id(&self, forge_mod_id: i64) -> rusqlite::Result<Option<InstalledMod>> {
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id, guid
                  FROM installed_mods WHERE forge_mod_id = ?1",
                 params![forge_mod_id],
                 row_to_installed_mod,
@@ -129,7 +131,7 @@ impl Database {
         let by_name = self
             .conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id, guid
                  FROM installed_mods WHERE LOWER(name) = LOWER(?1)",
                 params![query],
                 row_to_installed_mod,
@@ -140,7 +142,7 @@ impl Database {
         }
         self.conn
             .query_row(
-                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+                "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id, guid
                  FROM installed_mods WHERE LOWER(slug) = LOWER(?1)",
                 params![query],
                 row_to_installed_mod,
@@ -150,7 +152,7 @@ impl Database {
 
     pub fn list_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id, guid
              FROM installed_mods ORDER BY name",
         )?;
         let rows = stmt.query_map([], row_to_installed_mod)?;
@@ -160,7 +162,7 @@ impl Database {
     pub fn list_mods_with_file_counts(&self) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
-                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url, m.group_id,
+                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url, m.group_id, m.guid,
                     COUNT(f.id) as file_count,
                     COALESCE(SUM(f.file_size), 0) as total_size
              FROM installed_mods m
@@ -170,8 +172,8 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| {
             let m = row_to_installed_mod(row)?;
-            let count: i64 = row.get(12)?;
-            let size: i64 = row.get(13)?;
+            let count: i64 = row.get(13)?;
+            let size: i64 = row.get(14)?;
             Ok((m, count as usize, size))
         })?;
         rows.collect()
@@ -183,7 +185,7 @@ impl Database {
     ) -> rusqlite::Result<Vec<(InstalledMod, usize, i64)>> {
         let mut sql = String::from(
             "SELECT m.id, m.forge_mod_id, m.forge_version_id, m.name, m.slug, m.version,
-                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url, m.group_id,
+                    m.installed_at, m.updated_at, m.disabled, m.source, m.source_url, m.group_id, m.guid,
                     COUNT(f.id) as file_count,
                     COALESCE(SUM(f.file_size), 0) as total_size
              FROM installed_mods m
@@ -236,8 +238,8 @@ impl Database {
             param_values.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_ref.as_slice(), |row| {
             let m = row_to_installed_mod(row)?;
-            let count: i64 = row.get(12)?;
-            let size: i64 = row.get(13)?;
+            let count: i64 = row.get(13)?;
+            let size: i64 = row.get(14)?;
             Ok((m, count as usize, size))
         })?;
         rows.collect()
@@ -685,7 +687,7 @@ impl Database {
     #[allow(dead_code)]
     pub fn get_mods_in_group(&self, group_id: i64) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id, guid
              FROM installed_mods WHERE group_id = ?1 ORDER BY name",
         )?;
         let rows = stmt.query_map(params![group_id], row_to_installed_mod)?;
@@ -695,7 +697,7 @@ impl Database {
     #[allow(dead_code)]
     pub fn get_ungrouped_mods(&self) -> rusqlite::Result<Vec<InstalledMod>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id
+            "SELECT id, forge_mod_id, forge_version_id, name, slug, version, installed_at, updated_at, disabled, source, source_url, group_id, guid
              FROM installed_mods WHERE group_id IS NULL ORDER BY name",
         )?;
         let rows = stmt.query_map([], row_to_installed_mod)?;
@@ -764,6 +766,7 @@ fn row_to_installed_mod(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledMo
         source: row.get(9)?,
         source_url: row.get(10)?,
         group_id: row.get(11)?,
+        guid: row.get(12)?,
     })
 }
 
@@ -807,6 +810,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.insert_file(mod_id, "file1.dll", None, Some(1024))
@@ -833,6 +837,7 @@ mod tests {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
 
@@ -854,6 +859,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -882,6 +888,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         let file_id = db
@@ -900,11 +907,20 @@ mod tests {
     #[test]
     fn list_mods_filtered_default_returns_all_sorted_by_name() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(Some(1), Some(1), "Zulu", None, "1.0.0", "forge", None)
+        db.insert_mod(Some(1), Some(1), "Zulu", None, "1.0.0", "forge", None, None)
             .unwrap();
-        db.insert_mod(Some(2), Some(2), "Alpha", None, "2.0.0", "forge", None)
-            .unwrap();
-        db.insert_mod(Some(3), Some(3), "Mike", None, "3.0.0", "forge", None)
+        db.insert_mod(
+            Some(2),
+            Some(2),
+            "Alpha",
+            None,
+            "2.0.0",
+            "forge",
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_mod(Some(3), Some(3), "Mike", None, "3.0.0", "forge", None, None)
             .unwrap();
 
         let filter = super::ModListFilter {
@@ -923,10 +939,19 @@ mod tests {
     #[test]
     fn list_mods_filtered_search_filters_by_name() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(Some(1), Some(1), "SAIN", None, "1.0.0", "forge", None)
+        db.insert_mod(Some(1), Some(1), "SAIN", None, "1.0.0", "forge", None, None)
             .unwrap();
-        db.insert_mod(Some(2), Some(2), "Big Brain", None, "1.0.0", "forge", None)
-            .unwrap();
+        db.insert_mod(
+            Some(2),
+            Some(2),
+            "Big Brain",
+            None,
+            "1.0.0",
+            "forge",
+            None,
+            None,
+        )
+        .unwrap();
         db.insert_mod(
             Some(3),
             Some(3),
@@ -934,6 +959,7 @@ mod tests {
             None,
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();
@@ -953,7 +979,16 @@ mod tests {
     fn list_mods_filtered_status_enabled_excludes_disabled() {
         let db = Database::open_in_memory().unwrap();
         let id1 = db
-            .insert_mod(Some(1), Some(1), "EnabledMod", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(1),
+                Some(1),
+                "EnabledMod",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         let id2 = db
             .insert_mod(
@@ -963,6 +998,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -984,10 +1020,28 @@ mod tests {
     fn list_mods_filtered_sort_by_size_desc() {
         let db = Database::open_in_memory().unwrap();
         let id1 = db
-            .insert_mod(Some(1), Some(1), "Small", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(1),
+                Some(1),
+                "Small",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         let id2 = db
-            .insert_mod(Some(2), Some(2), "Large", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(2),
+                Some(2),
+                "Large",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         db.insert_file(id1, "a.dll", None, Some(100)).unwrap();
         db.insert_file(id2, "b.dll", None, Some(9999)).unwrap();
@@ -1007,9 +1061,18 @@ mod tests {
     #[test]
     fn list_mods_filtered_sort_name_is_case_insensitive() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_mod(Some(1), Some(1), "alpha", None, "1.0.0", "forge", None)
-            .unwrap();
-        db.insert_mod(Some(2), Some(2), "Beta", None, "1.0.0", "forge", None)
+        db.insert_mod(
+            Some(1),
+            Some(1),
+            "alpha",
+            None,
+            "1.0.0",
+            "forge",
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_mod(Some(2), Some(2), "Beta", None, "1.0.0", "forge", None, None)
             .unwrap();
 
         let filter = super::ModListFilter {
@@ -1033,6 +1096,7 @@ mod tests {
             Some("test-mod"),
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();

@@ -230,6 +230,7 @@ async fn install_from_forge(
             name: &forge_mod.name,
             slug: forge_mod.slug.as_deref(),
             version: version_str,
+            guid: forge_mod.guid.as_deref(),
         },
     )
     .await?;

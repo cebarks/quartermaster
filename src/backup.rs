@@ -460,6 +460,7 @@ pub fn restore_mod_backup(
                 version,
                 "forge",
                 None,
+                None,
             )?
         }
     };
@@ -569,6 +570,7 @@ pub fn restore_full_backup(
                 mm.slug.as_deref(),
                 &mm.version,
                 "forge",
+                None,
                 None,
             )?;
 
@@ -814,6 +816,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -923,6 +926,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -1043,6 +1047,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
 
@@ -1096,6 +1101,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -1113,6 +1119,7 @@ mod tests {
                 Some("mod-b"),
                 "2.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();

@@ -41,6 +41,7 @@ fn insert_and_get_mod() {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     assert!(id > 0);
@@ -82,6 +83,7 @@ fn insert_mod_with_no_slug() {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     let m = db.get_mod(id).unwrap().expect("mod should exist");
@@ -99,6 +101,7 @@ fn duplicate_forge_mod_id_rejected() {
         "1.0.0",
         "forge",
         None,
+        None,
     )
     .unwrap();
     let result = db.insert_mod(
@@ -108,6 +111,7 @@ fn duplicate_forge_mod_id_rejected() {
         Some("mod-b"),
         "2.0.0",
         "forge",
+        None,
         None,
     );
     assert!(result.is_err(), "duplicate forge_mod_id should be rejected");
@@ -125,6 +129,7 @@ fn delete_mod_cascades_to_files_and_deps() {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     let mod_b = db
@@ -135,6 +140,7 @@ fn delete_mod_cascades_to_files_and_deps() {
             Some("mod-b"),
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();
@@ -174,6 +180,7 @@ fn insert_and_get_files() {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
 
@@ -211,6 +218,7 @@ fn insert_file_with_no_hash() {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     db.insert_file(mod_id, "plugins/a.dll", None, None).unwrap();
@@ -231,6 +239,7 @@ fn file_path_unique_constraint() {
             Some("mod-a"),
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();
@@ -253,6 +262,7 @@ fn insert_and_query_dependency() {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     let mod_b = db
@@ -263,6 +273,7 @@ fn insert_and_query_dependency() {
             Some("mod-b"),
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();
@@ -300,6 +311,7 @@ fn reverse_dependencies() {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     let mod_b = db
@@ -311,6 +323,7 @@ fn reverse_dependencies() {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     let mod_c = db
@@ -321,6 +334,7 @@ fn reverse_dependencies() {
             Some("mod-c"),
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();
@@ -350,6 +364,7 @@ fn get_all_dependencies_returns_all_edges() {
             "1.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     let mod_b = db
@@ -361,6 +376,7 @@ fn get_all_dependencies_returns_all_edges() {
             "1.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
     let mod_c = db
@@ -371,6 +387,7 @@ fn get_all_dependencies_returns_all_edges() {
             Some("mod-c"),
             "1.0",
             "forge",
+            None,
             None,
         )
         .unwrap();
@@ -633,6 +650,7 @@ fn lookup_mod_by_name_or_slug() {
         Some("sain"),
         "3.0.0",
         "forge",
+        None,
         None,
     )
     .unwrap();

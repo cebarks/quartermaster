@@ -435,6 +435,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
             archive_path: &archive_owned,
             source,
             source_url: source_url.as_deref(),
+            guid: None,
         })
     })
     .await??;

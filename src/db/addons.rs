@@ -224,6 +224,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         let addon_id = db
@@ -258,6 +259,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.insert_addon(500, mod_id, 600, "TestAddon", None, "1.0.0", None)
@@ -272,10 +274,28 @@ mod tests {
     fn list_addons_for_mod_returns_only_children() {
         let db = Database::open_in_memory().unwrap();
         let mod1 = db
-            .insert_mod(Some(100), Some(200), "Mod1", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "Mod1",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         let mod2 = db
-            .insert_mod(Some(101), Some(201), "Mod2", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(101),
+                Some(201),
+                "Mod2",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         db.insert_addon(500, mod1, 600, "Addon1", None, "1.0.0", None)
             .unwrap();
@@ -300,6 +320,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -341,6 +362,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         let addon_id = db
@@ -367,6 +389,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         let addon_id = db
@@ -391,6 +414,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();

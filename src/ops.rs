@@ -224,6 +224,7 @@ pub struct InstallRequest<'a> {
     pub archive_path: &'a Path,
     pub source: ModSource,
     pub source_url: Option<&'a str>,
+    pub guid: Option<&'a str>,
 }
 
 /// Parameters for installing an addon from a downloaded archive.
@@ -268,6 +269,7 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
         req.version,
         req.source.as_str(),
         req.source_url,
+        req.guid,
     )?;
     record_extracted_files(req.db, db_id, &extracted)?;
     tx.commit()?;
@@ -1715,6 +1717,7 @@ pub async fn resolve_and_install_deps(
                 name: &dep.name,
                 slug: dep.slug.as_deref(),
                 version: &dep.version,
+                guid: dep.guid.as_deref(),
             },
         )
         .await?;
@@ -1780,6 +1783,7 @@ struct PendingDep {
     name: String,
     version: String,
     slug: Option<String>,
+    guid: Option<String>,
 }
 
 // TODO(debt): no cycle guard — if the Forge API ever returns circular deps, this
@@ -1827,6 +1831,7 @@ fn collect_web_deps(
             name: node.name.clone(),
             version,
             slug: node.slug.clone(),
+            guid: node.guid.clone(),
         });
     }
     Ok(())
@@ -1870,6 +1875,7 @@ mod tests {
             archive_path: zip.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -1910,6 +1916,7 @@ mod tests {
             archive_path: zip1.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -1927,6 +1934,7 @@ mod tests {
             archive_path: zip2.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         });
         assert!(result.is_err(), "duplicate forge_mod_id should fail");
 
@@ -1966,6 +1974,7 @@ mod tests {
             archive_path: zip_v1.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2020,6 +2029,7 @@ mod tests {
             archive_path: zip_v1.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2103,6 +2113,7 @@ mod tests {
             archive_path: zip.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2161,7 +2172,16 @@ mod tests {
 
         // Mod A owns BepInEx/plugins/SharedDir/a.dll
         let mod_a = db
-            .insert_mod(Some(100), Some(200), "ModA", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ModA",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_a,
@@ -2173,7 +2193,16 @@ mod tests {
 
         // Mod B also has files under BepInEx/plugins/SharedDir/
         let mod_b = db
-            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(101),
+                Some(201),
+                "ModB",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_b,
@@ -2194,7 +2223,16 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         let mod_a = db
-            .insert_mod(Some(100), Some(200), "ModA", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ModA",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_a,
@@ -2205,7 +2243,16 @@ mod tests {
         .unwrap();
 
         let mod_b = db
-            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(101),
+                Some(201),
+                "ModB",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         db.insert_file(
             mod_b,
@@ -2243,6 +2290,7 @@ mod tests {
             archive_path: zip.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2309,6 +2357,7 @@ mod tests {
             archive_path: zip.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2354,6 +2403,7 @@ mod tests {
             archive_path: zip.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2383,6 +2433,7 @@ mod tests {
             archive_path: zip_a.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2400,6 +2451,7 @@ mod tests {
             archive_path: zip_b.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2445,6 +2497,7 @@ mod tests {
             archive_path: zip_v1.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2512,6 +2565,7 @@ mod tests {
             archive_path: zip_v1.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2580,6 +2634,7 @@ mod tests {
             archive_path: zip_v1.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2652,6 +2707,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
 
@@ -2686,6 +2742,7 @@ mod tests {
             archive_path: zip.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2721,6 +2778,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -2775,6 +2833,7 @@ mod tests {
             archive_path: zip.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2818,6 +2877,7 @@ mod tests {
             archive_path: zip_v1.path(),
             source: ModSource::Forge,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
@@ -2872,6 +2932,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -2920,6 +2981,7 @@ mod tests {
             archive_path: zip.path(),
             source: ModSource::File,
             source_url: None,
+            guid: None,
         })
         .unwrap();
 
