@@ -1115,6 +1115,16 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
     // Pre-warm mod ZIP cache in background
     app_state.mod_zip_cache.invalidate();
 
+    // Poll Forge + GitHub for mod updates and announce them (no-op without a webhook).
+    crate::notify::spawn(
+        app_state.db.clone(),
+        app_state.forge.clone(),
+        app_state.update_cache.clone(),
+        app_state.spt_info.spt_version.clone(),
+        config.discord_webhook_url.clone(),
+        config.update_notify_interval,
+    );
+
     // One-time modsync-to-convoy migration
     {
         let config = app_state.config.read();

@@ -256,6 +256,40 @@ impl Database {
         )
     }
 
+    /// Has this mod-version already been announced? Keeps the update poller from
+    /// repeating itself on every tick, and across restarts.
+    pub fn was_update_notified(&self, mod_db_id: i64, version: &str) -> rusqlite::Result<bool> {
+        self.conn
+            .query_row(
+                "SELECT 1 FROM update_notifications WHERE mod_db_id = ?1 AND version = ?2",
+                params![mod_db_id, version],
+                |_| Ok(()),
+            )
+            .optional()
+            .map(|hit| hit.is_some())
+    }
+
+    pub fn mark_update_notified(&self, mod_db_id: i64, version: &str) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO update_notifications (mod_db_id, version) VALUES (?1, ?2)",
+            params![mod_db_id, version],
+        )
+    }
+
+    /// Record a new version for a mod that came from a URL rather than Forge.
+    pub fn update_mod_source(
+        &self,
+        id: i64,
+        version: &str,
+        source_url: &str,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE installed_mods SET version = ?1, source_url = ?2, updated_at = datetime('now')
+             WHERE id = ?3",
+            params![version, source_url, id],
+        )
+    }
+
     pub fn delete_mod(&self, id: i64) -> rusqlite::Result<usize> {
         self.conn
             .execute("DELETE FROM installed_mods WHERE id = ?1", params![id])
