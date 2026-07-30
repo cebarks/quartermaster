@@ -1018,11 +1018,14 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         let fika_config_path = crate::fika::config::fika_config_path(&dirs);
         match crate::fika::config::read_fika_config(&fika_config_path) {
             Ok(fika_config) if !fika_config.server.api_key.is_empty() => {
-                let base_url = format!(
-                    "https://{}:{}",
-                    fika_config.server.spt.http.backend_ip,
-                    fika_config.server.spt.http.backend_port
-                );
+                let host = config
+                    .server_host
+                    .clone()
+                    .unwrap_or_else(|| fika_config.server.spt.http.backend_ip.clone());
+                let port = config
+                    .server_port
+                    .unwrap_or(fika_config.server.spt.http.backend_port);
+                let base_url = format!("https://{host}:{port}");
                 match crate::fika::client::FikaClient::new(&base_url, fika_config.server.api_key) {
                     Ok(client) => {
                         tracing::info!("FikaClient initialized");
