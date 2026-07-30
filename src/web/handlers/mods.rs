@@ -841,7 +841,8 @@ pub async fn refresh_updates(
     state: Data<AppState>,
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
-    let _user = require_auth(&req)?;
+    let user = require_auth(&req)?;
+    require_permission(&user, Permission::ModsUpdate)?;
     state.update_cache.invalidate();
     Ok(HttpResponse::NoContent().finish())
 }
