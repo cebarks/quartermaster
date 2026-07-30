@@ -380,7 +380,7 @@ impl ClientSupervisor {
             });
         }
 
-        // Query memory usage for running containers
+        // Query resource usage for running containers
         if container_running {
             if let Some(bytes) = self
                 .container_mgr
@@ -389,8 +389,13 @@ impl ClientSupervisor {
             {
                 state.memory_mb = Some(bytes as f64 / (1024.0 * 1024.0));
             }
+            state.cpu_percent = self
+                .container_mgr
+                .container_cpu_percent(&container_name)
+                .await;
         } else {
             state.memory_mb = None;
+            state.cpu_percent = None;
         }
 
         // Compute health
