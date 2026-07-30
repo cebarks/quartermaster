@@ -510,9 +510,10 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
             &dirs,
             &config,
             installed.id,
-            version_id,
+            Some(version_id),
             &version_str,
             &archive_owned,
+            None,
         )
     })
     .await??;

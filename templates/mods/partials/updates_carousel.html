@@ -21,16 +21,16 @@
 <div style="display: flex; flex-direction: column; gap: 0.5rem">
     <div class="flex-between" style="align-items: flex-start">
         <div>
-            {% if let Some(slug) = &e.slug %}
-            <a href="https://forge.sp-tarkov.com/mod/{{ e.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener" style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</a>
+            {% if let Some(link) = &e.source_link %}
+            <a href="{{ link }}" target="_blank" rel="noopener" style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</a>
             {% else %}
             <span style="font-size: 1.05rem; font-weight: 600">{{ e.name }}</span>
             {% endif %}
             <div style="margin-top: 0.25rem">
                 <span>{{ e.current_version }}</span>
                 <span style="color: var(--success)"> → {{ e.new_version }}</span>
-                {% if let Some(slug) = &e.slug %}
-                <a href="https://forge.sp-tarkov.com/mod/{{ e.forge_mod_id }}/{{ slug }}/#versions" target="_blank" rel="noopener" class="text-sm text-muted" style="margin-left:0.5rem">changelog ↗</a>
+                {% if let Some(link) = &e.source_link %}
+                <a href="{{ link }}" target="_blank" rel="noopener" class="text-sm text-muted" style="margin-left:0.5rem">changelog ↗</a>
                 {% endif %}
             </div>
         </div>
