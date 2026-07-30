@@ -478,24 +478,54 @@ pub enum DeleteRoleResult {
     HasUsers(i64),
 }
 
-/// Idempotently ensure the admin role has all permissions from Permission::ALL.
+/// Permissions that the moderator role should have.
+/// Everything except admin-only permissions (UsersManage, SettingsManage, NotesManage).
+const MODERATOR_PERMISSIONS: &[Permission] = &[
+    Permission::ModsInstall,
+    Permission::ModsUpdate,
+    Permission::ModsRemove,
+    Permission::ModsDisable,
+    Permission::ModsConfigEdit,
+    Permission::ConvoyManage,
+    Permission::SvmEdit,
+    Permission::RequestsResolve,
+    Permission::ServerControl,
+    Permission::ServerLogs,
+    Permission::ServerMetrics,
+    Permission::HeadlessManage,
+    Permission::QueueManage,
+    Permission::ItemsGive,
+    Permission::NotesEdit,
+];
+
+/// Idempotently ensure built-in roles have their expected permissions.
 /// Called after migrations to pick up newly added permissions on upgrade.
 /// Additive only — never removes permissions.
 pub fn sync_builtin_role_permissions(conn: &Connection) -> rusqlite::Result<()> {
-    let admin_id: Option<i64> = conn
-        .query_row("SELECT id FROM roles WHERE name = 'admin'", [], |row| {
-            row.get(0)
-        })
-        .optional()?;
+    // ponytail: single query per role, INSERT OR IGNORE is idempotent
+    let sync_role = |role_name: &str, perms: &[Permission]| -> rusqlite::Result<()> {
+        let role_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM roles WHERE name = ?1",
+                params![role_name],
+                |row| row.get(0),
+            )
+            .optional()?;
 
-    if let Some(id) = admin_id {
-        for perm in Permission::ALL {
-            conn.execute(
-                "INSERT OR IGNORE INTO role_permissions (role_id, permission) VALUES (?1, ?2)",
-                params![id, perm.as_str()],
-            )?;
+        if let Some(id) = role_id {
+            for perm in perms {
+                conn.execute(
+                    "INSERT OR IGNORE INTO role_permissions (role_id, permission) VALUES (?1, ?2)",
+                    params![id, perm.as_str()],
+                )?;
+            }
         }
-    }
+        Ok(())
+    };
+
+    sync_role("admin", Permission::ALL)?;
+    sync_role("moderator", MODERATOR_PERMISSIONS)?;
+    // player intentionally has no permissions
     Ok(())
 }
 
@@ -534,10 +564,15 @@ mod tests {
     fn moderator_permissions() {
         let db = Database::open_in_memory().unwrap();
         let perms = db.get_permissions_for_role("moderator").unwrap();
-        assert!(perms.contains(&Permission::ModsInstall));
-        assert!(perms.contains(&Permission::ServerControl));
+        // Moderator should have exactly the MODERATOR_PERMISSIONS set
+        assert_eq!(perms.len(), MODERATOR_PERMISSIONS.len());
+        for p in MODERATOR_PERMISSIONS {
+            assert!(perms.contains(p), "moderator missing {:?}", p);
+        }
+        // Admin-only permissions must be absent
         assert!(!perms.contains(&Permission::UsersManage));
         assert!(!perms.contains(&Permission::SettingsManage));
+        assert!(!perms.contains(&Permission::NotesManage));
     }
 
     #[test]
@@ -669,5 +704,23 @@ mod tests {
         let perms_after_sync = db.get_permissions_for_role("admin").unwrap();
         assert_eq!(perms_after_sync.len(), Permission::ALL.len());
         assert!(perms_after_sync.contains(&Permission::SettingsManage));
+    }
+
+    #[test]
+    fn sync_adds_new_moderator_permissions() {
+        let db = Database::open_in_memory().unwrap();
+        // Simulate a pre-upgrade state: remove a permission that sync should restore
+        db.conn().execute(
+            "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name = 'moderator') AND permission = 'items.give'",
+            [],
+        ).unwrap();
+        let perms = db.get_permissions_for_role("moderator").unwrap();
+        assert!(!perms.contains(&Permission::ItemsGive));
+
+        sync_builtin_role_permissions(db.conn()).unwrap();
+        let perms = db.get_permissions_for_role("moderator").unwrap();
+        assert!(perms.contains(&Permission::ItemsGive));
+        // Still no admin-only permissions
+        assert!(!perms.contains(&Permission::UsersManage));
     }
 }

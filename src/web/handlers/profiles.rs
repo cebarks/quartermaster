@@ -7,7 +7,7 @@ use askama::Template;
 use serde::Deserialize;
 
 use crate::spt::profiles::{load_profile_detail, load_stash_items, ProfileDetail, QuestState};
-use crate::web::auth::require_auth;
+use crate::web::auth::{require_auth, require_self_or_admin};
 use crate::web::csrf;
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
@@ -125,6 +125,7 @@ pub async fn profile_page(
     let flash = take_flash(&session);
     let csrf_token = csrf::get_or_create_token(&session);
     let profile_username = path.into_inner();
+    require_self_or_admin(&user, &profile_username)?;
 
     let db = state.db.clone();
     let dirs = Arc::clone(&state.dirs);
@@ -252,8 +253,9 @@ pub async fn quests_partial(
     path: Path<String>,
     query: Query<QuestsQuery>,
 ) -> actix_web::Result<Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
     let profile_username = path.into_inner();
+    require_self_or_admin(&user, &profile_username)?;
     let detail = load_detail_for_user(&state, &profile_username).await?;
 
     let total = detail.quests.len();
@@ -306,8 +308,9 @@ pub async fn traders_partial(
     req: HttpRequest,
     path: Path<String>,
 ) -> actix_web::Result<Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
     let profile_username = path.into_inner();
+    require_self_or_admin(&user, &profile_username)?;
     let detail = load_detail_for_user(&state, &profile_username).await?;
 
     let trader_displays: Vec<TraderDisplay> = detail
@@ -338,8 +341,9 @@ pub async fn hideout_partial(
     req: HttpRequest,
     path: Path<String>,
 ) -> actix_web::Result<Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
     let profile_username = path.into_inner();
+    require_self_or_admin(&user, &profile_username)?;
     let detail = load_detail_for_user(&state, &profile_username).await?;
 
     let area_displays: Vec<HideoutAreaDisplay> = detail
@@ -405,8 +409,9 @@ pub async fn stash_partial(
     path: Path<String>,
     query: Query<StashQuery>,
 ) -> actix_web::Result<Html> {
-    require_auth(&req)?;
+    let user = require_auth(&req)?;
     let profile_username = path.into_inner();
+    require_self_or_admin(&user, &profile_username)?;
 
     let db = state.db.clone();
     let lookup_username = profile_username.clone();

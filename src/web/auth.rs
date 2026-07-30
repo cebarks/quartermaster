@@ -99,6 +99,17 @@ pub fn require_permission(
     Ok(())
 }
 
+/// Require that the requesting user is viewing their own data or has UsersManage.
+pub fn require_self_or_admin(
+    user: &SessionUser,
+    target_username: &str,
+) -> std::result::Result<(), WebError> {
+    if user.username != target_username && !user.has_permission(Permission::UsersManage) {
+        return Err(WebError::Forbidden);
+    }
+    Ok(())
+}
+
 pub fn set_session_user(session: &Session, user: &SessionUser) -> Result<()> {
     session
         .insert("user_id", user.user_id)
@@ -311,6 +322,34 @@ mod tests {
         assert!(!user.can("users.manage"));
         // Unknown permission string returns false (and would log a warning)
         assert!(!user.can("nonexistent.perm"));
+    }
+
+    #[test]
+    fn require_self_or_admin_allows_own_data() {
+        let user = SessionUser {
+            user_id: 1,
+            username: "alice".into(),
+            role_name: "player".into(),
+            role_display_name: "Player".into(),
+            permissions: HashSet::new(),
+            has_password: true,
+        };
+        assert!(require_self_or_admin(&user, "alice").is_ok());
+        assert!(require_self_or_admin(&user, "bob").is_err());
+    }
+
+    #[test]
+    fn require_self_or_admin_allows_users_manage() {
+        let user = SessionUser {
+            user_id: 1,
+            username: "admin".into(),
+            role_name: "admin".into(),
+            role_display_name: "Admin".into(),
+            permissions: HashSet::from([Permission::UsersManage]),
+            has_password: true,
+        };
+        assert!(require_self_or_admin(&user, "alice").is_ok());
+        assert!(require_self_or_admin(&user, "bob").is_ok());
     }
 
     #[test]

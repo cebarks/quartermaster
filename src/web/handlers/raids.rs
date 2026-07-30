@@ -5,7 +5,7 @@ use askama::Template;
 use serde::Deserialize;
 
 use crate::db::raids::{LeaderboardEntry, Raid, RaidKill, ServerRaidStats, UserRaidStats};
-use crate::web::auth::require_auth;
+use crate::web::auth::{require_auth, require_self_or_admin};
 use crate::web::csrf;
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
@@ -175,6 +175,7 @@ pub async fn player_raids_page(
     let flash = take_flash(&session);
     let csrf_token = csrf::get_or_create_token(&session);
     let profile_username = path.into_inner();
+    require_self_or_admin(&user, &profile_username)?;
     let offset = query.offset.unwrap_or(0);
 
     let db = state.db.clone();
@@ -249,6 +250,8 @@ pub async fn raid_detail_page(
     .await
     .map_err(WebError::from)?
     .map_err(|_| WebError::NotFound)?;
+
+    require_self_or_admin(&user, &raid_username)?;
 
     let tmpl = RaidDetailPageTemplate {
         user,
