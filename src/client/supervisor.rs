@@ -17,6 +17,18 @@ use crate::container::ContainerManager;
 use crate::spt::headless::{EHeadlessStatus, GetHeadlessesResponse};
 use crate::spt::server::SptClient;
 
+/// Shared context for exit watchers, avoiding long argument lists.
+/// Config is read dynamically on each loop iteration so restart policy
+/// changes take effect without restarting the supervisor.
+struct ExitWatcherCtx {
+    container_mgr: ContainerManager,
+    state: Arc<RwLock<Vec<ClientState>>>,
+    watcher_handles: Arc<RwLock<HashMap<u32, CancellationToken>>>,
+    converging: Arc<AtomicBool>,
+    cancel_token: CancellationToken,
+    config: Arc<parking_lot::RwLock<Config>>,
+}
+
 struct RestartingGuard {
     state: Arc<RwLock<Vec<ClientState>>>,
     index: u32,
@@ -211,21 +223,8 @@ impl ClientSupervisor {
             if state.container_status == ContainerStatus::Running {
                 let has_watcher = self.watcher_handles.read().await.contains_key(&state.index);
                 if !has_watcher {
-                    ClientSupervisor::spawn_exit_watcher(
-                        self.container_mgr.clone(),
-                        Arc::clone(&self.state),
-                        Arc::clone(&self.watcher_handles),
-                        state.index,
-                        state.container_name.clone(),
-                        headless_config.restart_policy.clone(),
-                        headless_config.max_restart_attempts,
-                        headless_config.restart_backoff_cap,
-                        self.converging.clone(),
-                        self.cancel_token.clone(),
-                        Arc::clone(&self.config),
-                        Arc::clone(&self.db),
-                    )
-                    .await;
+                    self.spawn_exit_watcher(state.index, state.container_name.clone())
+                        .await;
                 }
             }
         }
@@ -412,86 +411,66 @@ impl ClientSupervisor {
         Ok(state)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
-    async fn spawn_exit_watcher(
-        container_mgr: ContainerManager,
-        state: Arc<RwLock<Vec<ClientState>>>,
-        watcher_handles: Arc<RwLock<HashMap<u32, CancellationToken>>>,
-        index: u32,
-        container_name: String,
-        restart_policy: RestartPolicy,
-        max_restart_attempts: u32,
-        backoff_cap: u64,
-        converging: Arc<AtomicBool>,
-        cancel_token: CancellationToken,
-        config: Arc<parking_lot::RwLock<Config>>,
-        db: Arc<parking_lot::Mutex<crate::db::Database>>,
-    ) {
+    async fn spawn_exit_watcher(&self, index: u32, container_name: String) {
+        let ctx = ExitWatcherCtx {
+            container_mgr: self.container_mgr.clone(),
+            state: Arc::clone(&self.state),
+            watcher_handles: Arc::clone(&self.watcher_handles),
+            converging: self.converging.clone(),
+            cancel_token: self.cancel_token.clone(),
+            config: Arc::clone(&self.config),
+        };
+
         // Child token: cancelled when either the supervisor shuts down
         // (cancel_token) or this specific watcher is replaced/removed.
-        let watcher_cancel = cancel_token.child_token();
+        let watcher_cancel = ctx.cancel_token.child_token();
 
         // Register this watcher, cancelling any previous one for the same index
         {
-            let mut handles = watcher_handles.write().await;
+            let mut handles = ctx.watcher_handles.write().await;
             if let Some(old) = handles.insert(index, watcher_cancel.clone()) {
                 old.cancel();
             }
         }
 
-        let watcher_cancel_clone = watcher_cancel.clone();
-        let container_mgr_clone = container_mgr.clone();
-        let state_clone = Arc::clone(&state);
-        let watcher_handles_clone = Arc::clone(&watcher_handles);
-
         tokio::spawn(async move {
-            exit_watcher_loop(
-                container_mgr_clone,
-                state_clone,
-                watcher_handles_clone,
-                index,
-                container_name,
-                restart_policy,
-                max_restart_attempts,
-                backoff_cap,
-                converging,
-                watcher_cancel_clone,
-                config,
-                db,
-            )
-            .await;
+            exit_watcher_loop(ctx, index, container_name, watcher_cancel).await;
         });
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn exit_watcher_loop(
-    container_mgr: ContainerManager,
-    state: Arc<RwLock<Vec<ClientState>>>,
-    watcher_handles: Arc<RwLock<HashMap<u32, CancellationToken>>>,
+    ctx: ExitWatcherCtx,
     index: u32,
     container_name: String,
-    restart_policy: RestartPolicy,
-    max_restart_attempts: u32,
-    backoff_cap: u64,
-    converging: Arc<AtomicBool>,
     cancel_token: CancellationToken,
-    _config: Arc<parking_lot::RwLock<Config>>,
-    _db: Arc<parking_lot::Mutex<crate::db::Database>>,
 ) {
     let mut retry_delay = Duration::from_secs(1);
     let max_retry_delay = Duration::from_secs(30);
 
     loop {
+        // Read restart config fresh each iteration so changes take effect
+        // without restarting the supervisor.
+        let (restart_policy, max_restart_attempts, backoff_cap) = {
+            let cfg = ctx.config.read();
+            match cfg.headless {
+                Some(ref hc) => (
+                    hc.restart_policy.clone(),
+                    hc.max_restart_attempts,
+                    hc.restart_backoff_cap,
+                ),
+                None => (RestartPolicy::Auto, 5, 300),
+            }
+        };
+
         // Watch the container for exit
-        let mut stream = container_mgr.wait_container(&container_name);
+        let mut stream = ctx.container_mgr.wait_container(&container_name);
 
         let wait_result = tokio::select! {
             _ = cancel_token.cancelled() => {
                 tracing::debug!(container = %container_name, "Exit watcher cancelled");
                 // Clean up our handle
-                watcher_handles.write().await.remove(&index);
+                ctx.watcher_handles.write().await.remove(&index);
                 return;
             }
             result = stream.next() => result,
@@ -544,7 +523,7 @@ async fn exit_watcher_loop(
                     container = %container_name,
                     "Exit watcher stream ended unexpectedly"
                 );
-                watcher_handles.write().await.remove(&index);
+                ctx.watcher_handles.write().await.remove(&index);
                 return;
             }
         };
@@ -552,7 +531,7 @@ async fn exit_watcher_loop(
         // Check for OOM kill: the kernel kills the game process but the
         // entrypoint exits cleanly (code 0). Without this check, OOM kills
         // look like normal restarts and never trigger backoff.
-        if is_clean_exit && container_mgr.was_oom_killed(&container_name).await {
+        if is_clean_exit && ctx.container_mgr.was_oom_killed(&container_name).await {
             is_clean_exit = false;
             tracing::warn!(
                 container = %container_name,
@@ -562,7 +541,7 @@ async fn exit_watcher_loop(
 
         // Update state with exit info
         let should_restart = {
-            let mut state_lock = state.write().await;
+            let mut state_lock = ctx.state.write().await;
             if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
                 s.container_status = ContainerStatus::Stopped;
                 s.health = ClientHealth::Down;
@@ -588,7 +567,7 @@ async fn exit_watcher_loop(
             }
         };
 
-        if converging.load(Ordering::Relaxed) {
+        if ctx.converging.load(Ordering::Relaxed) {
             tracing::debug!(
                 container = %container_name,
                 "Skipping exit-watcher restart (convergence in progress)"
@@ -600,7 +579,7 @@ async fn exit_watcher_loop(
 
         if !should_restart {
             let reason = {
-                let state_lock = state.read().await;
+                let state_lock = ctx.state.read().await;
                 if let Some(s) = state_lock.iter().find(|s| s.index == index) {
                     if s.manually_stopped {
                         "manually stopped"
@@ -616,13 +595,13 @@ async fn exit_watcher_loop(
                 exit_code,
                 "Not restarting ({reason})"
             );
-            watcher_handles.write().await.remove(&index);
+            ctx.watcher_handles.write().await.remove(&index);
             return;
         }
 
         // Mark as restarting
         {
-            let mut state_lock = state.write().await;
+            let mut state_lock = ctx.state.write().await;
             if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
                 s.restarting = true;
             }
@@ -630,7 +609,7 @@ async fn exit_watcher_loop(
 
         // Get failure count for backoff calculation
         let failures = {
-            let state_lock = state.read().await;
+            let state_lock = ctx.state.read().await;
             state_lock
                 .iter()
                 .find(|s| s.index == index)
@@ -639,7 +618,7 @@ async fn exit_watcher_loop(
         };
 
         let _guard = RestartingGuard {
-            state: state.clone(),
+            state: ctx.state.clone(),
             index,
         };
 
@@ -657,9 +636,9 @@ async fn exit_watcher_loop(
 
         // Start the already-stopped container (don't use restart() —
         // calling stop() on an exited container errors with 304)
-        match container_mgr.start(&container_name).await {
+        match ctx.container_mgr.start(&container_name).await {
             Ok(()) => {
-                let mut state_lock = state.write().await;
+                let mut state_lock = ctx.state.write().await;
                 if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
                     s.restart_count += 1;
                     s.last_restart = Some(Utc::now());
@@ -679,7 +658,7 @@ async fn exit_watcher_loop(
                     err = %e,
                     "Failed to restart"
                 );
-                watcher_handles.write().await.remove(&index);
+                ctx.watcher_handles.write().await.remove(&index);
                 return;
             }
         }

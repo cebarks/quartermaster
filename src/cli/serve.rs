@@ -145,19 +145,17 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                                     "Running initial convergence for {} headless client(s)",
                                     headless_config.client_count()
                                 );
-                                if let Err(e) = crate::client::converge::converge(
-                                    container_mgr_arc,
+                                let ctx = crate::client::converge::ConvergeContext {
+                                    container_mgr: container_mgr_arc,
                                     headless_config,
-                                    &config,
-                                    &dirs,
-                                    &spt_client,
-                                    &forge,
-                                    &spt_info.spt_version,
-                                    Arc::clone(&converging),
-                                    &db_arc,
-                                )
-                                .await
-                                {
+                                    config: &config,
+                                    dirs: &dirs,
+                                    spt_client: &spt_client,
+                                    forge: &forge,
+                                    converging: &converging,
+                                    db: &db_arc,
+                                };
+                                if let Err(e) = crate::client::converge::converge(&ctx).await {
                                     tracing::error!(err = %e, "Initial convergence failed");
                                 }
                             }
