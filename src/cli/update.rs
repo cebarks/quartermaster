@@ -362,9 +362,10 @@ pub async fn apply_update_by_version(
         &ctx.dirs,
         &ctx.config,
         installed.id,
-        target_version_id,
+        Some(target_version_id),
         &version_info.version,
         &archive_path,
+        None,
     )?;
 
     let file_count = ctx.db.get_files_for_mod(installed.id)?.len();

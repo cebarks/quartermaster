@@ -345,14 +345,20 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
     Ok(db_id)
 }
 
+/// Replace a mod's files from an archive.
+///
+/// `version_id` is the Forge version; a mod installed from a URL has none, and
+/// passes its new download URL as `source_url` instead.
+#[allow(clippy::too_many_arguments)]
 pub fn update_mod_from_archive(
     db: &Database,
     dirs: &QumaDirs,
     config: &crate::config::Config,
     mod_db_id: i64,
-    version_id: i64,
+    version_id: Option<i64>,
     version_str: &str,
     archive_path: &Path,
+    source_url: Option<&str>,
 ) -> Result<()> {
     tracing::info!(
         mod_db_id,
@@ -385,7 +391,11 @@ pub fn update_mod_from_archive(
     let tx = db.begin_transaction()?;
     db.delete_files_for_mod(mod_db_id)?;
     record_extracted_files(db, mod_db_id, &extracted)?;
-    db.update_mod(mod_db_id, version_id, version_str)?;
+    match (version_id, source_url) {
+        (Some(id), _) => db.update_mod(mod_db_id, id, version_str)?,
+        (None, Some(url)) => db.update_mod_source(mod_db_id, version_str, url)?,
+        (None, None) => anyhow::bail!("update needs either a Forge version id or a source URL"),
+    };
     tx.commit()?;
     Ok(())
 }
@@ -1988,9 +1998,10 @@ mod tests {
             &dirs,
             &Config::default(),
             db_id,
-            300,
+            Some(300),
             "2.0.0",
             zip_v2.path(),
+            None,
         )
         .unwrap();
 
@@ -2053,9 +2064,10 @@ mod tests {
             &dirs,
             &Config::default(),
             db_id,
-            300,
+            Some(300),
             "2.0.0",
             zip_v2.path(),
+            None,
         )
         .unwrap();
 
@@ -2893,9 +2905,10 @@ mod tests {
             &dirs,
             &Config::default(),
             db_id,
-            201,
+            Some(201),
             "2.0.0",
             zip_v2.path(),
+            None,
         )
         .unwrap();
 

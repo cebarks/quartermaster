@@ -404,9 +404,10 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                     &ctx.dirs,
                     &ctx.config,
                     installed.id,
-                    version_id,
+                    Some(version_id),
                     &version_str,
                     archive,
+                    None,
                 ) {
                     let remaining = pending.len() - applied - 1;
                     eprintln!("\n  Error: {e:#}");

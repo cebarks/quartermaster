@@ -32,18 +32,19 @@ struct DepsJson {
     libraries: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// Required markers that identify a valid SPT 4.0+ installation directory.
+/// Required markers that identify a valid SPT 4.0+ server directory.
+///
+/// Uses `SPT.Server.deps.json` (platform-agnostic, already parsed by
+/// `read_spt_version`) instead of `SPT.Server.exe` which doesn't exist on
+/// Linux dedicated servers. `BepInEx/plugins` is a client-side path that
+/// may not exist on a headless/dedicated server.
 const REQUIRED_PATHS: &[&str] = &[
-    "SPT/SPT.Server.exe",
+    "SPT/SPT.Server.deps.json",
     "SPT/SPT_Data/configs/core.json",
     "SPT/user/mods",
-    "BepInEx/plugins",
 ];
 
-/// Validate that `path` contains the expected SPT directory structure.
-///
-/// Checks for the presence of SPT/SPT.Server.exe, the server config directory,
-/// the user mods directory, and BepInEx plugins directory.
+/// Validate that `path` contains the expected SPT server directory structure.
 pub fn validate_spt_dir(path: &Path) -> Result<()> {
     for entry in REQUIRED_PATHS {
         let full = path.join(entry);
@@ -134,10 +135,6 @@ mod tests {
     fn create_fake_spt_dir(base: &Path) -> PathBuf {
         let spt_root = base.to_path_buf();
 
-        // SPT/SPT.Server.exe
-        std::fs::create_dir_all(spt_root.join("SPT")).unwrap();
-        std::fs::write(spt_root.join("SPT/SPT.Server.exe"), b"").unwrap();
-
         // SPT/SPT_Data/configs/core.json
         let configs_dir = spt_root.join("SPT/SPT_Data/configs");
         std::fs::create_dir_all(&configs_dir).unwrap();
@@ -147,7 +144,7 @@ mod tests {
         )
         .unwrap();
 
-        // SPT/SPT.Server.deps.json (for version detection)
+        // SPT/SPT.Server.deps.json (for version detection + validation)
         std::fs::write(
             spt_root.join("SPT/SPT.Server.deps.json"),
             r#"{"libraries":{"SPT.Server/4.0.13-RELEASE+abc123.20260101":{}}}"#,
@@ -156,9 +153,6 @@ mod tests {
 
         // SPT/user/mods/
         std::fs::create_dir_all(spt_root.join("SPT/user/mods")).unwrap();
-
-        // BepInEx/plugins/
-        std::fs::create_dir_all(spt_root.join("BepInEx/plugins")).unwrap();
 
         spt_root
     }
@@ -174,15 +168,15 @@ mod tests {
     fn validate_rejects_empty_dir() {
         let tmp = TempDir::new().unwrap();
         let err = validate_spt_dir(tmp.path()).unwrap_err();
-        assert!(err.to_string().contains("missing SPT/SPT.Server.exe"));
+        assert!(err.to_string().contains("missing SPT/SPT.Server.deps.json"));
     }
 
     #[test]
     fn validate_rejects_partial_dir() {
         let tmp = TempDir::new().unwrap();
-        // Only create the exe — remaining markers are absent.
+        // Only create deps.json — remaining markers are absent.
         std::fs::create_dir_all(tmp.path().join("SPT")).unwrap();
-        std::fs::write(tmp.path().join("SPT/SPT.Server.exe"), b"").unwrap();
+        std::fs::write(tmp.path().join("SPT/SPT.Server.deps.json"), b"{}").unwrap();
 
         let err = validate_spt_dir(tmp.path()).unwrap_err();
         // Should fail on one of the missing dirs (core.json path).

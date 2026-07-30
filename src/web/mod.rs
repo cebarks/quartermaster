@@ -1018,11 +1018,14 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         let fika_config_path = crate::fika::config::fika_config_path(&dirs);
         match crate::fika::config::read_fika_config(&fika_config_path) {
             Ok(fika_config) if !fika_config.server.api_key.is_empty() => {
-                let base_url = format!(
-                    "https://{}:{}",
-                    fika_config.server.spt.http.backend_ip,
-                    fika_config.server.spt.http.backend_port
-                );
+                let host = config
+                    .server_host
+                    .clone()
+                    .unwrap_or_else(|| fika_config.server.spt.http.backend_ip.clone());
+                let port = config
+                    .server_port
+                    .unwrap_or(fika_config.server.spt.http.backend_port);
+                let base_url = format!("https://{host}:{port}");
                 match crate::fika::client::FikaClient::new(&base_url, fika_config.server.api_key) {
                     Ok(client) => {
                         tracing::info!("FikaClient initialized");
@@ -1114,6 +1117,16 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
 
     // Pre-warm mod ZIP cache in background
     app_state.mod_zip_cache.invalidate();
+
+    // Poll Forge + GitHub for mod updates and announce them (no-op without a webhook).
+    crate::notify::spawn(
+        app_state.db.clone(),
+        app_state.forge.clone(),
+        app_state.update_cache.clone(),
+        app_state.spt_info.spt_version.clone(),
+        config.discord_webhook_url.clone(),
+        config.update_notify_interval,
+    );
 
     // One-time modsync-to-convoy migration
     {

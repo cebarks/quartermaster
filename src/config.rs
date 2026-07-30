@@ -55,6 +55,10 @@ fn default_session_secret() -> String {
     String::new()
 }
 
+fn default_update_notify_interval() -> u64 {
+    1800
+}
+
 fn default_update_check_interval() -> u64 {
     300
 }
@@ -935,6 +939,16 @@ pub struct Config {
     #[serde(default = "default_update_check_interval")]
     pub update_check_interval: u64,
 
+    /// Discord webhook URL for announcing newly available mod updates.
+    /// Unset = the background update poller does not run at all.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discord_webhook_url: Option<String>,
+
+    /// How often the poller checks Forge and GitHub for updates, in seconds.
+    #[serde(default = "default_update_notify_interval")]
+    pub update_notify_interval: u64,
+
     #[serde(default)]
     pub update_disabled_mods: bool,
 
@@ -1029,6 +1043,8 @@ impl Default for Config {
             web_port: 9190,
             web_workers: None,
             update_check_interval: 300,
+            discord_webhook_url: None,
+            update_notify_interval: 1800,
             update_disabled_mods: false,
             forge_cache_ttl: Some(86400),
             headless: None,
@@ -1217,6 +1233,8 @@ impl Config {
         env_override!(opt_parse: self.server_port, "QUMA_SERVER_PORT", u16);
         env_override!(parse: self.container_stop_timeout, "QUMA_CONTAINER_STOP_TIMEOUT", u64);
         env_override!(parse: self.update_check_interval, "QUMA_UPDATE_CHECK_INTERVAL", u64);
+        env_override!(opt_str: self.discord_webhook_url, "QUMA_DISCORD_WEBHOOK_URL");
+        env_override!(parse: self.update_notify_interval, "QUMA_UPDATE_NOTIFY_INTERVAL", u64);
         env_override!(opt_parse: self.forge_cache_ttl, "QUMA_FORGE_CACHE_TTL", u64);
         env_override!(bool: self.auto_start_server, "QUMA_AUTO_START_SERVER");
         env_override!(parse: self.on_exit, "QUMA_ON_EXIT", OnExit);

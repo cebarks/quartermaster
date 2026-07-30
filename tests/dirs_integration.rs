@@ -10,8 +10,7 @@ fn new_layout_round_trip() {
     let dirs = QumaDirs::from_root(root.to_path_buf());
     std::fs::create_dir_all(dirs.spt_server.join("SPT/SPT_Data/configs")).unwrap();
     std::fs::create_dir_all(dirs.spt_server.join("SPT/user/mods")).unwrap();
-    std::fs::create_dir_all(dirs.spt_server.join("BepInEx/plugins")).unwrap();
-    std::fs::write(dirs.spt_server.join("SPT/SPT.Server.exe"), "").unwrap();
+    std::fs::write(dirs.spt_server.join("SPT/SPT.Server.deps.json"), "{}").unwrap();
     std::fs::write(dirs.spt_server.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
     std::fs::write(dirs.config_path(), "").unwrap();
 
@@ -28,8 +27,7 @@ fn legacy_layout_detected() {
 
     std::fs::create_dir_all(root.join("SPT/SPT_Data/configs")).unwrap();
     std::fs::create_dir_all(root.join("SPT/user/mods")).unwrap();
-    std::fs::create_dir_all(root.join("BepInEx/plugins")).unwrap();
-    std::fs::write(root.join("SPT/SPT.Server.exe"), "").unwrap();
+    std::fs::write(root.join("SPT/SPT.Server.deps.json"), "{}").unwrap();
     std::fs::write(root.join("SPT/SPT_Data/configs/core.json"), "{}").unwrap();
 
     let detected = QumaDirs::detect(Some(root), None).unwrap();
