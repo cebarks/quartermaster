@@ -260,7 +260,7 @@ pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
 
 /// Extract a mod archive into `spt_root`, stripping any wrapper directory prefix.
 ///
-/// Returns a list of extracted files with their relative paths, SHA256 hashes, and sizes.
+/// Returns a list of extracted files with their relative paths, xxHash3-64 hashes, and sizes.
 pub fn extract_mod(archive_path: &Path, spt_root: &Path) -> Result<Vec<ExtractedFile>> {
     let prefix = detect_strip_prefix(archive_path)?;
     let limits = ExtractionLimits::production();
@@ -530,7 +530,7 @@ fn validate_dest_under_root(dest: &Path, spt_root: &Path, raw_name: &str) -> Res
     Ok(())
 }
 
-/// Compute the SHA256 hash of a file on disk, returned as a lowercase hex string.
+/// Compute the xxHash3-64 hash of a file on disk, returned as a lowercase hex string.
 /// Streams through a BufReader to avoid loading the entire file into memory.
 pub fn compute_file_hash(path: &Path) -> Result<String> {
     let file = fs::File::open(path)
