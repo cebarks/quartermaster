@@ -230,11 +230,13 @@ pub fn configure_app(
     }
 
     // Build the API scope
-    // api_auth_middleware must be outermost (last .wrap) so it runs first —
-    // it checks X-Quma-Token before auth_middleware checks session cookies.
+    // Wrap order: last .wrap() = outermost (runs first on request, last on response).
+    // api_json_errors is outermost so it converts error responses (including auth
+    // failures) to JSON when the client sends Accept: application/json.
     let mut api_scope = web::scope("/api")
         .wrap(from_fn(auth::auth_middleware))
         .wrap(from_fn(api_auth::api_auth_middleware))
+        .wrap(from_fn(error::api_json_errors))
         .route("/events", web::get().to(crate::web::sse::events_stream))
         .route(
             "/mods/check-updates",
