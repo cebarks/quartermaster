@@ -12,7 +12,7 @@ pub fn run(expires: Option<&str>, ctx: &CliContext) -> Result<()> {
     };
 
     ctx.db
-        .create_invite(&code, None, expires_at.as_deref())
+        .create_invite(&code, None, expires_at.as_deref(), Some(1))
         .map_err(|e| anyhow::anyhow!("failed to create invite: {e}"))?;
 
     let display_host = if ctx.config.web_bind == "0.0.0.0" {

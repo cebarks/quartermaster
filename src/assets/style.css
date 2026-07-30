@@ -531,6 +531,9 @@ pre code {
 .request-row { cursor: pointer; border-bottom: 1px solid var(--border); }
 .request-row:hover { background: var(--bg-hover, rgba(255,255,255,0.03)); }
 .request-row td { padding: 10px 16px; vertical-align: middle; }
+.request-row td:first-child { position: relative; padding-left: 28px; }
+.request-row td:first-child::before { content: "\25B8"; position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.8rem; transition: transform 0.15s; }
+.request-row.expanded td:first-child::before { transform: translateY(-50%) rotate(90deg); }
 .request-row.expanded { background: var(--bg-hover, rgba(255,255,255,0.03)); }
 .request-detail { border-bottom: 1px solid var(--border); border-left: 3px solid var(--accent); }
 .request-expanded .request-detail { display: table-row !important; }

@@ -119,7 +119,7 @@ impl TestAppBuilder {
 
         // Seed invites
         for (code, expires_at) in &self.invites {
-            db.create_invite(code, None, expires_at.as_deref())
+            db.create_invite(code, None, expires_at.as_deref(), Some(1))
                 .expect("failed to insert invite");
         }
 

@@ -923,6 +923,12 @@ pub fn configure_app(
 
     quma_scope = quma_scope.service(auth_scope);
 
+    // Unrecognized /quma/* paths get a styled 404 instead of falling through
+    // to the SPT proxy (which would return confusing proxy errors).
+    quma_scope = quma_scope.default_service(web::to(|| async {
+        Err::<HttpResponse, actix_web::Error>(error::WebError::NotFound.into())
+    }));
+
     cfg.service(quma_scope);
 
     // Root redirect and default proxy handler

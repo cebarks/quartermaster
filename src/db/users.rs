@@ -41,6 +41,8 @@ pub struct InviteCode {
     pub created_at: String,
     pub used_at: Option<String>,
     pub expires_at: Option<String>,
+    pub max_uses: Option<i64>,
+    pub use_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -325,10 +327,11 @@ impl Database {
         code: &str,
         created_by: Option<i64>,
         expires_at: Option<&str>,
+        max_uses: Option<i64>,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO invite_codes (code, created_by, expires_at) VALUES (?1, ?2, ?3)",
-            params![code, created_by, expires_at],
+            "INSERT INTO invite_codes (code, created_by, expires_at, max_uses) VALUES (?1, ?2, ?3, ?4)",
+            params![code, created_by, expires_at, max_uses],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -336,7 +339,7 @@ impl Database {
     pub fn get_invite(&self, code: &str) -> rusqlite::Result<Option<InviteCode>> {
         self.conn
             .query_row(
-                "SELECT id, code, created_by, used_by, created_at, used_at, expires_at
+                "SELECT id, code, created_by, used_by, created_at, used_at, expires_at, max_uses, use_count
                  FROM invite_codes WHERE code = ?1",
                 params![code],
                 row_to_invite_code,
@@ -345,11 +348,12 @@ impl Database {
     }
 
     /// Attempt to use an invite code. Returns the number of rows affected (1 if
-    /// successful, 0 if the code was already used or expired).
+    /// successful, 0 if the code is exhausted or expired).
     pub fn use_invite(&self, code: &str, user_id: i64) -> rusqlite::Result<usize> {
         self.conn.execute(
-            "UPDATE invite_codes SET used_by = ?1, used_at = datetime('now')
-             WHERE code = ?2 AND used_by IS NULL
+            "UPDATE invite_codes SET used_by = ?1, used_at = datetime('now'), use_count = use_count + 1
+             WHERE code = ?2
+             AND (max_uses IS NULL OR use_count < max_uses)
              AND (expires_at IS NULL OR expires_at > datetime('now'))",
             params![user_id, code],
         )
@@ -358,6 +362,7 @@ impl Database {
     pub fn list_invite_codes(&self) -> rusqlite::Result<Vec<InviteCodeWithUsers>> {
         let mut stmt = self.conn.prepare(
             "SELECT ic.id, ic.code, ic.created_by, ic.used_by, ic.created_at, ic.used_at, ic.expires_at,
+                    ic.max_uses, ic.use_count,
                     u1.username AS created_by_username,
                     u2.username AS used_by_username
              FROM invite_codes ic
@@ -375,17 +380,23 @@ impl Database {
                     created_at: row.get(4)?,
                     used_at: row.get(5)?,
                     expires_at: row.get(6)?,
+                    max_uses: row.get(7)?,
+                    use_count: row.get(8)?,
                 },
-                created_by_username: row.get(7)?,
-                used_by_username: row.get(8)?,
+                created_by_username: row.get(9)?,
+                used_by_username: row.get(10)?,
             })
         })?;
         rows.collect()
     }
 
     pub fn delete_invite(&self, invite_id: i64) -> rusqlite::Result<DeleteInviteResult> {
+        // Allow deletion of unused single-use codes (use_count = 0 and max_uses = 1)
+        // and any multi-use/unlimited codes regardless of use_count.
+        // Block deletion only for fully-consumed single-use codes.
         let affected = self.conn.execute(
-            "DELETE FROM invite_codes WHERE id = ?1 AND used_by IS NULL",
+            "DELETE FROM invite_codes WHERE id = ?1
+             AND NOT (max_uses = 1 AND use_count >= 1)",
             params![invite_id],
         )?;
         if affected > 0 {
@@ -599,6 +610,8 @@ fn row_to_invite_code(row: &rusqlite::Row<'_>) -> rusqlite::Result<InviteCode> {
         created_at: row.get(4)?,
         used_at: row.get(5)?,
         expires_at: row.get(6)?,
+        max_uses: row.get(7)?,
+        use_count: row.get(8)?,
     })
 }
 

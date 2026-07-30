@@ -46,8 +46,11 @@ pub fn validate_invite_code(db: &Database, code: &str) -> Result<InviteCode, Inv
         })?
         .ok_or(InviteError::NotFound)?;
 
-    if invite.used_by.is_some() {
-        return Err(InviteError::AlreadyUsed);
+    // Check if all uses are exhausted (max_uses NULL = unlimited)
+    if let Some(max) = invite.max_uses {
+        if invite.use_count >= max {
+            return Err(InviteError::AlreadyUsed);
+        }
     }
 
     if is_invite_expired(invite.expires_at.as_deref()) {

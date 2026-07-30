@@ -140,12 +140,18 @@ pub struct InviteView {
     pub used_by_username: Option<String>,
     pub created_at: String,
     pub expires_at: Option<String>,
+    pub max_uses: Option<i64>,
+    pub use_count: i64,
     pub status: String, // "available", "used", or "expired"
 }
 
 impl InviteView {
     fn from_db(ic: InviteCodeWithUsers) -> Self {
-        let status = if ic.invite.used_by.is_some() {
+        let exhausted = ic
+            .invite
+            .max_uses
+            .is_some_and(|max| ic.invite.use_count >= max);
+        let status = if exhausted {
             "used"
         } else if crate::web::invite::is_invite_expired(ic.invite.expires_at.as_deref()) {
             "expired"
@@ -159,6 +165,8 @@ impl InviteView {
             used_by_username: ic.used_by_username,
             created_at: ic.invite.created_at,
             expires_at: ic.invite.expires_at,
+            max_uses: ic.invite.max_uses,
+            use_count: ic.invite.use_count,
             status: status.to_string(),
         }
     }
@@ -199,6 +207,7 @@ pub struct CsrfOnly {
 #[derive(serde::Deserialize)]
 pub struct InviteForm {
     expiry: String,
+    max_uses: String,
     csrf_token: String,
 }
 
@@ -662,12 +671,20 @@ pub async fn create_invite(
         )
     };
 
+    let max_uses: Option<i64> = match form.max_uses.as_str() {
+        "unlimited" => None,
+        n => Some(
+            n.parse()
+                .map_err(|_| WebError::BadRequest("Invalid max uses value".to_string()))?,
+        ),
+    };
+
     let db = state.db.clone();
     let code_clone = code.clone();
     let user_id = current_user.user_id;
     web::block(move || {
         let db = db.lock();
-        db.create_invite(&code_clone, Some(user_id), expires_at.as_deref())
+        db.create_invite(&code_clone, Some(user_id), expires_at.as_deref(), max_uses)
     })
     .await
     .map_err(WebError::from)?
