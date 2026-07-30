@@ -24,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/018_dependency_tree.sql"),
     include_str!("../../migrations/019_queue_unique_constraints.sql"),
     include_str!("../../migrations/020_multi_use_invites.sql"),
+    include_str!("../../migrations/021_mod_guid.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {

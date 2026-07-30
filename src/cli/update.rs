@@ -575,6 +575,7 @@ mod tests {
             source: "forge".to_string(),
             source_url: None,
             group_id: None,
+            guid: None,
         }];
 
         assert_eq!(mod_name_for_id(&mods, 100), "TestMod");

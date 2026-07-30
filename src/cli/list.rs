@@ -509,6 +509,7 @@ mod tests {
             source: "forge".to_string(),
             source_url: None,
             group_id: None,
+            guid: None,
         }
     }
 

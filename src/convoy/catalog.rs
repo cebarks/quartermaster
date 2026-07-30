@@ -41,10 +41,37 @@ pub struct CatalogGroup {
 pub struct CatalogMod {
     pub id: i64,
     pub forge_id: Option<i64>,
+    pub guid: Option<String>,
     pub name: String,
     pub version: String,
     pub file_checksums: BTreeMap<String, String>,
     pub bundle_checksums: BTreeMap<String, String>,
+}
+
+fn resolve_guid(
+    m: &crate::db::mods::InstalledMod,
+    spt_dir: &Path,
+    db: &Database,
+) -> Option<String> {
+    if m.guid.is_some() {
+        return m.guid.clone();
+    }
+    let files = db.get_files_for_mod_ids(&[m.id]).ok()?;
+    let mod_dir = files.iter().find_map(|f| {
+        f.file_path
+            .strip_prefix("SPT/user/mods/")
+            .and_then(|rest| rest.split('/').next())
+    })?;
+    let pkg_path = spt_dir
+        .join("SPT/user/mods")
+        .join(mod_dir)
+        .join("package.json");
+    let content = std::fs::read_to_string(&pkg_path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    v.get("name")
+        .or_else(|| v.get("uid"))
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
 }
 
 fn get_client_file_checksums(
@@ -172,9 +199,11 @@ pub fn generate_catalog(
         let checksums = get_client_file_checksums(db, m)?;
         if !checksums.is_empty() {
             let bundle_checksums = get_bundle_checksums(spt_dir, db, m.id);
+            let guid = resolve_guid(m, spt_dir, db);
             default_mods.push(CatalogMod {
                 id: m.id,
                 forge_id: m.forge_mod_id,
+                guid,
                 name: m.name.clone(),
                 version: m.version.clone(),
                 file_checksums: checksums,
@@ -203,9 +232,11 @@ pub fn generate_catalog(
             let checksums = get_client_file_checksums(db, m)?;
             if !checksums.is_empty() {
                 let bundle_checksums = get_bundle_checksums(spt_dir, db, m.id);
+                let guid = resolve_guid(m, spt_dir, db);
                 catalog_mods.push(CatalogMod {
                     id: m.id,
                     forge_id: m.forge_mod_id,
+                    guid,
                     name: m.name.clone(),
                     version: m.version.clone(),
                     file_checksums: checksums,
@@ -592,6 +623,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -627,6 +659,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.set_mod_group(mod_id, Some(group_id)).unwrap();
@@ -658,6 +691,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -685,6 +719,7 @@ mod tests {
                 Some("servermod"),
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();

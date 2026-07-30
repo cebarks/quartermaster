@@ -428,6 +428,7 @@ mod tests {
             source: "forge".to_string(),
             source_url: None,
             group_id: None,
+            guid: None,
         }
     }
 
@@ -748,6 +749,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         ctx.db
@@ -792,6 +794,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -1097,6 +1100,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
 
@@ -1157,6 +1161,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         db.insert_file(
@@ -1192,6 +1197,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -1237,6 +1243,7 @@ mod tests {
                 None,
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();

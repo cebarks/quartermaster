@@ -517,6 +517,7 @@ async fn install_deps(ctx: &CliContext, deps: &[PendingInstall]) -> Result<()> {
                 name: &dep.name,
                 slug: dep_mod.slug.as_deref(),
                 version: &dep.version,
+                guid: dep_mod.guid.as_deref(),
             },
         )
         .await?;
@@ -546,6 +547,7 @@ async fn install_main_mod(
             name: &forge_mod.name,
             slug: forge_mod.slug.as_deref(),
             version: &selected_version.version,
+            guid: forge_mod.guid.as_deref(),
         },
     )
     .await
@@ -591,6 +593,7 @@ pub struct ModInstallParams<'a> {
     pub name: &'a str,
     pub slug: Option<&'a str>,
     pub version: &'a str,
+    pub guid: Option<&'a str>,
 }
 
 /// Download a mod archive from Forge, extract it, and record it in the database.
@@ -615,6 +618,7 @@ pub async fn download_and_install(
         name,
         slug,
         version,
+        guid,
     } = params;
 
     let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
@@ -640,6 +644,7 @@ pub async fn download_and_install(
         archive_path: &archive_path,
         source: crate::ops::ModSource::Forge,
         source_url: None,
+        guid: *guid,
     })?;
 
     let file_count = db.get_files_for_mod(db_id)?.len();
@@ -667,6 +672,7 @@ pub async fn download_and_install_with_arc(
         name,
         slug,
         version,
+        guid,
     } = params;
 
     let tmp_dir = tempfile::tempdir().context("failed to create temp directory")?;
@@ -694,6 +700,7 @@ pub async fn download_and_install_with_arc(
             archive_path: &archive_path,
             source: crate::ops::ModSource::Forge,
             source_url: None,
+            guid: *guid,
         })?
     };
 
@@ -841,6 +848,7 @@ mod tests {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
 
@@ -980,6 +988,7 @@ mod tests {
             None,
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();
@@ -1166,6 +1175,7 @@ async fn install_from_url(
         archive_path: &archive_path,
         source: crate::ops::ModSource::Url,
         source_url: Some(url),
+        guid: None,
     })?;
 
     println!("\n{mod_name} installed successfully (ID: {db_id}).");
@@ -1217,6 +1227,7 @@ async fn install_from_file(
         archive_path: &archive_path,
         source: crate::ops::ModSource::File,
         source_url: None,
+        guid: None,
     })?;
 
     println!("\n{mod_name} installed successfully (ID: {db_id}).");

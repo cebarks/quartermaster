@@ -271,6 +271,7 @@ pub async fn drain_all(ctx: &CliContext) -> Result<usize> {
                         archive_path: archive,
                         source,
                         source_url: op.source_url.as_deref(),
+                        guid: None,
                     },
                 ) {
                     Ok(db_id) => db_id,

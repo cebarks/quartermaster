@@ -557,6 +557,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .expect("insert mod");
         db.insert_file(

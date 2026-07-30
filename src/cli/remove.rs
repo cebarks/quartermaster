@@ -274,6 +274,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
 
@@ -294,6 +295,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
 
@@ -313,6 +315,7 @@ mod tests {
                 Some("sain"),
                 "1.0.0",
                 "forge",
+                None,
                 None,
             )
             .unwrap();
@@ -351,6 +354,7 @@ mod tests {
                 "1.0.0",
                 "forge",
                 None,
+                None,
             )
             .unwrap();
         ctx.db
@@ -379,11 +383,29 @@ mod tests {
 
         let mod_c = ctx
             .db
-            .insert_mod(Some(100), Some(200), "ModC", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ModC",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         let mod_b = ctx
             .db
-            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(101),
+                Some(201),
+                "ModB",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         // B depends on C
         ctx.db
@@ -409,15 +431,42 @@ mod tests {
 
         let mod_c = ctx
             .db
-            .insert_mod(Some(100), Some(200), "ModC", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "ModC",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         let mod_b = ctx
             .db
-            .insert_mod(Some(101), Some(201), "ModB", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(101),
+                Some(201),
+                "ModB",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         let mod_a = ctx
             .db
-            .insert_mod(Some(102), Some(202), "ModA", None, "1.0.0", "forge", None)
+            .insert_mod(
+                Some(102),
+                Some(202),
+                "ModA",
+                None,
+                "1.0.0",
+                "forge",
+                None,
+                None,
+            )
             .unwrap();
         // A depends on B, B depends on C
         ctx.db

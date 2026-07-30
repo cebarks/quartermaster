@@ -344,7 +344,7 @@ mod tests {
         let mgr = ConfigManager::new(&QumaDirs::from_legacy(spt_dir.to_path_buf()));
         let db = crate::db::Database::open_in_memory().unwrap();
         // Insert a mod matching the directory name
-        db.insert_mod(None, None, "TestMod", None, "1.0.0", "manual", None)
+        db.insert_mod(None, None, "TestMod", None, "1.0.0", "manual", None, None)
             .unwrap();
 
         let configs = mgr.discover_configs(&db).unwrap();

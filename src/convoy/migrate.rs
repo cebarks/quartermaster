@@ -178,6 +178,7 @@ mod tests {
             "1.0.0",
             "forge",
             None,
+            None,
         )
         .unwrap();
         let mod_one_id = db.get_mod_by_forge_id(101).unwrap().unwrap().id;
@@ -189,6 +190,7 @@ mod tests {
             Some("mod-two"),
             "1.0.0",
             "forge",
+            None,
             None,
         )
         .unwrap();
