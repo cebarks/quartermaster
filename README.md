@@ -204,7 +204,7 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for developmen
 
 ## AI Disclosure
 
-Portions of this codebase were implemented with the assistance of LLM-based tools (Claude Code). All architecture, design decisions, and direction were done by a human (Senior Product Security Engineer w/ 10+ years of coding experience), the LLM was used as an implementation aid under continuous human supervision and review.
+Portions of this codebase were implemented with the assistance of LLM-based tools (Claude Code, and since 2026 Pi). All architecture, design decisions, and direction were done by a human (Senior Product Security Engineer w/ 10+ years of coding experience), the LLM was used as an implementation aid under continuous human supervision and review.
 
 ## License
 

@@ -79,4 +79,4 @@ Group related changes into logical, complete commits. Write clear messages that 
 
 ## AI Disclosure
 
-This project uses LLM-based tools (Claude Code) for implementation assistance. All architecture, design, and technical direction are human-driven. See the [AI Disclosure](README.md#ai-disclosure) section in the README.
+This project uses LLM-based tools (Claude Code, and since 2026 Pi) for implementation assistance. All architecture, design, and technical direction are human-driven. See the [AI Disclosure](README.md#ai-disclosure) section in the README.

@@ -9,7 +9,7 @@ Run and interact with the Quartermaster dev environment. Accepts an optional mod
 
 ## SPT Install Discovery
 
-On first invocation, if `QUMA_SPT_DIR` is not set (environment or `.claude/settings.json`): ask the user for their SPT install path, validate it contains `SPT/`, and save to `.claude/settings.json` under `"env"`. The `dev-*` recipes override this with `.dev-server/`.
+On first invocation, if neither `QUMA_DIR` nor the legacy `QUMA_SPT_DIR` is set in the environment: ask the user for their SPT install path and validate that it holds an SPT server runtime directory — `SPT_Runtime/` for current installs, `SPT/` for legacy ones (`src/spt/layout.rs`). Don't write the answer into a tracked file — export it for the session (`QUMA_DIR=<path> just dev-cli …`) and suggest the user persist it in their shell profile or their own agent tool's env setting. The `dev-*` recipes override this with `.dev-server/`.
 
 ## Modes
 
