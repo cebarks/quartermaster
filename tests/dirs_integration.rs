@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use spt_quartermaster::dirs::QumaDirs;
 
 #[test]
@@ -37,27 +35,15 @@ fn legacy_layout_detected() {
 
 #[test]
 fn legacy_paths_match_old_behavior() {
-    let dirs = QumaDirs::from_legacy(PathBuf::from("/old/spt"));
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("SPT")).unwrap();
+    let dirs = QumaDirs::from_legacy(root.to_path_buf());
 
-    assert_eq!(dirs.db_path(), PathBuf::from("/old/spt/quartermaster.db"));
-    assert_eq!(
-        dirs.staging_dir(),
-        PathBuf::from("/old/spt/quartermaster/.staging")
-    );
-    assert_eq!(
-        dirs.disabled_dir(),
-        PathBuf::from("/old/spt/quartermaster/disabled")
-    );
-    assert_eq!(
-        dirs.queue_dir(),
-        PathBuf::from("/old/spt/.quartermaster/queued")
-    );
-    assert_eq!(
-        dirs.cache_dir(),
-        PathBuf::from("/old/spt/quartermaster-cache")
-    );
-    assert_eq!(
-        dirs.server_mods_dir(),
-        PathBuf::from("/old/spt/SPT/user/mods")
-    );
+    assert_eq!(dirs.db_path(), root.join("quartermaster.db"));
+    assert_eq!(dirs.staging_dir(), root.join("quartermaster/.staging"));
+    assert_eq!(dirs.disabled_dir(), root.join("quartermaster/disabled"));
+    assert_eq!(dirs.queue_dir(), root.join(".quartermaster/queued"));
+    assert_eq!(dirs.cache_dir(), root.join("quartermaster-cache"));
+    assert_eq!(dirs.server_mods_dir().unwrap(), root.join("SPT/user/mods"));
 }

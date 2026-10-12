@@ -205,7 +205,10 @@ async fn stage_mod_inner(
 
     // 2. Resolve dependencies
     let dep_nodes = forge
-        .get_dependencies(&[(&req.forge_mod_id.to_string(), &version.version)])
+        .get_dependencies(
+            &[(&req.forge_mod_id.to_string(), &version.version)],
+            &crate::spt::detect::read_spt_version(&dirs.spt_server)?.spt_version,
+        )
         .await?;
 
     let mut deps_to_install = Vec::new();
@@ -428,7 +431,10 @@ async fn stage_update_inner(
 
     // Resolve deps for the new version — queue installs for any uninstalled
     let dep_nodes = forge
-        .get_dependencies(&[(&forge_mod_id.to_string(), &version.version)])
+        .get_dependencies(
+            &[(&forge_mod_id.to_string(), &version.version)],
+            &crate::spt::detect::read_spt_version(&dirs.spt_server)?.spt_version,
+        )
         .await?;
 
     let mut deps_to_install = Vec::new();

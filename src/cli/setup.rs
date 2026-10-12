@@ -394,7 +394,7 @@ pub(crate) fn create_container_opts(dirs: &QumaDirs, container_name: &str) -> Cr
         healthcheck: Some(HealthConfig {
             test: Some(vec![
                 "CMD-SHELL".to_string(),
-                "curl -sf http://localhost:6969/launcher/ping || exit 1".to_string(),
+                "cert=/opt/server/SPT_Runtime/user/certs/server.crt; [ -f \"$cert\" ] || cert=/opt/server/SPT/user/certs/server.crt; curl -4 -sf --noproxy '*' --max-time 10 --cacert \"$cert\" -H 'responsecompressed: 0' https://localhost:6969/launcher/v2/ping".to_string(),
             ]),
             interval: Some(30_000_000_000),
             timeout: Some(10_000_000_000),

@@ -276,7 +276,7 @@ pub fn group_untracked_by_mod_dir(
     let mut dirs: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for path in untracked_paths {
         let parts: Vec<&str> = path.split('/').collect();
-        let dir = if path.starts_with("SPT/") && parts.len() >= 4 {
+        let dir = if crate::spt::layout::is_server_path(path) && parts.len() >= 4 {
             format!("{}/{}/{}/{}", parts[0], parts[1], parts[2], parts[3])
         } else if path.starts_with("BepInEx/") && parts.len() >= 3 {
             format!("{}/{}/{}", parts[0], parts[1], parts[2])

@@ -139,7 +139,9 @@ fn build_profile_names(dirs: &QumaDirs) -> HashMap<String, String> {
 }
 
 fn build_client_aliases(dirs: &crate::dirs::QumaDirs) -> HashMap<String, String> {
-    let path = crate::fika::config::fika_config_path(dirs);
+    let Ok(path) = crate::fika::config::fika_config_path(dirs) else {
+        return HashMap::new();
+    };
     crate::fika::config::read_fika_config(&path)
         .map(|c| c.headless.profiles.aliases)
         .unwrap_or_default()

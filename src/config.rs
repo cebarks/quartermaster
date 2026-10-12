@@ -702,7 +702,8 @@ impl HeadlessConfig {
         if !is_fika_installed(dirs) {
             bail!(
                 "Fika server mod not found at {}. Dedicated client management requires Fika.",
-                dirs.mod_file_path("SPT/user/mods/fika-server").display()
+                dirs.mod_file_path(&dirs.server_mod_relative_path("fika-server")?)
+                    .display()
             );
         }
         // In legacy mode, headless install_dir must not be inside spt_server
@@ -750,15 +751,18 @@ impl HeadlessConfig {
 }
 
 pub fn is_fika_installed(dirs: &crate::dirs::QumaDirs) -> bool {
-    dirs.mod_file_path("SPT/user/mods/fika-server").is_dir()
-        || dirs.spt_server.join("SPT/user/mods/fika-server").is_dir()
+    dirs.server_mod_relative_path("fika-server")
+        .map(|path| dirs.resolve_mod_file(&path).is_dir())
+        .unwrap_or(false)
 }
 
 pub const FIKA_CLIENT_FORGE_ID: i64 = 2326;
 pub const FIKA_SERVER_FORGE_ID: i64 = 2357;
 
 pub fn find_svm_dir(spt_dir: &Path) -> Option<PathBuf> {
-    let mods_dir = spt_dir.join("SPT/user/mods");
+    let mods_dir = crate::spt::layout::runtime_dir(spt_dir)
+        .ok()?
+        .join("user/mods");
     let entries = std::fs::read_dir(&mods_dir).ok()?;
     entries
         .filter_map(|e| e.ok())
@@ -1448,10 +1452,11 @@ web_port = 3000
 
     #[test]
     fn resolve_config_path() {
-        // When spt_dir is provided but no CLI flag, should use spt_dir/quartermaster.toml
-        let spt = PathBuf::from("/opt/spt");
-        let result = Config::resolve_path(None, Some(&spt));
-        assert_eq!(result, PathBuf::from("/opt/spt/quartermaster.toml"));
+        temp_env::with_vars_unset(["QUMA_CONFIG"], || {
+            let spt = PathBuf::from("/opt/spt");
+            let result = Config::resolve_path(None, Some(&spt));
+            assert_eq!(result, PathBuf::from("/opt/spt/quartermaster.toml"));
+        });
     }
 
     #[test]
@@ -1805,7 +1810,7 @@ install_dir = "/opt/fika"
         let tmp = tempfile::tempdir().unwrap();
         let dirs = crate::dirs::QumaDirs::from_root(tmp.path().to_path_buf());
         assert!(!is_fika_installed(&dirs));
-        std::fs::create_dir_all(dirs.mod_file_path("SPT/user/mods/fika-server")).unwrap();
+        std::fs::create_dir_all(dirs.mod_file_path("SPT_Runtime/user/mods/fika-server")).unwrap();
         assert!(is_fika_installed(&dirs));
     }
 

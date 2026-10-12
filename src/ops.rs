@@ -58,7 +58,7 @@ pub fn cleanup_staging(dirs: &QumaDirs) {
 /// everything EXCEPT server-side mods (`SPT/user/mods/`) and BepInEx config
 /// (per-client overlay).
 pub fn is_client_file(path: &str) -> bool {
-    !path.starts_with("SPT/") && !path.starts_with("BepInEx/config/")
+    !crate::spt::layout::is_server_path(path) && !path.starts_with("BepInEx/config/")
 }
 
 /// Check if a mod is in a convoy group with `exclude_headless = true`.
@@ -258,7 +258,11 @@ pub fn install_mod_from_archive(req: &InstallRequest<'_>) -> Result<i64> {
     // Extract to a staging directory on the same filesystem as spt_dir so
     // rename() works instead of cross-device copy.
     let staging_dir = staging_tempdir(req.dirs)?;
-    let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
+    let extracted = crate::spt::mods::extract_mod_for_layout(
+        req.archive_path,
+        staging_dir.path(),
+        crate::spt::layout::detect_layout(&req.dirs.spt_server)?,
+    )?;
 
     let tx = req.db.begin_transaction()?;
     let db_id = req.db.insert_mod(
@@ -311,7 +315,11 @@ pub fn install_addon_from_archive(req: &InstallAddonRequest<'_>) -> Result<i64> 
     );
 
     let staging_dir = staging_tempdir(req.dirs)?;
-    let extracted = crate::spt::mods::extract_mod(req.archive_path, staging_dir.path())?;
+    let extracted = crate::spt::mods::extract_mod_for_layout(
+        req.archive_path,
+        staging_dir.path(),
+        crate::spt::layout::detect_layout(&req.dirs.spt_server)?,
+    )?;
 
     // ponytail: addon source tracking deferred to Task 5, for now only Forge addons exist
     let forge_addon_id = req
@@ -366,7 +374,11 @@ pub fn update_mod_from_archive(
         "updating mod from archive"
     );
     let staging_dir = staging_tempdir(dirs)?;
-    let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
+    let extracted = crate::spt::mods::extract_mod_for_layout(
+        archive_path,
+        staging_dir.path(),
+        crate::spt::layout::detect_layout(&dirs.spt_server)?,
+    )?;
 
     let old_files = db.get_files_for_mod(mod_db_id)?;
     let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
@@ -417,7 +429,11 @@ pub fn update_addon_from_archive(
         "updating addon from archive"
     );
     let staging_dir = staging_tempdir(dirs)?;
-    let extracted = crate::spt::mods::extract_mod(archive_path, staging_dir.path())?;
+    let extracted = crate::spt::mods::extract_mod_for_layout(
+        archive_path,
+        staging_dir.path(),
+        crate::spt::layout::detect_layout(&dirs.spt_server)?,
+    )?;
 
     let old_files = db.get_files_for_addon(addon_db_id)?;
     let old_paths: Vec<String> = old_files.into_iter().map(|f| f.file_path).collect();
@@ -1038,7 +1054,7 @@ fn find_top_level_mod_dirs(file_paths: &[String]) -> Vec<String> {
     for path in file_paths {
         let parts: Vec<&str> = path.split('/').collect();
         // SPT/user/mods/ModName/... → 4 components
-        if path.starts_with("SPT/user/mods/") && parts.len() >= 4 {
+        if crate::spt::layout::server_mod_suffix(path).is_some() && parts.len() >= 4 {
             dirs.insert(format!(
                 "{}/{}/{}/{}",
                 parts[0], parts[1], parts[2], parts[3]
@@ -1666,7 +1682,10 @@ pub async fn resolve_and_install_deps(
     selected_version: &crate::forge::models::ForgeVersion,
 ) -> Result<(Vec<i64>, Vec<crate::forge::models::DependencyNode>)> {
     let dep_nodes = forge
-        .get_dependencies(&[(&forge_mod_id.to_string(), &selected_version.version)])
+        .get_dependencies(
+            &[(&forge_mod_id.to_string(), &selected_version.version)],
+            &crate::spt::detect::read_spt_version(&dirs.spt_server)?.spt_version,
+        )
         .await?;
 
     let mut to_install = Vec::new();
@@ -1861,6 +1880,43 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("SPT/user/mods")).unwrap();
         std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
         tmp
+    }
+
+    #[test]
+    fn current_layout_staged_install_tracks_actual_paths_and_toggles() {
+        let tmp = TempDir::new().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        std::fs::create_dir_all(dirs.spt_server.join("SPT_Runtime/user/mods")).unwrap();
+        let db = Database::open_in_memory().unwrap();
+        let mut config = Config::default();
+        config.backup.auto_backup = false;
+        let archive = create_test_zip(&[("SPT/user/mods/TestMod/package.json", b"{}")]);
+        let id = install_mod_from_archive(&InstallRequest {
+            db: &db,
+            dirs: &dirs,
+            config: &config,
+            forge_mod_id: Some(100),
+            version_id: Some(200),
+            name: "TestMod",
+            slug: None,
+            version: "1.0.0",
+            archive_path: archive.path(),
+            source: ModSource::Forge,
+            source_url: None,
+            guid: None,
+        })
+        .unwrap();
+        let relative = "SPT_Runtime/user/mods/TestMod/package.json";
+        assert_eq!(db.get_files_for_mod(id).unwrap()[0].file_path, relative);
+        assert!(dirs.mod_overlay().join(relative).is_file());
+        assert!(!dirs
+            .mod_overlay()
+            .join("SPT/user/mods/TestMod/package.json")
+            .exists());
+        disable_mod(&db, &dirs, &config, id).unwrap();
+        assert!(dirs.disabled_dir().join(relative).is_file());
+        enable_mod(&db, &dirs, &config, id).unwrap();
+        assert!(dirs.mod_overlay().join(relative).is_file());
     }
 
     #[test]

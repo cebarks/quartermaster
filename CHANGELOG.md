@@ -2,6 +2,30 @@
 
 All notable changes to Quartermaster will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Discover SPT releases from the current `SP-Tushonka/build` upstream and use the successor Forge API at `sp-mod.com`.
+- Include .NET and ASP.NET Core 9 and 10 in the SPT server container for legacy servers and SPT 4.1.6.
+- Support native `SPT_Runtime/` server paths alongside legacy `SPT/` paths, including mod tracking and server-file filtering.
+- Use the current launcher v2 HTTP API for health, version, loaded mods and profile registration; retire legacy HTTP routes. Verify the server certificate in container health probes.
+- Normalize runtime/client prefixes after wrapper stripping as well as before classification and extraction.
+- Omit client aliases targeting server-runtime files from strict client ZIP exports, while preserving confined client-to-client links.
+- Show dependency-preview lookup failures inline instead of reporting an empty dependency tree.
+- Reject cross-layout SPT updates before stopping the server or overwriting files.
+- Pass the installed SPT version to Forge dependency resolution and parse its current grouped dependency responses.
+- Propagate ambiguous runtime-layout errors through path helpers and exclude entire server runtime trees from client exports.
+- Confine ordinary mod ZIP reads, bundle manifest reads, bundle hashing/ZIP exports, and release writes to directory capabilities. Reject unsafe archive paths before update side effects, preserve confined existing symlinks, and reject escaping paths/links.
+- Update Forge links and support current `/mod/{id}/{slug}` URLs while retaining legacy mod URL input support.
+- Document SPT 4.1.x mod/profile compatibility and the required EFT 0.16.9.5.40743 client build.
+
+### Fixed
+
+- Isolate the config-path test from concurrent `QUMA_CONFIG` overrides.
+- Use debug-level logging for the hot-path headless CRC diagnostic.
+- Launch the Linux server through its managed DLL so freshly extracted files do not need execute permissions.
+
 ## [0.3.1] - 2026-07-08
 
 ### Bug Fixes

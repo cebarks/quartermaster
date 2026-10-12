@@ -176,6 +176,7 @@ struct UpdateBadgesTemplate {
 #[template(path = "mods/partials/dependency_tree.html")]
 struct DependencyTreeTemplate {
     deps: Vec<DependencyNode>,
+    unavailable: bool,
 }
 
 struct UpdateStatusEntry {
@@ -731,7 +732,7 @@ pub async fn mod_detail(
         .ok()
         .flatten()
         .and_then(|dir| {
-            let config_dir = state.dirs.server_mods_dir().join(&dir).join("config");
+            let config_dir = state.dirs.server_mods_dir().ok()?.join(&dir).join("config");
             if config_dir.is_dir() {
                 let mut files = Vec::new();
                 crate::config_mgmt::ConfigManager::scan_config_dir(
@@ -1044,7 +1045,7 @@ pub async fn updates_carousel_partial(
                 source_link: m
                     .slug
                     .as_ref()
-                    .map(|slug| format!("https://forge.sp-tarkov.com/mod/{forge_mod_id}/{slug}")),
+                    .map(|slug| format!("https://sp-mod.com/mod/{forge_mod_id}/{slug}")),
                 name: m.name.clone(),
                 current_version: m.version.clone(),
                 new_version: u.recommended_version.version.clone(),
@@ -1107,14 +1108,14 @@ pub async fn dep_tree_partial(
     let user = require_auth(&req)?;
     require_permission(&user, Permission::ModsInstall)?;
 
-    let empty = || {
-        let tmpl = DependencyTreeTemplate { deps: vec![] };
+    let render = |deps, unavailable| {
+        let tmpl = DependencyTreeTemplate { deps, unavailable };
         Ok(Html::new(tmpl.render().map_err(WebError::from)?))
     };
 
     let mod_id = match query.mod_id {
         Some(id) => id,
-        None => return empty(),
+        None => return render(vec![], false),
     };
 
     let ver = match (&query.ver, query.ver_id) {
@@ -1122,24 +1123,30 @@ pub async fn dep_tree_partial(
         (None, Some(ver_id)) => {
             let versions = match state.forge.get_versions(mod_id, None).await {
                 Ok(v) => v,
-                Err(_) => return empty(),
+                Err(err) => {
+                    tracing::warn!(%err, mod_id, "Dependency preview version lookup failed");
+                    return render(vec![], true);
+                }
             };
             match versions.iter().find(|v| v.id == ver_id) {
                 Some(v) => v.version.clone(),
-                None => return empty(),
+                None => return render(vec![], true),
             }
         }
-        _ => return empty(),
+        _ => return render(vec![], false),
     };
 
-    let deps = state
+    match state
         .forge
-        .get_dependencies(&[(&mod_id.to_string(), &ver)])
+        .get_dependencies(&[(&mod_id.to_string(), &ver)], &state.spt_info.spt_version)
         .await
-        .unwrap_or_default();
-
-    let tmpl = DependencyTreeTemplate { deps };
-    Ok(Html::new(tmpl.render().map_err(WebError::from)?))
+    {
+        Ok(deps) => render(deps, false),
+        Err(err) => {
+            tracing::warn!(%err, mod_id, "Dependency preview lookup failed");
+            render(vec![], true)
+        }
+    }
 }
 
 pub async fn search_mods(
@@ -1908,8 +1915,9 @@ pub async fn update_mod(
             let staging_dir = crate::ops::staging_tempdir(&dirs)?;
             let staging_path = staging_dir.path().to_path_buf();
             let archive = archive_path.clone();
+            let layout = crate::spt::layout::detect_layout(&dirs.spt_server)?;
             let extracted = actix_web::web::block(move || {
-                crate::spt::mods::extract_mod(&archive, &staging_path)
+                crate::spt::mods::extract_mod_for_layout(&archive, &staging_path, layout)
             })
             .await??;
 
@@ -2260,8 +2268,9 @@ pub async fn update_all_mods(
                 let staging_dir = crate::ops::staging_tempdir(&dirs)?;
                 let staging_path = staging_dir.path().to_path_buf();
                 let archive = archive_path.clone();
+                let layout = crate::spt::layout::detect_layout(&dirs.spt_server)?;
                 let extracted = actix_web::web::block(move || {
-                    crate::spt::mods::extract_mod(&archive, &staging_path)
+                    crate::spt::mods::extract_mod_for_layout(&archive, &staging_path, layout)
                 })
                 .await??;
 
@@ -3029,8 +3038,9 @@ pub async fn update_addon(
             let staging_path = staging_dir.path().to_path_buf();
             let archive = archive_path.clone();
             let staging_path_clone = staging_path.clone();
+            let layout = crate::spt::layout::detect_layout(&dirs.spt_server)?;
             let extracted = actix_web::web::block(move || {
-                crate::spt::mods::extract_mod(&archive, &staging_path_clone)
+                crate::spt::mods::extract_mod_for_layout(&archive, &staging_path_clone, layout)
             })
             .await??;
 
