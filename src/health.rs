@@ -189,7 +189,7 @@ pub fn resolve_spt_names(
     for &mod_id in server_mod_ids {
         if let Ok(files) = db.get_files_for_mod(mod_id) {
             for file in &files {
-                if file.file_path.starts_with("SPT/user/mods/") {
+                if crate::spt::layout::server_mod_suffix(&file.file_path).is_some() {
                     let parts: Vec<&str> = file.file_path.splitn(5, '/').collect();
                     if parts.len() >= 4 {
                         names.insert(mod_id, parts[3].to_string());

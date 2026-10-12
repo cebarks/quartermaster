@@ -349,9 +349,9 @@ pub fn migrate_to_overlay_layout(db: &Database, dirs: &QumaDirs) -> Result<()> {
     // Move any remaining mod directories not covered by DB tracking.
     // The DB may have stale file lists (e.g., mod was updated outside quma)
     // or mods installed manually without quma tracking.
-    let server_mods_dir = dirs.spt_server.join("SPT/user/mods");
+    let server_mods_dir = dirs.server_mods_dir()?;
     if server_mods_dir.is_dir() {
-        let mod_overlay_mods = mod_overlay.join("SPT/user/mods");
+        let mod_overlay_mods = mod_overlay.join(dirs.server_mod_relative_path("")?);
         std::fs::create_dir_all(&mod_overlay_mods)?;
         for entry in std::fs::read_dir(&server_mods_dir)?.flatten() {
             if !entry.file_type().is_ok_and(|ft| ft.is_dir()) {
@@ -398,11 +398,12 @@ pub fn migrate_to_overlay_layout(db: &Database, dirs: &QumaDirs) -> Result<()> {
 
     // Move runtime state to runtime overlay
     let runtime_upper = dirs.runtime_upper();
+    let runtime_name = crate::spt::layout::detect_layout(&dirs.spt_server)?.directory();
     let runtime_dirs = [
-        "SPT/user/profiles",
-        "SPT/user/cache",
-        "BepInEx/config",
-        "BepInEx/cache",
+        format!("{runtime_name}/user/profiles"),
+        format!("{runtime_name}/user/cache"),
+        "BepInEx/config".to_string(),
+        "BepInEx/cache".to_string(),
     ];
     for dir in &runtime_dirs {
         let src = dirs.spt_server.join(dir);

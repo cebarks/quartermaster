@@ -244,7 +244,7 @@ mod tests {
     fn make_test_ctx(tmp: &TempDir) -> CliContext {
         let root = tmp.path().to_path_buf();
         let dirs = crate::dirs::QumaDirs::from_root(root.clone());
-        std::fs::create_dir_all(dirs.server_mods_dir()).unwrap();
+        std::fs::create_dir_all(dirs.server_mods_dir().unwrap()).unwrap();
         std::fs::create_dir_all(dirs.client_mods_dir()).unwrap();
 
         CliContext {

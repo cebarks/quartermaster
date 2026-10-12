@@ -39,17 +39,21 @@ struct DepsJson {
 /// Linux dedicated servers. `BepInEx/plugins` is a client-side path that
 /// may not exist on a headless/dedicated server.
 const REQUIRED_PATHS: &[&str] = &[
-    "SPT/SPT.Server.deps.json",
-    "SPT/SPT_Data/configs/core.json",
-    "SPT/user/mods",
+    "SPT.Server.deps.json",
+    "SPT_Data/configs/core.json",
+    "user/mods",
 ];
 
 /// Validate that `path` contains the expected SPT server directory structure.
 pub fn validate_spt_dir(path: &Path) -> Result<()> {
+    let layout = super::layout::detect_layout(path)?;
     for entry in REQUIRED_PATHS {
-        let full = path.join(entry);
+        let full = path.join(layout.directory()).join(entry);
         if !full.exists() {
-            anyhow::bail!("not a valid SPT 4.0+ install: missing {entry}");
+            anyhow::bail!(
+                "not a valid SPT 4.0+ install: missing {}/{entry}",
+                layout.directory()
+            );
         }
     }
     Ok(())
@@ -58,7 +62,10 @@ pub fn validate_spt_dir(path: &Path) -> Result<()> {
 /// Parse SPT version from `SPT.Server.deps.json` and Tarkov version from `core.json`.
 pub fn read_spt_version(spt_dir: &Path) -> Result<SptInfo> {
     // 1. Read Tarkov version from core.json
-    let core_path = spt_dir.join("SPT/SPT_Data/configs/core.json");
+    let layout = super::layout::detect_layout(spt_dir)?;
+    let core_path = spt_dir
+        .join(layout.directory())
+        .join("SPT_Data/configs/core.json");
     let contents = std::fs::read_to_string(&core_path)
         .with_context(|| format!("failed to read {}", core_path.display()))?;
 
@@ -84,7 +91,7 @@ pub fn read_spt_version(spt_dir: &Path) -> Result<SptInfo> {
 /// Parse SPT version from `SPT/SPT.Server.deps.json`.
 /// Looks for a key like `"SPT.Server/4.0.13-RELEASE+..."` and extracts `4.0.13`.
 fn read_spt_version_from_deps(spt_dir: &Path) -> Result<String> {
-    let deps_path = spt_dir.join("SPT/SPT.Server.deps.json");
+    let deps_path = super::layout::runtime_dir(spt_dir)?.join("SPT.Server.deps.json");
     let contents = std::fs::read_to_string(&deps_path)
         .with_context(|| format!("failed to read {}", deps_path.display()))?;
     let parsed: DepsJson = serde_json::from_str(&contents)
@@ -117,7 +124,10 @@ fn read_spt_version_from_deps(spt_dir: &Path) -> Result<String> {
 ///
 /// Returns `None` on any failure (missing file, bad JSON, missing fields).
 pub fn read_http_config(spt_dir: &Path) -> Option<(String, u16)> {
-    let http_path = spt_dir.join("SPT/SPT_Data/configs/http.json");
+    let layout = super::layout::detect_layout(spt_dir).ok()?;
+    let http_path = spt_dir
+        .join(layout.directory())
+        .join("SPT_Data/configs/http.json");
     let contents = std::fs::read_to_string(&http_path).ok()?;
     let parsed: HttpJson = serde_json::from_str(&contents).ok()?;
     Some((parsed.ip?, parsed.port?))
@@ -165,10 +175,46 @@ mod tests {
     }
 
     #[test]
+    fn detects_current_runtime_layout() {
+        let tmp = TempDir::new().unwrap();
+        create_fake_spt_dir(tmp.path());
+        std::fs::rename(tmp.path().join("SPT"), tmp.path().join("SPT_Runtime")).unwrap();
+        assert!(validate_spt_dir(tmp.path()).is_ok());
+        let info = read_spt_version(tmp.path()).unwrap();
+        assert_eq!(info.spt_version, "4.0.13");
+        assert_eq!(info.tarkov_version, "0.16.9-40087");
+        std::fs::write(
+            tmp.path().join("SPT_Runtime/SPT_Data/configs/http.json"),
+            r#"{"ip":"127.0.0.1","port":6969}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            read_http_config(tmp.path()),
+            Some(("127.0.0.1".into(), 6969))
+        );
+    }
+
+    #[test]
+    fn rejects_ambiguous_runtime_layouts() {
+        let tmp = TempDir::new().unwrap();
+        create_fake_spt_dir(tmp.path());
+        let other = TempDir::new().unwrap();
+        create_fake_spt_dir(other.path());
+        std::fs::rename(other.path().join("SPT"), tmp.path().join("SPT_Runtime")).unwrap();
+        assert!(validate_spt_dir(tmp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("ambiguous"));
+        assert!(read_spt_version(tmp.path()).is_err());
+    }
+
+    #[test]
     fn validate_rejects_empty_dir() {
         let tmp = TempDir::new().unwrap();
         let err = validate_spt_dir(tmp.path()).unwrap_err();
-        assert!(err.to_string().contains("missing SPT/SPT.Server.deps.json"));
+        assert!(err
+            .to_string()
+            .contains("missing SPT_Runtime/SPT.Server.deps.json"));
     }
 
     #[test]

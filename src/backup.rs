@@ -252,6 +252,7 @@ pub fn backup_full(
     dirs: &QumaDirs,
     config: &crate::config::Config,
 ) -> Result<i64> {
+    let profiles_src = dirs.profiles_dir()?;
     let backup_dir = resolve_backup_dir(dirs, config)?;
     let full_dir = backup_dir.join("full");
     std::fs::create_dir_all(&full_dir)?;
@@ -316,7 +317,6 @@ pub fn backup_full(
         .context("failed to write backup manifest")?;
 
     // 3. Copy profiles
-    let profiles_src = dirs.spt_server.join("user/profiles");
     if profiles_src.is_dir() {
         let profiles_dst = dest.join("profiles");
         std::fs::create_dir_all(&profiles_dst)?;
@@ -512,6 +512,7 @@ pub fn restore_full_backup(
     _config: &crate::config::Config,
     backup_db_id: i64,
 ) -> Result<()> {
+    let profiles_dst = dirs.profiles_dir()?;
     let backup = db
         .get_backup(backup_db_id)?
         .ok_or_else(|| anyhow::anyhow!("backup {backup_db_id} not found"))?;
@@ -636,7 +637,6 @@ pub fn restore_full_backup(
     // Restore profiles
     let profiles_dir = backup_dir.join("profiles");
     if profiles_dir.is_dir() {
-        let profiles_dst = dirs.spt_server.join("user/profiles");
         std::fs::create_dir_all(&profiles_dst)?;
         for entry in std::fs::read_dir(&profiles_dir)? {
             let entry = entry?;
@@ -872,13 +872,48 @@ mod tests {
     }
 
     #[test]
+    fn backup_full_rejects_ambiguous_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        for runtime in ["SPT_Runtime", "SPT"] {
+            let path = dirs.spt_server.join(runtime);
+            std::fs::create_dir_all(path.join("SPT_Data/configs")).unwrap();
+            std::fs::write(path.join("SPT.Server.deps.json"), "{}").unwrap();
+            std::fs::write(path.join("SPT_Data/configs/core.json"), "{}").unwrap();
+        }
+        let db = crate::db::Database::open_in_memory().unwrap();
+        assert!(backup_full(&db, &dirs, &crate::config::Config::default()).is_err());
+    }
+
+    #[test]
+    fn backup_full_includes_current_runtime_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let profiles = dirs.spt_server.join("SPT_Runtime/user/profiles");
+        std::fs::create_dir_all(&profiles).unwrap();
+        std::fs::write(profiles.join("player.json"), b"{\"profile\":true}").unwrap();
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let id = backup_full(&db, &dirs, &crate::config::Config::default()).unwrap();
+        let backup = db.get_backup(id).unwrap().unwrap();
+        assert_eq!(
+            std::fs::read(
+                dirs.root
+                    .join(backup.backup_path)
+                    .join("profiles/player.json")
+            )
+            .unwrap(),
+            b"{\"profile\":true}"
+        );
+    }
+
+    #[test]
     fn backup_full_copies_mods_profiles_config() {
         let (spt_dir, db, _mod_id, config) = test_backup_env();
         let dirs = QumaDirs::from_legacy(spt_dir.path().to_path_buf());
         // Add profiles and config for full backup test
-        std::fs::create_dir_all(spt_dir.path().join("user/profiles")).unwrap();
+        std::fs::create_dir_all(spt_dir.path().join("SPT/user/profiles")).unwrap();
         std::fs::write(
-            spt_dir.path().join("user/profiles/abc123.json"),
+            spt_dir.path().join("SPT/user/profiles/abc123.json"),
             b"{\"info\":{}}",
         )
         .unwrap();

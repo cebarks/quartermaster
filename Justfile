@@ -152,7 +152,11 @@ dev-seed: dev-init
     echo "Database seeded."
     # Copy profile fixtures — use overlay upper dir so they're visible through fuse-overlayfs
     fixtures="dev/fixtures/profiles"
-    target="{{dev_dir}}/overlays/runtime/upper/SPT/user/profiles"
+    runtime="SPT_Runtime"
+    if [ -f "{{dev_dir}}/spt-server/SPT/SPT.Server.deps.json" ] && [ ! -f "{{dev_dir}}/spt-server/SPT_Runtime/SPT.Server.deps.json" ]; then
+        runtime="SPT"
+    fi
+    target="{{dev_dir}}/overlays/runtime/upper/$runtime/user/profiles"
     if [ -d "$fixtures" ] && [ "$(find "$fixtures" -name '*.json' 2>/dev/null | head -1)" ]; then
         mkdir -p "$target"
         cp "$fixtures"/*.json "$target/"

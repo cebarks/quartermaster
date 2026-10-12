@@ -50,6 +50,18 @@ pub fn filter_setup_zip_files(
 
     files
         .into_iter()
+        .filter_map(
+            |mut f| match crate::spt::scoped::relative_path(&f.file_path) {
+                Ok(path) => {
+                    f.file_path = path.to_string_lossy().into_owned();
+                    Some(f)
+                }
+                Err(e) => {
+                    tracing::warn!(path = %f.file_path, err = %e, "skipping unsafe setup ZIP path");
+                    None
+                }
+            },
+        )
         .filter(|f| {
             let path = &f.file_path;
 
@@ -68,7 +80,7 @@ pub fn filter_setup_zip_files(
             }
 
             // 3. Server-only files
-            if config.exclude_server_files && path.starts_with("SPT/user/mods/") {
+            if config.exclude_server_files && crate::spt::layout::is_server_path(path) {
                 return false;
             }
 
@@ -101,41 +113,43 @@ fn build_globset(patterns: &[String]) -> Option<globset::GlobSet> {
 }
 
 /// Write a ZIP archive of mod files directly to disk (no in-memory buffer).
-/// When `client_only` is true, server-only files (`SPT/user/mods/`) are excluded.
+/// When `client_only` is true, both complete server runtime trees are excluded.
 pub fn build_mod_zip_to_file(
     spt_dir: &Path,
     files: &[InstalledFile],
     dest: &Path,
     client_only: bool,
 ) -> anyhow::Result<()> {
+    let scope = crate::spt::scoped::ScopedDir::open(spt_dir)?;
     let file = BufWriter::new(File::create(dest)?);
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for f in files {
-        if client_only && f.file_path.starts_with("SPT/user/mods/") {
-            continue;
-        }
-
-        if std::path::Path::new(&f.file_path).is_absolute()
-            || f.file_path.split('/').any(|c| c == "..")
-            || f.file_path.split('\\').any(|c| c == "..")
-        {
-            tracing::warn!(path = %f.file_path, "skipping file with unsafe path in mod zip cache");
-            continue;
-        }
-
-        let full_path = spt_dir.join(&f.file_path);
-        match std::fs::read(&full_path) {
-            Ok(data) => {
-                zip.start_file(&f.file_path, options)?;
-                std::io::Write::write_all(&mut zip, &data)?;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::warn!(path = %f.file_path, "skipping missing file in mod zip cache");
+        let relative = match crate::spt::scoped::relative_path(&f.file_path) {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::warn!(path = %f.file_path, err = %e, "skipping unsafe mod ZIP path");
                 continue;
             }
-            Err(e) => return Err(e.into()),
+        };
+        let archive_name = relative.to_string_lossy();
+        if client_only && crate::spt::layout::is_server_path(&archive_name) {
+            continue;
+        }
+        let source = if client_only {
+            scope.read_client_file(&relative)
+        } else {
+            scope.read_file(&relative)
+        };
+        match source {
+            Ok(mut source) => {
+                zip.start_file(archive_name.as_ref(), options)?;
+                std::io::copy(&mut source, &mut zip)?;
+            }
+            Err(e) => {
+                tracing::warn!(path = %f.file_path, err = %e, "unsafe or missing mod ZIP source, skipping");
+            }
         }
     }
 
@@ -312,6 +326,110 @@ mod tests {
             file_size: None,
             source: "archive".to_string(),
         }
+    }
+
+    #[test]
+    fn current_runtime_server_files_are_excluded_from_client_exports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = [
+            "SPT_Runtime/user/mods/Test/package.json",
+            "SPT/user/mods/Old/package.json",
+            "SPT_Runtime/SPT_Data/configs/core.json",
+            "SPT/user/profiles/player.json",
+            "./SPT_Runtime/user/profiles/alias.json",
+            "./SPT/user/profiles/alias.json",
+            "C:/payload.dll",
+            "\\rooted.dll",
+            "BepInEx/plugins/Client.dll",
+        ];
+        for path in paths {
+            make_test_file(tmp.path(), path, b"test");
+        }
+        let files: Vec<_> = paths.iter().map(|p| test_file(1, p)).collect();
+        let filtered = filter_setup_zip_files(files.clone(), &SetupZipConfig::default());
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].file_path, "BepInEx/plugins/Client.dll");
+        let out = tmp.path().join("client.zip");
+        build_mod_zip_to_file(tmp.path(), &files, &out, true).unwrap();
+        let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
+        assert_eq!(zip.len(), 1);
+        assert_eq!(zip.file_names().next(), Some("BepInEx/plugins/Client.dll"));
+        let db = Database::open_in_memory().unwrap();
+        let id = db
+            .insert_mod(None, None, "Hybrid", None, "1", "local", None, None)
+            .unwrap();
+        for path in paths {
+            db.insert_file(id, path, None, None).unwrap();
+        }
+        let out = crate::convoy::download::get_or_build_convoy_zip(&db, tmp.path(), &[id], false)
+            .unwrap();
+        let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
+        assert_eq!(
+            zip.file_names().collect::<Vec<_>>(),
+            vec!["BepInEx/plugins/Client.dll"]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn client_exports_reject_server_target_aliases_but_keep_client_links() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        make_test_file(
+            tmp.path(),
+            "SPT_Runtime/user/profiles/player.json",
+            b"server-secret",
+        );
+        make_test_file(
+            tmp.path(),
+            "LegacyStorage/user/config.json",
+            b"legacy-secret",
+        );
+        make_test_file(tmp.path(), "Assets/client.dat", b"client-data");
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
+        symlink("LegacyStorage", tmp.path().join("SPT")).unwrap();
+        let paths = [
+            (
+                "BepInEx/plugins/Current.dll",
+                "../../SPT_Runtime/user/profiles/player.json",
+            ),
+            ("BepInEx/plugins/Legacy.dll", "../../SPT/user/config.json"),
+            ("BepInEx/plugins/Client.dll", "../../Assets/client.dat"),
+        ];
+        for (name, target) in paths {
+            symlink(target, tmp.path().join(name)).unwrap();
+        }
+        symlink(
+            tmp.path().join("SPT_Runtime/user/profiles/player.json"),
+            tmp.path().join("BepInEx/plugins/Absolute.dll"),
+        )
+        .unwrap();
+        let names = paths
+            .iter()
+            .map(|(name, _)| *name)
+            .chain(["BepInEx/plugins/Absolute.dll"]);
+        let files: Vec<_> = names.map(|name| test_file(1, name)).collect();
+        let out = tmp.path().join("client.zip");
+        build_mod_zip_to_file(tmp.path(), &files, &out, true).unwrap();
+        let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
+        assert_eq!(
+            zip.file_names().collect::<Vec<_>>(),
+            vec!["BepInEx/plugins/Client.dll"]
+        );
+        let db = Database::open_in_memory().unwrap();
+        let id = db
+            .insert_mod(None, None, "Hybrid", None, "1", "local", None, None)
+            .unwrap();
+        for file in files {
+            db.insert_file(id, &file.file_path, None, None).unwrap();
+        }
+        let out = crate::convoy::download::get_or_build_convoy_zip(&db, tmp.path(), &[id], false)
+            .unwrap();
+        let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
+        assert_eq!(
+            zip.file_names().collect::<Vec<_>>(),
+            vec!["BepInEx/plugins/Client.dll"]
+        );
     }
 
     #[test]

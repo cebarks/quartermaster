@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,19 +7,6 @@ use std::time::Duration;
 
 use crate::config::ConvoyConfig;
 use crate::db::Database;
-
-#[derive(Debug, Deserialize)]
-struct BundleManifest {
-    manifest: Option<Vec<BundleManifestEntry>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BundleManifestEntry {
-    key: String,
-    #[serde(default, rename = "dependencyKeys")]
-    #[allow(dead_code)]
-    dependency_keys: Vec<String>,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Catalog {
@@ -58,12 +45,11 @@ fn resolve_guid(
     }
     let files = db.get_files_for_mod_ids(&[m.id]).ok()?;
     let mod_dir = files.iter().find_map(|f| {
-        f.file_path
-            .strip_prefix("SPT/user/mods/")
-            .and_then(|rest| rest.split('/').next())
+        crate::spt::layout::server_mod_suffix(&f.file_path).and_then(|rest| rest.split('/').next())
     })?;
-    let pkg_path = spt_dir
-        .join("SPT/user/mods")
+    let pkg_path = crate::spt::layout::runtime_dir(spt_dir)
+        .ok()?
+        .join("user/mods")
         .join(mod_dir)
         .join("package.json");
     let content = std::fs::read_to_string(&pkg_path).ok()?;
@@ -99,79 +85,20 @@ fn get_bundle_checksums(spt_dir: &Path, db: &Database, mod_id: i64) -> BTreeMap<
         }
     };
 
-    let mod_dir = files
-        .iter()
-        .filter_map(|f| {
-            f.file_path
-                .strip_prefix("SPT/user/mods/")
-                .and_then(|rest| rest.split('/').next())
-        })
-        .next();
-
-    let mod_dir = match mod_dir {
-        Some(d) => d.to_string(),
-        None => return BTreeMap::new(),
-    };
-
-    let bundles_json_path = spt_dir
-        .join("SPT/user/mods")
-        .join(&mod_dir)
-        .join("bundles.json");
-
-    if !bundles_json_path.is_file() {
-        return BTreeMap::new();
-    }
-
-    let content = match std::fs::read_to_string(&bundles_json_path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(path = %bundles_json_path.display(), err = %e, "failed to read bundles.json");
-            return BTreeMap::new();
-        }
-    };
-
-    let manifest: BundleManifest = match serde_json::from_str(&content) {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::warn!(path = %bundles_json_path.display(), err = %e, "failed to parse bundles.json");
-            return BTreeMap::new();
-        }
-    };
-
-    let entries = match manifest.manifest {
-        Some(e) => e,
-        None => return BTreeMap::new(),
-    };
-
-    let bundles_dir = spt_dir.join("SPT/user/mods").join(&mod_dir).join("bundles");
     let mut checksums = BTreeMap::new();
-
-    for entry in entries {
-        let bundle_path = bundles_dir.join(&entry.key);
-        if !bundle_path.is_file() {
-            tracing::warn!(
-                key = %entry.key,
-                mod_dir = %mod_dir,
-                "bundle file missing on disk, skipping"
-            );
-            continue;
-        }
-
-        match crate::spt::mods::compute_file_hash(&bundle_path) {
+    for bundle in super::download::discover_mod_bundles(spt_dir, &files) {
+        match bundle
+            .open()
+            .and_then(crate::spt::mods::compute_reader_hash)
+        {
             Ok(hash) => {
-                let cache_key = format!("SPT/user/cache/bundles/{}", entry.key);
-                checksums.insert(cache_key, hash);
+                checksums.insert(bundle.cache_path, hash);
             }
             Err(e) => {
-                tracing::warn!(
-                    key = %entry.key,
-                    err = %e,
-                    "failed to hash bundle file, skipping"
-                );
+                tracing::warn!(path = %bundle.cache_path, err = %e, "failed to hash bundle file, skipping");
             }
         }
     }
-
     checksums
 }
 
@@ -609,6 +536,133 @@ mod tests {
         assert!(catalog.groups.is_empty());
         assert!(catalog.exclusions.is_empty());
         assert_eq!(catalog.spt_version, "unknown");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundle_exports_reject_unconfined_sources() {
+        for runtime in ["SPT_Runtime", "SPT"] {
+            let (dir, db) = setup();
+            let id = db
+                .insert_mod(None, None, "Test", None, "1", "local", None, None)
+                .unwrap();
+            let outside = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(outside.path(), b"secret").unwrap();
+            let base = dir.path().join(runtime);
+            let mod_dir = base.join("user/mods/Test");
+            std::fs::create_dir_all(mod_dir.join("bundles")).unwrap();
+            std::fs::create_dir_all(base.join("SPT_Data/configs")).unwrap();
+            std::fs::write(base.join("SPT_Data/configs/core.json"), b"secret").unwrap();
+            std::os::unix::fs::symlink(outside.path(), mod_dir.join("bundles/outside.bundle"))
+                .unwrap();
+            std::fs::write(
+                mod_dir.join("bundles.json"),
+                serde_json::to_vec(&serde_json::json!({"manifest": [
+                    {"key": outside.path().to_str().unwrap()},
+                    {"key": "../../../../SPT_Data/configs/core.json"},
+                    {"key": "outside.bundle"}
+                ]}))
+                .unwrap(),
+            )
+            .unwrap();
+            db.insert_file(
+                id,
+                &format!("{runtime}/user/mods/Test/bundles.json"),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(get_bundle_checksums(dir.path(), &db, id).is_empty());
+            let path =
+                crate::convoy::download::get_or_build_convoy_zip(&db, dir.path(), &[id], true)
+                    .unwrap();
+            let zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+            assert_eq!(zip.len(), 0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundle_exports_preserve_confined_symlinks() {
+        for runtime in ["SPT_Runtime", "SPT"] {
+            let (dir, db) = setup();
+            let id = db
+                .insert_mod(None, None, "Test", None, "1", "local", None, None)
+                .unwrap();
+            let mod_dir = dir.path().join(runtime).join("user/mods/Test");
+            std::fs::create_dir_all(mod_dir.join("bundles")).unwrap();
+            let target = mod_dir.join("bundles/target.bundle");
+            std::fs::write(&target, b"allowed bundle").unwrap();
+            std::os::unix::fs::symlink("target.bundle", mod_dir.join("bundles/relative.bundle"))
+                .unwrap();
+            std::os::unix::fs::symlink(&target, mod_dir.join("bundles/absolute.bundle")).unwrap();
+            std::fs::write(
+                mod_dir.join("bundles.json"),
+                br#"{"manifest":[{"key":"relative.bundle"},{"key":"absolute.bundle"}]}"#,
+            )
+            .unwrap();
+            db.insert_file(
+                id,
+                &format!("{runtime}/user/mods/Test/bundles.json"),
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(get_bundle_checksums(dir.path(), &db, id).len(), 2);
+            let path =
+                crate::convoy::download::get_or_build_convoy_zip(&db, dir.path(), &[id], true)
+                    .unwrap();
+            let mut zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+            assert_eq!(zip.len(), 2);
+            for i in 0..zip.len() {
+                let mut contents = String::new();
+                std::io::Read::read_to_string(&mut zip.by_index(i).unwrap(), &mut contents)
+                    .unwrap();
+                assert_eq!(contents, "allowed bundle");
+            }
+        }
+    }
+
+    #[test]
+    fn bundle_exports_follow_the_client_runtime_layout() {
+        for (runtime, expected) in [
+            ("SPT_Runtime", "SPT_Runtime/user/cache/bundles/test.bundle"),
+            ("SPT", "SPT/user/cache/bundles/test.bundle"),
+        ] {
+            let (dir, db) = setup();
+            let id = db
+                .insert_mod(
+                    Some(1234),
+                    Some(1),
+                    "Test",
+                    None,
+                    "1.0",
+                    "forge",
+                    None,
+                    None,
+                )
+                .unwrap();
+            let relative = format!("{runtime}/user/mods/Test/bundles.json");
+            let mod_dir = dir.path().join(runtime).join("user/mods/Test");
+            std::fs::create_dir_all(mod_dir.join("bundles")).unwrap();
+            std::fs::write(
+                mod_dir.join("bundles.json"),
+                br#"{"manifest":[{"key":"test.bundle"}]}"#,
+            )
+            .unwrap();
+            std::fs::write(mod_dir.join("bundles/test.bundle"), b"bundle content").unwrap();
+            db.insert_file(id, &relative, None, None).unwrap();
+            let checksums = get_bundle_checksums(dir.path(), &db, id);
+            assert_eq!(
+                checksums.keys().map(String::as_str).collect::<Vec<_>>(),
+                vec![expected]
+            );
+            let path =
+                crate::convoy::download::get_or_build_convoy_zip(&db, dir.path(), &[id], true)
+                    .unwrap();
+            let zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+            assert_eq!(zip.file_names().collect::<Vec<_>>(), vec![expected]);
+        }
     }
 
     #[test]

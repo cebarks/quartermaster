@@ -349,7 +349,7 @@ fn calculate_stash_value(inventory: &InventoryData, prices: &HashMap<String, i64
 }
 
 pub fn list_profiles(dirs: &QumaDirs) -> Result<Vec<SptProfile>> {
-    let profiles_dir = dirs.profiles_dir();
+    let profiles_dir = dirs.profiles_dir()?;
     if !profiles_dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -388,7 +388,10 @@ pub fn list_profiles(dirs: &QumaDirs) -> Result<Vec<SptProfile>> {
 /// Load profile stats for a single AID, returning the appropriate `ProfileStatus`.
 /// Avoids reading every profile file on disk when only one user row is needed.
 pub fn load_single_profile_status(dirs: &QumaDirs, aid: &str) -> ProfileStatus {
-    let path = dirs.profiles_dir().join(format!("{aid}.json"));
+    let Ok(profiles_dir) = dirs.profiles_dir() else {
+        return ProfileStatus::NotFound;
+    };
+    let path = profiles_dir.join(format!("{aid}.json"));
     let contents = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(_) => return ProfileStatus::NotFound,
@@ -405,8 +408,10 @@ pub fn load_single_profile_status(dirs: &QumaDirs, aid: &str) -> ProfileStatus {
 }
 
 pub fn load_all_profile_stats(dirs: &QumaDirs) -> HashMap<String, SptProfileStats> {
-    let profiles_dir = dirs.profiles_dir();
     let mut map = HashMap::new();
+    let Ok(profiles_dir) = dirs.profiles_dir() else {
+        return map;
+    };
 
     let entries = match std::fs::read_dir(&profiles_dir) {
         Ok(e) => e,
@@ -453,7 +458,7 @@ pub fn load_profile_detail(
     profile_id: &str,
     prices: &HashMap<String, i64>,
 ) -> Result<Option<ProfileDetail>> {
-    let path = dirs.profiles_dir().join(format!("{profile_id}.json"));
+    let path = dirs.profiles_dir()?.join(format!("{profile_id}.json"));
     let contents = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read profile {}", path.display()))?;
     let parsed: FullProfileJson = serde_json::from_str(&contents)
@@ -524,7 +529,7 @@ pub fn load_profile_detail(
 }
 
 pub fn load_stash_items(dirs: &QumaDirs, profile_id: &str) -> Result<Option<Vec<StashItem>>> {
-    let path = dirs.profiles_dir().join(format!("{profile_id}.json"));
+    let path = dirs.profiles_dir()?.join(format!("{profile_id}.json"));
     let contents = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read profile {}", path.display()))?;
     let parsed: FullProfileJson = serde_json::from_str(&contents)

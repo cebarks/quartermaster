@@ -8,6 +8,48 @@ pub struct PingResult {
     pub latency_ms: u64,
 }
 
+#[derive(serde::Deserialize)]
+struct LauncherResponse<T> {
+    #[serde(rename = "Response")]
+    response: T,
+}
+
+#[derive(serde::Deserialize)]
+struct RegistrationResponse {
+    #[serde(rename = "Response")]
+    success: bool,
+    #[serde(rename = "Profiles")]
+    profiles: Vec<RegistrationProfile>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistrationProfile {
+    username: Option<String>,
+    profile_id: Option<String>,
+}
+
+pub(crate) fn registered_profile_id(body: &str, username: &str) -> Result<String> {
+    let response: RegistrationResponse =
+        serde_json::from_str(body).context("failed to decode launcher v2 registration response")?;
+    anyhow::ensure!(response.success, "SPT profile registration was rejected");
+    let mut matching = response
+        .profiles
+        .into_iter()
+        .filter(|p| p.username.as_deref() == Some(username));
+    let profile = matching
+        .next()
+        .context("registered profile is missing from response")?;
+    anyhow::ensure!(
+        matching.next().is_none(),
+        "registration returned ambiguous profile identity"
+    );
+    profile
+        .profile_id
+        .filter(|id| !id.is_empty())
+        .context("registered profile has no profile ID")
+}
+
 pub struct SptClient {
     client: reqwest::Client,
     base_url: String,
@@ -32,31 +74,28 @@ impl SptClient {
         let start = Instant::now();
         let resp = self
             .client
-            .get(format!("{}/launcher/ping", self.base_url))
+            .get(format!("{}/launcher/v2/ping", self.base_url))
             .header("responsecompressed", "0")
             .send()
             .await;
 
-        match resp {
-            Ok(r) if r.status().is_success() => Ok(PingResult {
-                ok: true,
-                latency_ms: start.elapsed().as_millis() as u64,
-            }),
-            Ok(_) => Ok(PingResult {
-                ok: false,
-                latency_ms: start.elapsed().as_millis() as u64,
-            }),
-            Err(_) => Ok(PingResult {
-                ok: false,
-                latency_ms: start.elapsed().as_millis() as u64,
-            }),
-        }
+        let ok = match resp {
+            Ok(r) if r.status().is_success() => r
+                .json::<LauncherResponse<String>>()
+                .await
+                .is_ok_and(|reply| reply.response.eq_ignore_ascii_case("Pong!")),
+            _ => false,
+        };
+        Ok(PingResult {
+            ok,
+            latency_ms: start.elapsed().as_millis() as u64,
+        })
     }
 
     pub async fn server_version(&self) -> Result<String> {
         let resp = self
             .client
-            .get(format!("{}/launcher/server/version", self.base_url))
+            .get(format!("{}/launcher/v2/version", self.base_url))
             .header("responsecompressed", "0")
             .send()
             .await
@@ -64,22 +103,21 @@ impl SptClient {
             .error_for_status()
             .context("SPT server version endpoint returned error")?;
 
-        let body = resp
-            .text()
+        let reply: LauncherResponse<String> = resp
+            .json()
             .await
-            .context("failed to read version response")?;
-        // Response is a JSON string like "\"4.0.13\"" — strip outer quotes
-        let version = body.trim().trim_matches('"').to_string();
-        Ok(version)
+            .context("failed to decode launcher v2 version response")?;
+        anyhow::ensure!(
+            !reply.response.trim().is_empty(),
+            "SPT returned an empty version"
+        );
+        Ok(reply.response)
     }
 
     pub async fn loaded_server_mods(&self) -> Result<HashMap<String, serde_json::Value>> {
         let resp = self
             .client
-            .get(format!(
-                "{}/launcher/server/loadedServerMods",
-                self.base_url
-            ))
+            .get(format!("{}/launcher/v2/mods", self.base_url))
             .header("responsecompressed", "0")
             .send()
             .await
@@ -87,11 +125,11 @@ impl SptClient {
             .error_for_status()
             .context("SPT loaded mods endpoint returned error")?;
 
-        let mods: HashMap<String, serde_json::Value> = resp
+        let reply: LauncherResponse<HashMap<String, serde_json::Value>> = resp
             .json()
             .await
-            .context("failed to parse loaded mods response")?;
-        Ok(mods)
+            .context("failed to decode launcher v2 mods response")?;
+        Ok(reply.response)
     }
 
     pub async fn headless_clients(&self) -> Result<crate::spt::headless::GetHeadlessesResponse> {
@@ -109,21 +147,15 @@ impl SptClient {
             .context("failed to parse headless clients response")
     }
 
-    pub async fn register_profile(
-        &self,
-        username: &str,
-        password: &str,
-        edition: &str,
-    ) -> Result<String> {
+    pub async fn register_profile(&self, username: &str, edition: &str) -> Result<String> {
         let body = serde_json::json!({
             "username": username,
-            "password": password,
             "edition": edition,
         });
 
         let resp = self
             .client
-            .post(format!("{}/launcher/profile/register", self.base_url))
+            .post(format!("{}/launcher/v2/register", self.base_url))
             .header("responsecompressed", "0")
             .json(&body)
             .send()
@@ -132,12 +164,11 @@ impl SptClient {
             .error_for_status()
             .context("SPT server rejected profile registration")?;
 
-        let aid = resp
+        let body = resp
             .text()
             .await
             .context("failed to read SPT registration response")?;
-
-        Ok(aid)
+        registered_profile_id(&body, username)
     }
 
     pub fn base_url(&self) -> &str {
@@ -149,6 +180,80 @@ impl SptClient {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn launcher_v2_reads_unwrap_response_envelopes() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        for (route, body) in [
+            (
+                "/launcher/v2/ping",
+                serde_json::json!({"Response": "Pong!"}),
+            ),
+            (
+                "/launcher/v2/version",
+                serde_json::json!({"Response": "4.1.6"}),
+            ),
+            (
+                "/launcher/v2/mods",
+                serde_json::json!({"Response": {"server": {"ModGuid": "Fika", "Version": "2.4.2"}}}),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        let mut client = SptClient::new("127.0.0.1", 6969).unwrap();
+        client.base_url = server.uri();
+        let ping = client.ping().await.unwrap();
+        let version = client.server_version().await;
+        let mods = client.loaded_server_mods().await;
+        assert!(ping.ok);
+        assert_eq!(version.unwrap(), "4.1.6");
+        assert_eq!(mods.unwrap()["server"]["ModGuid"], "Fika");
+    }
+
+    #[test]
+    fn registration_selects_exact_profile_and_rejects_invalid_identity() {
+        let valid = r#"{"Response":true,"Profiles":[{"username":"other","profileId":"other-id"},{"username":"alice","profileId":"alice-id"}]}"#;
+        assert_eq!(registered_profile_id(valid, "alice").unwrap(), "alice-id");
+        for body in [
+            r#"{"Response":false,"Profiles":[]}"#,
+            r#"{"Response":true,"Profiles":[]}"#,
+            r#"{"Response":true,"Profiles":[{"username":"alice","profileId":""}]}"#,
+            r#"{"Response":true,"Profiles":[{"username":"alice","profileId":"one"},{"username":"alice","profileId":"two"}]}"#,
+        ] {
+            assert!(registered_profile_id(body, "alice").is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn registration_posts_once_with_current_request_shape() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/launcher/v2/register"))
+            .and(body_json(
+                serde_json::json!({"username":"alice", "edition":"Standard"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Response":true,"Profiles":[{"username":"alice","profileId":"alice-id"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut client = SptClient::new("127.0.0.1", 6969).unwrap();
+        client.base_url = server.uri();
+        assert_eq!(
+            client.register_profile("alice", "Standard").await.unwrap(),
+            "alice-id"
+        );
+    }
 
     #[test]
     fn spt_client_constructs_base_url() {
@@ -173,8 +278,8 @@ mod tests {
         let client = SptClient::new("192.168.1.10", 6969).unwrap();
         // Verify the URL that register_profile would target
         assert_eq!(
-            format!("{}/launcher/profile/register", client.base_url()),
-            "https://192.168.1.10:6969/launcher/profile/register"
+            format!("{}/launcher/v2/register", client.base_url()),
+            "https://192.168.1.10:6969/launcher/v2/register"
         );
     }
 }

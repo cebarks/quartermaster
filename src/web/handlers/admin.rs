@@ -37,8 +37,11 @@ fn build_user_profiles(
             match profile_stats.get(profile_id) {
                 Some(stats) => ProfileStatus::Found(stats.clone()),
                 None => {
-                    let profile_path = dirs.profiles_dir().join(format!("{}.json", profile_id));
-                    if profile_path.exists() {
+                    let exists = dirs
+                        .profiles_dir()
+                        .map(|path| path.join(format!("{}.json", profile_id)).exists())
+                        .unwrap_or(false);
+                    if exists {
                         ProfileStatus::ParseError
                     } else {
                         ProfileStatus::NotFound
@@ -566,7 +569,7 @@ pub async fn link_profile(
         let aid_check = aid.clone();
         let db_check = state.db.clone();
         let (exists, already_linked) = web::block(move || {
-            let profile_path = dirs_check.profiles_dir().join(format!("{aid_check}.json"));
+            let profile_path = dirs_check.profiles_dir()?.join(format!("{aid_check}.json"));
             let exists = profile_path.exists();
             let db = db_check.lock();
             let already_linked = db
@@ -575,9 +578,10 @@ pub async fn link_profile(
                 .flatten()
                 .map(|u| u.id != target_id)
                 .unwrap_or(false);
-            (exists, already_linked)
+            Ok::<_, anyhow::Error>((exists, already_linked))
         })
         .await
+        .map_err(WebError::from)?
         .map_err(WebError::from)?;
 
         if !exists {

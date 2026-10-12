@@ -2,7 +2,7 @@
 <tr class="request-row" onclick="toggleRequestDetail({{ r.request.id }})">
     <td>
         {% if let Some(slug) = r.request.mod_slug.as_deref() %}
-        <a href="https://forge.sp-tarkov.com/mod/{{ r.request.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
+        <a href="https://sp-mod.com/mod/{{ r.request.forge_mod_id }}/{{ slug }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
             <strong>{{ r.request.mod_name }}</strong> ↗
         </a>
         {% else %}
