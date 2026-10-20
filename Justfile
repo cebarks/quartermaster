@@ -36,7 +36,8 @@ serve *ARGS:
     cargo run -- serve {{ARGS}}
 
 audit:
-    cargo audit
+    python3 -m unittest discover -s scripts -p 'test_audit.py' -v
+    python3 scripts/audit.py
 
 release-dry-run:
     dist build

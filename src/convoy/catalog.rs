@@ -661,7 +661,12 @@ mod tests {
                 crate::convoy::download::get_or_build_convoy_zip(&db, dir.path(), &[id], true)
                     .unwrap();
             let zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
-            assert_eq!(zip.file_names().collect::<Vec<_>>(), vec![expected]);
+            assert_eq!(
+                zip.file_names()
+                    .collect::<zip::result::ZipResult<Vec<_>>>()
+                    .unwrap(),
+                vec![expected]
+            );
         }
     }
 

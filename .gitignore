@@ -14,3 +14,4 @@ docs/superpowers/
 .dev-server/
 .venv
 .venv/
+__pycache__/

@@ -20,6 +20,10 @@ All notable changes to Quartermaster will be documented in this file.
 - Update Forge links and support current `/mod/{id}/{slug}` URLs while retaining legacy mod URL input support.
 - Document SPT 4.1.x mod/profile compatibility and the required EFT 0.16.9.5.40743 client build.
 
+### Security
+
+- Upgrade TLS, HTTP/2, HTML sanitization, and ZIP dependencies to patched releases. Propagate ZIP entry-name decoding errors during mod detection and extraction while preserving legacy CP437 filenames. Keep one explicit, version-scoped risk acceptance for Actix's unpatched `h2` 0.3.27 HTTP/2 denial-of-service advisory, enforced by the same tested audit gate locally and in CI.
+
 ### Fixed
 
 - Isolate the config-path test from concurrent `QUMA_CONFIG` overrides.

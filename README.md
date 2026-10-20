@@ -143,7 +143,7 @@ QUMA_DIR=~/spt-server quma status
 
 ## Development
 
-Requires Rust (2021 edition).
+Requires Rust (2021 edition). `just audit` also requires Python 3 and cargo-audit 0.22.2; see [security audits](CONTRIBUTING.md#security-audits) for setup and the scoped risk acceptance.
 
 ```bash
 just build      # cargo build
@@ -151,7 +151,7 @@ just test       # cargo test
 just lint       # fmt + clippy + logging conventions + copy-paste detection
 just serve      # cargo run -- serve
 just run <ARGS> # cargo run -- <ARGS>
-just audit      # cargo audit
+just audit      # dependency audit with tested, version-scoped policy
 just changelog  # git-cliff changelog generation
 ```
 

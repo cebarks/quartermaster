@@ -92,7 +92,11 @@ pub fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
                 .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
             let archive = ZipArchive::new(file)
                 .with_context(|| format!("failed to read ZIP: {}", archive_path.display()))?;
-            Ok(archive.file_names().map(normalize_archive_path).collect())
+            archive
+                .file_names()
+                .map(|name| name.map(|name| normalize_archive_path(&name)))
+                .collect::<zip::result::ZipResult<Vec<_>>>()
+                .context("failed to decode ZIP entry names")
         }
         ArchiveFormat::SevenZ => {
             let mut file = fs::File::open(archive_path)
@@ -324,7 +328,11 @@ fn extract_mod_zip(
             .by_index(i)
             .with_context(|| format!("failed to read ZIP entry {i}"))?;
 
-        let raw_name = normalize_archive_path(entry.name());
+        let raw_name = normalize_archive_path(
+            &entry
+                .name()
+                .with_context(|| format!("failed to decode ZIP entry {i} name"))?,
+        );
 
         if entry.is_symlink() {
             anyhow::bail!("archive contains symlink entry: {raw_name}");
@@ -725,6 +733,37 @@ pub(crate) mod tests {
         tmp.write_all(buf.get_ref()).unwrap();
         tmp.flush().unwrap();
         tmp
+    }
+
+    #[test]
+    fn zip_preserves_cp437_entry_names() {
+        let archive = create_test_zip(&[("BepInEx/plugins/Cafe.dll", b"payload")]);
+        let mut bytes = fs::read(archive.path()).unwrap();
+        let local = bytes.windows(4).position(|v| v == b"PK\x03\x04").unwrap();
+        let central = bytes.windows(4).position(|v| v == b"PK\x01\x02").unwrap();
+        // Replace the final 'e' with CP437's 'é' in both ZIP headers.
+        let name_offset = "BepInEx/plugins/Caf".len();
+        bytes[local + 30 + name_offset] = 0x82;
+        bytes[central + 46 + name_offset] = 0x82;
+        fs::write(archive.path(), bytes).unwrap();
+
+        let expected = "BepInEx/plugins/Café.dll";
+        assert_eq!(list_entry_names(archive.path()).unwrap(), vec![expected]);
+        assert_eq!(detect_mod_type(archive.path()).unwrap(), ModType::Client);
+        let destination = TempDir::new().unwrap();
+        let files = extract_mod_zip(
+            archive.path(),
+            destination.path(),
+            "",
+            &ExtractionLimits::production(),
+        )
+        .unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, expected);
+        assert_eq!(
+            fs::read(destination.path().join(expected)).unwrap(),
+            b"payload"
+        );
     }
 
     #[test]

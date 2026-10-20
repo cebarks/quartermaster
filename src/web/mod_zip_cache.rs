@@ -353,7 +353,10 @@ mod tests {
         build_mod_zip_to_file(tmp.path(), &files, &out, true).unwrap();
         let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
         assert_eq!(zip.len(), 1);
-        assert_eq!(zip.file_names().next(), Some("BepInEx/plugins/Client.dll"));
+        assert_eq!(
+            zip.file_names().next().unwrap().unwrap(),
+            "BepInEx/plugins/Client.dll"
+        );
         let db = Database::open_in_memory().unwrap();
         let id = db
             .insert_mod(None, None, "Hybrid", None, "1", "local", None, None)
@@ -365,7 +368,9 @@ mod tests {
             .unwrap();
         let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
         assert_eq!(
-            zip.file_names().collect::<Vec<_>>(),
+            zip.file_names()
+                .collect::<zip::result::ZipResult<Vec<_>>>()
+                .unwrap(),
             vec!["BepInEx/plugins/Client.dll"]
         );
     }
@@ -413,7 +418,9 @@ mod tests {
         build_mod_zip_to_file(tmp.path(), &files, &out, true).unwrap();
         let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
         assert_eq!(
-            zip.file_names().collect::<Vec<_>>(),
+            zip.file_names()
+                .collect::<zip::result::ZipResult<Vec<_>>>()
+                .unwrap(),
             vec!["BepInEx/plugins/Client.dll"]
         );
         let db = Database::open_in_memory().unwrap();
@@ -427,7 +434,9 @@ mod tests {
             .unwrap();
         let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
         assert_eq!(
-            zip.file_names().collect::<Vec<_>>(),
+            zip.file_names()
+                .collect::<zip::result::ZipResult<Vec<_>>>()
+                .unwrap(),
             vec!["BepInEx/plugins/Client.dll"]
         );
     }
@@ -752,9 +761,11 @@ mod tests {
 
         // Default config excludes server files
         assert_eq!(reader.len(), 1);
-        let names: Vec<_> = reader.file_names().collect();
-        assert!(names.contains(&"BepInEx/plugins/mod/mod.dll"));
-        assert!(!names.contains(&"SPT/user/mods/server-mod/package.json"));
+        let names = reader
+            .file_names()
+            .collect::<zip::result::ZipResult<Vec<_>>>()
+            .unwrap();
+        assert_eq!(names, vec!["BepInEx/plugins/mod/mod.dll"]);
     }
 
     #[test]
@@ -793,7 +804,7 @@ mod tests {
         assert_eq!(reader.len(), 1);
         assert!(reader
             .file_names()
-            .any(|n| n == "BepInEx/plugins/mod/mod.dll"));
+            .any(|n| n.unwrap() == "BepInEx/plugins/mod/mod.dll"));
     }
 
     #[test]
