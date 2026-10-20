@@ -1,4 +1,5 @@
 [advisories]
 ignore = [
-    # "RUSTSEC-YYYY-NNNN",  # reason for accepting the risk
+    # Keep advisory-wide ignores empty, including in .cargo/audit.toml.
+    # The version-scoped h2 risk acceptance lives in scripts/audit.py.
 ]

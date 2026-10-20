@@ -459,7 +459,10 @@ async fn resolve_deps(
 )> {
     let dep_nodes = ctx
         .forge
-        .get_dependencies(&[(&forge_mod.id.to_string(), &selected_version.version)])
+        .get_dependencies(
+            &[(&forge_mod.id.to_string(), &selected_version.version)],
+            &ctx.spt_info.spt_version,
+        )
         .await?;
 
     let mut to_install = Vec::new();

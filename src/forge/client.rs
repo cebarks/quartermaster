@@ -8,7 +8,7 @@ use super::cache::ForgeResponseCache;
 use super::models::*;
 use super::rate_limit::RateLimiter;
 
-const DEFAULT_BASE_URL: &str = "https://forge.sp-tarkov.com/api/v0";
+const DEFAULT_BASE_URL: &str = "https://sp-mod.com/api/v0";
 const MAX_RETRIES: u32 = 3;
 #[cfg(test)]
 const EXTERNAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
@@ -23,6 +23,22 @@ const MIN_REQUEST_INTERVAL: std::time::Duration = std::time::Duration::from_mill
 #[derive(serde::Deserialize)]
 struct DataWrapper<T> {
     data: T,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum DependencyData {
+    Groups(std::collections::BTreeMap<String, Vec<DependencyNode>>),
+    Flat(Vec<DependencyNode>),
+}
+
+impl DependencyData {
+    fn into_nodes(self) -> Vec<DependencyNode> {
+        match self {
+            Self::Groups(groups) => groups.into_values().flatten().collect(),
+            Self::Flat(nodes) => nodes,
+        }
+    }
 }
 
 fn format_id_version_pairs(pairs: &[(&str, &str)]) -> String {
@@ -250,11 +266,21 @@ impl ForgeClient {
 
     /// Resolve the dependency tree for a set of (identifier, version) pairs.
     /// The identifier can be a numeric mod ID or a GUID string.
-    pub async fn get_dependencies(&self, mods: &[(&str, &str)]) -> Result<Vec<DependencyNode>> {
+    pub async fn get_dependencies(
+        &self,
+        mods: &[(&str, &str)],
+        spt_version: &str,
+    ) -> Result<Vec<DependencyNode>> {
         let url = format!("{}/mods/dependencies", self.base_url);
         let mods_param = format_id_version_pairs(mods);
-        let req = self.client.get(&url).query(&[("mods", &mods_param)]);
-        self.fetch_and_parse(req, "get_dependencies").await
+        let req = self
+            .client
+            .get(&url)
+            .query(&[("mods", mods_param.as_str()), ("spt_version", spt_version)]);
+        Ok(self
+            .fetch_and_parse::<DependencyData>(req, "get_dependencies")
+            .await?
+            .into_nodes())
     }
 
     /// Check for available updates for the given mods.
@@ -319,11 +345,18 @@ impl ForgeClient {
     pub async fn get_addon_dependencies(
         &self,
         addons: &[(&str, &str)],
+        spt_version: &str,
     ) -> Result<Vec<DependencyNode>> {
         let url = format!("{}/addons/dependencies", self.base_url);
         let addons_param = format_id_version_pairs(addons);
-        let req = self.client.get(&url).query(&[("addons", &addons_param)]);
-        self.fetch_and_parse(req, "get_addon_dependencies").await
+        let req = self.client.get(&url).query(&[
+            ("addons", addons_param.as_str()),
+            ("spt_version", spt_version),
+        ]);
+        Ok(self
+            .fetch_and_parse::<DependencyData>(req, "get_addon_dependencies")
+            .await?
+            .into_nodes())
     }
 
     /// Get all known SPT versions with mod counts and release links.
@@ -678,6 +711,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dependencies_require_installed_spt_version() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/mods/dependencies"))
+            .and(query_param("spt_version", "4.1.6"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})))
+            .mount(&server)
+            .await;
+        let client = test_client(&server).await;
+        assert!(client
+            .get_dependencies(&[("2357", "2.4.2")], "4.1.6")
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn dependencies_parse_current_grouped_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/mods/dependencies"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": true, "data": {"2357:2.4.2": []}
+            })))
+            .mount(&server)
+            .await;
+        let client = test_client(&server).await;
+        assert!(client
+            .get_dependencies(&[("2357", "2.4.2")], "4.1.6")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dependencies_parse_nonempty_current_groups() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/mods/dependencies"))
+            .and(query_param("spt_version", "4.1.6"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "2357:2.4.2": [],
+                    "791:4.5.1": [{"id": 827, "guid": "xyz.drakia.waypoints",
+                        "name": "Waypoints - Expanded Navmesh", "slug": "waypoints-expanded-navmesh",
+                        "latest_compatible_version": {"id": 14423, "version": "1.9.0",
+                            "link": "https://sp-mod.com/mod/download/827/waypoints-expanded-navmesh/1.9.0",
+                            "content_length": 50349566, "fika_compatibility": "unknown"},
+                        "conflict": false, "dependencies": []}]
+                }
+            }))).mount(&server).await;
+        let client = test_client(&server).await;
+        let nodes = client
+            .get_dependencies(&[("791", "4.5.1"), ("2357", "2.4.2")], "4.1.6")
+            .await
+            .unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].id, 827);
+        assert_eq!(
+            nodes[0].latest_compatible_version.as_ref().unwrap().version,
+            "1.9.0"
+        );
+    }
+
+    #[tokio::test]
+    async fn addon_dependencies_use_current_protocol() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/addons/dependencies"))
+            .and(query_param("addons", "101:1.0.0"))
+            .and(query_param("spt_version", "4.1.6"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"data": {"101:1.0.0": []}})),
+            )
+            .mount(&server)
+            .await;
+        let client = test_client(&server).await;
+        assert!(client
+            .get_addon_dependencies(&[("101", "1.0.0")], "4.1.6")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
     async fn get_dependencies_parses_tree() {
         let server = MockServer::start().await;
         let body = serde_json::json!({
@@ -721,7 +839,10 @@ mod tests {
             .await;
 
         let client = test_client(&server).await;
-        let deps = client.get_dependencies(&[("42", "1.2.0")]).await.unwrap();
+        let deps = client
+            .get_dependencies(&[("42", "1.2.0")], "4.0.0")
+            .await
+            .unwrap();
 
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id, 42);
@@ -767,7 +888,7 @@ mod tests {
 
         let client = test_client(&server).await;
         let deps = client
-            .get_dependencies(&[("com.example.big-brain", "1.2.0")])
+            .get_dependencies(&[("com.example.big-brain", "1.2.0")], "4.0.0")
             .await
             .unwrap();
 
@@ -1003,6 +1124,14 @@ mod tests {
         assert!(v.fika_compatibility.is_none());
         assert!(v.spt_version.is_none());
         assert!(v.dependencies.is_none());
+    }
+
+    #[test]
+    fn default_client_recognizes_current_forge_downloads() {
+        let client = ForgeClient::new().unwrap();
+        assert!(client.is_forge_url("https://sp-mod.com/mod/download/2326/project-fika/2.4.4"));
+        assert!(!client.is_forge_url("https://sp-mod.com.example.org/mod/download/2326"));
+        assert!(!client.is_forge_url("https://github.com/project-fika/Fika-Plugin/releases"));
     }
 
     #[test]

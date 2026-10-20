@@ -431,7 +431,8 @@ impl Database {
     pub fn mods_with_server_files(&self) -> rusqlite::Result<std::collections::HashSet<i64>> {
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT mod_id FROM installed_files
-             WHERE file_path LIKE 'SPT/user/mods/%'",
+             WHERE file_path LIKE 'SPT/user/mods/%'
+                OR file_path GLOB 'SPT_Runtime/user/mods/*'",
         )?;
         let rows = stmt.query_map([], |row| row.get::<_, Option<i64>>(0))?;
         let mut ids = std::collections::HashSet::new();

@@ -175,8 +175,8 @@ impl GameData {
 
     fn load_quest_names(dirs: &QumaDirs) -> Result<HashMap<String, String>> {
         let path = dirs
-            .spt_server
-            .join("SPT/SPT_Data/database/templates/quests.json");
+            .server_runtime_dir()?
+            .join("SPT_Data/database/templates/quests.json");
         if !path.exists() {
             tracing::warn!(
                 "quests.json not found at {}, quest names will show raw IDs",
@@ -195,7 +195,7 @@ impl GameData {
     }
 
     fn load_trader_info(dirs: &QumaDirs) -> Result<HashMap<String, TraderMeta>> {
-        let traders_dir = dirs.spt_server.join("SPT/SPT_Data/database/traders");
+        let traders_dir = dirs.server_runtime_dir()?.join("SPT_Data/database/traders");
         let mut info = HashMap::new();
         if !traders_dir.is_dir() {
             tracing::warn!("traders directory not found at {}", traders_dir.display());
@@ -235,8 +235,8 @@ impl GameData {
 
     fn load_prices(dirs: &QumaDirs) -> Result<HashMap<String, i64>> {
         let path = dirs
-            .spt_server
-            .join("SPT/SPT_Data/database/templates/prices.json");
+            .server_runtime_dir()?
+            .join("SPT_Data/database/templates/prices.json");
         if !path.exists() {
             tracing::warn!(
                 "prices.json not found at {}, stash values will be unavailable",
@@ -255,8 +255,8 @@ impl GameData {
         dirs: &QumaDirs,
     ) -> Result<(HashMap<String, ItemLocale>, HashMap<String, String>)> {
         let path = dirs
-            .spt_server
-            .join("SPT/SPT_Data/database/locales/global/en.json");
+            .server_runtime_dir()?
+            .join("SPT_Data/database/locales/global/en.json");
         if !path.exists() {
             tracing::warn!(
                 "en.json not found at {}, item names will show raw IDs",
@@ -293,8 +293,8 @@ impl GameData {
         raw_locale: &HashMap<String, String>,
     ) -> Result<(HashMap<String, String>, HashMap<String, i64>)> {
         let path = dirs
-            .spt_server
-            .join("SPT/SPT_Data/database/templates/handbook.json");
+            .server_runtime_dir()?
+            .join("SPT_Data/database/templates/handbook.json");
         if !path.exists() {
             tracing::warn!(
                 "handbook.json not found at {}, item categories will show 'Other'",

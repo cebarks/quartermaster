@@ -73,6 +73,30 @@ async fn update(ctx: &CliContext, skip_confirm: bool) -> Result<()> {
         return Ok(());
     }
 
+    println!(
+        "Downloading SPT {} (EFT {})...",
+        latest.version, latest.eft_version
+    );
+    let last_log = std::sync::Mutex::new(std::time::Instant::now());
+    let downloaded = releases::download_release(&latest, |downloaded, total| {
+        let mut last = last_log.lock().expect("progress mutex poisoned");
+        if last.elapsed().as_secs() >= 5 {
+            let dl_mb = downloaded as f64 / 1_048_576.0;
+            if let Some(t) = total {
+                let total_mb = t as f64 / 1_048_576.0;
+                println!(
+                    "  {dl_mb:.1} / {total_mb:.1} MB ({:.0}%)",
+                    dl_mb / total_mb * 100.0
+                );
+            } else {
+                println!("  {dl_mb:.1} MB downloaded");
+            }
+            *last = std::time::Instant::now();
+        }
+    })
+    .await?;
+    downloaded.ensure_compatible(&ctx.dirs.spt_server)?;
+
     // Stop server if running
     let was_running = if let Some(ref mgr) = ctx.container_mgr {
         if let Some(ref container) = ctx.config.server_container {
@@ -108,30 +132,7 @@ async fn update(ctx: &CliContext, skip_confirm: bool) -> Result<()> {
         }
     }
 
-    // Download and extract
-    println!(
-        "Downloading SPT {} (EFT {})...",
-        latest.version, latest.eft_version
-    );
-
-    let last_log = std::sync::Mutex::new(std::time::Instant::now());
-    releases::download_and_extract_release(&latest, &ctx.dirs.spt_server, |downloaded, total| {
-        let mut last = last_log.lock().expect("progress mutex poisoned");
-        if last.elapsed().as_secs() >= 5 {
-            let dl_mb = downloaded as f64 / 1_048_576.0;
-            if let Some(t) = total {
-                let total_mb = t as f64 / 1_048_576.0;
-                println!(
-                    "  {dl_mb:.1} / {total_mb:.1} MB ({:.0}%)",
-                    dl_mb / total_mb * 100.0
-                );
-            } else {
-                println!("  {dl_mb:.1} MB downloaded");
-            }
-            *last = std::time::Instant::now();
-        }
-    })
-    .await?;
+    downloaded.extract(&ctx.dirs.spt_server).await?;
 
     // Verify new version
     let new_info = read_spt_version(&ctx.dirs.spt_server)?;

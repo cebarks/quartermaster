@@ -263,7 +263,8 @@ impl HeadlessService {
 
         tokio::task::spawn_blocking(move || {
             let _guard = fika_config_lock.lock();
-            let path = crate::fika::config::fika_config_path(&dirs);
+            let path = crate::fika::config::fika_config_path(&dirs)
+                .map_err(|e| HeadlessError::ConfigError(e.to_string()))?;
 
             let config = crate::fika::config::read_fika_config(&path)
                 .map_err(|e| HeadlessError::ConfigError(e.to_string()))?;

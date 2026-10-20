@@ -132,6 +132,7 @@ fn reindex_mod_from_archive(
 ) -> Result<usize> {
     let prefix = detect_strip_prefix(archive_path)?;
     let entries = list_entry_names(archive_path)?;
+    let layout = crate::spt::layout::detect_layout(spt_dir)?;
 
     let file_paths: Vec<String> = entries
         .iter()
@@ -149,9 +150,10 @@ fn reindex_mod_from_archive(
             }
 
             // Only index files under known mod directories
-            if effective.starts_with("SPT/user/mods/") || effective.starts_with("BepInEx/plugins/")
+            if crate::spt::layout::server_mod_suffix(effective).is_some()
+                || effective.starts_with("BepInEx/plugins/")
             {
-                Some(effective.to_string())
+                Some(layout.mod_path(effective))
             } else {
                 None
             }
@@ -216,7 +218,10 @@ pub async fn run_deps(apply: bool, ctx: &CliContext) -> Result<()> {
 
         let dep_nodes = match ctx
             .forge
-            .get_dependencies(&[(&forge_mod_id.to_string(), version)])
+            .get_dependencies(
+                &[(&forge_mod_id.to_string(), version)],
+                &ctx.spt_info.spt_version,
+            )
             .await
         {
             Ok(nodes) => nodes,

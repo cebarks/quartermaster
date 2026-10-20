@@ -52,6 +52,7 @@ fn normalize_known_prefixes(path: &str) -> String {
     const CANONICAL_PREFIXES: &[(&[&str], &str)] = &[
         (&["BepInEx", "plugins"], "BepInEx/plugins/"),
         (&["SPT", "user", "mods"], "SPT/user/mods/"),
+        (&["SPT_Runtime", "user", "mods"], "SPT_Runtime/user/mods/"),
     ];
 
     let parts: Vec<&str> = path.splitn(2, '/').collect();
@@ -91,7 +92,11 @@ pub fn list_entry_names(archive_path: &Path) -> Result<Vec<String>> {
                 .with_context(|| format!("failed to open archive: {}", archive_path.display()))?;
             let archive = ZipArchive::new(file)
                 .with_context(|| format!("failed to read ZIP: {}", archive_path.display()))?;
-            Ok(archive.file_names().map(normalize_archive_path).collect())
+            archive
+                .file_names()
+                .map(|name| name.map(|name| normalize_archive_path(&name)))
+                .collect::<zip::result::ZipResult<Vec<_>>>()
+                .context("failed to decode ZIP entry names")
         }
         ArchiveFormat::SevenZ => {
             let mut file = fs::File::open(archive_path)
@@ -192,7 +197,6 @@ impl<W: Write> Write for HashingWriter<W> {
 }
 
 /// Known prefixes that indicate a mod's target directory.
-const SERVER_PREFIX: &str = "SPT/user/mods/";
 const CLIENT_PREFIX: &str = "BepInEx/plugins/";
 
 /// Inspect ZIP entries to determine whether a mod targets the server, client, or both.
@@ -210,7 +214,7 @@ pub fn detect_mod_type(archive_path: &Path) -> Result<ModType> {
     for name in &names {
         let effective = strip_known_prefix_from_name(name);
 
-        if effective.starts_with(SERVER_PREFIX) {
+        if super::layout::server_mod_suffix(&effective).is_some() {
             has_server = true;
         }
         if effective.starts_with(CLIENT_PREFIX) {
@@ -241,7 +245,7 @@ pub fn detect_strip_prefix(archive_path: &Path) -> Result<String> {
             }
         };
 
-        if top_dir == "SPT/" || top_dir == "BepInEx/" {
+        if top_dir == "SPT/" || top_dir == "SPT_Runtime/" || top_dir == "BepInEx/" {
             return Ok(String::new());
         }
 
@@ -271,6 +275,32 @@ pub fn extract_mod(archive_path: &Path, spt_root: &Path) -> Result<Vec<Extracted
     }
 }
 
+/// Place server mod files in the installation's layout, including when staging elsewhere.
+pub fn extract_mod_for_layout(
+    archive_path: &Path,
+    dest: &Path,
+    layout: super::layout::RuntimeLayout,
+) -> Result<Vec<ExtractedFile>> {
+    let mut files = extract_mod(archive_path, dest)?;
+    let paths: Vec<String> = files.iter().map(|f| layout.mod_path(&f.path)).collect();
+    let unique: std::collections::HashSet<&str> = paths.iter().map(String::as_str).collect();
+    if unique.len() != paths.len() {
+        anyhow::bail!("archive contains conflicting server paths across runtime layouts");
+    }
+    for (file, path) in files.iter_mut().zip(paths) {
+        if file.path != path {
+            let target = dest.join(&path);
+            validate_dest_under_root(&target, dest, &file.path)?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::rename(dest.join(&file.path), &target)?;
+            file.path = path;
+        }
+    }
+    Ok(files)
+}
+
 fn extract_mod_zip(
     archive_path: &Path,
     spt_root: &Path,
@@ -298,7 +328,11 @@ fn extract_mod_zip(
             .by_index(i)
             .with_context(|| format!("failed to read ZIP entry {i}"))?;
 
-        let raw_name = normalize_archive_path(entry.name());
+        let raw_name = normalize_archive_path(
+            &entry
+                .name()
+                .with_context(|| format!("failed to decode ZIP entry {i} name"))?,
+        );
 
         if entry.is_symlink() {
             anyhow::bail!("archive contains symlink entry: {raw_name}");
@@ -310,6 +344,8 @@ fn extract_mod_zip(
             &raw_name
         };
 
+        let normalized = normalize_known_prefixes(relative);
+        let relative = normalized.as_str();
         if relative.is_empty() {
             continue;
         }
@@ -416,6 +452,8 @@ fn extract_mod_7z(
                 &raw_name
             };
 
+            let normalized = normalize_known_prefixes(relative);
+            let relative = normalized.as_str();
             if relative.is_empty() {
                 return Ok(true);
             }
@@ -535,13 +573,17 @@ fn validate_dest_under_root(dest: &Path, spt_root: &Path, raw_name: &str) -> Res
 pub fn compute_file_hash(path: &Path) -> Result<String> {
     let file = fs::File::open(path)
         .with_context(|| format!("failed to open file for hashing: {}", path.display()))?;
-    let mut reader = std::io::BufReader::new(file);
+    compute_reader_hash(file)
+}
+
+pub(crate) fn compute_reader_hash(reader: impl Read) -> Result<String> {
+    let mut reader = std::io::BufReader::new(reader);
     let mut hasher = Xxh3::new();
     let mut buf = [0u8; 8192];
     loop {
         let n = reader
             .read(&mut buf)
-            .with_context(|| format!("failed to read file for hashing: {}", path.display()))?;
+            .context("failed to read stream for hashing")?;
         if n == 0 {
             break;
         }
@@ -584,7 +626,7 @@ pub fn delete_mod_files(spt_root: &Path, file_paths: &[String]) -> Result<()> {
 pub fn scan_mod_directories(dirs: &QumaDirs) -> Result<Vec<String>> {
     let mut out = Vec::new();
 
-    let server_dir = dirs.server_mods_dir();
+    let server_dir = dirs.server_mods_dir()?;
     if server_dir.is_dir() {
         scan_dir_recursive(&server_dir, &dirs.spt_server, &mut out)?;
     }
@@ -652,21 +694,20 @@ fn scan_dir_recursive(dir: &Path, spt_root: &Path, out: &mut Vec<String>) -> Res
 /// Given a full entry name from a ZIP, strip a wrapper directory if the
 /// underlying path starts with a known prefix. This is used by `detect_mod_type`
 /// to look through wrapper directories.
-fn strip_known_prefix_from_name(name: &str) -> &str {
-    // If the name directly starts with a known prefix, return as-is
-    if name.starts_with("SPT/") || name.starts_with("BepInEx/") {
-        return name;
+fn strip_known_prefix_from_name(name: &str) -> String {
+    let normalized = normalize_known_prefixes(name);
+    if super::layout::is_server_path(&normalized) || normalized.starts_with("BepInEx/") {
+        return normalized;
     }
 
-    // Check if after the first path component, a known prefix appears
     if let Some(idx) = name.find('/') {
-        let after = &name[idx + 1..];
-        if after.starts_with("SPT/") || after.starts_with("BepInEx/") {
+        let after = normalize_known_prefixes(&name[idx + 1..]);
+        if super::layout::is_server_path(&after) || after.starts_with("BepInEx/") {
             return after;
         }
     }
 
-    name
+    normalized
 }
 
 #[cfg(test)]
@@ -692,6 +733,59 @@ pub(crate) mod tests {
         tmp.write_all(buf.get_ref()).unwrap();
         tmp.flush().unwrap();
         tmp
+    }
+
+    #[test]
+    fn zip_preserves_cp437_entry_names() {
+        let archive = create_test_zip(&[("BepInEx/plugins/Cafe.dll", b"payload")]);
+        let mut bytes = fs::read(archive.path()).unwrap();
+        let local = bytes.windows(4).position(|v| v == b"PK\x03\x04").unwrap();
+        let central = bytes.windows(4).position(|v| v == b"PK\x01\x02").unwrap();
+        // Replace the final 'e' with CP437's 'é' in both ZIP headers.
+        let name_offset = "BepInEx/plugins/Caf".len();
+        bytes[local + 30 + name_offset] = 0x82;
+        bytes[central + 46 + name_offset] = 0x82;
+        fs::write(archive.path(), bytes).unwrap();
+
+        let expected = "BepInEx/plugins/Café.dll";
+        assert_eq!(list_entry_names(archive.path()).unwrap(), vec![expected]);
+        assert_eq!(detect_mod_type(archive.path()).unwrap(), ModType::Client);
+        let destination = TempDir::new().unwrap();
+        let files = extract_mod_zip(
+            archive.path(),
+            destination.path(),
+            "",
+            &ExtractionLimits::production(),
+        )
+        .unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, expected);
+        assert_eq!(
+            fs::read(destination.path().join(expected)).unwrap(),
+            b"payload"
+        );
+    }
+
+    #[test]
+    fn detects_current_server_mod_with_wrapper_and_casing() {
+        for name in [
+            "SPT_Runtime/user/mods/TestMod/package.json",
+            "Wrapper/SPT_Runtime/user/mods/TestMod/package.json",
+            "spt_runtime/USER/MODS/TestMod/package.json",
+        ] {
+            let archive = create_test_zip(&[(name, b"{}")]);
+            assert_eq!(
+                detect_mod_type(archive.path()).unwrap(),
+                ModType::Server,
+                "{name}"
+            );
+        }
+        let archive = create_test_zip(&[
+            ("SPT_Runtime/user/mods/TestMod/package.json", b"{}"),
+            ("BepInEx/plugins/TestMod.dll", b"dll"),
+        ]);
+        assert_eq!(detect_mod_type(archive.path()).unwrap(), ModType::Hybrid);
+        assert_eq!(detect_strip_prefix(archive.path()).unwrap(), "");
     }
 
     #[test]
@@ -914,7 +1008,7 @@ pub(crate) mod tests {
     }
 
     /// Create a test 7z archive with the given entries.
-    fn create_test_7z(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+    pub(crate) fn create_test_7z(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
         use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -1350,6 +1444,42 @@ pub(crate) mod tests {
 
         let prefix = detect_strip_prefix(tmp.path()).unwrap();
         assert_eq!(prefix, "SAIN/");
+    }
+
+    #[test]
+    fn wrapped_case_variants_classify_and_extract() {
+        for name in [
+            "Wrapper/spt_runtime/USER/MODS/Test/package.json",
+            "Wrapper/spt/USER/MODS/Test/package.json",
+        ] {
+            let archive = create_test_zip(&[(name, b"{}")]);
+            assert_eq!(detect_mod_type(archive.path()).unwrap(), ModType::Server);
+            let dest = tempfile::tempdir().unwrap();
+            let files = extract_mod_for_layout(
+                archive.path(),
+                dest.path(),
+                super::super::layout::RuntimeLayout::Current,
+            )
+            .unwrap();
+            assert_eq!(files[0].path, "SPT_Runtime/user/mods/Test/package.json");
+            assert!(dest.path().join(&files[0].path).is_file());
+        }
+        let archive = create_test_zip(&[
+            ("Wrapper/spt_runtime/USER/MODS/Test/package.json", b"{}"),
+            ("Wrapper/bepinex/PLUGINS/Test.dll", b"client"),
+        ]);
+        assert_eq!(detect_mod_type(archive.path()).unwrap(), ModType::Hybrid);
+        let dest = tempfile::tempdir().unwrap();
+        let files = extract_mod_for_layout(
+            archive.path(),
+            dest.path(),
+            super::super::layout::RuntimeLayout::Legacy,
+        )
+        .unwrap();
+        assert!(files
+            .iter()
+            .any(|f| f.path == "SPT/user/mods/Test/package.json"));
+        assert!(files.iter().any(|f| f.path == "BepInEx/plugins/Test.dll"));
     }
 
     #[test]

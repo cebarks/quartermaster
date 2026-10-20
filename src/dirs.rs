@@ -82,6 +82,7 @@ impl QumaDirs {
         let spt_subdir = path.join("spt-server");
 
         if (has_config || has_db) && spt_subdir.exists() {
+            crate::spt::layout::detect_layout(&spt_subdir)?;
             if crate::spt::detect::validate_spt_dir(&spt_subdir).is_ok() {
                 return Ok(Self::from_root(path.to_path_buf()));
             }
@@ -215,31 +216,46 @@ impl QumaDirs {
         overlay
     }
 
-    pub fn server_mods_dir(&self) -> PathBuf {
-        self.spt_server.join("SPT/user/mods")
+    pub fn server_runtime_dir(&self) -> Result<PathBuf> {
+        crate::spt::layout::runtime_dir(&self.spt_server)
+    }
+
+    pub fn server_mods_dir(&self) -> Result<PathBuf> {
+        Ok(self.server_runtime_dir()?.join("user/mods"))
+    }
+
+    pub fn server_mod_relative_path(&self, suffix: &str) -> Result<String> {
+        Ok(crate::spt::layout::detect_layout(&self.spt_server)?
+            .mod_path(&format!("SPT_Runtime/user/mods/{suffix}")))
     }
 
     pub fn client_mods_dir(&self) -> PathBuf {
         self.spt_server.join("BepInEx/plugins")
     }
 
-    pub fn profiles_dir(&self) -> PathBuf {
-        self.spt_server.join("SPT/user/profiles")
+    pub fn profiles_dir(&self) -> Result<PathBuf> {
+        Ok(self.server_runtime_dir()?.join("user/profiles"))
     }
 
     #[allow(dead_code)] // ponytail: used once spt/detect migrates
-    pub fn core_json(&self) -> PathBuf {
-        self.spt_server.join("SPT/SPT_Data/configs/core.json")
+    pub fn core_json(&self) -> Result<PathBuf> {
+        Ok(self
+            .server_runtime_dir()?
+            .join("SPT_Data/configs/core.json"))
     }
 
     #[allow(dead_code)] // ponytail: used once server_detect migrates fully
-    pub fn http_json(&self) -> PathBuf {
-        self.spt_server.join("SPT/SPT_Data/configs/http.json")
+    pub fn http_json(&self) -> Result<PathBuf> {
+        Ok(self
+            .server_runtime_dir()?
+            .join("SPT_Data/configs/http.json"))
     }
 
     #[allow(dead_code)] // ponytail: callers currently use fika::config::fika_config_path
-    pub fn fika_config(&self) -> PathBuf {
-        self.resolve_mod_file("SPT/user/mods/fika-server/assets/configs/fika.jsonc")
+    pub fn fika_config(&self) -> Result<PathBuf> {
+        Ok(self.resolve_mod_file(
+            &self.server_mod_relative_path("fika-server/assets/configs/fika.jsonc")?,
+        ))
     }
 
     // -- Overlay paths --
@@ -353,21 +369,52 @@ mod tests {
     fn spt_server_paths() {
         let dirs = QumaDirs::from_root(PathBuf::from("/opt/quma"));
         assert_eq!(
-            dirs.server_mods_dir(),
-            PathBuf::from("/opt/quma/spt-server/SPT/user/mods")
+            dirs.server_mods_dir().unwrap(),
+            PathBuf::from("/opt/quma/spt-server/SPT_Runtime/user/mods")
         );
         assert_eq!(
             dirs.client_mods_dir(),
             PathBuf::from("/opt/quma/spt-server/BepInEx/plugins")
         );
         assert_eq!(
-            dirs.profiles_dir(),
-            PathBuf::from("/opt/quma/spt-server/SPT/user/profiles")
+            dirs.profiles_dir().unwrap(),
+            PathBuf::from("/opt/quma/spt-server/SPT_Runtime/user/profiles")
         );
         assert_eq!(
             dirs.mod_file_path("SPT/user/mods/test"),
             PathBuf::from("/opt/quma/overlays/mod/SPT/user/mods/test")
         );
+    }
+
+    #[test]
+    fn current_runtime_paths_and_fresh_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        assert_eq!(
+            dirs.server_mods_dir().unwrap(),
+            dirs.spt_server.join("SPT_Runtime/user/mods")
+        );
+        std::fs::create_dir_all(dirs.spt_server.join("SPT_Runtime")).unwrap();
+        assert_eq!(
+            dirs.profiles_dir().unwrap(),
+            dirs.spt_server.join("SPT_Runtime/user/profiles")
+        );
+        assert_eq!(
+            dirs.core_json().unwrap(),
+            dirs.spt_server
+                .join("SPT_Runtime/SPT_Data/configs/core.json")
+        );
+        assert_eq!(
+            dirs.http_json().unwrap(),
+            dirs.spt_server
+                .join("SPT_Runtime/SPT_Data/configs/http.json")
+        );
+        let config_path = dirs
+            .mod_overlay()
+            .join("SPT_Runtime/user/mods/fika-server/assets/configs/fika.jsonc");
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(&config_path, "{}").unwrap();
+        assert_eq!(dirs.fika_config().unwrap(), config_path);
     }
 
     #[test]
@@ -435,9 +482,31 @@ mod tests {
             PathBuf::from("/home/user/spt-server/quartermaster.db")
         );
         assert_eq!(
-            dirs.server_mods_dir(),
-            PathBuf::from("/home/user/spt-server/SPT/user/mods")
+            dirs.server_mods_dir().unwrap(),
+            PathBuf::from("/home/user/spt-server/SPT_Runtime/user/mods")
         );
+    }
+
+    #[test]
+    fn nested_quma_detection_rejects_ambiguous_runtime_markers() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("quartermaster.toml"), "").unwrap();
+        for runtime in ["SPT_Runtime", "SPT"] {
+            let path = tmp.path().join("spt-server").join(runtime);
+            std::fs::create_dir_all(path.join("SPT_Data/configs")).unwrap();
+            std::fs::create_dir_all(path.join("user/mods")).unwrap();
+            std::fs::write(path.join("SPT.Server.deps.json"), "{}").unwrap();
+            std::fs::write(path.join("SPT_Data/configs/core.json"), "{}").unwrap();
+        }
+        assert!(QumaDirs::detect(Some(tmp.path()), None).is_err());
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        assert!(dirs.server_runtime_dir().is_err());
+        assert!(dirs.server_mods_dir().is_err());
+        assert!(dirs.profiles_dir().is_err());
+        assert!(dirs.core_json().is_err());
+        assert!(dirs.http_json().is_err());
+        assert!(dirs.fika_config().is_err());
+        assert!(dirs.server_mod_relative_path("fika-server").is_err());
     }
 
     #[test]

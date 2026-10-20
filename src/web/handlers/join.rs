@@ -294,22 +294,9 @@ pub async fn join_submit(
         }
     };
 
-    // Generate a random SPT password (nominal auth, not stored)
-    let spt_password: String = {
-        use rand::RngExt;
-        rand::rng()
-            .sample_iter(&rand::distr::Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect()
-    };
-
     // TODO(debt): If this succeeds but the DB transaction below fails, the SPT
     // profile is orphaned (no Quartermaster account links to it).
-    let profile_aid = match spt_client
-        .register_profile(&username, &spt_password, &form.edition)
-        .await
-    {
+    let profile_aid = match spt_client.register_profile(&username, &form.edition).await {
         Ok(aid) => {
             let trimmed = aid.trim().trim_matches('"').to_string();
             if trimmed.is_empty() {

@@ -37,10 +37,10 @@ static HOP_BY_HOP_HEADERS: &[&str] = &[
 fn is_auth_exempt(method: &actix_web::http::Method, path: &str) -> bool {
     matches!(
         (method, path),
-        (&actix_web::http::Method::POST, "/launcher/profile/register")
-            | (_, "/launcher/ping")
-            | (_, "/launcher/server/version")
-            | (_, "/launcher/server/loadedServerMods")
+        (&actix_web::http::Method::POST, "/launcher/v2/register")
+            | (_, "/launcher/v2/ping")
+            | (_, "/launcher/v2/version")
+            | (_, "/launcher/v2/mods")
     )
 }
 
@@ -192,7 +192,7 @@ pub async fn proxy_handler(
 
             // Check if this is a watched endpoint
             let is_register = req.method() == actix_web::http::Method::POST
-                && req.path() == "/launcher/profile/register"
+                && req.path() == "/launcher/v2/register"
                 && status.is_success();
 
             if is_register {
@@ -452,7 +452,10 @@ fn handle_player_registration(
     //
     // Phase 1: Read all profile data from disk (no DB lock held).
     // Phase 2: Acquire the lock once and perform all DB lookups/inserts.
-    let profiles_dir = spt_dir.join("SPT/user/profiles");
+    let Ok(runtime) = crate::spt::layout::runtime_dir(&spt_dir) else {
+        return;
+    };
+    let profiles_dir = runtime.join("user/profiles");
     let entries = match std::fs::read_dir(&profiles_dir) {
         Ok(e) => e,
         Err(e) => {
@@ -588,7 +591,7 @@ fn fix_headless_crc(body: web::Bytes, dirs: &crate::dirs::QumaDirs) -> web::Byte
         }
     };
     let real_crc = crc32c(&dll_bytes);
-    tracing::info!(
+    tracing::debug!(
         crc = real_crc,
         "fixing headless crc32=0 in /fika/raid/join response"
     );
@@ -687,7 +690,7 @@ mod tests {
     fn auth_exempt_paths_include_register() {
         assert!(is_auth_exempt(
             &actix_web::http::Method::POST,
-            "/launcher/profile/register"
+            "/launcher/v2/register"
         ));
     }
 
@@ -695,7 +698,7 @@ mod tests {
     fn auth_exempt_paths_include_ping() {
         assert!(is_auth_exempt(
             &actix_web::http::Method::GET,
-            "/launcher/ping"
+            "/launcher/v2/ping"
         ));
     }
 

@@ -52,9 +52,8 @@ impl ConfigManager {
             let Some(mod_dir_name) = mod_dir_name else {
                 continue;
             };
-            let config_dir = self
-                .spt_server
-                .join("SPT/user/mods")
+            let config_dir = crate::spt::layout::runtime_dir(&self.spt_server)?
+                .join("user/mods")
                 .join(&mod_dir_name)
                 .join("config");
             if !config_dir.is_dir() {
@@ -107,7 +106,7 @@ impl ConfigManager {
     /// Find the actual directory name for a mod under SPT/user/mods/.
     /// Mod names in the DB may not match the directory name exactly.
     pub fn find_mod_dir(&self, mod_name: &str) -> Result<Option<String>> {
-        let mods_dir = self.spt_server.join("SPT/user/mods");
+        let mods_dir = crate::spt::layout::runtime_dir(&self.spt_server)?.join("user/mods");
         if !mods_dir.is_dir() {
             return Ok(None);
         }
@@ -134,7 +133,7 @@ impl ConfigManager {
     /// Read a config file, stripping UTF-8 BOM if present.
     #[allow(dead_code)] // ponytail: used in later tasks
     pub fn read_config(&self, mod_dir: &str, config_rel_path: &Path) -> Result<String> {
-        let path = self.config_path(mod_dir, config_rel_path);
+        let path = self.config_path(mod_dir, config_rel_path)?;
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
         Ok(strip_bom(&content).to_string())
@@ -153,7 +152,7 @@ impl ConfigManager {
         jsonc_parser::parse_to_serde_value(content, &Default::default())
             .map_err(|e| anyhow::anyhow!("Invalid JSON/JSONC: {e}"))?;
 
-        let file_path = self.config_path(mod_dir, config_rel_path);
+        let file_path = self.config_path(mod_dir, config_rel_path)?;
         let current = std::fs::read_to_string(&file_path).unwrap_or_default();
         let current = strip_bom(&current);
 
@@ -214,7 +213,7 @@ impl ConfigManager {
         let old_content = self.history.content_at_rev(&history_rel, rev)?;
 
         // Write restored content to disk
-        let file_path = self.config_path(mod_dir, config_rel_path);
+        let file_path = self.config_path(mod_dir, config_rel_path)?;
         let dir = file_path
             .parent()
             .context("config file has no parent dir")?;
@@ -265,12 +264,12 @@ impl ConfigManager {
     }
 
     #[allow(dead_code)] // ponytail: used in later tasks
-    fn config_path(&self, mod_dir: &str, config_rel_path: &Path) -> PathBuf {
-        self.spt_server
-            .join("SPT/user/mods")
+    fn config_path(&self, mod_dir: &str, config_rel_path: &Path) -> Result<PathBuf> {
+        Ok(crate::spt::layout::runtime_dir(&self.spt_server)?
+            .join("user/mods")
             .join(mod_dir)
             .join("config")
-            .join(config_rel_path)
+            .join(config_rel_path))
     }
 }
 

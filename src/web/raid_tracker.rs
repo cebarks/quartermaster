@@ -103,8 +103,9 @@ pub fn snapshot_profile(
     profile_id: &str,
     is_scav: bool,
 ) -> Option<(ProfileSnapshot, Vec<u8>)> {
-    let path = spt_dir
-        .join("SPT/user/profiles")
+    let path = crate::spt::layout::runtime_dir(spt_dir)
+        .ok()?
+        .join("user/profiles")
         .join(format!("{profile_id}.json"));
 
     let contents = std::fs::read(&path).ok()?;

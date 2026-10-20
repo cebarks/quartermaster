@@ -22,6 +22,74 @@ async fn mods_page_loads() {
     app.login_as("admin", "password").await;
     let resp = app.get("/quma/mods").await;
     assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = actix_web::test::read_body(resp).await;
+    let html = String::from_utf8_lossy(&body);
+    assert!(html.contains("href=\"https://sp-mod.com\""));
+    assert!(!html.contains("href=\"https://forge.sp-tarkov.com\""));
+}
+
+#[actix_web::test]
+async fn dependency_preview_distinguishes_failure_from_empty_result() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    for (response, unavailable, attempts) in [
+        (ResponseTemplate::new(500), true, 4),
+        (
+            ResponseTemplate::new(200).set_body_string("malformed"),
+            true,
+            1,
+        ),
+        (
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})),
+            false,
+            1,
+        ),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/mods/dependencies"))
+            .respond_with(response)
+            .expect(attempts)
+            .mount(&server)
+            .await;
+        let mut app = TestAppBuilder::new()
+            .with_user("admin", "password", "admin")
+            .with_mock_server(server)
+            .build()
+            .await;
+        app.login_as("admin", "password").await;
+        let resp = app.get("/quma/api/mods/dep-tree?mod=791&ver=4.5.1").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = actix_web::test::read_body(resp).await;
+        let html = String::from_utf8_lossy(&body);
+        assert_eq!(html.contains("Dependency preview unavailable"), unavailable);
+        assert_eq!(html.contains("No dependencies."), !unavailable);
+    }
+}
+
+#[actix_web::test]
+async fn dependency_preview_reports_version_lookup_failure() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/mod/791/versions"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(4)
+        .mount(&server)
+        .await;
+    let mut app = TestAppBuilder::new()
+        .with_user("admin", "password", "admin")
+        .with_mock_server(server)
+        .build()
+        .await;
+    app.login_as("admin", "password").await;
+    let resp = app.get("/quma/api/mods/dep-tree?mod=791&ver_id=99").await;
+    let body = actix_web::test::read_body(resp).await;
+    let html = String::from_utf8_lossy(&body);
+    assert!(html.contains("Dependency preview unavailable"));
+    assert!(!html.contains("No dependencies."));
 }
 
 #[actix_web::test]

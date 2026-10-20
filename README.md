@@ -1,8 +1,45 @@
 # Quartermaster (`quma`)
 
-A CLI and web dashboard for managing server-side mods on an [SPT](https://www.sp-tarkov.com)/[Fika](https://github.com/project-fika) dedicated server. Installs, updates, and removes mods from [SPT Forge](https://forge.sp-tarkov.com), with a web UI for server hosts and connected players.
+A CLI and web dashboard for managing server-side mods on an [SPT (Single Player Tushonka)](https://sp-mod.com)/[Fika](https://github.com/project-fika) dedicated server. Installs, updates, and removes mods from [SPT Forge](https://sp-mod.com), with a web UI for server hosts and connected players.
 
 Built for Linux hosts running SPT in a Podman container.
+
+## SPT Compatibility
+
+The SPT server image includes .NET and ASP.NET Core 9 and 10 for legacy servers and [SPT 4.1.6](https://github.com/SP-Tushonka/build/releases/tag/4.1.6).
+Setup discovers the latest available release from `SP-Tushonka/build` rather than pinning a specific version.
+SPT 4.1.6 requires EFT **0.16.9.5.40743** for game and headless clients.
+
+SPT 4.1.6 supports most **4.1.x mods**, not **4.0.x mods**. Its release notes promise profile compatibility
+with **4.1.x and newer**, not 4.0.x. Check Fika and all other mods against the target SPT version before
+upgrading. Back up the installation and follow the upstream upgrade instructions; updating server files
+alone does not update game clients. With the current SPT Launcher, configure the remote
+server address manually: the bootstrap scripts' automatic launcher-config edit targets the legacy
+launcher format.
+
+New installations preserve upstream's `SPT_Runtime/` server directory. Quartermaster also supports
+legacy `SPT/` server directories; this is separate from its flat versus nested data-directory layout.
+In-place updates that switch between these runtime directories are rejected before the server is
+stopped or files are overwritten. Use a clean target installation and explicitly migrate compatible
+mods/profiles instead. Installations containing valid server markers in both directories are rejected
+as ambiguous.
+
+Server communication requires the current **launcher v2 HTTP API** (`/launcher/v2/`); the
+old launcher HTTP endpoints are not supported. Legacy directory management does not imply
+legacy HTTP API support. Container health probes use HTTPS and verify SPT's generated
+certificate. Launcher v2 profile registration is username/edition-based; Quartermaster
+accounts retain their separate password authentication.
+
+Release extraction and client exports use directory-scoped I/O. Unsafe archive/ZIP names
+and links escaping their permitted root are rejected or omitted. Existing relative or
+absolute symlinks confined to that root are preserved, including links to missing targets
+created during release extraction. Archive-provided symlink entries remain rejected.
+Strict client exports also omit client-named links targeting either server-runtime tree;
+confined client-to-client links remain supported. Bundle exports are discovered separately
+and constrained to their bundle directory. Server/client classification assumes runtime
+directory names and aliases stay stable during export; it is not an atomic filesystem
+snapshot against hostile concurrent renames or retargeting. Capability confinement still
+prevents outside-installation reads independently of that classification prerequisite.
 
 ## Features
 
@@ -106,7 +143,7 @@ QUMA_DIR=~/spt-server quma status
 
 ## Development
 
-Requires Rust (2021 edition).
+Requires Rust (2021 edition). `just audit` also requires Python 3 and cargo-audit 0.22.2; see [security audits](CONTRIBUTING.md#security-audits) for setup and the scoped risk acceptance.
 
 ```bash
 just build      # cargo build
@@ -114,7 +151,7 @@ just test       # cargo test
 just lint       # fmt + clippy + logging conventions + copy-paste detection
 just serve      # cargo run -- serve
 just run <ARGS> # cargo run -- <ARGS>
-just audit      # cargo audit
+just audit      # dependency audit with tested, version-scoped policy
 just changelog  # git-cliff changelog generation
 ```
 

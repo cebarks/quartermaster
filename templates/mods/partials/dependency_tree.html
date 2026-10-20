@@ -1,4 +1,6 @@
-{% if deps.is_empty() %}
+{% if unavailable %}
+<p class="text-danger" role="alert">Dependency preview unavailable. Refresh the version selection to retry.</p>
+{% else if deps.is_empty() %}
 <p class="text-muted">No dependencies.</p>
 {% else %}
 <ul>

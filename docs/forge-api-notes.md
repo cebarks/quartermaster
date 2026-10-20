@@ -2,7 +2,9 @@
 
 Undocumented behaviors and quirks observed while building the Forge client (`src/forge/`).
 
-Base URL: `https://forge.sp-tarkov.com/api/v0`
+Base URL: `https://sp-mod.com/api/v0` (the successor to `forge.sp-tarkov.com`).
+The old host returned HTTP 525 during verification; new requests use the successor API.
+Legacy mod page URLs are still accepted as input identifiers, but are resolved through the current API.
 
 ## `fika_compatibility` type mismatch
 
@@ -65,4 +67,12 @@ Mods can be referenced by:
 - GUID (e.g., `com.example.big-brain`) — used in dependency resolution
 - Name (e.g., `"Big Brain"`) — resolved via search
 
-The dependency resolution endpoint (`GET /mods/dependencies`) accepts either numeric IDs or GUIDs as the identifier in `mods=<id>:<version>` pairs.
+The dependency resolution endpoint (`GET /mods/dependencies`) accepts either numeric IDs or GUIDs as the identifier in `mods=<id>:<version>` pairs. Both this endpoint and `GET /addons/dependencies` require a concrete installed `spt_version` query parameter; omitting it returns HTTP 400 `VALIDATION_FAILED`.
+
+Current responses group dependency arrays by the requested pair, for example:
+
+```json
+{"success":true,"data":{"2357:2.4.2":[]}}
+```
+
+Quartermaster flattens these groups while preserving each node's nested dependency tree, and still accepts the legacy flat-array response. A live SAIN 4.5.1 request with `spt_version=4.1.6` returned Waypoints and BigBrain dependency nodes; the compatible-version object may omit its SPT constraint.

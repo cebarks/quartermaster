@@ -13,19 +13,20 @@ pub(crate) fn parse_forge_url(input: &str) -> Option<i64> {
     if let Ok(id) = input.parse::<i64>() {
         return Some(id);
     }
-    if input.contains("forge.sp-tarkov.com") {
-        // Strip query parameters before parsing
-        let url_path = input.split('?').next().unwrap_or(input);
-        let parts: Vec<&str> = url_path.split('/').collect();
-        if let Some(segment) = parts.iter().rev().find(|s| !s.is_empty()) {
-            if let Some(id_str) = segment.split('-').next() {
-                if let Ok(id) = id_str.parse::<i64>() {
-                    return Some(id);
-                }
-            }
-        }
+    let url = reqwest::Url::parse(input).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !matches!(url.host_str(), Some("sp-mod.com" | "forge.sp-tarkov.com"))
+    {
+        return None;
     }
-    None
+    let mut segments = url.path_segments()?;
+    let route = segments.next()?;
+    let id_segment = segments.next()?;
+    match route {
+        "mod" => id_segment.parse().ok(),
+        "mods" => id_segment.split('-').next()?.parse().ok(),
+        _ => None,
+    }
 }
 
 pub(crate) fn fika_compat_to_string(fc: &Option<FikaCompat>) -> String {
@@ -109,6 +110,31 @@ mod tests {
             parse_forge_url("https://forge.sp-tarkov.com/mods/123-test/"),
             Some(123)
         );
+    }
+
+    #[test]
+    fn parse_forge_url_current_and_legacy_mod_links() {
+        for url in [
+            "https://sp-mod.com/mod/2326/project-fika",
+            "https://sp-mod.com/mod/2326/project-fika/?details=true#versions",
+            "https://sp-mod.com/mods/2326-project-fika",
+            "https://forge.sp-tarkov.com/mod/2326/project-fika",
+        ] {
+            assert_eq!(parse_forge_url(url), Some(2326), "{url}");
+        }
+    }
+
+    #[test]
+    fn parse_forge_url_rejects_unrelated_hosts_and_paths() {
+        for url in [
+            "https://sp-mod.com.example.org/mod/2326/project-fika",
+            "https://example.org/mods/2326-sp-mod.com",
+            "https://forge.sp-tarkov.com.example.org/mods/2326-test",
+            "https://sp-mod.com/addon/2326/test",
+            "https://sp-mod.com/mod/not-an-id/project-fika",
+        ] {
+            assert_eq!(parse_forge_url(url), None, "{url}");
+        }
     }
 
     #[test]
