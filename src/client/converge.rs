@@ -986,30 +986,32 @@ pub async fn converge(ctx: &ConvergeContext<'_>) -> Result<()> {
             })
             .filter(|s| !s.is_empty());
 
-        info!(
-            "Client {i}: NUMA pinning changed ({:?} → {:?}), recreating container",
-            current_cpus, desired_cpus
-        );
-
-        if container_mgr.is_running(&name).await.unwrap_or(false) {
+        let topology = &topology;
+        let fika_version = fika_version.as_deref();
+        recreate_assigned_client(profile_id, |profile_id| async move {
+            info!(
+                "Client {i}: NUMA pinning changed ({:?} → {:?}), recreating container",
+                current_cpus, desired_cpus
+            );
+            if container_mgr.is_running(&name).await.unwrap_or(false) {
+                container_mgr.stop(&name).await.with_context(|| {
+                    format!("failed to stop client {i} for NUMA reconciliation")
+                })?;
+            }
             container_mgr
-                .stop(&name)
+                .remove_container(&name)
                 .await
-                .with_context(|| format!("failed to stop client {i} for NUMA reconciliation"))?;
-        }
-        container_mgr
-            .remove_container(&name)
+                .with_context(|| format!("failed to remove client {i} for NUMA reconciliation"))?;
+            create_client_container(
+                ctx,
+                i,
+                Some(profile_id),
+                ntsync_available,
+                topology,
+                fika_version,
+            )
             .await
-            .with_context(|| format!("failed to remove client {i} for NUMA reconciliation"))?;
-
-        create_client_container(
-            ctx,
-            i,
-            profile_id,
-            ntsync_available,
-            &topology,
-            fika_version.as_deref(),
-        )
+        })
         .await?;
     }
 
@@ -1360,6 +1362,17 @@ fn resolve_numa_cpuset(
 /// The game directory is mounted via Podman's overlay mount (`:O`), giving each
 /// container a private writable layer over the shared install_dir. A first-boot
 /// flow waits for Fika to generate its config before patching and restarting.
+async fn recreate_assigned_client<F, Fut>(profile_id: Option<String>, recreate: F) -> Result<()>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let profile_id = profile_id
+        .filter(|profile| !profile.trim().is_empty())
+        .context("missing headless profile assignment for NUMA recreation")?;
+    recreate(profile_id).await
+}
+
 async fn create_client_container(
     ctx: &ConvergeContext<'_>,
     index: u32,
@@ -1694,6 +1707,35 @@ mod tests {
         std::fs::write(fika_dir.join("Fika.Core.dll"), b"fake dll").unwrap();
 
         assert!(is_fika_client_present(tmp.path()));
+    }
+
+    #[tokio::test]
+    async fn review_regression_numa_missing_profile_preserves_existing_container() {
+        for profile in [None, Some(String::new()), Some("   ".to_string())] {
+            let changed = std::cell::Cell::new(false);
+            let effects = &changed;
+            let result = recreate_assigned_client(profile, |profile| async move {
+                effects.set(true);
+                anyhow::ensure!(!profile.trim().is_empty(), "replacement profile missing");
+                Ok(())
+            })
+            .await;
+            assert!(result.is_err());
+            assert!(
+                !changed.get(),
+                "stop/remove callback ran before validating the replacement profile"
+            );
+        }
+        let changed = std::cell::Cell::new(false);
+        let effects = &changed;
+        recreate_assigned_client(Some("assigned".to_string()), |profile| async move {
+            assert_eq!(profile, "assigned");
+            effects.set(true);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(changed.get());
     }
 
     #[test]

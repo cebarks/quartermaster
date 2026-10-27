@@ -252,7 +252,7 @@ pub fn backup_full(
     dirs: &QumaDirs,
     config: &crate::config::Config,
 ) -> Result<i64> {
-    let profiles_src = dirs.profiles_dir()?;
+    let profiles = crate::spt::profile_store::ProfileReader::open(dirs)?;
     let backup_dir = resolve_backup_dir(dirs, config)?;
     let full_dir = backup_dir.join("full");
     std::fs::create_dir_all(&full_dir)?;
@@ -316,21 +316,17 @@ pub fn backup_full(
     std::fs::write(dest.join("manifest.json"), manifest_json)
         .context("failed to write backup manifest")?;
 
-    // 3. Copy profiles
-    if profiles_src.is_dir() {
-        let profiles_dst = dest.join("profiles");
-        std::fs::create_dir_all(&profiles_dst)?;
-        for entry in std::fs::read_dir(&profiles_src)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                let dst = profiles_dst.join(entry.file_name());
-                std::fs::copy(&path, &dst)?;
-                total_size += std::fs::metadata(&path)
-                    .map(|m| m.len() as i64)
-                    .unwrap_or(0);
-            }
-        }
+    // 3. Copy the visible profile union, keeping only one source file open at a time.
+    let profiles_dst = dest.join("profiles");
+    std::fs::create_dir_all(&profiles_dst)?;
+    for name in profiles.candidate_names()? {
+        let Some(mut source) = profiles.read(Path::new(&name))? else {
+            continue;
+        };
+        let mut target = std::fs::File::create(profiles_dst.join(name))?;
+        target.set_permissions(source.metadata()?.permissions())?;
+        total_size += i64::try_from(std::io::copy(&mut source, &mut target)?)
+            .context("profile backup size exceeds supported range")?;
     }
 
     // 4. Copy config
@@ -903,6 +899,84 @@ mod tests {
             )
             .unwrap(),
             b"{\"profile\":true}"
+        );
+    }
+
+    #[test]
+    fn review_regression_full_backup_merges_unmounted_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = Path::new("SPT_Runtime/user/profiles");
+        let base = dirs.spt_server.join(relative);
+        let upper = dirs.runtime_upper().join(relative);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&upper).unwrap();
+        for (name, contents) in [
+            ("base.json", "base"),
+            ("shared.json", "old"),
+            ("deleted.json", "deleted"),
+        ] {
+            std::fs::write(base.join(name), contents).unwrap();
+        }
+        for (name, contents) in [
+            ("upper.json", "upper"),
+            ("shared.json", "new"),
+            (".wh.deleted.json", ""),
+        ] {
+            std::fs::write(upper.join(name), contents).unwrap();
+        }
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let id = backup_full(&db, &dirs, &crate::config::Config::default()).unwrap();
+        let backup = db.get_backup(id).unwrap().unwrap();
+        let saved = dirs.root.join(backup.backup_path).join("profiles");
+        assert_eq!(
+            std::fs::read_to_string(saved.join("base.json")).unwrap(),
+            "base"
+        );
+        assert_eq!(
+            std::fs::read_to_string(saved.join("upper.json")).unwrap(),
+            "upper"
+        );
+        assert_eq!(
+            std::fs::read_to_string(saved.join("shared.json")).unwrap(),
+            "new"
+        );
+        assert!(!saved.join("deleted.json").exists());
+        assert!(!saved.join(".wh.deleted.json").exists());
+    }
+
+    #[test]
+    fn full_profile_restore_writes_upper_and_preserves_base_and_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = Path::new("SPT_Runtime/user/profiles/player.json");
+        let base = dirs.spt_server.join(relative);
+        std::fs::create_dir_all(base.parent().unwrap()).unwrap();
+        std::fs::write(&base, "saved").unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let id = backup_full(&db, &dirs, &crate::config::Config::default()).unwrap();
+        let backup = db.get_backup(id).unwrap().unwrap();
+        let saved = dirs
+            .root
+            .join(backup.backup_path)
+            .join("profiles/player.json");
+        assert_eq!(
+            std::fs::metadata(saved).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::write(&base, "base-after-backup").unwrap();
+        restore_full_backup(&db, &dirs, &crate::config::Config::default(), id).unwrap();
+        assert_eq!(std::fs::read_to_string(&base).unwrap(), "base-after-backup");
+        assert_eq!(
+            std::fs::read_to_string(dirs.runtime_upper().join(relative)).unwrap(),
+            "saved"
+        );
+        let reader = crate::spt::profile_store::ProfileReader::open(&dirs).unwrap();
+        assert_eq!(
+            std::io::read_to_string(reader.read_id("player").unwrap().unwrap()).unwrap(),
+            "saved"
         );
     }
 

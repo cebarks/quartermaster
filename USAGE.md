@@ -144,9 +144,9 @@ quma headless rebuild          # tear down and recreate all client containers an
 quma headless logs 1           # stream client logs
 ```
 
-Headless clients require a matching EFT/SPT client installation in `<quma_dir>/headless/`, Fika to be installed, and a `[headless]` section in your config. The client must also have SPT's launcher-supplied assembly patches applied; downgrading EFT and extracting the SPT archive alone does not complete client preparation. See [Configuration](#headless-clients-1) below. Scaling generates dedicated Fika profiles and restarts the SPT server; schedule it when players are disconnected. First boot allows up to 180 seconds for Fika's config generation, which runs after locale initialization. During scale-down, an unmount failure stops the operation before overlay-directory deletion; the data is preserved even if the container has already been removed.
+Headless clients require a matching EFT/SPT client installation in `<quma_dir>/headless/`, Fika to be installed, and a `[headless]` section in your config. The client must also have SPT's launcher-supplied assembly patches applied; downgrading EFT and extracting the SPT archive alone does not complete client preparation. See [Configuration](#headless-clients-1) below. Scaling generates dedicated Fika profiles and restarts the SPT server; schedule it when players are disconnected. NUMA-driven recreation validates the replacement profile assignment before stopping or removing the existing container. First boot allows up to 180 seconds for Fika's config generation, which runs after locale initialization. During scale-down, an unmount failure stops the operation before overlay-directory deletion; the data is preserved even if the container has already been removed.
 
-Managed headless clients connect through the local HTTPS proxy using their assigned profile IDs. With proxy authentication enabled, Quartermaster verifies a direct loopback connection and the live managed container's labels, configured index, name, running state, and profile assignment. A `headless_` username alone does not grant proxy access. Fika's `GET /fika/headless/client` WebSocket uses HTTP Basic credentials containing the profile ID and an empty password; both Basic and cookie identities on that route must pass the managed-container checks. Basic authentication is not enabled for other game or API routes. Duplicate Authorization headers and conflicting session-cookie values are rejected. EFT's redundant, valid session cookies are accepted only when every value agrees, then collapsed into one canonical Cookie header used for both authentication and HTTP/WebSocket forwarding. Other supported, unambiguous cookie fields are preserved; unrelated cookie ambiguity remains rejected. Player authentication remains enabled, and disabled linked accounts stay blocked.
+Managed headless clients connect through the local HTTPS proxy using their assigned profile IDs. With proxy authentication enabled, Quartermaster verifies a direct loopback connection and the live managed container's labels, configured index, name, running state, and profile assignment. A `headless_` username alone does not grant proxy access. Fika's `GET /fika/headless/client` WebSocket uses HTTP Basic credentials containing the profile ID and an empty password; both Basic and cookie identities on that route must pass the managed-container checks. Basic authentication is not enabled for other game or API routes. Duplicate Authorization headers and conflicting session-cookie values are rejected. EFT's redundant, valid session cookies are accepted only when every value agrees, then collapsed into one canonical Cookie header used for both authentication and HTTP/WebSocket forwarding. Other supported, unambiguous cookie fields are preserved; unrelated cookie ambiguity remains rejected. Player authentication remains enabled, and disabled linked accounts stay blocked. An enabled database link does not prevent a live managed client from being recognized for loopback backend URL rewriting.
 
 SPT's assembly prepatcher runs before session initialization, so the exact read-only `GET /singleplayer/customEnumEntries` route is public bootstrap metadata. Static prestige artwork is also public only for GET requests to `/files/prestige/{id}.png` and `/files/prestige/reward/{small,big}/{id}.png`, with exactly 24 hexadecimal characters in the filename. Other methods, arbitrary files, directory listings, and game/profile routes remain authenticated.
 
@@ -162,6 +162,8 @@ quma restore --latest big-brain  # restore latest backup for a specific mod
 quma restore -f <backup-id>   # skip confirmation
 ```
 
+Full profile backups and profile reads use the visible runtime/mod/base union even when the server overlay is unmounted, preserving overrides, whiteouts, and opaque-directory semantics. Reads do not mount the server or materialize a copy of every profile. Symlinked profile directories (including symlinked ancestors inside an installation layer) are rejected explicitly rather than risking a partial backup; confined individual profile-file aliases remain readable. Profile writes use the writable merged view or runtime upper, rather than the immutable base.
+
 ## Migration
 
 Migrate from the legacy flat directory layout to the new structured layout:
@@ -172,6 +174,8 @@ quma migrate --dry-run         # show migration plan without making changes
 ```
 
 ## Web UI
+
+HTTP compression supports gzip and Brotli. The optional HTTP zstd codec is disabled; archive zstd support remains available through the patched archive dependency.
 
 Start the web dashboard:
 

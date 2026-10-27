@@ -25,6 +25,7 @@ fn build_user_profiles(
     dirs: &QumaDirs,
     profile_stats: &std::collections::HashMap<String, SptProfileStats>,
 ) -> Vec<ProfileStatus> {
+    let profiles = crate::spt::profile_store::ProfileReader::open(dirs).ok();
     users
         .iter()
         .map(|u| {
@@ -37,10 +38,10 @@ fn build_user_profiles(
             match profile_stats.get(profile_id) {
                 Some(stats) => ProfileStatus::Found(stats.clone()),
                 None => {
-                    let exists = dirs
-                        .profiles_dir()
-                        .map(|path| path.join(format!("{}.json", profile_id)).exists())
-                        .unwrap_or(false);
+                    let exists = profiles
+                        .as_ref()
+                        .and_then(|reader| reader.read_id(profile_id).ok().flatten())
+                        .is_some();
                     if exists {
                         ProfileStatus::ParseError
                     } else {
@@ -569,8 +570,9 @@ pub async fn link_profile(
         let aid_check = aid.clone();
         let db_check = state.db.clone();
         let (exists, already_linked) = web::block(move || {
-            let profile_path = dirs_check.profiles_dir()?.join(format!("{aid_check}.json"));
-            let exists = profile_path.exists();
+            let exists = crate::spt::profile_store::ProfileReader::open(&dirs_check)?
+                .read_id(&aid_check)?
+                .is_some();
             let db = db_check.lock();
             let already_linked = db
                 .get_user_by_spt_profile_id(&aid_check)

@@ -160,6 +160,77 @@ impl ScopedDir {
         Ok(true)
     }
 
+    pub(crate) fn require_unaliased_directories(&self, path: &Path) -> Result<()> {
+        validate_relative(path)?;
+        self.verify_identity()?;
+        let mut directory = self.dir.try_clone()?;
+        for component in path.components() {
+            let name = component.as_os_str();
+            match directory.symlink_metadata(name) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    bail!("directory aliases are unsupported for this filesystem view");
+                }
+                Ok(metadata) if metadata.is_dir() => directory = directory.open_dir(name)?,
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        self.verify_identity()
+    }
+
+    pub(crate) fn file_names(&self, path: &Path) -> Result<Vec<std::ffi::OsString>> {
+        let child = self.child(path)?;
+        let names = child
+            .dir
+            .entries()?
+            .map(|entry| Ok(entry?.file_name()))
+            .collect::<Result<_>>()?;
+        self.verify_identity()?;
+        Ok(names)
+    }
+
+    pub(crate) fn read_overlay_file(&self, path: &Path) -> Result<Option<File>> {
+        #[cfg(target_os = "linux")]
+        {
+            use cap_std::fs::MetadataExt;
+            let metadata = self.dir.symlink_metadata(self.resolve(path)?)?;
+            if is_kernel_whiteout(metadata.mode(), metadata.rdev()) {
+                return Ok(None);
+            }
+        }
+        let file = self.read_file(path)?;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            // Native regular-file whiteouts must be empty; restored data is visible.
+            if file.metadata()?.len() != 0 {
+                return Ok(Some(file));
+            }
+            for attr in [
+                c"trusted.overlay.whiteout",
+                c"user.overlay.whiteout",
+                c"user.fuseoverlayfs.whiteout",
+            ] {
+                // SAFETY: live fd/C name; a null zero-length buffer probes attribute presence.
+                let size = unsafe {
+                    libc::fgetxattr(file.as_raw_fd(), attr.as_ptr(), std::ptr::null_mut(), 0)
+                };
+                if size >= 0 {
+                    return Ok(None);
+                }
+                let error = std::io::Error::last_os_error();
+                if !matches!(
+                    error.raw_os_error(),
+                    Some(libc::ENODATA | libc::ENOTSUP | libc::EPERM)
+                ) {
+                    return Err(error.into());
+                }
+            }
+        }
+        Ok(Some(file))
+    }
+
     pub(crate) fn read_file(&self, path: &Path) -> Result<File> {
         let relative = self.resolve(path)?;
         let mut options = OpenOptions::new();
@@ -231,6 +302,11 @@ impl ScopedDir {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn is_kernel_whiteout(mode: u32, device: u64) -> bool {
+    mode & libc::S_IFMT == libc::S_IFCHR && device == 0
+}
+
 fn directory_is_opaque(dir: &Dir) -> Result<bool> {
     match dir.symlink_metadata(".wh..wh..opq") {
         Ok(_) => return Ok(true),
@@ -276,6 +352,14 @@ fn directory_is_opaque(dir: &Dir) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_whiteout_is_only_a_zero_device_character_node() {
+        assert!(is_kernel_whiteout(libc::S_IFCHR | 0o600, 0));
+        assert!(!is_kernel_whiteout(libc::S_IFREG | 0o600, 0));
+        assert!(!is_kernel_whiteout(libc::S_IFCHR | 0o600, 259));
+    }
 
     #[test]
     fn rejects_unsafe_names() {

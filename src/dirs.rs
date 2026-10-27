@@ -233,18 +233,22 @@ impl QumaDirs {
         self.spt_server.join("BepInEx/plugins")
     }
 
+    /// Writable profile target; use ProfileReader for the visible read union.
     pub fn profiles_dir(&self) -> Result<PathBuf> {
+        self.profile_write_dir(!self.legacy && self.spt_overlay().is_mounted()?)
+    }
+
+    fn profile_write_dir(&self, mounted: bool) -> Result<PathBuf> {
         let base = self.server_runtime_dir()?.join("user/profiles");
-        if !self.legacy {
-            let relative = base.strip_prefix(&self.spt_server)?;
-            for root in [self.spt_runtime(), self.runtime_upper()] {
-                let profiles = root.join(relative);
-                if profiles.is_dir() {
-                    return Ok(profiles);
-                }
-            }
+        if self.legacy {
+            return Ok(base);
         }
-        Ok(base)
+        let root = if mounted {
+            self.spt_runtime()
+        } else {
+            self.runtime_upper()
+        };
+        Ok(root.join(base.strip_prefix(&self.spt_server)?))
     }
 
     #[allow(dead_code)] // ponytail: used once spt/detect migrates
@@ -395,7 +399,7 @@ mod tests {
         );
         assert_eq!(
             dirs.profiles_dir().unwrap(),
-            PathBuf::from("/opt/quma/spt-server/SPT_Runtime/user/profiles")
+            PathBuf::from("/opt/quma/overlays/runtime/upper/SPT_Runtime/user/profiles")
         );
         assert_eq!(
             dirs.mod_file_path("SPT/user/mods/test"),
@@ -414,7 +418,7 @@ mod tests {
         std::fs::create_dir_all(dirs.spt_server.join("SPT_Runtime")).unwrap();
         assert_eq!(
             dirs.profiles_dir().unwrap(),
-            dirs.spt_server.join("SPT_Runtime/user/profiles")
+            dirs.runtime_upper().join("SPT_Runtime/user/profiles")
         );
         assert_eq!(
             dirs.core_json().unwrap(),
@@ -456,7 +460,31 @@ mod tests {
     }
 
     #[test]
-    fn profiles_follow_live_and_stopped_server_views() {
+    fn review_regression_unmounted_profile_write_target_is_not_immutable_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        std::fs::create_dir_all(dirs.spt_server.join("SPT_Runtime/user/profiles")).unwrap();
+        assert_eq!(
+            dirs.profiles_dir().unwrap(),
+            dirs.runtime_upper().join("SPT_Runtime/user/profiles")
+        );
+    }
+
+    #[test]
+    fn review_regression_stale_merged_directory_is_not_a_write_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/profiles";
+        std::fs::create_dir_all(dirs.spt_server.join(relative)).unwrap();
+        std::fs::create_dir_all(dirs.spt_runtime().join(relative)).unwrap();
+        assert_eq!(
+            dirs.profiles_dir().unwrap(),
+            dirs.runtime_upper().join(relative)
+        );
+    }
+
+    #[test]
+    fn profile_write_targets_follow_mount_state_not_directory_presence() {
         for runtime in ["SPT_Runtime", "SPT"] {
             let tmp = tempfile::tempdir().unwrap();
             let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
@@ -466,12 +494,28 @@ mod tests {
             let upper = dirs.runtime_upper().join(&relative);
             std::fs::create_dir_all(&merged).unwrap();
             std::fs::create_dir_all(&upper).unwrap();
-            assert_eq!(dirs.profiles_dir().unwrap(), merged);
+            assert_eq!(dirs.profile_write_dir(true).unwrap(), merged);
+            assert_eq!(dirs.profiles_dir().unwrap(), upper);
             std::fs::remove_dir(&merged).unwrap();
             assert_eq!(dirs.profiles_dir().unwrap(), upper);
             std::fs::remove_dir(&upper).unwrap();
-            assert_eq!(dirs.profiles_dir().unwrap(), dirs.spt_server.join(relative));
+            assert_eq!(
+                dirs.profiles_dir().unwrap(),
+                dirs.runtime_upper().join(relative)
+            );
         }
+    }
+
+    #[test]
+    fn mounted_profile_write_target_does_not_require_an_existing_profile_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/profiles";
+        assert_eq!(
+            dirs.profile_write_dir(true).unwrap(),
+            dirs.spt_runtime().join(relative)
+        );
+        assert!(!dirs.spt_runtime().join(relative).exists());
     }
 
     #[test]

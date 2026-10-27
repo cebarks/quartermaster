@@ -22,6 +22,7 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Security
 
+- Disable the optional HTTP zstd codec to remove vulnerable transitive zstd releases, while retaining HTTP gzip/Brotli and patched archive zstd support; add no audit waivers.
 - Reject duplicate Authorization headers and conflicting proxy session cookies. Normalize EFT's agreeing, valid redundant session cookies into one canonical header shared by authentication and HTTP/WebSocket forwarding, so validated and forwarded identities cannot diverge.
 - Accept Fika Headless's profile-ID Basic credentials only on its exact local WebSocket route, requiring live managed-container identity even for linked player accounts; ordinary API routes remain cookie-authenticated.
 - Allow sessionless prestige PNG artwork GETs only for validated 24-hex filenames in the three supported static image paths, without exposing arbitrary files or other methods.
@@ -31,11 +32,11 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Fixed
 
-- Keep authenticated managed headless clients' advertised HTTP and direct backend addresses on explicit loopback ports, so public URL rewriting does not send them back through an external route.
+- Keep authenticated managed headless clients' advertised HTTP and direct backend addresses on explicit loopback ports, including clients with enabled database account links, so public URL rewriting does not send them back through an external route.
 - Allow up to 180 seconds for first-boot Fika config generation after locale initialization, rather than aborting valid cold starts at 60 seconds.
 - Clean up empty, inaccessible internal OverlayFS work directories on rootless retries and teardown without following symlinks; abort teardown before deleting data if unmounting fails.
-- Use the live server overlay for Fika configuration changes and profile discovery, rather than editing backing upper files or reading missing immutable-base profiles.
-- Fail headless provisioning when generated profiles are unavailable instead of assigning player profiles or launching clients with empty authentication tokens.
+- Use the live server overlay for Fika configuration changes. Read the visible runtime/mod/base profile union even while unmounted, preserving overrides, whiteouts and opacity so full backups do not omit lower-only profiles; keep profile writes out of the immutable base.
+- Fail headless provisioning when generated profiles are unavailable instead of assigning player profiles or launching clients with empty authentication tokens. Validate NUMA recreation assignments before stopping or removing an existing client.
 - Mark invitation signup requests as uncompressed JSON so SPT does not try to inflate them as zlib and return an empty registration response.
 - Accept `quma init` as an alias for `setup` and document the required `--quma-dir` option for custom installation paths.
 - Recognize fresh server archives before mutable `user/mods` directories exist, so setup can be rerun on overlay installations. Preserve the recorded container name on rerun unless `--container-name` or `--dev` overrides it.

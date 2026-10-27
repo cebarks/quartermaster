@@ -325,6 +325,29 @@ async fn is_managed_headless_session(
     false
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ProxyIdentityError {
+    Disabled,
+    Unknown,
+}
+
+async fn classify_proxy_identity(
+    linked_disabled: Option<bool>,
+    requires_managed: bool,
+    managed: impl std::future::Future<Output = bool>,
+) -> Result<bool, ProxyIdentityError> {
+    if linked_disabled == Some(true) {
+        return Err(ProxyIdentityError::Disabled);
+    }
+    if managed.await {
+        Ok(true)
+    } else if linked_disabled == Some(false) && !requires_managed {
+        Ok(false)
+    } else {
+        Err(ProxyIdentityError::Unknown)
+    }
+}
+
 pub async fn proxy_handler(
     req: HttpRequest,
     mut payload: web::Payload,
@@ -366,28 +389,21 @@ pub async fn proxy_handler(
             actix_web::error::ErrorInternalServerError("internal error")
         })?;
 
-        match user {
-            Some(u) if u.disabled => {
-                tracing::warn!(
-                    username = %u.username,
-                    path = %req.path(),
-                    "proxy auth: disabled account"
-                );
-                return Err(actix_web::error::ErrorForbidden("account disabled"));
-            }
-            Some(_) if !requires_managed => {}
-            _ => {
-                if !is_managed_headless_session(&req, &state, &session_id).await {
-                    tracing::warn!(
-                        client_ip = %req.connection_info().realip_remote_addr().unwrap_or_default(),
-                        path = %req.path(),
-                        "proxy auth: unknown profile"
-                    );
-                    return Err(actix_web::error::ErrorUnauthorized("unknown profile"));
+        managed_headless = classify_proxy_identity(
+            user.as_ref().map(|user| user.disabled), requires_managed,
+            is_managed_headless_session(&req, &state, &session_id),
+        ).await.map_err(|error| match error {
+            ProxyIdentityError::Disabled => {
+                if let Some(user) = &user {
+                    tracing::warn!(username = %user.username, path = %req.path(), "proxy auth: disabled account");
                 }
-                managed_headless = true;
+                actix_web::error::ErrorForbidden("account disabled")
             }
-        }
+            ProxyIdentityError::Unknown => {
+                tracing::warn!(client_ip = %req.connection_info().realip_remote_addr().unwrap_or_default(), path = %req.path(), "proxy auth: unknown profile");
+                actix_web::error::ErrorUnauthorized("unknown profile")
+            }
+        })?;
     }
 
     // Detect WebSocket upgrade and delegate to the WS proxy handler
@@ -1284,6 +1300,56 @@ mod tests {
             ),
             "public.example:6969"
         );
+    }
+
+    #[actix_web::test]
+    async fn review_regression_linked_managed_identity_keeps_loopback_rewrites() {
+        use crate::client::converge::{MANAGED_BY_LABEL, MANAGED_BY_VALUE};
+        use actix_web::test::TestRequest;
+        let session = "000000000000000000000001";
+        let container: bollard::models::ContainerInspectResponse = serde_json::from_value(serde_json::json!({
+            "Name":"/fika-headless-1", "State":{"Running":true},
+            "Config":{"Labels":{(MANAGED_BY_LABEL):MANAGED_BY_VALUE,"quma.client.index":"1"},"Env":[format!("PROFILE_ID={session}")]}
+        })).unwrap();
+        let request = TestRequest::get()
+            .uri("/client/game/config")
+            .peer_addr("127.0.0.1:12345".parse().unwrap())
+            .insert_header(("cookie", format!("PHPSESSID={session}")))
+            .to_http_request();
+        let (_, requires_managed) = proxy_session_credentials(&request).unwrap();
+        let checked = std::cell::Cell::new(false);
+        let managed = classify_proxy_identity(Some(false), requires_managed, async {
+            checked.set(true);
+            is_direct_local_peer(&request)
+                && managed_headless_profile_matches(&container, session, 2)
+        })
+        .await
+        .unwrap();
+        assert!(
+            checked.get(),
+            "enabled DB links must not skip live managed classification"
+        );
+        for (target, expected) in [
+            (BackendRewriteTarget::HttpProxy, "127.0.0.1:9190"),
+            (BackendRewriteTarget::DirectTcp, "127.0.0.1:6969"),
+        ] {
+            assert_eq!(
+                backend_rewrite_authority(&target, "https://public.example", 6969, 9190, managed),
+                expected
+            );
+        }
+    }
+
+    #[actix_web::test]
+    async fn disabled_identity_is_rejected_before_managed_lookup() {
+        let checked = std::cell::Cell::new(false);
+        let result = classify_proxy_identity(Some(true), false, async {
+            checked.set(true);
+            true
+        })
+        .await;
+        assert_eq!(result, Err(ProxyIdentityError::Disabled));
+        assert!(!checked.get());
     }
 
     #[test]

@@ -3,6 +3,7 @@ pub mod game_data;
 pub mod headless;
 pub mod layout;
 pub mod mods;
+pub(crate) mod profile_store;
 pub mod profiles;
 pub mod releases;
 pub(crate) mod scoped;
