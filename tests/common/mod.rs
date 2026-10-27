@@ -23,6 +23,7 @@ pub struct TestAppBuilder {
     external_url: Option<String>,
     mock_server: Option<wiremock::MockServer>,
     api_token: Option<String>,
+    proxy_auth: bool,
 }
 
 impl TestAppBuilder {
@@ -34,6 +35,7 @@ impl TestAppBuilder {
             external_url: None,
             mock_server: None,
             api_token: None,
+            proxy_auth: false,
         }
     }
 
@@ -73,6 +75,12 @@ impl TestAppBuilder {
     /// Set an API token for X-Quma-Token auth testing.
     pub fn with_api_token(mut self, token: &str) -> Self {
         self.api_token = Some(token.to_string());
+        self
+    }
+
+    /// Enable proxy authentication with a deliberately unreachable test upstream.
+    pub fn with_proxy_auth(mut self) -> Self {
+        self.proxy_auth = true;
         self
     }
 
@@ -146,7 +154,9 @@ impl TestAppBuilder {
         let config = Config {
             session_secret: "test-session-secret-at-least-48-chars-long-abcdefgh".to_string(),
             tls_enabled: false,
-            proxy_enabled: false,
+            proxy_enabled: self.proxy_auth,
+            proxy_auth: true,
+            server_port: self.proxy_auth.then_some(1),
             external_url: self.external_url.clone(),
             ..Config::default()
         };
@@ -210,7 +220,7 @@ impl TestAppBuilder {
             proxy_metrics: ProxyMetrics::new(),
             proxy_client,
             mod_zip_cache: spt_quartermaster::web::mod_zip_cache::ModZipCache::new(
-                spt_dir.clone(),
+                spt_quartermaster::dirs::QumaDirs::from_legacy(spt_dir.clone()),
                 db_arc.clone(),
                 config_arc.clone(),
             ),

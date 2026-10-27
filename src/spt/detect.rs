@@ -37,12 +37,9 @@ struct DepsJson {
 /// Uses `SPT.Server.deps.json` (platform-agnostic, already parsed by
 /// `read_spt_version`) instead of `SPT.Server.exe` which doesn't exist on
 /// Linux dedicated servers. `BepInEx/plugins` is a client-side path that
-/// may not exist on a headless/dedicated server.
-const REQUIRED_PATHS: &[&str] = &[
-    "SPT.Server.deps.json",
-    "SPT_Data/configs/core.json",
-    "user/mods",
-];
+/// may not exist on a headless/dedicated server. Generated `user/` directories
+/// may exist only in the writable overlay, not the freshly extracted base.
+const REQUIRED_PATHS: &[&str] = &["SPT.Server.deps.json", "SPT_Data/configs/core.json"];
 
 /// Validate that `path` contains the expected SPT server directory structure.
 pub fn validate_spt_dir(path: &Path) -> Result<()> {
@@ -172,6 +169,20 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let spt = create_fake_spt_dir(tmp.path());
         assert!(validate_spt_dir(&spt).is_ok());
+    }
+
+    #[test]
+    fn fresh_server_without_generated_user_directory_is_valid() {
+        for runtime in ["SPT", "SPT_Runtime"] {
+            let tmp = TempDir::new().unwrap();
+            create_fake_spt_dir(tmp.path());
+            if runtime != "SPT" {
+                std::fs::rename(tmp.path().join("SPT"), tmp.path().join(runtime)).unwrap();
+            }
+            std::fs::remove_dir_all(tmp.path().join(runtime).join("user")).unwrap();
+            validate_spt_dir(tmp.path())
+                .expect("fresh server archives need no generated user/mods");
+        }
     }
 
     #[test]

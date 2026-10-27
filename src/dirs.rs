@@ -234,7 +234,17 @@ impl QumaDirs {
     }
 
     pub fn profiles_dir(&self) -> Result<PathBuf> {
-        Ok(self.server_runtime_dir()?.join("user/profiles"))
+        let base = self.server_runtime_dir()?.join("user/profiles");
+        if !self.legacy {
+            let relative = base.strip_prefix(&self.spt_server)?;
+            for root in [self.spt_runtime(), self.runtime_upper()] {
+                let profiles = root.join(relative);
+                if profiles.is_dir() {
+                    return Ok(profiles);
+                }
+            }
+        }
+        Ok(base)
     }
 
     #[allow(dead_code)] // ponytail: used once spt/detect migrates
@@ -253,9 +263,16 @@ impl QumaDirs {
 
     #[allow(dead_code)] // ponytail: callers currently use fika::config::fika_config_path
     pub fn fika_config(&self) -> Result<PathBuf> {
-        Ok(self.resolve_mod_file(
-            &self.server_mod_relative_path("fika-server/assets/configs/fika.jsonc")?,
-        ))
+        let relative = self.server_mod_relative_path("fika-server/assets/configs/fika.jsonc")?;
+        if !self.legacy {
+            let merged = self.spt_runtime().join(&relative);
+            if merged.is_file() {
+                // Writes to an active overlay must go through its merged view, not
+                // replace backing upper inodes behind the overlay filesystem.
+                return Ok(merged);
+            }
+        }
+        Ok(self.resolve_mod_file(&relative))
     }
 
     // -- Overlay paths --
@@ -415,6 +432,46 @@ mod tests {
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
         std::fs::write(&config_path, "{}").unwrap();
         assert_eq!(dirs.fika_config().unwrap(), config_path);
+    }
+
+    #[test]
+    fn live_fika_config_uses_merged_view_not_backing_upper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/mods/fika-server/assets/configs/fika.jsonc";
+        for root in [dirs.spt_runtime(), dirs.runtime_upper(), dirs.mod_overlay()] {
+            let config = root.join(relative);
+            std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+            std::fs::write(config, "{}").unwrap();
+        }
+        assert_eq!(
+            dirs.fika_config().unwrap(),
+            dirs.spt_runtime().join(relative)
+        );
+        std::fs::remove_file(dirs.spt_runtime().join(relative)).unwrap();
+        assert_eq!(
+            dirs.fika_config().unwrap(),
+            dirs.runtime_upper().join(relative)
+        );
+    }
+
+    #[test]
+    fn profiles_follow_live_and_stopped_server_views() {
+        for runtime in ["SPT_Runtime", "SPT"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+            std::fs::create_dir_all(dirs.spt_server.join(runtime)).unwrap();
+            let relative = format!("{runtime}/user/profiles");
+            let merged = dirs.spt_runtime().join(&relative);
+            let upper = dirs.runtime_upper().join(&relative);
+            std::fs::create_dir_all(&merged).unwrap();
+            std::fs::create_dir_all(&upper).unwrap();
+            assert_eq!(dirs.profiles_dir().unwrap(), merged);
+            std::fs::remove_dir(&merged).unwrap();
+            assert_eq!(dirs.profiles_dir().unwrap(), upper);
+            std::fs::remove_dir(&upper).unwrap();
+            assert_eq!(dirs.profiles_dir().unwrap(), dirs.spt_server.join(relative));
+        }
     }
 
     #[test]

@@ -9,6 +9,7 @@ Bootstrap Quartermaster for your SPT server:
 ```bash
 quma setup                          # interactive — prompts for everything
 quma setup --quma-dir /path/to/dir  # explicit data directory
+quma init --quma-dir /path/to/dir   # equivalent alias
 ```
 
 This creates the data directory layout, pulls the SPT server container image, downloads the selected SPT version, sets up an admin account, and optionally installs Fika.
@@ -18,7 +19,7 @@ Setup flags for non-interactive use:
 ```bash
 quma setup --quma-dir /path/to/dir \
   --admin-password "yourpassword" \
-  --spt-version "3.10.5" \
+  --spt-version "latest" \
   --no-fika                        # skip Fika installation
 ```
 
@@ -28,6 +29,17 @@ Additional setup options:
 |------|---------|
 | `--dev` | Use a separate container name for development |
 | `--container-name <NAME>` | Override the container name (useful for parallel environments) |
+
+Without an explicit container name or `--dev`, rerunning setup retains the container recorded in the installation's configuration. Fresh installations default to `spt-server`.
+
+For a custom directory, include it in subsequent commands (or set `QUMA_DIR`):
+
+```bash
+quma --quma-dir /path/to/dir serve
+quma --quma-dir /path/to/dir server start
+```
+
+The default login URL is `https://<server-host>:9190/quma/login`. TLS is enabled by default with a self-signed certificate. If the default `spt-server` container already belongs to another installation, choose a distinct `--container-name` rather than deleting it.
 
 ## Managing Mods
 
@@ -132,7 +144,11 @@ quma headless rebuild          # tear down and recreate all client containers an
 quma headless logs 1           # stream client logs
 ```
 
-Headless clients require Fika to be installed and a `[headless]` section in your config. See [Configuration](#headless-clients-1) below.
+Headless clients require a matching EFT/SPT client installation in `<quma_dir>/headless/`, Fika to be installed, and a `[headless]` section in your config. The client must also have SPT's launcher-supplied assembly patches applied; downgrading EFT and extracting the SPT archive alone does not complete client preparation. See [Configuration](#headless-clients-1) below. Scaling generates dedicated Fika profiles and restarts the SPT server; schedule it when players are disconnected. First boot allows up to 180 seconds for Fika's config generation, which runs after locale initialization. During scale-down, an unmount failure stops the operation before overlay-directory deletion; the data is preserved even if the container has already been removed.
+
+Managed headless clients connect through the local HTTPS proxy using their assigned profile IDs. With proxy authentication enabled, Quartermaster verifies a direct loopback connection and the live managed container's labels, configured index, name, running state, and profile assignment. A `headless_` username alone does not grant proxy access. Fika's `GET /fika/headless/client` WebSocket uses HTTP Basic credentials containing the profile ID and an empty password; both Basic and cookie identities on that route must pass the managed-container checks. Basic authentication is not enabled for other game or API routes. Duplicate Authorization headers and conflicting session-cookie values are rejected. EFT's redundant, valid session cookies are accepted only when every value agrees, then collapsed into one canonical Cookie header used for both authentication and HTTP/WebSocket forwarding. Other supported, unambiguous cookie fields are preserved; unrelated cookie ambiguity remains rejected. Player authentication remains enabled, and disabled linked accounts stay blocked.
+
+SPT's assembly prepatcher runs before session initialization, so the exact read-only `GET /singleplayer/customEnumEntries` route is public bootstrap metadata. Static prestige artwork is also public only for GET requests to `/files/prestige/{id}.png` and `/files/prestige/reward/{small,big}/{id}.png`, with exactly 24 hexadecimal characters in the filename. Other methods, arbitrary files, directory listings, and game/profile routes remain authenticated.
 
 ## Backups
 
@@ -316,7 +332,7 @@ numa_auto = false              # round-robin clients across NUMA nodes
 
 ### Setup ZIP
 
-Controls what gets included in the client setup ZIP available on the join page:
+Controls what gets included in the client setup ZIP available on the join page. Files are read from the runtime upper layer, installed mod overlay, then base installation, in that priority order. The server does not need to be running or its overlay mounted to build the ZIP:
 
 ```toml
 [setup_zip]

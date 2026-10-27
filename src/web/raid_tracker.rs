@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use actix_web::web::Bytes;
-use actix_web::HttpRequest;
 use flate2::read::ZlibDecoder;
 use serde::{Deserialize, Serialize};
 
@@ -64,8 +63,10 @@ pub struct ProfileSnapshot {
 // ── Helper Functions ──────────────────────────────────────────────
 
 /// Extract PHPSESSID from Cookie header by splitting on `;`, trimming, and finding entry starting with `PHPSESSID=`
-pub fn extract_session_id(req: &HttpRequest) -> Option<String> {
-    let cookie_header = req.headers().get("cookie")?.to_str().ok()?;
+pub(crate) fn extract_session_id_from_headers(
+    headers: &actix_web::http::header::HeaderMap,
+) -> Option<String> {
+    let cookie_header = headers.get("cookie")?.to_str().ok()?;
     for entry in cookie_header.split(';') {
         let trimmed = entry.trim();
         if let Some(value) = trimmed.strip_prefix("PHPSESSID=") {
@@ -74,7 +75,10 @@ pub fn extract_session_id(req: &HttpRequest) -> Option<String> {
             if value.len() == 24 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Some(value.to_string());
             }
-            tracing::warn!(value, "rejected invalid PHPSESSID cookie value");
+            tracing::warn!(
+                value_len = value.len(),
+                "rejected invalid PHPSESSID cookie value"
+            );
             return None;
         }
     }
@@ -362,6 +366,11 @@ pub fn handle_raid_end(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::HttpRequest;
+
+    fn extract_session_id(req: &HttpRequest) -> Option<String> {
+        extract_session_id_from_headers(req.headers())
+    }
     use actix_web::test::TestRequest;
 
     fn req_with_session(value: &str) -> HttpRequest {

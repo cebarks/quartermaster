@@ -62,13 +62,7 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
         }
         None => prompt_admin_password()?,
     };
-    let container_name = if let Some(name) = args.container_name {
-        name
-    } else if args.dev {
-        DEV_CONTAINER_NAME.to_string()
-    } else {
-        DEFAULT_CONTAINER_NAME.to_string()
-    };
+    let container_name = resolve_container_name(args.container_name, args.dev, &data_dir)?;
 
     let params = ResolvedSetup {
         data_dir,
@@ -91,6 +85,19 @@ pub async fn run(args: SetupArgs, cli: &Cli) -> Result<()> {
             wrap_existing(&mgr, params, dir_state, cli).await
         }
     }
+}
+
+fn resolve_container_name(explicit: Option<String>, dev: bool, data_dir: &Path) -> Result<String> {
+    if let Some(name) = explicit {
+        return Ok(name);
+    }
+    if dev {
+        return Ok(DEV_CONTAINER_NAME.to_string());
+    }
+    let config = Config::load(&data_dir.join("quartermaster.toml"))?;
+    Ok(config
+        .server_container
+        .unwrap_or_else(|| DEFAULT_CONTAINER_NAME.to_string()))
 }
 
 struct ResolvedSetup {
@@ -473,16 +480,37 @@ fn print_summary(config: &Config, data_dir: &Path, install_fika: bool) {
             "disabled"
         }
     );
-    println!("Web UI: http://{}:{}", config.web_bind, config.web_port);
+    println!("Web UI: {}", setup_web_url(config));
     println!("Admin user: admin");
     println!("\nNext steps:");
-    println!("  quma serve              Start the web UI");
-    println!("  quma server start       Start the SPT server");
-    println!("  quma invite             Generate invite codes for players");
+    println!("  {}  Start the web UI", setup_command(data_dir, "serve"));
+    println!(
+        "  {}  Start the SPT server",
+        setup_command(data_dir, "server start")
+    );
+    println!(
+        "  {}  Generate invite codes for players",
+        setup_command(data_dir, "invite")
+    );
     println!("\nNetwork requirements (for multiplayer):");
     println!("  TCP 6969 inbound        SPT server");
     println!("  UDP 25565 inbound       Fika P2P raids (whoever hosts)");
     println!("  Consider UPnP or VPN as alternatives to port forwarding.");
+}
+
+fn setup_web_url(config: &Config) -> String {
+    let scheme = if config.tls_enabled { "https" } else { "http" };
+    let host = match config.web_bind.as_str() {
+        "0.0.0.0" | "::" => "localhost".to_string(),
+        host if host.contains(':') && !host.starts_with('[') => format!("[{host}]"),
+        host => host.to_string(),
+    };
+    format!("{scheme}://{host}:{}/quma/login", config.web_port)
+}
+
+fn setup_command(data_dir: &Path, command: &str) -> String {
+    let path = data_dir.to_string_lossy().replace('\'', "'\\''");
+    format!("quma --quma-dir '{path}' {command}")
 }
 
 // --- Path A: Bootstrap ---
@@ -683,6 +711,69 @@ async fn detect_or_create_container(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup_url_uses_configured_transport_and_login_route() {
+        let mut config = Config::default();
+        assert_eq!(setup_web_url(&config), "https://localhost:9190/quma/login");
+        config.tls_enabled = false;
+        config.web_bind = "192.0.2.1".to_string();
+        config.web_port = 8181;
+        assert_eq!(setup_web_url(&config), "http://192.0.2.1:8181/quma/login");
+        config.web_bind = "::".to_string();
+        assert_eq!(setup_web_url(&config), "http://localhost:8181/quma/login");
+        config.web_bind = "::1".to_string();
+        assert_eq!(setup_web_url(&config), "http://[::1]:8181/quma/login");
+    }
+
+    #[test]
+    fn setup_next_steps_preserve_and_quote_custom_directory() {
+        let path = Path::new("/mnt/services/SPT user's $HOME");
+        for action in ["serve", "server start", "invite"] {
+            let command = setup_command(path, action);
+            let output = std::process::Command::new("sh")
+                .args(["-c", &format!("set -- {command}; printf '%s' \"$3\"")])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                path.to_str().unwrap()
+            );
+            assert!(command.ends_with(action));
+        }
+    }
+
+    #[test]
+    fn setup_container_selection_preserves_existing_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            resolve_container_name(None, false, tmp.path()).unwrap(),
+            "spt-server"
+        );
+        let mut config = Config::default();
+        config.server_container = Some("sptd".to_string());
+        config.save(&tmp.path().join("quartermaster.toml")).unwrap();
+        assert_eq!(
+            resolve_container_name(None, false, tmp.path()).unwrap(),
+            "sptd"
+        );
+        assert_eq!(
+            resolve_container_name(None, true, tmp.path()).unwrap(),
+            "spt-server-dev"
+        );
+        assert_eq!(
+            resolve_container_name(Some("explicit".into()), true, tmp.path()).unwrap(),
+            "explicit"
+        );
+    }
+
+    #[test]
+    fn setup_container_selection_reports_invalid_existing_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("quartermaster.toml"), "not valid TOML").unwrap();
+        assert!(resolve_container_name(None, false, tmp.path()).is_err());
+    }
 
     #[test]
     fn classify_empty_dir() {

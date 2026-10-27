@@ -66,6 +66,8 @@ pub struct FikaConfig {
     #[serde(rename = "natPunchServer")]
     pub nat_punch_server: FikaNatPunchConfig,
     pub headless: FikaHeadlessConfig,
+    // Removed in Fika 2.4; retain support for older server configs.
+    #[serde(default)]
     pub background: FikaBackgroundConfig,
 }
 
@@ -126,6 +128,7 @@ pub struct FikaServerConfig {
     pub item_sending_storage_time: u32,
     #[serde(rename = "sentItemsLoseFIR")]
     pub sent_items_lose_fir: bool,
+    #[serde(default)]
     pub launcher_list_all_profiles: bool,
     pub session_timeout: u32,
     pub show_dev_profile: bool,
@@ -192,7 +195,7 @@ pub struct FikaHeadlessScriptsConfig {
     pub force_ip: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct FikaBackgroundConfig {
     pub enable: bool,
 }
@@ -268,6 +271,40 @@ mod tests {
         assert_eq!(config.nat_punch_server.port, 6790);
         assert!(config.background.enable);
         assert_eq!(config.client.revive_config.max_revives, 3);
+    }
+
+    #[test]
+    fn current_fika_config_without_removed_settings_parses() {
+        let mut value = jsonc_parser::parse_to_serde_value(SAMPLE_FIKA_JSONC, &Default::default())
+            .unwrap()
+            .unwrap();
+        value.as_object_mut().unwrap().remove("background");
+        value["server"]
+            .as_object_mut()
+            .unwrap()
+            .remove("launcherListAllProfiles");
+        let config = parse_fika_jsonc(&value.to_string()).expect("Fika 2.4.2 config should parse");
+        assert_eq!(config.server.api_key, "test-api-key-123");
+        assert_eq!(config.headless.profiles.amount, 2);
+        assert!(!config.background.enable);
+        assert!(!config.server.launcher_list_all_profiles);
+    }
+
+    #[test]
+    fn generated_fika_2_4_2_config_parses() {
+        let config =
+            parse_fika_jsonc(include_str!("../../tests/fixtures/fika-2.4.2.jsonc")).unwrap();
+        assert_eq!(config.server.webhook.name, "Fika Server");
+        assert!(config.client.friendly_fire);
+        assert_eq!(config.headless.profiles.amount, 0);
+        assert_eq!(config.client.revive_config.max_revives, 0);
+    }
+
+    #[test]
+    fn legacy_fika_settings_are_preserved() {
+        let config = parse_fika_jsonc(SAMPLE_FIKA_JSONC).unwrap();
+        assert!(config.background.enable);
+        assert!(config.server.launcher_list_all_profiles);
     }
 
     #[test]

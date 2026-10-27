@@ -132,6 +132,34 @@ impl ScopedDir {
         Ok(child)
     }
 
+    /// After a missing read, distinguish absent entries from overlay shadows.
+    /// Inspect each ancestor without following links, using bound directory handles.
+    pub(crate) fn blocks_lower_layer(&self, path: &Path) -> Result<bool> {
+        validate_relative(path)?;
+        self.verify_identity()?;
+        let mut dir = self.dir.try_clone()?;
+        for component in path.components() {
+            if directory_is_opaque(&dir)? {
+                return Ok(true);
+            }
+            let name = component.as_os_str();
+            let mut whiteout = std::ffi::OsString::from(".wh.");
+            whiteout.push(name);
+            match dir.symlink_metadata(&whiteout) {
+                Ok(_) => return Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+            match dir.symlink_metadata(name) {
+                Ok(metadata) if metadata.is_dir() => dir = dir.open_dir(name)?,
+                Ok(_) => return Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(true)
+    }
+
     pub(crate) fn read_file(&self, path: &Path) -> Result<File> {
         let relative = self.resolve(path)?;
         let mut options = OpenOptions::new();
@@ -201,6 +229,48 @@ impl ScopedDir {
         file.set_len(0)?;
         Ok(file.into_std())
     }
+}
+
+fn directory_is_opaque(dir: &Dir) -> Result<bool> {
+    match dir.symlink_metadata(".wh..wh..opq") {
+        Ok(_) => return Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let directory = dir.open(".")?;
+        for attr in [
+            c"trusted.overlay.opaque",
+            c"user.overlay.opaque",
+            c"user.fuseoverlayfs.opaque",
+        ] {
+            let mut value = [0u8; 16];
+            // SAFETY: the live directory fd, C string and writable buffer are valid for this call.
+            let size = unsafe {
+                libc::fgetxattr(
+                    directory.as_raw_fd(),
+                    attr.as_ptr(),
+                    value.as_mut_ptr().cast(),
+                    value.len(),
+                )
+            };
+            if size > 0 && value[0] == b'y' {
+                return Ok(true);
+            }
+            if size < 0 {
+                let error = std::io::Error::last_os_error();
+                if !matches!(
+                    error.raw_os_error(),
+                    Some(libc::ENODATA | libc::ENOTSUP | libc::EPERM)
+                ) {
+                    return Err(error.into());
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]

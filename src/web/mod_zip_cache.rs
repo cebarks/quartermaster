@@ -12,6 +12,8 @@ use zip::ZipWriter;
 use crate::config::{Config, SetupZipConfig};
 use crate::db::mods::InstalledFile;
 use crate::db::Database;
+use crate::dirs::QumaDirs;
+use crate::spt::scoped::ScopedDir;
 
 const NON_ESSENTIAL_NAMES: &[&str] = &[
     "readme",
@@ -112,15 +114,32 @@ fn build_globset(patterns: &[String]) -> Option<globset::GlobSet> {
     builder.build().ok()
 }
 
-/// Write a ZIP archive of mod files directly to disk (no in-memory buffer).
-/// When `client_only` is true, both complete server runtime trees are excluded.
+/// Write a ZIP archive directly to disk, reading runtime, mod, then base layers.
+/// Works without a mounted overlay. When `client_only` is true, both complete
+/// server runtime trees (including aliases to them) are excluded.
 pub fn build_mod_zip_to_file(
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     files: &[InstalledFile],
     dest: &Path,
     client_only: bool,
 ) -> anyhow::Result<()> {
-    let scope = crate::spt::scoped::ScopedDir::open(spt_dir)?;
+    let roots = if dirs.is_legacy() {
+        vec![dirs.spt_server.clone()]
+    } else {
+        vec![
+            dirs.runtime_upper(),
+            dirs.mod_overlay(),
+            dirs.spt_server.clone(),
+        ]
+    };
+    let mut scopes = Vec::new();
+    for root in roots {
+        match ScopedDir::open(&root) {
+            Ok(scope) => scopes.push(scope),
+            Err(e) if is_not_found(&e) => continue,
+            Err(e) => return Err(e),
+        }
+    }
     let file = BufWriter::new(File::create(dest)?);
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -137,11 +156,7 @@ pub fn build_mod_zip_to_file(
         if client_only && crate::spt::layout::is_server_path(&archive_name) {
             continue;
         }
-        let source = if client_only {
-            scope.read_client_file(&relative)
-        } else {
-            scope.read_file(&relative)
-        };
+        let source = read_zip_source(&scopes, &relative, client_only);
         match source {
             Ok(mut source) => {
                 zip.start_file(archive_name.as_ref(), options)?;
@@ -157,8 +172,33 @@ pub fn build_mod_zip_to_file(
     Ok(())
 }
 
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+}
+
+fn read_zip_source(
+    scopes: &[ScopedDir],
+    relative: &Path,
+    client_only: bool,
+) -> anyhow::Result<File> {
+    for scope in scopes {
+        let result = if client_only {
+            scope.read_client_file(relative)
+        } else {
+            scope.read_file(relative)
+        };
+        match result {
+            Err(e) if is_not_found(&e) && !scope.blocks_lower_layer(relative)? => continue,
+            result => return result,
+        }
+    }
+    anyhow::bail!("mod ZIP source does not exist in any installation layer")
+}
+
 struct Inner {
-    spt_dir: PathBuf,
+    dirs: QumaDirs,
     db: Arc<Mutex<Database>>,
     config: Arc<parking_lot::RwLock<Config>>,
     cache_path: PathBuf,
@@ -174,18 +214,18 @@ pub struct ModZipCache {
 
 impl ModZipCache {
     pub fn new(
-        spt_dir: PathBuf,
+        dirs: QumaDirs,
         db: Arc<Mutex<Database>>,
         config: Arc<parking_lot::RwLock<Config>>,
     ) -> Self {
-        let cache_dir = spt_dir.join("quartermaster-cache");
+        let cache_dir = dirs.spt_server.join("quartermaster-cache");
         let _ = std::fs::create_dir_all(&cache_dir);
 
         Self {
             inner: Arc::new(Inner {
                 cache_path: cache_dir.join("all-mods.zip"),
                 tmp_path: cache_dir.join("all-mods.zip.tmp"),
-                spt_dir,
+                dirs,
                 db,
                 config,
                 rebuilding: AtomicBool::new(false),
@@ -281,7 +321,7 @@ impl ModZipCache {
             return Ok(());
         }
 
-        build_mod_zip_to_file(&self.inner.spt_dir, &files, &self.inner.tmp_path, false)?;
+        build_mod_zip_to_file(&self.inner.dirs, &files, &self.inner.tmp_path, false)?;
         std::fs::rename(&self.inner.tmp_path, &self.inner.cache_path)?;
 
         tracing::debug!(
@@ -350,7 +390,13 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].file_path, "BepInEx/plugins/Client.dll");
         let out = tmp.path().join("client.zip");
-        build_mod_zip_to_file(tmp.path(), &files, &out, true).unwrap();
+        build_mod_zip_to_file(
+            &QumaDirs::from_legacy(tmp.path().to_path_buf()),
+            &files,
+            &out,
+            true,
+        )
+        .unwrap();
         let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
         assert_eq!(zip.len(), 1);
         assert_eq!(
@@ -415,7 +461,13 @@ mod tests {
             .chain(["BepInEx/plugins/Absolute.dll"]);
         let files: Vec<_> = names.map(|name| test_file(1, name)).collect();
         let out = tmp.path().join("client.zip");
-        build_mod_zip_to_file(tmp.path(), &files, &out, true).unwrap();
+        build_mod_zip_to_file(
+            &QumaDirs::from_legacy(tmp.path().to_path_buf()),
+            &files,
+            &out,
+            true,
+        )
+        .unwrap();
         let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
         assert_eq!(
             zip.file_names()
@@ -453,7 +505,13 @@ mod tests {
         let files = vec![test_file(1, "SPT/user/mods/test/package.json")];
 
         let out = spt_dir.path().join("out.zip");
-        build_mod_zip_to_file(spt_dir.path(), &files, &out, false).unwrap();
+        build_mod_zip_to_file(
+            &QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            &files,
+            &out,
+            false,
+        )
+        .unwrap();
 
         assert!(out.exists());
         let data = std::fs::read(&out).unwrap();
@@ -467,7 +525,13 @@ mod tests {
         let files = vec![test_file(1, "SPT/user/mods/ghost/package.json")];
 
         let out = spt_dir.path().join("out.zip");
-        build_mod_zip_to_file(spt_dir.path(), &files, &out, false).unwrap();
+        build_mod_zip_to_file(
+            &QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            &files,
+            &out,
+            false,
+        )
+        .unwrap();
 
         let data = std::fs::read(&out).unwrap();
         let reader = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();
@@ -475,11 +539,158 @@ mod tests {
     }
 
     #[test]
+    fn cache_reads_overlay_layers_without_a_mounted_server() {
+        use std::io::Read;
+        let root = tempfile::tempdir().unwrap();
+        let dirs = crate::dirs::QumaDirs::from_root(root.path().to_path_buf());
+        make_test_file(&dirs.spt_server, "BepInEx/plugins/base.dll", b"base");
+        make_test_file(&dirs.spt_server, "BepInEx/plugins/override.dll", b"old");
+        make_test_file(&dirs.mod_overlay(), "BepInEx/plugins/override.dll", b"mod");
+        make_test_file(&dirs.mod_overlay(), "BepInEx/plugins/Fika.dll", b"fika");
+        make_test_file(
+            &dirs.runtime_upper(),
+            "BepInEx/plugins/override.dll",
+            b"runtime",
+        );
+        let db = Database::open_in_memory().unwrap();
+        db.insert_mod(Some(1), Some(1), "Fika", None, "2.4.6", "forge", None, None)
+            .unwrap();
+        for name in ["base.dll", "override.dll", "Fika.dll"] {
+            db.insert_file(1, &format!("BepInEx/plugins/{name}"), None, None)
+                .unwrap();
+        }
+        let cache = ModZipCache::new(dirs.clone(), Arc::new(Mutex::new(db)), test_config());
+        cache.rebuild_sync();
+        let mut zip = zip::ZipArchive::new(File::open(cache.get().unwrap()).unwrap()).unwrap();
+        assert_eq!(
+            zip.len(),
+            3,
+            "the client download must include installed overlay files"
+        );
+        for (name, expected) in [
+            ("base.dll", "base"),
+            ("override.dll", "runtime"),
+            ("Fika.dll", "fika"),
+        ] {
+            let mut content = String::new();
+            zip.by_name(&format!("BepInEx/plugins/{name}"))
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+            assert_eq!(content, expected);
+        }
+        assert!(
+            !dirs.spt_runtime().exists(),
+            "export must not require a FUSE mount"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn layered_zip_rejects_unsafe_shadow_without_falling_back() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"secret").unwrap();
+        let dirs = QumaDirs::from_root(root.path().to_path_buf());
+        let name = "BepInEx/plugins/shadow.dll";
+        make_test_file(&dirs.spt_server, name, b"base");
+        let shadow = dirs.mod_overlay().join(name);
+        std::fs::create_dir_all(shadow.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(outside.path(), &shadow).unwrap();
+        let dest = root.path().join("out.zip");
+        build_mod_zip_to_file(&dirs, &[test_file(1, name)], &dest, false).unwrap();
+        let zip = zip::ZipArchive::new(File::open(dest).unwrap()).unwrap();
+        assert!(
+            zip.is_empty(),
+            "unsafe higher layers must not expose outside or stale base files"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn layered_zip_preserves_missing_shadow_entries() {
+        for shadow_kind in ["dangling-file", "dangling-directory", "whiteout", "opaque"] {
+            let root = tempfile::tempdir().unwrap();
+            let dirs = QumaDirs::from_root(root.path().to_path_buf());
+            let name = "BepInEx/plugins/Test.dll";
+            make_test_file(&dirs.spt_server, name, b"stale base");
+            let upper = dirs.runtime_upper();
+            std::fs::create_dir_all(upper.join("BepInEx")).unwrap();
+            if shadow_kind == "dangling-directory" {
+                std::os::unix::fs::symlink("missing-directory", upper.join("BepInEx/plugins"))
+                    .unwrap();
+            } else {
+                std::fs::create_dir_all(upper.join("BepInEx/plugins")).unwrap();
+                match shadow_kind {
+                    "dangling-file" => {
+                        std::os::unix::fs::symlink("missing.dll", upper.join(name)).unwrap()
+                    }
+                    "whiteout" => make_test_file(&upper, "BepInEx/plugins/.wh.Test.dll", b""),
+                    "opaque" => make_test_file(&upper, "BepInEx/.wh..wh..opq", b""),
+                    _ => unreachable!(),
+                }
+            }
+            let dest = root.path().join("out.zip");
+            build_mod_zip_to_file(&dirs, &[test_file(1, name)], &dest, false).unwrap();
+            let zip = zip::ZipArchive::new(File::open(dest).unwrap()).unwrap();
+            assert!(
+                zip.is_empty(),
+                "{shadow_kind} must hide the stale base file"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn layered_zip_preserves_opaque_xattr_but_keeps_upper_files() {
+        use std::os::unix::ffi::OsStrExt;
+        for attr in [c"user.overlay.opaque", c"user.fuseoverlayfs.opaque"] {
+            let root = tempfile::tempdir().unwrap();
+            let dirs = QumaDirs::from_root(root.path().to_path_buf());
+            let name = "BepInEx/plugins/Test.dll";
+            make_test_file(&dirs.spt_server, name, b"stale base");
+            let upper = dirs.runtime_upper();
+            std::fs::create_dir_all(upper.join("BepInEx")).unwrap();
+            let directory =
+                std::ffi::CString::new(upper.join("BepInEx").as_os_str().as_bytes()).unwrap();
+            // SAFETY: paths are NUL-terminated and the value points to one readable byte.
+            let result = unsafe {
+                libc::setxattr(
+                    directory.as_ptr(),
+                    attr.as_ptr(),
+                    b"y".as_ptr().cast(),
+                    1,
+                    0,
+                )
+            };
+            assert_eq!(result, 0, "{}", std::io::Error::last_os_error());
+            let dest = root.path().join("out.zip");
+            let files = [test_file(1, name)];
+            build_mod_zip_to_file(&dirs, &files, &dest, false).unwrap();
+            assert!(zip::ZipArchive::new(File::open(&dest).unwrap())
+                .unwrap()
+                .is_empty());
+            make_test_file(&upper, name, b"current upper");
+            build_mod_zip_to_file(&dirs, &files, &dest, false).unwrap();
+            assert_eq!(
+                zip::ZipArchive::new(File::open(dest).unwrap())
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+    }
+
+    #[test]
     fn cache_get_returns_none_when_no_file() {
         let spt_dir = tempfile::tempdir().unwrap();
         let db = Database::open_in_memory().unwrap();
         let db_arc = Arc::new(Mutex::new(db));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, test_config());
+        let cache = ModZipCache::new(
+            QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            db_arc,
+            test_config(),
+        );
         assert!(cache.get().is_none());
     }
 
@@ -510,7 +721,11 @@ mod tests {
         .unwrap();
 
         let db_arc = Arc::new(Mutex::new(db));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, test_config());
+        let cache = ModZipCache::new(
+            QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            db_arc,
+            test_config(),
+        );
 
         // Directly call rebuild (synchronous, for testing)
         cache.rebuild_sync();
@@ -545,7 +760,11 @@ mod tests {
             .unwrap();
 
         let db_arc = Arc::new(Mutex::new(db));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc.clone(), test_config());
+        let cache = ModZipCache::new(
+            QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            db_arc.clone(),
+            test_config(),
+        );
         cache.rebuild_sync();
 
         let path = cache.get().unwrap();
@@ -588,7 +807,11 @@ mod tests {
         let spt_dir = tempfile::tempdir().unwrap();
         let db = Database::open_in_memory().unwrap();
         let db_arc = Arc::new(Mutex::new(db));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, test_config());
+        let cache = ModZipCache::new(
+            QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            db_arc,
+            test_config(),
+        );
 
         // Create a dummy cache file
         std::fs::write(&cache.inner.cache_path, b"dummy").unwrap();
@@ -752,7 +975,11 @@ mod tests {
         let db_arc = Arc::new(Mutex::new(db));
         // Default config has exclude_server_files=true
         let config = Arc::new(parking_lot::RwLock::new(crate::config::Config::default()));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, config);
+        let cache = ModZipCache::new(
+            QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            db_arc,
+            config,
+        );
         cache.rebuild_sync();
 
         let path = cache.get().unwrap();
@@ -794,7 +1021,11 @@ mod tests {
         let db_arc = Arc::new(Mutex::new(db));
         // Default config has exclude_non_essential=true
         let config = Arc::new(parking_lot::RwLock::new(crate::config::Config::default()));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, config);
+        let cache = ModZipCache::new(
+            QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            db_arc,
+            config,
+        );
         cache.rebuild_sync();
 
         let path = cache.get().unwrap();
@@ -837,7 +1068,11 @@ mod tests {
             c.setup_zip.exclude_non_essential = false;
             c
         }));
-        let cache = ModZipCache::new(spt_dir.path().to_path_buf(), db_arc, config);
+        let cache = ModZipCache::new(
+            QumaDirs::from_legacy(spt_dir.path().to_path_buf()),
+            db_arc,
+            config,
+        );
         cache.rebuild_sync();
 
         let path = cache.get().unwrap();

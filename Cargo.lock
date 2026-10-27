@@ -3964,6 +3964,7 @@ dependencies = [
  "argon2",
  "askama",
  "assert_cmd",
+ "base64 0.22.1",
  "bollard",
  "cap-std",
  "chrono",
