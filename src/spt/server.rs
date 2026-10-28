@@ -156,6 +156,7 @@ impl SptClient {
         let resp = self
             .client
             .post(format!("{}/launcher/v2/register", self.base_url))
+            .header("requestcompressed", "0")
             .header("responsecompressed", "0")
             .json(&body)
             .send()
@@ -232,12 +233,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registration_posts_once_with_current_request_shape() {
-        use wiremock::matchers::{body_json, method, path};
+    async fn registration_posts_uncompressed_json_once() {
+        use wiremock::matchers::{body_json, header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/launcher/v2/register"))
+            .and(header("requestcompressed", "0"))
+            .and(header("responsecompressed", "0"))
             .and(body_json(
                 serde_json::json!({"username":"alice", "edition":"Standard"}),
             ))

@@ -67,6 +67,7 @@ impl Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Bootstrap or initialize Quartermaster for an SPT server
+    #[command(visible_alias = "init")]
     Setup {
         /// Quartermaster data directory (default: ~/spt-server)
         #[arg(long)]
@@ -266,6 +267,52 @@ pub enum ServerAction {
         #[arg(long)]
         pull: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initialization_commands_preserve_custom_directory() {
+        for command in ["init", "setup"] {
+            for args in [
+                vec![
+                    "quma",
+                    command,
+                    "--quma-dir",
+                    "/mnt/services/sptd",
+                    "--container-name",
+                    "sptd",
+                ],
+                vec![
+                    "quma",
+                    "--quma-dir",
+                    "/mnt/services/sptd",
+                    command,
+                    "--container-name",
+                    "sptd",
+                ],
+            ] {
+                let cli = Cli::try_parse_from(args).expect("initialization command should parse");
+                assert_eq!(
+                    cli.effective_quma_dir(),
+                    Some(Path::new("/mnt/services/sptd"))
+                );
+                match cli.command {
+                    Command::Setup {
+                        quma_dir,
+                        container_name,
+                        ..
+                    } => {
+                        assert_eq!(quma_dir.as_deref(), Some(Path::new("/mnt/services/sptd")));
+                        assert_eq!(container_name.as_deref(), Some("sptd"));
+                    }
+                    _ => panic!("initialization must dispatch to setup"),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Subcommand)]

@@ -41,7 +41,311 @@ fn is_auth_exempt(method: &actix_web::http::Method, path: &str) -> bool {
             | (_, "/launcher/v2/ping")
             | (_, "/launcher/v2/version")
             | (_, "/launcher/v2/mods")
-    )
+            | (
+                &actix_web::http::Method::GET,
+                "/singleplayer/customEnumEntries"
+            )
+    ) || (method == actix_web::http::Method::GET && is_prestige_artwork(path))
+}
+
+fn is_prestige_artwork(path: &str) -> bool {
+    [
+        "/files/prestige/",
+        "/files/prestige/reward/small/",
+        "/files/prestige/reward/big/",
+    ]
+    .iter()
+    .any(|prefix| {
+        path.strip_prefix(prefix)
+            .and_then(|filename| filename.strip_suffix(".png"))
+            .is_some_and(|id| id.len() == 24 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct ProxyCredentialShape {
+    authorization_headers: usize,
+    cookie_headers: usize,
+    session_keys: usize,
+    session_values_equal: Option<bool>,
+}
+
+fn proxy_credential_shape(req: &HttpRequest) -> ProxyCredentialShape {
+    let header_count = |header: &str| {
+        req.headers()
+            .iter()
+            .filter(|(name, _)| name.as_str().eq_ignore_ascii_case(header))
+            .count()
+    };
+    let sessions: Vec<&str> = req
+        .headers()
+        .iter()
+        .filter(|(name, _)| name.as_str().eq_ignore_ascii_case("cookie"))
+        .filter_map(|(_, value)| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .filter_map(|cookie| cookie.split_once('='))
+        .filter(|(name, _)| name.trim().eq_ignore_ascii_case("PHPSESSID"))
+        .map(|(_, value)| value.trim())
+        .collect();
+    ProxyCredentialShape {
+        authorization_headers: header_count("authorization"),
+        cookie_headers: header_count("cookie"),
+        session_keys: sessions.len(),
+        session_values_equal: (sessions.len() > 1)
+            .then(|| sessions.windows(2).all(|pair| pair[0] == pair[1])),
+    }
+}
+
+fn canonical_redundant_cookie(fields: &[&str]) -> Option<String> {
+    let mut session: Option<&str> = None;
+    let mut session_count = 0;
+    let mut others = std::collections::BTreeMap::new();
+    for field in fields {
+        for entry in field.split(';').filter(|entry| !entry.trim().is_empty()) {
+            let (name, value) = entry.split_once('=')?;
+            let (name, value) = (name.trim(), value.trim());
+            if name.eq_ignore_ascii_case("PHPSESSID") {
+                if value.len() != 24
+                    || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || session.is_some_and(|previous| previous != value)
+                {
+                    return None;
+                }
+                session = Some(value);
+                session_count += 1;
+            } else if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+                || others
+                    .insert(name.to_ascii_lowercase(), (name, value))
+                    .is_some()
+            {
+                return None;
+            }
+        }
+    }
+    if session_count < 2 {
+        return None;
+    }
+    let mut cookie = format!("PHPSESSID={}", session?);
+    for (name, value) in others.into_values() {
+        cookie.push_str("; ");
+        cookie.push_str(name);
+        cookie.push('=');
+        cookie.push_str(value);
+    }
+    Some(cookie)
+}
+
+fn normalize_proxy_headers(req: &HttpRequest) -> Option<actix_web::http::header::HeaderMap> {
+    if req
+        .headers()
+        .iter()
+        .filter(|(name, _)| name.as_str() == "authorization")
+        .take(2)
+        .count()
+        > 1
+    {
+        return None;
+    }
+    let fields: Vec<&str> = req
+        .headers()
+        .iter()
+        .filter(|(name, _)| name.as_str() == "cookie")
+        .map(|(_, value)| value.to_str().ok())
+        .collect::<Option<_>>()?;
+    let session_keys = fields
+        .iter()
+        .flat_map(|field| field.split(';'))
+        .filter(|entry| {
+            entry
+                .split('=')
+                .next()
+                .is_some_and(|name| name.trim().eq_ignore_ascii_case("PHPSESSID"))
+        })
+        .count();
+    let mut headers = req.headers().clone();
+    if fields.len() > 1 || session_keys > 1 {
+        let cookie = canonical_redundant_cookie(&fields)?;
+        headers.remove("cookie");
+        headers.insert(
+            actix_web::http::header::COOKIE,
+            actix_web::http::header::HeaderValue::from_str(&cookie).ok()?,
+        );
+    }
+    Some(headers)
+}
+
+fn proxy_session_credentials_from_headers(
+    req: &HttpRequest,
+    headers: &actix_web::http::header::HeaderMap,
+) -> Option<(String, bool)> {
+    let requires_managed = req.path() == "/fika/headless/client";
+    if requires_managed && headers.contains_key("authorization") {
+        return headless_basic_session(req, headers).map(|session| (session, true));
+    }
+    crate::web::raid_tracker::extract_session_id_from_headers(headers)
+        .map(|session| (session, requires_managed))
+}
+
+fn headless_basic_session(
+    req: &HttpRequest,
+    headers: &actix_web::http::header::HeaderMap,
+) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    if req.method() != actix_web::http::Method::GET
+        || req.path() != "/fika/headless/client"
+        || !is_direct_local_peer(req)
+        || !req
+            .headers()
+            .get("upgrade")?
+            .to_str()
+            .ok()?
+            .eq_ignore_ascii_case("websocket")
+        || !req
+            .headers()
+            .get("connection")?
+            .to_str()
+            .ok()?
+            .split(',')
+            .any(|value| value.trim().eq_ignore_ascii_case("upgrade"))
+    {
+        return None;
+    }
+    let authorization = headers.get("authorization")?.to_str().ok()?;
+    let (scheme, encoded) = authorization.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("basic") || encoded.len() != 36 {
+        return None;
+    }
+    let decoded = STANDARD.decode(encoded).ok()?;
+    if decoded.len() != 25
+        || decoded[24] != b':'
+        || !decoded[..24].iter().all(u8::is_ascii_hexdigit)
+    {
+        return None;
+    }
+    let session = String::from_utf8(decoded[..24].to_vec()).ok()?;
+    if headers.contains_key("cookie")
+        && crate::web::raid_tracker::extract_session_id_from_headers(headers).as_deref()
+            != Some(session.as_str())
+    {
+        return None;
+    }
+    Some(session)
+}
+
+fn is_direct_local_peer(req: &HttpRequest) -> bool {
+    req.peer_addr().is_some_and(|peer| peer.ip().is_loopback())
+        && ["forwarded", "x-forwarded-for", "x-real-ip"]
+            .iter()
+            .all(|header| !req.headers().contains_key(*header))
+}
+
+fn managed_headless_profile_matches(
+    container: &bollard::models::ContainerInspectResponse,
+    session_id: &str,
+    configured_count: u32,
+) -> bool {
+    use crate::client::converge::{client_container_name, MANAGED_BY_LABEL, MANAGED_BY_VALUE};
+    if session_id.len() != 24 || !session_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return false;
+    }
+    if container.state.as_ref().and_then(|state| state.running) != Some(true) {
+        return false;
+    }
+    let Some(config) = container.config.as_ref() else {
+        return false;
+    };
+    let Some(labels) = config.labels.as_ref() else {
+        return false;
+    };
+    if labels.get(MANAGED_BY_LABEL).map(String::as_str) != Some(MANAGED_BY_VALUE) {
+        return false;
+    }
+    let Some(index) = labels
+        .get("quma.client.index")
+        .and_then(|value| value.parse::<u32>().ok())
+    else {
+        return false;
+    };
+    if index == 0 || index > configured_count {
+        return false;
+    }
+    let expected_name = client_container_name(index);
+    if container
+        .name
+        .as_deref()
+        .map(|name| name.trim_start_matches('/'))
+        != Some(expected_name.as_str())
+    {
+        return false;
+    }
+    let expected_profile = format!("PROFILE_ID={session_id}");
+    config
+        .env
+        .as_ref()
+        .is_some_and(|env| env.contains(&expected_profile))
+}
+
+async fn is_managed_headless_session(
+    req: &HttpRequest,
+    state: &AppState,
+    session_id: &str,
+) -> bool {
+    if !is_direct_local_peer(req) {
+        return false;
+    }
+    let count = state
+        .config()
+        .headless
+        .as_ref()
+        .map_or(0, |config| config.client_count());
+    let Some(manager) = state.container_mgr.as_ref().filter(|_| count > 0) else {
+        return false;
+    };
+    use crate::client::converge::{MANAGED_BY_LABEL, MANAGED_BY_VALUE};
+    let Ok(names) = manager
+        .detect_containers_by_label(MANAGED_BY_LABEL, MANAGED_BY_VALUE)
+        .await
+    else {
+        return false;
+    };
+    // Read live runtime metadata rather than trusting a profile name or stale allowlist.
+    for name in names
+        .into_iter()
+        .take(crate::config::MAX_HEADLESS_CLIENTS as usize)
+    {
+        if let Ok(container) = manager.inspect(&name).await {
+            if managed_headless_profile_matches(&container, session_id, count) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ProxyIdentityError {
+    Disabled,
+    Unknown,
+}
+
+async fn classify_proxy_identity(
+    linked_disabled: Option<bool>,
+    requires_managed: bool,
+    managed: impl std::future::Future<Output = bool>,
+) -> Result<bool, ProxyIdentityError> {
+    if linked_disabled == Some(true) {
+        return Err(ProxyIdentityError::Disabled);
+    }
+    if managed.await {
+        Ok(true)
+    } else if linked_disabled == Some(false) && !requires_managed {
+        Ok(false)
+    } else {
+        Err(ProxyIdentityError::Unknown)
+    }
 }
 
 pub async fn proxy_handler(
@@ -53,20 +357,27 @@ pub async fn proxy_handler(
         return Err(actix_web::error::ErrorNotFound("proxy not enabled"));
     }
 
+    let Some(proxy_headers) = normalize_proxy_headers(&req) else {
+        tracing::warn!(path = %req.path(), credential_shape = ?proxy_credential_shape(&req), "proxy auth: ambiguous credentials");
+        return Err(actix_web::error::ErrorUnauthorized("ambiguous credentials"));
+    };
+    let mut managed_headless = false;
     if state.config().proxy_auth && !is_auth_exempt(req.method(), req.path()) {
-        let session_id = crate::web::raid_tracker::extract_session_id(&req).ok_or_else(|| {
-            tracing::warn!(
-                client_ip = %req.connection_info().realip_remote_addr().unwrap_or_default(),
-                path = %req.path(),
-                "proxy auth: missing or invalid session"
-            );
-            actix_web::error::ErrorUnauthorized("missing or invalid session")
-        })?;
+        let (session_id, requires_managed) =
+            proxy_session_credentials_from_headers(&req, &proxy_headers).ok_or_else(|| {
+                tracing::warn!(
+                    client_ip = %req.connection_info().realip_remote_addr().unwrap_or_default(),
+                    path = %req.path(),
+                    "proxy auth: missing or invalid session"
+                );
+                actix_web::error::ErrorUnauthorized("missing or invalid session")
+            })?;
 
         let db = state.db.clone();
+        let lookup_id = session_id.clone();
         let user = web::block(move || {
             let db = db.lock();
-            db.get_user_by_spt_profile_id(&session_id)
+            db.get_user_by_spt_profile_id(&lookup_id)
         })
         .await
         .map_err(|e| {
@@ -78,25 +389,21 @@ pub async fn proxy_handler(
             actix_web::error::ErrorInternalServerError("internal error")
         })?;
 
-        match user {
-            Some(u) if u.disabled => {
-                tracing::warn!(
-                    username = %u.username,
-                    path = %req.path(),
-                    "proxy auth: disabled account"
-                );
-                return Err(actix_web::error::ErrorForbidden("account disabled"));
+        managed_headless = classify_proxy_identity(
+            user.as_ref().map(|user| user.disabled), requires_managed,
+            is_managed_headless_session(&req, &state, &session_id),
+        ).await.map_err(|error| match error {
+            ProxyIdentityError::Disabled => {
+                if let Some(user) = &user {
+                    tracing::warn!(username = %user.username, path = %req.path(), "proxy auth: disabled account");
+                }
+                actix_web::error::ErrorForbidden("account disabled")
             }
-            Some(_) => {}
-            None => {
-                tracing::warn!(
-                    client_ip = %req.connection_info().realip_remote_addr().unwrap_or_default(),
-                    path = %req.path(),
-                    "proxy auth: unknown profile"
-                );
-                return Err(actix_web::error::ErrorUnauthorized("unknown profile"));
+            ProxyIdentityError::Unknown => {
+                tracing::warn!(client_ip = %req.connection_info().realip_remote_addr().unwrap_or_default(), path = %req.path(), "proxy auth: unknown profile");
+                actix_web::error::ErrorUnauthorized("unknown profile")
             }
-        }
+        })?;
     }
 
     // Detect WebSocket upgrade and delegate to the WS proxy handler
@@ -107,7 +414,7 @@ pub async fn proxy_handler(
         .map(|v| v.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false)
     {
-        return crate::web::proxy_ws::ws_proxy_handler(req, payload, state).await;
+        return crate::web::proxy_ws::ws_proxy_handler(req, payload, state, proxy_headers).await;
     }
 
     // Read the full body for HTTP requests, enforcing proxy-specific size limit
@@ -134,7 +441,7 @@ pub async fn proxy_handler(
     let upstream_url = format!("https://{host}:{port}{path}");
 
     let mut headers = HeaderMap::new();
-    for (name, value) in req.headers() {
+    for (name, value) in &proxy_headers {
         let name_str = name.as_str().to_lowercase();
         if HOP_BY_HOP_HEADERS.contains(&name_str.as_str()) {
             continue;
@@ -196,11 +503,11 @@ pub async fn proxy_handler(
                 && status.is_success();
 
             if is_register {
-                let spt_dir = state.dirs.spt_server.clone();
+                let dirs = state.dirs.clone();
                 let db = state.db.clone();
                 let events = state.events.clone();
                 tokio::task::spawn_blocking(move || {
-                    handle_player_registration(spt_dir, db, events);
+                    handle_player_registration(dirs, db, events);
                 });
             }
 
@@ -213,9 +520,11 @@ pub async fn proxy_handler(
                 && status.is_success();
 
             if is_raid_start || is_raid_end {
-                if let Some(profile_id) = crate::web::raid_tracker::extract_session_id(&req) {
+                if let Some(profile_id) =
+                    crate::web::raid_tracker::extract_session_id_from_headers(&proxy_headers)
+                {
                     if let Some(body_clone) = raid_body {
-                        let spt_dir = state.dirs.spt_server.clone();
+                        let dirs = state.dirs.clone();
                         let db = state.db.clone();
                         let events = state.events.clone();
                         let snapshots_enabled = state.config().snapshots_enabled;
@@ -224,7 +533,7 @@ pub async fn proxy_handler(
                                 crate::web::raid_tracker::handle_raid_start(
                                     body_clone,
                                     profile_id,
-                                    spt_dir,
+                                    dirs,
                                     db,
                                     events,
                                     snapshots_enabled,
@@ -235,7 +544,7 @@ pub async fn proxy_handler(
                                 crate::web::raid_tracker::handle_raid_end(
                                     body_clone,
                                     profile_id,
-                                    spt_dir,
+                                    dirs.spt_server.clone(),
                                     db,
                                     events,
                                     snapshots_enabled,
@@ -311,13 +620,14 @@ pub async fn proxy_handler(
                     .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY),
             );
 
-            let (external_url_for_rewrite, target_port) = {
+            let (external_url_for_rewrite, target_port, proxy_port) = {
                 let cfg = state.config();
                 (
                     rewrite_target
                         .as_ref()
                         .and_then(|_| cfg.external_url.clone()),
                     cfg.proxy_rewrite_target_port.unwrap_or(port),
+                    cfg.web_port,
                 )
             };
             let will_rewrite = matches!(
@@ -339,12 +649,14 @@ pub async fn proxy_handler(
             }
 
             if let (Some(target), Some(external_url)) = (rewrite_target, external_url_for_rewrite) {
-                let replacement = match target {
-                    BackendRewriteTarget::HttpProxy => extract_host(&external_url),
-                    BackendRewriteTarget::DirectTcp => {
-                        format!("{}:{}", extract_host(&external_url), target_port)
-                    }
-                };
+                let replacement = backend_rewrite_authority(
+                    &target,
+                    &external_url,
+                    target_port,
+                    proxy_port,
+                    port,
+                    managed_headless,
+                );
                 let raw_body = resp.bytes().await.map_err(|e| {
                     actix_web::error::ErrorBadGateway(format!("failed to read response body: {e}"))
                 })?;
@@ -381,6 +693,27 @@ pub async fn proxy_handler(
             );
             Err(actix_web::error::ErrorBadGateway("SPT server unreachable"))
         }
+    }
+}
+
+fn backend_rewrite_authority(
+    target: &BackendRewriteTarget,
+    external_url: &str,
+    direct_port: u16,
+    proxy_port: u16,
+    local_server_port: u16,
+    managed_headless: bool,
+) -> String {
+    if managed_headless {
+        let port = match target {
+            BackendRewriteTarget::HttpProxy => proxy_port,
+            BackendRewriteTarget::DirectTcp => local_server_port,
+        };
+        return format!("127.0.0.1:{port}");
+    }
+    match target {
+        BackendRewriteTarget::HttpProxy => extract_host(external_url),
+        BackendRewriteTarget::DirectTcp => format!("{}:{direct_port}", extract_host(external_url)),
     }
 }
 
@@ -443,7 +776,7 @@ fn rewrite_backend_url(body: &[u8], replacement: &str) -> Result<Vec<u8>, String
 }
 
 fn handle_player_registration(
-    spt_dir: std::path::PathBuf,
+    dirs: std::sync::Arc<crate::dirs::QumaDirs>,
     db: std::sync::Arc<parking_lot::Mutex<crate::db::Database>>,
     events: tokio::sync::broadcast::Sender<crate::web::sse::ServerEvent>,
 ) {
@@ -452,12 +785,15 @@ fn handle_player_registration(
     //
     // Phase 1: Read all profile data from disk (no DB lock held).
     // Phase 2: Acquire the lock once and perform all DB lookups/inserts.
-    let Ok(runtime) = crate::spt::layout::runtime_dir(&spt_dir) else {
-        return;
+    let reader = match crate::spt::profile_store::ProfileReader::open(&dirs) {
+        Ok(reader) => reader,
+        Err(error) => {
+            tracing::warn!(err = %error, "failed to open profile layers for new user detection");
+            return;
+        }
     };
-    let profiles_dir = runtime.join("user/profiles");
-    let entries = match std::fs::read_dir(&profiles_dir) {
-        Ok(e) => e,
+    let entries = match reader.candidate_names() {
+        Ok(entries) => entries,
         Err(e) => {
             tracing::warn!(err = %e, "failed to read profiles directory for new user detection");
             return;
@@ -466,17 +802,19 @@ fn handle_player_registration(
 
     // Phase 1: filesystem I/O — collect profile data without holding the DB lock.
     let mut profiles: Vec<(String, String)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for name in entries {
+        let path = std::path::Path::new(&name);
         let profile_id = match path.file_stem().and_then(|s| s.to_str()) {
             Some(id) if path.extension().and_then(|e| e.to_str()) == Some("json") => id.to_string(),
             _ => continue,
         };
 
         // Read profile to get username
-        let profile_json: serde_json::Value = match std::fs::read_to_string(&path)
+        let profile_json: serde_json::Value = match reader
+            .read(path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .flatten()
+            .and_then(|file| serde_json::from_reader(std::io::BufReader::new(file)).ok())
         {
             Some(v) => v,
             None => continue,
@@ -621,6 +959,11 @@ fn fix_headless_crc(body: web::Bytes, dirs: &crate::dirs::QumaDirs) -> web::Byte
 mod tests {
     use super::*;
 
+    fn proxy_session_credentials(req: &HttpRequest) -> Option<(String, bool)> {
+        let headers = normalize_proxy_headers(req)?;
+        proxy_session_credentials_from_headers(req, &headers)
+    }
+
     #[test]
     fn rewrite_replaces_loopback_origin() {
         let body = br#"{"backendUrl":"https://127.0.0.1:6969/api","ws":"wss://127.0.0.1:6969/ws"}"#;
@@ -700,6 +1043,537 @@ mod tests {
             &actix_web::http::Method::GET,
             "/launcher/v2/ping"
         ));
+    }
+
+    #[test]
+    fn agreeing_session_cookies_are_canonicalized_before_use() {
+        use actix_web::test::TestRequest;
+        let session = "000000000000000000000001";
+        let request = TestRequest::get()
+            .append_header(("cookie", format!("PHPSESSID={session}; other=one")))
+            .append_header(("cookie", format!("PHPSESSID={session}")))
+            .insert_header(("x-client-version", "test"))
+            .to_http_request();
+        let headers = normalize_proxy_headers(&request).expect("agreeing session cookies");
+        assert_eq!(
+            headers
+                .iter()
+                .filter(|(name, _)| name.as_str() == "cookie")
+                .count(),
+            1
+        );
+        assert_eq!(
+            headers.get("cookie").unwrap().to_str().unwrap(),
+            format!("PHPSESSID={session}; other=one")
+        );
+        assert_eq!(headers.get("x-client-version").unwrap(), "test");
+        for cookie in [
+            format!("PHPSESSID={session}; PHPSESSID={session}"),
+            format!("PHPSESSID={session}; phpsessid={session}"),
+        ] {
+            let request = TestRequest::get()
+                .insert_header(("cookie", cookie))
+                .to_http_request();
+            assert_eq!(
+                normalize_proxy_headers(&request)
+                    .unwrap()
+                    .get("cookie")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                format!("PHPSESSID={session}")
+            );
+        }
+    }
+
+    #[test]
+    fn cookie_normalization_rejects_invalid_and_unrelated_ambiguity() {
+        use actix_web::test::TestRequest;
+        let valid = "PHPSESSID=000000000000000000000001";
+        for second in [
+            "PHPSESSID=000000000000000000000002",
+            "PHPSESSID=bad",
+            "PHPSESSID=",
+            "PHPSESSID=00000000000000000000000g",
+            "PHPSESSID",
+            "other=one",
+        ] {
+            let request = TestRequest::get()
+                .append_header(("cookie", valid))
+                .append_header(("cookie", second))
+                .to_http_request();
+            assert!(normalize_proxy_headers(&request).is_none());
+        }
+        for extra in [
+            "other=one; Other=two",
+            "other=one; other=one",
+            "PHP%53ESSID=000000000000000000000002",
+        ] {
+            let request = TestRequest::get()
+                .append_header(("cookie", valid))
+                .append_header(("cookie", format!("{valid}; {extra}")))
+                .to_http_request();
+            assert!(normalize_proxy_headers(&request).is_none());
+        }
+    }
+
+    #[test]
+    fn credential_diagnostics_report_counts_and_equality_without_values() {
+        use actix_web::test::TestRequest;
+        for second in ["000000000000000000000001", "000000000000000000000002"] {
+            let request = TestRequest::get()
+                .append_header(("authorization", "Basic first"))
+                .append_header(("authorization", "Basic second"))
+                .append_header(("cookie", "PHPSESSID=000000000000000000000001"))
+                .append_header(("cookie", format!("PHPSESSID={second}")))
+                .to_http_request();
+            let shape = proxy_credential_shape(&request);
+            assert_eq!(
+                shape,
+                ProxyCredentialShape {
+                    authorization_headers: 2,
+                    cookie_headers: 2,
+                    session_keys: 2,
+                    session_values_equal: Some(second.ends_with('1'))
+                }
+            );
+            let diagnostic = format!("{shape:?}");
+            assert!(!diagnostic.contains("000000000000000000000001"));
+            assert!(!diagnostic.contains(second));
+            assert!(!diagnostic.contains("Basic first"));
+        }
+    }
+
+    #[test]
+    fn proxy_credentials_reject_conflicts_and_duplicate_authorization() {
+        use actix_web::test::TestRequest;
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let a = "000000000000000000000001";
+        let b = "000000000000000000000002";
+        for (first, second) in [(a, b), (b, a), (a, a)] {
+            let basic = |id: &str| format!("Basic {}", STANDARD.encode(format!("{id}:")));
+            let request = TestRequest::get()
+                .uri("/fika/headless/client")
+                .peer_addr("127.0.0.1:12345".parse().unwrap())
+                .insert_header(("upgrade", "websocket"))
+                .insert_header(("connection", "Upgrade"))
+                .append_header(("authorization", basic(first)))
+                .append_header(("authorization", basic(second)))
+                .to_http_request();
+            assert_eq!(
+                request
+                    .headers()
+                    .iter()
+                    .filter(|(name, _)| name.as_str() == "authorization")
+                    .count(),
+                2
+            );
+            assert!(
+                proxy_session_credentials(&request).is_none(),
+                "duplicate Basic credentials"
+            );
+            let request = TestRequest::get()
+                .uri("/client/game/start")
+                .append_header(("cookie", format!("PHPSESSID={first}")))
+                .append_header(("cookie", format!("PHPSESSID={second}")))
+                .to_http_request();
+            assert_eq!(
+                proxy_session_credentials(&request),
+                (first == second).then(|| (first.to_string(), false))
+            );
+            for key in ["PHPSESSID", "phpsessid", "PHPSESSID "] {
+                let request = TestRequest::get()
+                    .uri("/client/game/start")
+                    .insert_header(("cookie", format!("PHPSESSID={first}; {key}={second}")))
+                    .to_http_request();
+                assert_eq!(
+                    proxy_session_credentials(&request),
+                    (first == second).then(|| (first.to_string(), false))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn headless_websocket_basic_credentials_are_route_and_peer_scoped() {
+        use actix_web::{http::Method, test::TestRequest};
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let session = "000000000000000000000001";
+        let authorization = format!("Basic {}", STANDARD.encode(format!("{session}:")));
+        let valid = || {
+            TestRequest::get()
+                .uri("/fika/headless/client")
+                .peer_addr("127.0.0.1:12345".parse().unwrap())
+                .insert_header(("upgrade", "websocket"))
+                .insert_header(("connection", "Upgrade"))
+                .insert_header(("authorization", authorization.clone()))
+        };
+        assert_eq!(
+            proxy_session_credentials(&valid().to_http_request()),
+            Some((session.to_string(), true))
+        );
+        assert!(
+            proxy_session_credentials(&valid().uri("/client/game/start").to_http_request())
+                .is_none()
+        );
+        assert!(
+            proxy_session_credentials(&valid().method(Method::POST).to_http_request()).is_none()
+        );
+        assert!(proxy_session_credentials(
+            &valid()
+                .peer_addr("203.0.113.1:12345".parse().unwrap())
+                .to_http_request()
+        )
+        .is_none());
+        assert!(proxy_session_credentials(
+            &valid()
+                .insert_header(("x-forwarded-for", "127.0.0.1"))
+                .to_http_request()
+        )
+        .is_none());
+        assert!(proxy_session_credentials(
+            &valid().insert_header(("upgrade", "h2c")).to_http_request()
+        )
+        .is_none());
+        assert!(proxy_session_credentials(
+            &valid()
+                .insert_header(("connection", "close"))
+                .to_http_request()
+        )
+        .is_none());
+        assert!(proxy_session_credentials(
+            &valid()
+                .insert_header(("cookie", "PHPSESSID=000000000000000000000002"))
+                .to_http_request()
+        )
+        .is_none());
+        for credentials in [
+            "",
+            "not-an-id:",
+            "000000000000000000000001:password",
+            "00000000000000000000000g:",
+        ] {
+            let header = format!("Basic {}", STANDARD.encode(credentials));
+            assert!(proxy_session_credentials(
+                &valid()
+                    .insert_header(("authorization", header))
+                    .to_http_request()
+            )
+            .is_none());
+        }
+        assert!(proxy_session_credentials(
+            &valid()
+                .insert_header(("authorization", "Basic !!!"))
+                .to_http_request()
+        )
+        .is_none());
+        let cookie = TestRequest::get()
+            .insert_header(("cookie", format!("PHPSESSID={session}")))
+            .to_http_request();
+        assert_eq!(
+            proxy_session_credentials(&cookie),
+            Some((session.to_string(), false))
+        );
+    }
+
+    #[test]
+    fn managed_backend_urls_stay_on_loopback_with_explicit_ports() {
+        let external = "https://public.example";
+        assert_eq!(
+            backend_rewrite_authority(
+                &BackendRewriteTarget::HttpProxy,
+                external,
+                6969,
+                9190,
+                6969,
+                true
+            ),
+            "127.0.0.1:9190"
+        );
+        assert_eq!(
+            backend_rewrite_authority(
+                &BackendRewriteTarget::DirectTcp,
+                external,
+                6969,
+                9190,
+                6969,
+                true
+            ),
+            "127.0.0.1:6969"
+        );
+        assert_eq!(
+            backend_rewrite_authority(
+                &BackendRewriteTarget::HttpProxy,
+                external,
+                6969,
+                9190,
+                6969,
+                false
+            ),
+            "public.example"
+        );
+        assert_eq!(
+            backend_rewrite_authority(
+                &BackendRewriteTarget::DirectTcp,
+                external,
+                6969,
+                9190,
+                6969,
+                false
+            ),
+            "public.example:6969"
+        );
+    }
+
+    #[actix_web::test]
+    async fn review_regression_linked_managed_identity_keeps_loopback_rewrites() {
+        use crate::client::converge::{MANAGED_BY_LABEL, MANAGED_BY_VALUE};
+        use actix_web::test::TestRequest;
+        let session = "000000000000000000000001";
+        let container: bollard::models::ContainerInspectResponse = serde_json::from_value(serde_json::json!({
+            "Name":"/fika-headless-1", "State":{"Running":true},
+            "Config":{"Labels":{(MANAGED_BY_LABEL):MANAGED_BY_VALUE,"quma.client.index":"1"},"Env":[format!("PROFILE_ID={session}")]}
+        })).unwrap();
+        let request = TestRequest::get()
+            .uri("/client/game/config")
+            .peer_addr("127.0.0.1:12345".parse().unwrap())
+            .insert_header(("cookie", format!("PHPSESSID={session}")))
+            .to_http_request();
+        let (_, requires_managed) = proxy_session_credentials(&request).unwrap();
+        let checked = std::cell::Cell::new(false);
+        let managed = classify_proxy_identity(Some(false), requires_managed, async {
+            checked.set(true);
+            is_direct_local_peer(&request)
+                && managed_headless_profile_matches(&container, session, 2)
+        })
+        .await
+        .unwrap();
+        assert!(
+            checked.get(),
+            "enabled DB links must not skip live managed classification"
+        );
+        for (target, expected) in [
+            (BackendRewriteTarget::HttpProxy, "127.0.0.1:9190"),
+            (BackendRewriteTarget::DirectTcp, "127.0.0.1:6969"),
+        ] {
+            assert_eq!(
+                backend_rewrite_authority(
+                    &target,
+                    "https://public.example",
+                    6969,
+                    9190,
+                    6969,
+                    managed
+                ),
+                expected
+            );
+        }
+    }
+
+    #[actix_web::test]
+    async fn disabled_identity_is_rejected_before_managed_lookup() {
+        let checked = std::cell::Cell::new(false);
+        let result = classify_proxy_identity(Some(true), false, async {
+            checked.set(true);
+            true
+        })
+        .await;
+        assert_eq!(result, Err(ProxyIdentityError::Disabled));
+        assert!(!checked.get());
+    }
+
+    #[test]
+    fn review_two_managed_direct_rewrite_does_not_use_external_port() {
+        assert_eq!(
+            backend_rewrite_authority(
+                &BackendRewriteTarget::DirectTcp,
+                "https://public.example",
+                16969,
+                9190,
+                6969,
+                true
+            ),
+            "127.0.0.1:6969"
+        );
+        assert_eq!(
+            backend_rewrite_authority(
+                &BackendRewriteTarget::DirectTcp,
+                "https://public.example",
+                16969,
+                9190,
+                6969,
+                false
+            ),
+            "public.example:16969"
+        );
+    }
+
+    #[test]
+    fn review_two_registration_discovers_upper_only_and_overridden_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = crate::dirs::QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/profiles";
+        let base = dirs.spt_server.join(relative);
+        let upper = dirs.runtime_upper().join(relative);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&upper).unwrap();
+        let shared = "000000000000000000000001";
+        let only = "000000000000000000000002";
+        for (root, id, username) in [
+            (&base, shared, "old"),
+            (&upper, shared, "new"),
+            (&upper, only, "upper-only"),
+        ] {
+            std::fs::write(
+                root.join(format!("{id}.json")),
+                serde_json::json!({"info":{"username":username}}).to_string(),
+            )
+            .unwrap();
+        }
+        let db = std::sync::Arc::new(parking_lot::Mutex::new(
+            crate::db::Database::open_in_memory().unwrap(),
+        ));
+        let (events, _) = tokio::sync::broadcast::channel(8);
+        handle_player_registration(std::sync::Arc::new(dirs), db.clone(), events);
+        let db = db.lock();
+        assert_eq!(
+            db.get_user_by_spt_profile_id(shared)
+                .unwrap()
+                .unwrap()
+                .username,
+            "new"
+        );
+        assert!(db.get_user_by_spt_profile_id(only).unwrap().is_some());
+    }
+
+    #[test]
+    fn managed_headless_auth_requires_live_runtime_identity() {
+        use crate::client::converge::{MANAGED_BY_LABEL, MANAGED_BY_VALUE};
+        use bollard::models::{ContainerConfig, ContainerInspectResponse, ContainerState};
+        let session = "000000000000000000000001";
+        let container = ContainerInspectResponse {
+            name: Some("/fika-headless-1".into()),
+            state: Some(ContainerState {
+                running: Some(true),
+                ..Default::default()
+            }),
+            config: Some(ContainerConfig {
+                labels: Some(
+                    [
+                        (MANAGED_BY_LABEL.to_string(), MANAGED_BY_VALUE.to_string()),
+                        ("quma.client.index".to_string(), "1".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                env: Some(vec![format!("PROFILE_ID={session}")]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(managed_headless_profile_matches(&container, session, 2));
+        assert!(!managed_headless_profile_matches(&container, session, 0));
+        assert!(!managed_headless_profile_matches(
+            &container,
+            "000000000000000000000002",
+            2
+        ));
+        assert!(!managed_headless_profile_matches(&container, "", 2));
+        let mut stopped = container.clone();
+        stopped.state.as_mut().unwrap().running = Some(false);
+        assert!(!managed_headless_profile_matches(&stopped, session, 2));
+        let mut unlabelled = container.clone();
+        unlabelled.config.as_mut().unwrap().labels = None;
+        assert!(!managed_headless_profile_matches(&unlabelled, session, 2));
+        let mut renamed = container.clone();
+        renamed.name = Some("/unmanaged".into());
+        assert!(!managed_headless_profile_matches(&renamed, session, 2));
+        let mut no_profile = container;
+        no_profile.config.as_mut().unwrap().env = None;
+        assert!(!managed_headless_profile_matches(&no_profile, session, 2));
+    }
+
+    #[test]
+    fn managed_auth_rejects_remote_and_forwarded_peers() {
+        use actix_web::test::TestRequest;
+        let local = "127.0.0.1:12345".parse().unwrap();
+        let remote = "203.0.113.1:12345".parse().unwrap();
+        assert!(is_direct_local_peer(
+            &TestRequest::get().peer_addr(local).to_http_request()
+        ));
+        assert!(is_direct_local_peer(
+            &TestRequest::get()
+                .peer_addr("[::1]:12345".parse().unwrap())
+                .to_http_request()
+        ));
+        assert!(!is_direct_local_peer(&TestRequest::get().to_http_request()));
+        assert!(!is_direct_local_peer(
+            &TestRequest::get().peer_addr(remote).to_http_request()
+        ));
+        for header in ["forwarded", "x-forwarded-for", "x-real-ip"] {
+            assert!(!is_direct_local_peer(
+                &TestRequest::get()
+                    .peer_addr(local)
+                    .insert_header((header, "127.0.0.1"))
+                    .to_http_request()
+            ));
+            assert!(!is_direct_local_peer(
+                &TestRequest::get()
+                    .peer_addr(remote)
+                    .insert_header((header, "127.0.0.1"))
+                    .to_http_request()
+            ));
+        }
+    }
+
+    #[test]
+    fn prestige_artwork_exemption_is_narrow_and_read_only() {
+        use actix_web::http::Method;
+        let id = "0123456789abcdef01234567";
+        for prefix in [
+            "/files/prestige/",
+            "/files/prestige/reward/small/",
+            "/files/prestige/reward/big/",
+        ] {
+            let path = format!("{prefix}{id}.png");
+            assert!(is_auth_exempt(&Method::GET, &path), "{path}");
+            for method in [Method::POST, Method::PUT, Method::DELETE, Method::HEAD] {
+                assert!(!is_auth_exempt(&method, &path), "{method} {path}");
+            }
+        }
+        for path in [
+            "/files/prestige/",
+            "/files/prestige/reward/medium/0123456789abcdef01234567.png",
+            "/files/prestige/../profiles/0123456789abcdef01234567.png",
+            "/files/prestige/%2e%2e/0123456789abcdef01234567.png",
+            "/files/prestige/0123456789abcdef01234567.json",
+            "/files/prestige/0123456789abcdef01234567.png/extra",
+            "/files/prestige/not-an-id.png",
+            "/files/prestige/0123456789abcdef0123456g.png",
+            "/files/prestige/0123456789abcdef0123456.png",
+            "/files/prestige/0123456789abcdef012345678.png",
+            "/files/user/profiles/0123456789abcdef01234567.json",
+        ] {
+            assert!(!is_auth_exempt(&Method::GET, path), "{path}");
+        }
+    }
+
+    #[test]
+    fn prepatch_bootstrap_exemption_is_exact_and_read_only() {
+        use actix_web::http::Method;
+        let path = "/singleplayer/customEnumEntries";
+        assert!(is_auth_exempt(&Method::GET, path));
+        for method in [Method::POST, Method::PUT, Method::DELETE, Method::HEAD] {
+            assert!(!is_auth_exempt(&method, path));
+        }
+        for other in [
+            "/singleplayer/customEnumEntries/",
+            "/singleplayer/customEnumEntries/extra",
+            "/singleplayer/settings/version",
+            "/client/game/start",
+        ] {
+            assert!(!is_auth_exempt(&Method::GET, other));
+        }
     }
 
     #[test]

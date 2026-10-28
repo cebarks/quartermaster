@@ -22,10 +22,32 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Security
 
+- Disable the optional HTTP zstd codec to remove vulnerable transitive zstd releases, while retaining HTTP gzip/Brotli and patched archive zstd support; add no audit waivers.
+- Reject duplicate Authorization headers and conflicting proxy session cookies. Normalize EFT's agreeing, valid redundant session cookies into one canonical header shared by authentication and HTTP/WebSocket forwarding, so validated and forwarded identities cannot diverge.
+- Accept Fika Headless's profile-ID Basic credentials only on its exact local WebSocket route, requiring live managed-container identity even for linked player accounts; ordinary API routes remain cookie-authenticated.
+- Allow sessionless prestige PNG artwork GETs only for validated 24-hex filenames in the three supported static image paths, without exposing arbitrary files or other methods.
+- Authenticate local managed headless sessions against live container identity without disabling player authentication. Reject forwarded peers, stopped/unmanaged containers, and unassigned profile IDs; disabled linked accounts remain blocked.
+- Permit only `GET /singleplayer/customEnumEntries` for SPT's pre-session assembly patching, alongside the existing launcher bootstrap routes. Other methods and game/profile routes still require authentication.
 - Upgrade TLS, HTTP/2, HTML sanitization, and ZIP dependencies to patched releases. Propagate ZIP entry-name decoding errors during mod detection and extraction while preserving legacy CP437 filenames. Keep one explicit, version-scoped risk acceptance for Actix's unpatched `h2` 0.3.27 HTTP/2 denial-of-service advisory, enforced by the same tested audit gate locally and in CI.
 
 ### Fixed
 
+- Confine profile restoration to its writable profile directory, rejecting escaping destination aliases without overwriting base/outside targets while retaining confined leaf aliases.
+- Normalize relative overlay mount targets and decode mount-table escapes so profile/config writes use the actual mounted view, including installation paths with spaces or backslashes.
+- Ignore stale unmounted Fika configuration files; resolve the current installation layers instead.
+- Use the shared layered exporter for join bootstrap and setup cache-miss downloads, preserving configured file selection. Treat native zero-size whiteouts as terminal absence without falling back to lower files, while allowing restored nonempty data.
+- Read registration profiles and raid-start snapshots from the layered profile union rather than the base only.
+- Keep authenticated managed headless clients' advertised HTTP and direct backend addresses on explicit loopback ports, including clients with enabled database account links, so public URL rewriting does not send them back through an external route. Managed direct URLs use the local SPT port, not an external forwarding override.
+- Allow up to 180 seconds for first-boot Fika config generation after locale initialization, rather than aborting valid cold starts at 60 seconds.
+- Clean up empty, inaccessible internal OverlayFS work directories on rootless retries and teardown without following symlinks; abort teardown before deleting data if unmounting fails.
+- Use the live server overlay for Fika configuration changes. Read the visible runtime/mod/base profile union even while unmounted, preserving overrides, whiteouts and opacity so full backups do not omit lower-only profiles; keep profile writes out of the immutable base.
+- Fail headless provisioning when generated profiles are unavailable instead of assigning player profiles or launching clients with empty authentication tokens. Validate NUMA recreation assignments before stopping or removing an existing client.
+- Mark invitation signup requests as uncompressed JSON so SPT does not try to inflate them as zlib and return an empty registration response.
+- Accept `quma init` as an alias for `setup` and document the required `--quma-dir` option for custom installation paths.
+- Recognize fresh server archives before mutable `user/mods` directories exist, so setup can be rerun on overlay installations. Preserve the recorded container name on rerun unless `--container-name` or `--dev` overrides it.
+- Print the correct TLS-aware login URL and data-directory-specific next steps after setup.
+- Read current Fika server configs that no longer contain `launcherListAllProfiles` or `background`, while preserving older configs.
+- Build player mod downloads from runtime, mod, and base layers instead of producing empty archives for overlay installations; exports also work while the server overlay is unmounted and respect dangling shadows, whiteouts, and opaque directories.
 - Isolate the config-path test from concurrent `QUMA_CONFIG` overrides.
 - Use debug-level logging for the hot-path headless CRC diagnostic.
 - Launch the Linux server through its managed DLL so freshly extracted files do not need execute permissions.

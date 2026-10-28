@@ -233,8 +233,31 @@ impl QumaDirs {
         self.spt_server.join("BepInEx/plugins")
     }
 
+    /// Writable profile target; use ProfileReader for the visible read union.
+    #[allow(dead_code)] // Public library API; internal restoration uses the scoped writer.
     pub fn profiles_dir(&self) -> Result<PathBuf> {
-        Ok(self.server_runtime_dir()?.join("user/profiles"))
+        self.profile_write_dir(!self.legacy && self.spt_overlay().is_mounted()?)
+    }
+
+    pub(crate) fn profile_write_root(&self) -> Result<PathBuf> {
+        Ok(self.profile_root_for_mount(!self.legacy && self.spt_overlay().is_mounted()?))
+    }
+
+    fn profile_root_for_mount(&self, mounted: bool) -> PathBuf {
+        if self.legacy {
+            self.spt_server.clone()
+        } else if mounted {
+            self.spt_runtime()
+        } else {
+            self.runtime_upper()
+        }
+    }
+
+    fn profile_write_dir(&self, mounted: bool) -> Result<PathBuf> {
+        let base = self.server_runtime_dir()?.join("user/profiles");
+        Ok(self
+            .profile_root_for_mount(mounted)
+            .join(base.strip_prefix(&self.spt_server)?))
     }
 
     #[allow(dead_code)] // ponytail: used once spt/detect migrates
@@ -253,9 +276,15 @@ impl QumaDirs {
 
     #[allow(dead_code)] // ponytail: callers currently use fika::config::fika_config_path
     pub fn fika_config(&self) -> Result<PathBuf> {
-        Ok(self.resolve_mod_file(
-            &self.server_mod_relative_path("fika-server/assets/configs/fika.jsonc")?,
-        ))
+        self.fika_config_for_mount(!self.legacy && self.spt_overlay().is_mounted()?)
+    }
+
+    fn fika_config_for_mount(&self, mounted: bool) -> Result<PathBuf> {
+        let relative = self.server_mod_relative_path("fika-server/assets/configs/fika.jsonc")?;
+        if !self.legacy && mounted {
+            return Ok(self.spt_runtime().join(relative));
+        }
+        Ok(self.resolve_mod_file(&relative))
     }
 
     // -- Overlay paths --
@@ -378,7 +407,7 @@ mod tests {
         );
         assert_eq!(
             dirs.profiles_dir().unwrap(),
-            PathBuf::from("/opt/quma/spt-server/SPT_Runtime/user/profiles")
+            PathBuf::from("/opt/quma/overlays/runtime/upper/SPT_Runtime/user/profiles")
         );
         assert_eq!(
             dirs.mod_file_path("SPT/user/mods/test"),
@@ -397,7 +426,7 @@ mod tests {
         std::fs::create_dir_all(dirs.spt_server.join("SPT_Runtime")).unwrap();
         assert_eq!(
             dirs.profiles_dir().unwrap(),
-            dirs.spt_server.join("SPT_Runtime/user/profiles")
+            dirs.runtime_upper().join("SPT_Runtime/user/profiles")
         );
         assert_eq!(
             dirs.core_json().unwrap(),
@@ -415,6 +444,102 @@ mod tests {
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
         std::fs::write(&config_path, "{}").unwrap();
         assert_eq!(dirs.fika_config().unwrap(), config_path);
+    }
+
+    #[test]
+    fn review_two_unmounted_stale_fika_config_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/mods/fika-server/assets/configs/fika.jsonc";
+        for root in [dirs.spt_runtime(), dirs.runtime_upper()] {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "{}").unwrap();
+        }
+        assert_eq!(
+            dirs.fika_config().unwrap(),
+            dirs.runtime_upper().join(relative)
+        );
+    }
+
+    #[test]
+    fn live_fika_config_uses_merged_view_not_backing_upper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/mods/fika-server/assets/configs/fika.jsonc";
+        for root in [dirs.spt_runtime(), dirs.runtime_upper(), dirs.mod_overlay()] {
+            let config = root.join(relative);
+            std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+            std::fs::write(config, "{}").unwrap();
+        }
+        assert_eq!(
+            dirs.fika_config_for_mount(true).unwrap(),
+            dirs.spt_runtime().join(relative)
+        );
+        std::fs::remove_file(dirs.spt_runtime().join(relative)).unwrap();
+        assert_eq!(
+            dirs.fika_config().unwrap(),
+            dirs.runtime_upper().join(relative)
+        );
+    }
+
+    #[test]
+    fn review_regression_unmounted_profile_write_target_is_not_immutable_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        std::fs::create_dir_all(dirs.spt_server.join("SPT_Runtime/user/profiles")).unwrap();
+        assert_eq!(
+            dirs.profiles_dir().unwrap(),
+            dirs.runtime_upper().join("SPT_Runtime/user/profiles")
+        );
+    }
+
+    #[test]
+    fn review_regression_stale_merged_directory_is_not_a_write_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/profiles";
+        std::fs::create_dir_all(dirs.spt_server.join(relative)).unwrap();
+        std::fs::create_dir_all(dirs.spt_runtime().join(relative)).unwrap();
+        assert_eq!(
+            dirs.profiles_dir().unwrap(),
+            dirs.runtime_upper().join(relative)
+        );
+    }
+
+    #[test]
+    fn profile_write_targets_follow_mount_state_not_directory_presence() {
+        for runtime in ["SPT_Runtime", "SPT"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+            std::fs::create_dir_all(dirs.spt_server.join(runtime)).unwrap();
+            let relative = format!("{runtime}/user/profiles");
+            let merged = dirs.spt_runtime().join(&relative);
+            let upper = dirs.runtime_upper().join(&relative);
+            std::fs::create_dir_all(&merged).unwrap();
+            std::fs::create_dir_all(&upper).unwrap();
+            assert_eq!(dirs.profile_write_dir(true).unwrap(), merged);
+            assert_eq!(dirs.profiles_dir().unwrap(), upper);
+            std::fs::remove_dir(&merged).unwrap();
+            assert_eq!(dirs.profiles_dir().unwrap(), upper);
+            std::fs::remove_dir(&upper).unwrap();
+            assert_eq!(
+                dirs.profiles_dir().unwrap(),
+                dirs.runtime_upper().join(relative)
+            );
+        }
+    }
+
+    #[test]
+    fn mounted_profile_write_target_does_not_require_an_existing_profile_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/profiles";
+        assert_eq!(
+            dirs.profile_write_dir(true).unwrap(),
+            dirs.spt_runtime().join(relative)
+        );
+        assert!(!dirs.spt_runtime().join(relative).exists());
     }
 
     #[test]

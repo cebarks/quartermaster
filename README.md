@@ -74,11 +74,11 @@ prevents outside-installation reads independently of that classification prerequ
 # Build
 cargo build --release
 
-# Initialize for your SPT server directory
-quma setup /path/to/spt-server
+# Initialize your data directory ("quma init" is an alias for "quma setup")
+quma setup --quma-dir /path/to/spt-server
 
-# Start the web UI
-quma serve
+# Start the web UI using the same data directory
+quma --quma-dir /path/to/spt-server serve
 ```
 
 ## CLI Reference
@@ -87,7 +87,7 @@ quma serve
 quma [OPTIONS] <COMMAND>
 
 Commands:
-  setup       Bootstrap or initialize Quartermaster for an SPT server
+  setup       Bootstrap or initialize Quartermaster for an SPT server (alias: init)
   install     Install a mod and its dependencies
   update      Update installed mods
   remove      Remove an installed mod
@@ -119,7 +119,7 @@ Mods can be referenced by name, Forge slug, or numeric Forge ID. Use `--force` o
 
 ## Web UI
 
-Start with `quma serve` (default: `0.0.0.0:9190`).
+Start with `quma --quma-dir /path/to/spt-server serve` (default: `https://localhost:9190/quma/login`, listening on `0.0.0.0:9190`). The default self-signed TLS certificate requires a browser exception.
 
 The dashboard provides mod management, server controls, real-time log streaming, player profiles, mod request voting, and admin tools. Players register via invite codes; admins can manage users and approve mod requests. Includes a transparent HTTPS/WSS reverse proxy so game clients connect to the SPT server through Quartermaster.
 

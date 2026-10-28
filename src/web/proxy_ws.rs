@@ -17,6 +17,7 @@ pub async fn ws_proxy_handler(
     req: HttpRequest,
     body: web::Payload,
     state: Data<AppState>,
+    proxy_headers: actix_web::http::header::HeaderMap,
 ) -> actix_web::Result<HttpResponse> {
     let path = req
         .uri()
@@ -61,7 +62,7 @@ pub async fn ws_proxy_handler(
         .collect();
 
         let headers = upstream_request.headers_mut();
-        for (name, value) in req.headers() {
+        for (name, value) in &proxy_headers {
             let name_lower = name.as_str().to_lowercase();
             if ws_header_names.contains(name_lower.as_str()) {
                 continue;

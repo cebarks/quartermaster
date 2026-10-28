@@ -132,6 +132,105 @@ impl ScopedDir {
         Ok(child)
     }
 
+    /// After a missing read, distinguish absent entries from overlay shadows.
+    /// Inspect each ancestor without following links, using bound directory handles.
+    pub(crate) fn blocks_lower_layer(&self, path: &Path) -> Result<bool> {
+        validate_relative(path)?;
+        self.verify_identity()?;
+        let mut dir = self.dir.try_clone()?;
+        for component in path.components() {
+            if directory_is_opaque(&dir)? {
+                return Ok(true);
+            }
+            let name = component.as_os_str();
+            let mut whiteout = std::ffi::OsString::from(".wh.");
+            whiteout.push(name);
+            match dir.symlink_metadata(&whiteout) {
+                Ok(_) => return Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+            match dir.symlink_metadata(name) {
+                Ok(metadata) if metadata.is_dir() => dir = dir.open_dir(name)?,
+                Ok(_) => return Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn require_unaliased_directories(&self, path: &Path) -> Result<()> {
+        validate_relative(path)?;
+        self.verify_identity()?;
+        let mut directory = self.dir.try_clone()?;
+        for component in path.components() {
+            let name = component.as_os_str();
+            match directory.symlink_metadata(name) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    bail!("directory aliases are unsupported for this filesystem view");
+                }
+                Ok(metadata) if metadata.is_dir() => directory = directory.open_dir(name)?,
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        self.verify_identity()
+    }
+
+    pub(crate) fn file_names(&self, path: &Path) -> Result<Vec<std::ffi::OsString>> {
+        let child = self.child(path)?;
+        let names = child
+            .dir
+            .entries()?
+            .map(|entry| Ok(entry?.file_name()))
+            .collect::<Result<_>>()?;
+        self.verify_identity()?;
+        Ok(names)
+    }
+
+    pub(crate) fn read_overlay_file(&self, path: &Path) -> Result<Option<File>> {
+        #[cfg(target_os = "linux")]
+        {
+            use cap_std::fs::MetadataExt;
+            let metadata = self.dir.symlink_metadata(self.resolve(path)?)?;
+            if is_kernel_whiteout(metadata.mode(), metadata.rdev()) {
+                return Ok(None);
+            }
+        }
+        let file = self.read_file(path)?;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            // Native regular-file whiteouts must be empty; restored data is visible.
+            if file.metadata()?.len() != 0 {
+                return Ok(Some(file));
+            }
+            for attr in [
+                c"trusted.overlay.whiteout",
+                c"user.overlay.whiteout",
+                c"user.fuseoverlayfs.whiteout",
+            ] {
+                // SAFETY: live fd/C name; a null zero-length buffer probes attribute presence.
+                let size = unsafe {
+                    libc::fgetxattr(file.as_raw_fd(), attr.as_ptr(), std::ptr::null_mut(), 0)
+                };
+                if size >= 0 {
+                    return Ok(None);
+                }
+                let error = std::io::Error::last_os_error();
+                if !matches!(
+                    error.raw_os_error(),
+                    Some(libc::ENODATA | libc::ENOTSUP | libc::EPERM)
+                ) {
+                    return Err(error.into());
+                }
+            }
+        }
+        Ok(Some(file))
+    }
+
     pub(crate) fn read_file(&self, path: &Path) -> Result<File> {
         let relative = self.resolve(path)?;
         let mut options = OpenOptions::new();
@@ -151,10 +250,17 @@ impl ScopedDir {
     /// Runtime directory names/aliases must remain stable during classification.
     /// Capability confinement does not depend on this namespace prerequisite.
     pub(crate) fn read_client_file(&self, path: &Path) -> Result<File> {
+        self.read_client_overlay_file(path)?
+            .context("client source is deleted")
+    }
+
+    pub(crate) fn read_client_overlay_file(&self, path: &Path) -> Result<Option<File>> {
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::AsRawFd;
-            let file = self.read_file(path)?;
+            let Some(file) = self.read_overlay_file(path)? else {
+                return Ok(None);
+            };
             self.verify_identity()?;
             // Classify the opened descriptor, not a pathname checked before opening.
             // The data stream remains on this capability-opened file handle.
@@ -168,7 +274,7 @@ impl ScopedDir {
                 }
             }
             self.verify_identity()?;
-            Ok(file)
+            Ok(Some(file))
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -203,9 +309,64 @@ impl ScopedDir {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn is_kernel_whiteout(mode: u32, device: u64) -> bool {
+    mode & libc::S_IFMT == libc::S_IFCHR && device == 0
+}
+
+fn directory_is_opaque(dir: &Dir) -> Result<bool> {
+    match dir.symlink_metadata(".wh..wh..opq") {
+        Ok(_) => return Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let directory = dir.open(".")?;
+        for attr in [
+            c"trusted.overlay.opaque",
+            c"user.overlay.opaque",
+            c"user.fuseoverlayfs.opaque",
+        ] {
+            let mut value = [0u8; 16];
+            // SAFETY: the live directory fd, C string and writable buffer are valid for this call.
+            let size = unsafe {
+                libc::fgetxattr(
+                    directory.as_raw_fd(),
+                    attr.as_ptr(),
+                    value.as_mut_ptr().cast(),
+                    value.len(),
+                )
+            };
+            if size > 0 && value[0] == b'y' {
+                return Ok(true);
+            }
+            if size < 0 {
+                let error = std::io::Error::last_os_error();
+                if !matches!(
+                    error.raw_os_error(),
+                    Some(libc::ENODATA | libc::ENOTSUP | libc::EPERM)
+                ) {
+                    return Err(error.into());
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_whiteout_is_only_a_zero_device_character_node() {
+        assert!(is_kernel_whiteout(libc::S_IFCHR | 0o600, 0));
+        assert!(!is_kernel_whiteout(libc::S_IFREG | 0o600, 0));
+        assert!(!is_kernel_whiteout(libc::S_IFCHR | 0o600, 259));
+    }
 
     #[test]
     fn rejects_unsafe_names() {

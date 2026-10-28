@@ -42,6 +42,8 @@ pub struct ConvergeContext<'a> {
 pub const MANAGED_BY_LABEL: &str = "quma.managed-by";
 pub const MANAGED_BY_VALUE: &str = "quartermaster-clients";
 
+const FIKA_CONFIG_GENERATION_TIMEOUT_SECS: u64 = 180;
+
 /// Regex for editing UDP port in Fika client config
 static PORT_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^(UDP Port\s*=\s*)\d+").expect("valid regex"));
@@ -231,68 +233,41 @@ async fn assigned_profile_ids(
 
 /// Select profile IDs to assign to new containers during scale-up.
 ///
-/// Reads profiles from `<spt_dir>/SPT/user/profiles/`, filters out those already
-/// assigned to running containers, and prefers profiles whose username starts with
-/// `headless_` (Fika's auto-generated headless profiles). Returns up to `needed`
-/// profile IDs.
+/// Uses the live profile view and assigns only Fika-generated `headless_` profiles.
+/// Missing profiles fail convergence before any new container is launched.
 async fn select_profiles_for_assignment(
     container_mgr: &ContainerManager,
     dirs: &QumaDirs,
     managed_names: &[String],
     needed: u32,
-) -> Vec<Option<String>> {
+) -> Result<Vec<String>> {
     let already_assigned = assigned_profile_ids(container_mgr, managed_names).await;
+    let all_profiles = profiles::list_profiles(dirs).context("failed to read headless profiles")?;
+    headless_profile_assignments(&all_profiles, &already_assigned, needed)
+}
 
-    let all_profiles = match profiles::list_profiles(dirs) {
-        Ok(p) => p,
-        Err(e) => {
-            warn!("Failed to read profiles directory: {e}. Containers will be created without PROFILE_ID.");
-            return vec![None; needed as usize];
-        }
-    };
-
-    // Filter to unassigned profiles, preferring headless_ prefixed usernames
-    let mut headless_profiles: Vec<String> = Vec::new();
-    let mut other_profiles: Vec<String> = Vec::new();
-
-    for profile in &all_profiles {
-        if already_assigned.contains(&profile.aid) {
-            continue;
-        }
-        if profile.username.starts_with("headless_") {
-            headless_profiles.push(profile.aid.clone());
-        } else {
-            other_profiles.push(profile.aid.clone());
-        }
-    }
-
-    // Headless profiles first, then other profiles as fallback
-    let available: Vec<String> = headless_profiles
-        .into_iter()
-        .chain(other_profiles)
+fn headless_profile_assignments(
+    all_profiles: &[profiles::SptProfile],
+    already_assigned: &HashSet<String>,
+    needed: u32,
+) -> Result<Vec<String>> {
+    let assignments: Vec<String> = all_profiles
+        .iter()
+        .filter(|profile| {
+            profile.username.starts_with("headless_")
+                && !profile.aid.is_empty()
+                && !already_assigned.contains(&profile.aid)
+        })
+        .take(needed as usize)
+        .map(|profile| profile.aid.clone())
         .collect();
-
-    let mut assignments: Vec<Option<String>> = Vec::with_capacity(needed as usize);
-    for i in 0..needed as usize {
-        if i < available.len() {
-            assignments.push(Some(available[i].clone()));
-        } else {
-            assignments.push(None);
-        }
-    }
-
-    let assigned_count = assignments.iter().filter(|a| a.is_some()).count();
-    if assigned_count < needed as usize {
-        warn!(
-            "Only {} of {} profiles available for assignment. \
-             Remaining containers will be created without PROFILE_ID. \
-             Headless profiles are generated when the SPT server starts with Fika — \
-             restart the server to create them, then run `quma headless create` again.",
-            assigned_count, needed
+    if assignments.len() != needed as usize {
+        bail!(
+            "Only {} of {needed} unassigned headless profiles available; refusing to use player profiles or empty tokens",
+            assignments.len()
         );
     }
-
-    assignments
+    Ok(assignments)
 }
 
 /// Write the UDP port into the Fika client config file in a per-client overlay.
@@ -1011,30 +986,32 @@ pub async fn converge(ctx: &ConvergeContext<'_>) -> Result<()> {
             })
             .filter(|s| !s.is_empty());
 
-        info!(
-            "Client {i}: NUMA pinning changed ({:?} → {:?}), recreating container",
-            current_cpus, desired_cpus
-        );
-
-        if container_mgr.is_running(&name).await.unwrap_or(false) {
+        let topology = &topology;
+        let fika_version = fika_version.as_deref();
+        recreate_assigned_client(profile_id, |profile_id| async move {
+            info!(
+                "Client {i}: NUMA pinning changed ({:?} → {:?}), recreating container",
+                current_cpus, desired_cpus
+            );
+            if container_mgr.is_running(&name).await.unwrap_or(false) {
+                container_mgr.stop(&name).await.with_context(|| {
+                    format!("failed to stop client {i} for NUMA reconciliation")
+                })?;
+            }
             container_mgr
-                .stop(&name)
+                .remove_container(&name)
                 .await
-                .with_context(|| format!("failed to stop client {i} for NUMA reconciliation"))?;
-        }
-        container_mgr
-            .remove_container(&name)
+                .with_context(|| format!("failed to remove client {i} for NUMA reconciliation"))?;
+            create_client_container(
+                ctx,
+                i,
+                Some(profile_id),
+                ntsync_available,
+                topology,
+                fika_version,
+            )
             .await
-            .with_context(|| format!("failed to remove client {i} for NUMA reconciliation"))?;
-
-        create_client_container(
-            ctx,
-            i,
-            profile_id,
-            ntsync_available,
-            &topology,
-            fika_version.as_deref(),
-        )
+        })
         .await?;
     }
 
@@ -1211,13 +1188,20 @@ async fn ensure_clients(
         .await
         .unwrap_or_default();
     let profile_assignments =
-        select_profiles_for_assignment(ctx.container_mgr, ctx.dirs, &managed, new_count).await;
+        select_profiles_for_assignment(ctx.container_mgr, ctx.dirs, &managed, new_count).await?;
 
     // 5. Create containers for new clients
     for (offset, profile_id) in profile_assignments.into_iter().enumerate() {
         let i = current_count + 1 + offset as u32;
-        create_client_container(ctx, i, profile_id, ntsync_available, topology, fika_version)
-            .await?;
+        create_client_container(
+            ctx,
+            i,
+            Some(profile_id),
+            ntsync_available,
+            topology,
+            fika_version,
+        )
+        .await?;
     }
 
     Ok(())
@@ -1227,6 +1211,17 @@ async fn ensure_clients(
 ///
 /// In-raid checks are now handled by the CLI `headless delete` command before calling
 /// converge, so this function simply stops and removes excess containers.
+fn cleanup_removed_client_overlay(
+    overlay_dir: &Path,
+    unmount: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    unmount().context("failed to unmount removed client overlay")?;
+    if overlay_dir.exists() {
+        crate::overlay::remove_unused_overlay_dir(overlay_dir)?;
+    }
+    Ok(())
+}
+
 async fn remove_excess_clients(
     ctx: &ConvergeContext<'_>,
     current_count: u32,
@@ -1249,19 +1244,11 @@ async fn remove_excess_clients(
 
     // Clean up overlay mounts and directories for removed clients
     for i in (desired_count + 1)..=current_count {
-        // Unmount the overlay before removing the directory tree
-        if let Err(e) = ctx.dirs.headless_overlay_mount(i).unmount() {
-            warn!("Failed to unmount overlay for client {i}: {e}");
-        }
-
-        let overlay = ctx.dirs.headless_overlay(i);
-        if overlay.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&overlay) {
-                warn!("Failed to clean overlay dir for client {i}: {e}");
-            } else {
-                info!("Removed overlay directory for client {i}");
-            }
-        }
+        cleanup_removed_client_overlay(&ctx.dirs.headless_overlay(i), || {
+            ctx.dirs.headless_overlay_mount(i).unmount()
+        })
+        .with_context(|| format!("failed to clean overlay for removed client {i}"))?;
+        info!("Cleaned overlay directory for client {i}");
     }
 
     // 2. Edit fika.jsonc to set amount
@@ -1370,13 +1357,22 @@ fn resolve_numa_cpuset(
 
 /// Create a container for a single client.
 ///
-/// If `profile_id` is `Some`, the container gets a `PROFILE_ID` env var that allows
-/// the CLI status command and supervisor to correlate this container with the Fika
-/// headless API (which keys its response by profile/session ID).
+/// A nonempty profile ID is mandatory for authentication and Fika correlation.
 ///
 /// The game directory is mounted via Podman's overlay mount (`:O`), giving each
 /// container a private writable layer over the shared install_dir. A first-boot
 /// flow waits for Fika to generate its config before patching and restarting.
+async fn recreate_assigned_client<F, Fut>(profile_id: Option<String>, recreate: F) -> Result<()>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let profile_id = profile_id
+        .filter(|profile| !profile.trim().is_empty())
+        .context("missing headless profile assignment for NUMA recreation")?;
+    recreate(profile_id).await
+}
+
 async fn create_client_container(
     ctx: &ConvergeContext<'_>,
     index: u32,
@@ -1385,6 +1381,9 @@ async fn create_client_container(
     topology: &NumaTopology,
     fika_version: Option<&str>,
 ) -> Result<()> {
+    let profile_id = profile_id
+        .filter(|id| !id.is_empty())
+        .context("refusing to create headless client without a profile ID")?;
     let headless_config = ctx.headless_config;
     let dirs = ctx.dirs;
     let container_mgr = ctx.container_mgr;
@@ -1406,12 +1405,7 @@ async fn create_client_container(
     // Workdir must be empty before overlayfs mount — clean it here,
     // not in setup_client_overlay, because the overlay update loop in
     // converge() also calls setup_client_overlay for running containers.
-    if work_dir.exists() {
-        std::fs::remove_dir_all(&work_dir)
-            .with_context(|| format!("failed to clean work dir {}", work_dir.display()))?;
-        std::fs::create_dir_all(&work_dir)
-            .with_context(|| format!("failed to recreate work dir {}", work_dir.display()))?;
-    }
+    crate::overlay::prepare_work_dir(&work_dir)?;
 
     // Build volume mounts — wine prefix only (game dir uses overlay mount)
     let volumes = vec![VolumeMount {
@@ -1435,22 +1429,8 @@ async fn create_client_container(
         client_port(headless_config.base_udp_port, index)?.to_string(),
     )];
 
-    // Always set PROFILE_ID — the entrypoint passes it to -token=, and an empty string
-    // causes the entrypoint to fail clearly instead.
-    match profile_id {
-        Some(ref pid) => {
-            env.push(("PROFILE_ID".to_string(), pid.clone()));
-            info!("Assigning profile {pid} to client {index}");
-        }
-        None => {
-            env.push(("PROFILE_ID".to_string(), String::new()));
-            warn!(
-                "No profile available for client {index}. \
-                 Fika status correlation will not work until a profile is assigned. \
-                 Restart the SPT server to generate headless profiles, then re-scale."
-            );
-        }
-    }
+    info!("Assigning profile {profile_id} to client {index}");
+    env.push(("PROFILE_ID".to_string(), profile_id));
 
     // Route through quma's HTTPS proxy.
     // Host-networked containers are on the host's network stack directly,
@@ -1519,7 +1499,14 @@ async fn create_client_container(
         info!("First boot for client {index} — waiting for Fika config generation");
         container_mgr.start(&name).await?;
 
-        match await_fika_config(container_mgr, &name, &upper_dir, 60).await {
+        match await_fika_config(
+            container_mgr,
+            &name,
+            &upper_dir,
+            FIKA_CONFIG_GENERATION_TIMEOUT_SECS,
+        )
+        .await
+        {
             Ok(()) => {
                 container_mgr.stop(&name).await?;
             }
@@ -1556,6 +1543,53 @@ mod tests {
     use super::*;
     use crate::config::HeadlessClientDef;
     use std::collections::HashSet;
+
+    #[test]
+    fn headless_overlay_cleanup_preserves_data_on_unmount_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let overlay = tmp.path().join("client-1");
+        std::fs::create_dir_all(overlay.join("upper")).unwrap();
+        let sentinel = overlay.join("upper/keep.txt");
+        std::fs::write(&sentinel, b"preserve on failed unmount").unwrap();
+        let result =
+            cleanup_removed_client_overlay(&overlay, || anyhow::bail!("simulated unmount failure"));
+        assert!(sentinel.exists(), "data was deleted after failed unmount");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn headless_firstboot_window_covers_measured_locale_load() {
+        assert!(
+            (120..=300).contains(&FIKA_CONFIG_GENERATION_TIMEOUT_SECS),
+            "First boot generated config between60–90s; allow margin but keep the wait bounded"
+        );
+    }
+
+    #[test]
+    fn headless_assignments_never_use_human_profiles() {
+        let profiles = vec![
+            profiles::SptProfile {
+                aid: "human-id".into(),
+                username: "player".into(),
+            },
+            profiles::SptProfile {
+                aid: "headless-id".into(),
+                username: "headless_generated".into(),
+            },
+        ];
+        assert!(headless_profile_assignments(&profiles, &HashSet::new(), 2).is_err());
+        assert_eq!(
+            headless_profile_assignments(&profiles, &HashSet::new(), 1).unwrap(),
+            vec!["headless-id".to_string()]
+        );
+        assert!(
+            headless_profile_assignments(&profiles, &HashSet::from(["headless-id".into()]), 1)
+                .is_err()
+        );
+        assert!(headless_profile_assignments(&profiles, &HashSet::new(), 0)
+            .unwrap()
+            .is_empty());
+    }
 
     #[test]
     fn fika_headless_version_marker_written_and_read() {
@@ -1673,6 +1707,35 @@ mod tests {
         std::fs::write(fika_dir.join("Fika.Core.dll"), b"fake dll").unwrap();
 
         assert!(is_fika_client_present(tmp.path()));
+    }
+
+    #[tokio::test]
+    async fn review_regression_numa_missing_profile_preserves_existing_container() {
+        for profile in [None, Some(String::new()), Some("   ".to_string())] {
+            let changed = std::cell::Cell::new(false);
+            let effects = &changed;
+            let result = recreate_assigned_client(profile, |profile| async move {
+                effects.set(true);
+                anyhow::ensure!(!profile.trim().is_empty(), "replacement profile missing");
+                Ok(())
+            })
+            .await;
+            assert!(result.is_err());
+            assert!(
+                !changed.get(),
+                "stop/remove callback ran before validating the replacement profile"
+            );
+        }
+        let changed = std::cell::Cell::new(false);
+        let effects = &changed;
+        recreate_assigned_client(Some("assigned".to_string()), |profile| async move {
+            assert_eq!(profile, "assigned");
+            effects.set(true);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(changed.get());
     }
 
     #[test]

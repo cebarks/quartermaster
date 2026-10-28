@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+use std::io::BufReader;
+use std::path::Path;
+
+use crate::spt::profile_store::ProfileReader;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -349,29 +353,15 @@ fn calculate_stash_value(inventory: &InventoryData, prices: &HashMap<String, i64
 }
 
 pub fn list_profiles(dirs: &QumaDirs) -> Result<Vec<SptProfile>> {
-    let profiles_dir = dirs.profiles_dir()?;
-    if !profiles_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-
+    let reader = ProfileReader::open(dirs)?;
     let mut profiles = Vec::new();
-    let entries = std::fs::read_dir(&profiles_dir)
-        .with_context(|| format!("failed to read {}", profiles_dir.display()))?;
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-
-        let contents = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
+    for name in reader.candidate_names()? {
+        let file = match reader.read(Path::new(&name)) {
+            Ok(Some(file)) => file,
+            _ => continue,
         };
-
-        let parsed: ProfileJson = match serde_json::from_str(&contents) {
-            Ok(p) => p,
+        let parsed: ProfileJson = match serde_json::from_reader(BufReader::new(file)) {
+            Ok(profile) => profile,
             Err(_) => continue,
         };
 
@@ -388,15 +378,11 @@ pub fn list_profiles(dirs: &QumaDirs) -> Result<Vec<SptProfile>> {
 /// Load profile stats for a single AID, returning the appropriate `ProfileStatus`.
 /// Avoids reading every profile file on disk when only one user row is needed.
 pub fn load_single_profile_status(dirs: &QumaDirs, aid: &str) -> ProfileStatus {
-    let Ok(profiles_dir) = dirs.profiles_dir() else {
-        return ProfileStatus::NotFound;
+    let file = match ProfileReader::open(dirs).and_then(|reader| reader.read_id(aid)) {
+        Ok(Some(file)) => file,
+        _ => return ProfileStatus::NotFound,
     };
-    let path = profiles_dir.join(format!("{aid}.json"));
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return ProfileStatus::NotFound,
-    };
-    let parsed: FullProfileJson = match serde_json::from_str(&contents) {
+    let parsed: FullProfileJson = match serde_json::from_reader(BufReader::new(file)) {
         Ok(p) => p,
         Err(_) => return ProfileStatus::ParseError,
     };
@@ -409,30 +395,21 @@ pub fn load_single_profile_status(dirs: &QumaDirs, aid: &str) -> ProfileStatus {
 
 pub fn load_all_profile_stats(dirs: &QumaDirs) -> HashMap<String, SptProfileStats> {
     let mut map = HashMap::new();
-    let Ok(profiles_dir) = dirs.profiles_dir() else {
+    let Ok(reader) = ProfileReader::open(dirs) else {
         return map;
     };
-
-    let entries = match std::fs::read_dir(&profiles_dir) {
-        Ok(e) => e,
-        Err(_) => return map,
+    let Ok(names) = reader.candidate_names() else {
+        return map;
     };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-
-        let contents = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
+    for name in names {
+        let file = match reader.read(Path::new(&name)) {
+            Ok(Some(file)) => file,
+            _ => continue,
         };
-
-        let parsed: FullProfileJson = match serde_json::from_str(&contents) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(path = %path.display(), err = %e, "failed to parse SPT profile");
+        let parsed: FullProfileJson = match serde_json::from_reader(BufReader::new(file)) {
+            Ok(profile) => profile,
+            Err(error) => {
+                tracing::warn!(err = %error, "failed to parse SPT profile");
                 continue;
             }
         };
@@ -458,11 +435,11 @@ pub fn load_profile_detail(
     profile_id: &str,
     prices: &HashMap<String, i64>,
 ) -> Result<Option<ProfileDetail>> {
-    let path = dirs.profiles_dir()?.join(format!("{profile_id}.json"));
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read profile {}", path.display()))?;
-    let parsed: FullProfileJson = serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse profile {}", path.display()))?;
+    let file = ProfileReader::open(dirs)?
+        .read_id(profile_id)?
+        .context("profile not found")?;
+    let parsed: FullProfileJson =
+        serde_json::from_reader(BufReader::new(file)).context("failed to parse profile")?;
 
     let mut pmc = match parsed.characters.and_then(|c| c.pmc) {
         Some(pmc) => pmc,
@@ -529,11 +506,11 @@ pub fn load_profile_detail(
 }
 
 pub fn load_stash_items(dirs: &QumaDirs, profile_id: &str) -> Result<Option<Vec<StashItem>>> {
-    let path = dirs.profiles_dir()?.join(format!("{profile_id}.json"));
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read profile {}", path.display()))?;
-    let parsed: FullProfileJson = serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse profile {}", path.display()))?;
+    let file = ProfileReader::open(dirs)?
+        .read_id(profile_id)?
+        .context("profile not found")?;
+    let parsed: FullProfileJson =
+        serde_json::from_reader(BufReader::new(file)).context("failed to parse profile")?;
 
     let pmc = match parsed.characters.and_then(|c| c.pmc) {
         Some(pmc) => pmc,
@@ -577,6 +554,45 @@ mod tests {
         std::fs::create_dir_all(&profiles_dir).unwrap();
         let content = format!(r#"{{"info":{{"id":"{}","username":"{}"}}}}"#, aid, username);
         std::fs::write(profiles_dir.join(format!("{aid}.json")), content).unwrap();
+    }
+
+    #[test]
+    fn review_regression_unmounted_profile_consumers_see_all_layers() {
+        for runtime in ["SPT", "SPT_Runtime"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+            let relative = Path::new(runtime).join("user/profiles");
+            let base = dirs.spt_server.join(&relative);
+            let upper = dirs.runtime_upper().join(&relative);
+            std::fs::create_dir_all(&base).unwrap();
+            std::fs::create_dir_all(&upper).unwrap();
+            for (directory, id, name) in [
+                (&base, "base", "Base"),
+                (&base, "shared", "Old"),
+                (&upper, "shared", "New"),
+                (&upper, "upper", "Upper"),
+            ] {
+                std::fs::write(
+                    directory.join(format!("{id}.json")),
+                    serde_json::json!({"info":{"id":id,"username":name}}).to_string(),
+                )
+                .unwrap();
+            }
+            let profiles = list_profiles(&dirs).unwrap();
+            assert_eq!(profiles.len(), 3);
+            assert!(profiles
+                .iter()
+                .any(|profile| profile.aid == "shared" && profile.username == "New"));
+            assert!(matches!(
+                load_single_profile_status(&dirs, "base"),
+                ProfileStatus::Found(_)
+            ));
+            assert_eq!(load_all_profile_stats(&dirs).len(), 3);
+            assert!(load_profile_detail(&dirs, "base", &HashMap::new())
+                .unwrap()
+                .is_none());
+            assert!(load_stash_items(&dirs, "base").unwrap().is_none());
+        }
     }
 
     #[test]

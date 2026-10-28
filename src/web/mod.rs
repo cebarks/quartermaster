@@ -1008,7 +1008,7 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         .expect("failed to build proxy HTTP client");
 
     let mod_zip_cache = crate::web::mod_zip_cache::ModZipCache::new(
-        dirs.spt_server.clone(),
+        dirs.clone(),
         db_arc.clone(),
         config_handle.clone(),
     );

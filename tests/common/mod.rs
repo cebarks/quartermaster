@@ -23,6 +23,8 @@ pub struct TestAppBuilder {
     external_url: Option<String>,
     mock_server: Option<wiremock::MockServer>,
     api_token: Option<String>,
+    proxy_auth: bool,
+    nested_layout: bool,
 }
 
 impl TestAppBuilder {
@@ -34,6 +36,8 @@ impl TestAppBuilder {
             external_url: None,
             mock_server: None,
             api_token: None,
+            proxy_auth: false,
+            nested_layout: false,
         }
     }
 
@@ -76,11 +80,27 @@ impl TestAppBuilder {
         self
     }
 
+    /// Enable proxy authentication with a deliberately unreachable test upstream.
+    pub fn with_proxy_auth(mut self) -> Self {
+        self.proxy_auth = true;
+        self
+    }
+
+    pub fn with_nested_layout(mut self) -> Self {
+        self.nested_layout = true;
+        self
+    }
+
     /// Build the test app.
     pub async fn build(self) -> TestApp {
         // Create a temporary SPT directory structure
         let tmp_dir = TempDir::new().expect("failed to create temp dir");
-        let spt_dir = tmp_dir.path().to_path_buf();
+        let dirs = if self.nested_layout {
+            spt_quartermaster::dirs::QumaDirs::from_root(tmp_dir.path().to_path_buf())
+        } else {
+            spt_quartermaster::dirs::QumaDirs::from_legacy(tmp_dir.path().to_path_buf())
+        };
+        let spt_dir = dirs.spt_server.clone();
 
         // SPT directory structure
         std::fs::create_dir_all(spt_dir.join("SPT")).unwrap();
@@ -146,13 +166,15 @@ impl TestAppBuilder {
         let config = Config {
             session_secret: "test-session-secret-at-least-48-chars-long-abcdefgh".to_string(),
             tls_enabled: false,
-            proxy_enabled: false,
+            proxy_enabled: self.proxy_auth,
+            proxy_auth: true,
+            server_port: self.proxy_auth.then_some(1),
             external_url: self.external_url.clone(),
             ..Config::default()
         };
 
         // Write config file so handlers that reload config from disk can find it
-        let config_path = spt_dir.join("quartermaster.toml");
+        let config_path = dirs.root.join("quartermaster.toml");
         std::fs::write(
             &config_path,
             toml::to_string(&config).expect("failed to serialize config"),
@@ -183,9 +205,7 @@ impl TestAppBuilder {
             config: config_arc.clone(),
             config_path,
             config_lock: Arc::new(parking_lot::Mutex::new(())),
-            dirs: Arc::new(spt_quartermaster::dirs::QumaDirs::from_legacy(
-                spt_dir.clone(),
-            )),
+            dirs: Arc::new(dirs.clone()),
             spt_info: SptInfo {
                 root: spt_dir.clone(),
                 spt_version: "3.10.0".to_string(),
@@ -210,7 +230,7 @@ impl TestAppBuilder {
             proxy_metrics: ProxyMetrics::new(),
             proxy_client,
             mod_zip_cache: spt_quartermaster::web::mod_zip_cache::ModZipCache::new(
-                spt_dir.clone(),
+                dirs.clone(),
                 db_arc.clone(),
                 config_arc.clone(),
             ),
@@ -221,9 +241,7 @@ impl TestAppBuilder {
                 db_arc.clone(),
                 config_arc.clone(),
             ),
-            config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(
-                &spt_quartermaster::dirs::QumaDirs::from_legacy(spt_dir.clone()),
-            ),
+            config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(&dirs),
             sse_connections: std::sync::atomic::AtomicUsize::new(0),
         });
 
@@ -269,6 +287,10 @@ pub struct TestApp {
 }
 
 impl TestApp {
+    pub fn dirs(&self) -> &spt_quartermaster::dirs::QumaDirs {
+        &self.app_state.dirs
+    }
+
     async fn make_service(
         &self,
     ) -> impl Service<actix_http::Request, Response = ServiceResponse, Error = actix_web::Error>
