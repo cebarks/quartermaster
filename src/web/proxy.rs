@@ -503,11 +503,11 @@ pub async fn proxy_handler(
                 && status.is_success();
 
             if is_register {
-                let spt_dir = state.dirs.spt_server.clone();
+                let dirs = state.dirs.clone();
                 let db = state.db.clone();
                 let events = state.events.clone();
                 tokio::task::spawn_blocking(move || {
-                    handle_player_registration(spt_dir, db, events);
+                    handle_player_registration(dirs, db, events);
                 });
             }
 
@@ -524,7 +524,7 @@ pub async fn proxy_handler(
                     crate::web::raid_tracker::extract_session_id_from_headers(&proxy_headers)
                 {
                     if let Some(body_clone) = raid_body {
-                        let spt_dir = state.dirs.spt_server.clone();
+                        let dirs = state.dirs.clone();
                         let db = state.db.clone();
                         let events = state.events.clone();
                         let snapshots_enabled = state.config().snapshots_enabled;
@@ -533,7 +533,7 @@ pub async fn proxy_handler(
                                 crate::web::raid_tracker::handle_raid_start(
                                     body_clone,
                                     profile_id,
-                                    spt_dir,
+                                    dirs,
                                     db,
                                     events,
                                     snapshots_enabled,
@@ -544,7 +544,7 @@ pub async fn proxy_handler(
                                 crate::web::raid_tracker::handle_raid_end(
                                     body_clone,
                                     profile_id,
-                                    spt_dir,
+                                    dirs.spt_server.clone(),
                                     db,
                                     events,
                                     snapshots_enabled,
@@ -654,6 +654,7 @@ pub async fn proxy_handler(
                     &external_url,
                     target_port,
                     proxy_port,
+                    port,
                     managed_headless,
                 );
                 let raw_body = resp.bytes().await.map_err(|e| {
@@ -700,12 +701,13 @@ fn backend_rewrite_authority(
     external_url: &str,
     direct_port: u16,
     proxy_port: u16,
+    local_server_port: u16,
     managed_headless: bool,
 ) -> String {
     if managed_headless {
         let port = match target {
             BackendRewriteTarget::HttpProxy => proxy_port,
-            BackendRewriteTarget::DirectTcp => direct_port,
+            BackendRewriteTarget::DirectTcp => local_server_port,
         };
         return format!("127.0.0.1:{port}");
     }
@@ -774,7 +776,7 @@ fn rewrite_backend_url(body: &[u8], replacement: &str) -> Result<Vec<u8>, String
 }
 
 fn handle_player_registration(
-    spt_dir: std::path::PathBuf,
+    dirs: std::sync::Arc<crate::dirs::QumaDirs>,
     db: std::sync::Arc<parking_lot::Mutex<crate::db::Database>>,
     events: tokio::sync::broadcast::Sender<crate::web::sse::ServerEvent>,
 ) {
@@ -783,12 +785,15 @@ fn handle_player_registration(
     //
     // Phase 1: Read all profile data from disk (no DB lock held).
     // Phase 2: Acquire the lock once and perform all DB lookups/inserts.
-    let Ok(runtime) = crate::spt::layout::runtime_dir(&spt_dir) else {
-        return;
+    let reader = match crate::spt::profile_store::ProfileReader::open(&dirs) {
+        Ok(reader) => reader,
+        Err(error) => {
+            tracing::warn!(err = %error, "failed to open profile layers for new user detection");
+            return;
+        }
     };
-    let profiles_dir = runtime.join("user/profiles");
-    let entries = match std::fs::read_dir(&profiles_dir) {
-        Ok(e) => e,
+    let entries = match reader.candidate_names() {
+        Ok(entries) => entries,
         Err(e) => {
             tracing::warn!(err = %e, "failed to read profiles directory for new user detection");
             return;
@@ -797,17 +802,19 @@ fn handle_player_registration(
 
     // Phase 1: filesystem I/O — collect profile data without holding the DB lock.
     let mut profiles: Vec<(String, String)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for name in entries {
+        let path = std::path::Path::new(&name);
         let profile_id = match path.file_stem().and_then(|s| s.to_str()) {
             Some(id) if path.extension().and_then(|e| e.to_str()) == Some("json") => id.to_string(),
             _ => continue,
         };
 
         // Read profile to get username
-        let profile_json: serde_json::Value = match std::fs::read_to_string(&path)
+        let profile_json: serde_json::Value = match reader
+            .read(path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .flatten()
+            .and_then(|file| serde_json::from_reader(std::io::BufReader::new(file)).ok())
         {
             Some(v) => v,
             None => continue,
@@ -1273,11 +1280,25 @@ mod tests {
     fn managed_backend_urls_stay_on_loopback_with_explicit_ports() {
         let external = "https://public.example";
         assert_eq!(
-            backend_rewrite_authority(&BackendRewriteTarget::HttpProxy, external, 6969, 9190, true),
+            backend_rewrite_authority(
+                &BackendRewriteTarget::HttpProxy,
+                external,
+                6969,
+                9190,
+                6969,
+                true
+            ),
             "127.0.0.1:9190"
         );
         assert_eq!(
-            backend_rewrite_authority(&BackendRewriteTarget::DirectTcp, external, 6969, 9190, true),
+            backend_rewrite_authority(
+                &BackendRewriteTarget::DirectTcp,
+                external,
+                6969,
+                9190,
+                6969,
+                true
+            ),
             "127.0.0.1:6969"
         );
         assert_eq!(
@@ -1286,6 +1307,7 @@ mod tests {
                 external,
                 6969,
                 9190,
+                6969,
                 false
             ),
             "public.example"
@@ -1296,6 +1318,7 @@ mod tests {
                 external,
                 6969,
                 9190,
+                6969,
                 false
             ),
             "public.example:6969"
@@ -1334,7 +1357,14 @@ mod tests {
             (BackendRewriteTarget::DirectTcp, "127.0.0.1:6969"),
         ] {
             assert_eq!(
-                backend_rewrite_authority(&target, "https://public.example", 6969, 9190, managed),
+                backend_rewrite_authority(
+                    &target,
+                    "https://public.example",
+                    6969,
+                    9190,
+                    6969,
+                    managed
+                ),
                 expected
             );
         }
@@ -1350,6 +1380,70 @@ mod tests {
         .await;
         assert_eq!(result, Err(ProxyIdentityError::Disabled));
         assert!(!checked.get());
+    }
+
+    #[test]
+    fn review_two_managed_direct_rewrite_does_not_use_external_port() {
+        assert_eq!(
+            backend_rewrite_authority(
+                &BackendRewriteTarget::DirectTcp,
+                "https://public.example",
+                16969,
+                9190,
+                6969,
+                true
+            ),
+            "127.0.0.1:6969"
+        );
+        assert_eq!(
+            backend_rewrite_authority(
+                &BackendRewriteTarget::DirectTcp,
+                "https://public.example",
+                16969,
+                9190,
+                6969,
+                false
+            ),
+            "public.example:16969"
+        );
+    }
+
+    #[test]
+    fn review_two_registration_discovers_upper_only_and_overridden_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = crate::dirs::QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/profiles";
+        let base = dirs.spt_server.join(relative);
+        let upper = dirs.runtime_upper().join(relative);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&upper).unwrap();
+        let shared = "000000000000000000000001";
+        let only = "000000000000000000000002";
+        for (root, id, username) in [
+            (&base, shared, "old"),
+            (&upper, shared, "new"),
+            (&upper, only, "upper-only"),
+        ] {
+            std::fs::write(
+                root.join(format!("{id}.json")),
+                serde_json::json!({"info":{"username":username}}).to_string(),
+            )
+            .unwrap();
+        }
+        let db = std::sync::Arc::new(parking_lot::Mutex::new(
+            crate::db::Database::open_in_memory().unwrap(),
+        ));
+        let (events, _) = tokio::sync::broadcast::channel(8);
+        handle_player_registration(std::sync::Arc::new(dirs), db.clone(), events);
+        let db = db.lock();
+        assert_eq!(
+            db.get_user_by_spt_profile_id(shared)
+                .unwrap()
+                .unwrap()
+                .username,
+            "new"
+        );
+        assert!(db.get_user_by_spt_profile_id(only).unwrap().is_some());
     }
 
     #[test]

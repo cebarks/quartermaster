@@ -234,21 +234,30 @@ impl QumaDirs {
     }
 
     /// Writable profile target; use ProfileReader for the visible read union.
+    #[allow(dead_code)] // Public library API; internal restoration uses the scoped writer.
     pub fn profiles_dir(&self) -> Result<PathBuf> {
         self.profile_write_dir(!self.legacy && self.spt_overlay().is_mounted()?)
     }
 
-    fn profile_write_dir(&self, mounted: bool) -> Result<PathBuf> {
-        let base = self.server_runtime_dir()?.join("user/profiles");
+    pub(crate) fn profile_write_root(&self) -> Result<PathBuf> {
+        Ok(self.profile_root_for_mount(!self.legacy && self.spt_overlay().is_mounted()?))
+    }
+
+    fn profile_root_for_mount(&self, mounted: bool) -> PathBuf {
         if self.legacy {
-            return Ok(base);
-        }
-        let root = if mounted {
+            self.spt_server.clone()
+        } else if mounted {
             self.spt_runtime()
         } else {
             self.runtime_upper()
-        };
-        Ok(root.join(base.strip_prefix(&self.spt_server)?))
+        }
+    }
+
+    fn profile_write_dir(&self, mounted: bool) -> Result<PathBuf> {
+        let base = self.server_runtime_dir()?.join("user/profiles");
+        Ok(self
+            .profile_root_for_mount(mounted)
+            .join(base.strip_prefix(&self.spt_server)?))
     }
 
     #[allow(dead_code)] // ponytail: used once spt/detect migrates
@@ -267,14 +276,13 @@ impl QumaDirs {
 
     #[allow(dead_code)] // ponytail: callers currently use fika::config::fika_config_path
     pub fn fika_config(&self) -> Result<PathBuf> {
+        self.fika_config_for_mount(!self.legacy && self.spt_overlay().is_mounted()?)
+    }
+
+    fn fika_config_for_mount(&self, mounted: bool) -> Result<PathBuf> {
         let relative = self.server_mod_relative_path("fika-server/assets/configs/fika.jsonc")?;
-        if !self.legacy {
-            let merged = self.spt_runtime().join(&relative);
-            if merged.is_file() {
-                // Writes to an active overlay must go through its merged view, not
-                // replace backing upper inodes behind the overlay filesystem.
-                return Ok(merged);
-            }
+        if !self.legacy && mounted {
+            return Ok(self.spt_runtime().join(relative));
         }
         Ok(self.resolve_mod_file(&relative))
     }
@@ -439,6 +447,22 @@ mod tests {
     }
 
     #[test]
+    fn review_two_unmounted_stale_fika_config_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let relative = "SPT_Runtime/user/mods/fika-server/assets/configs/fika.jsonc";
+        for root in [dirs.spt_runtime(), dirs.runtime_upper()] {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "{}").unwrap();
+        }
+        assert_eq!(
+            dirs.fika_config().unwrap(),
+            dirs.runtime_upper().join(relative)
+        );
+    }
+
+    #[test]
     fn live_fika_config_uses_merged_view_not_backing_upper() {
         let tmp = tempfile::tempdir().unwrap();
         let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
@@ -449,7 +473,7 @@ mod tests {
             std::fs::write(config, "{}").unwrap();
         }
         assert_eq!(
-            dirs.fika_config().unwrap(),
+            dirs.fika_config_for_mount(true).unwrap(),
             dirs.spt_runtime().join(relative)
         );
         std::fs::remove_file(dirs.spt_runtime().join(relative)).unwrap();

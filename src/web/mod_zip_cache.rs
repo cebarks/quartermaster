@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -123,6 +123,18 @@ pub fn build_mod_zip_to_file(
     dest: &Path,
     client_only: bool,
 ) -> anyhow::Result<()> {
+    let file = BufWriter::new(File::create(dest)?);
+    let mut writer = build_mod_zip_to_writer(dirs, files, file, client_only)?;
+    writer.flush()?;
+    Ok(())
+}
+
+pub(crate) fn build_mod_zip_to_writer<W: Write + Seek>(
+    dirs: &QumaDirs,
+    files: &[InstalledFile],
+    writer: W,
+    client_only: bool,
+) -> anyhow::Result<W> {
     let roots = if dirs.is_legacy() {
         vec![dirs.spt_server.clone()]
     } else {
@@ -140,8 +152,7 @@ pub fn build_mod_zip_to_file(
             Err(e) => return Err(e),
         }
     }
-    let file = BufWriter::new(File::create(dest)?);
-    let mut zip = ZipWriter::new(file);
+    let mut zip = ZipWriter::new(writer);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for f in files {
@@ -168,8 +179,7 @@ pub fn build_mod_zip_to_file(
         }
     }
 
-    zip.finish()?;
-    Ok(())
+    Ok(zip.finish()?)
 }
 
 fn is_not_found(error: &anyhow::Error) -> bool {
@@ -185,13 +195,15 @@ fn read_zip_source(
 ) -> anyhow::Result<File> {
     for scope in scopes {
         let result = if client_only {
-            scope.read_client_file(relative)
+            scope.read_client_overlay_file(relative)
         } else {
-            scope.read_file(relative)
+            scope.read_overlay_file(relative)
         };
         match result {
+            Ok(Some(file)) => return Ok(file),
+            Ok(None) => anyhow::bail!("mod ZIP source is deleted in an installation layer"),
             Err(e) if is_not_found(&e) && !scope.blocks_lower_layer(relative)? => continue,
-            result => return result,
+            Err(e) => return Err(e),
         }
     }
     anyhow::bail!("mod ZIP source does not exist in any installation layer")
@@ -341,6 +353,64 @@ mod tests {
     use crate::config::SetupZipConfig;
     use crate::db::mods::InstalledFile;
     use std::io::Write;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn review_two_zip_native_whiteouts_are_terminal_but_restored_data_is_visible() {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        for client_only in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+            let relative = "BepInEx/plugins/Test.dll";
+            let base = dirs.spt_server.join(relative);
+            let upper = dirs.runtime_upper().join(relative);
+            std::fs::create_dir_all(base.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(upper.parent().unwrap()).unwrap();
+            std::fs::write(base, "deleted lower data").unwrap();
+            let marker = File::create(&upper).unwrap();
+            // SAFETY: live fd, valid C name, and a zero-length attribute value.
+            assert_eq!(
+                unsafe {
+                    libc::fsetxattr(
+                        marker.as_raw_fd(),
+                        c"user.overlay.whiteout".as_ptr(),
+                        std::ptr::null(),
+                        0,
+                        0,
+                    )
+                },
+                0
+            );
+            let files = vec![InstalledFile {
+                id: 0,
+                mod_id: Some(1),
+                addon_id: None,
+                file_path: relative.into(),
+                file_hash: None,
+                file_size: None,
+                source: "archive".into(),
+            }];
+            let dest = tmp.path().join("mods.zip");
+            build_mod_zip_to_file(&dirs, &files, &dest, client_only).unwrap();
+            assert_eq!(
+                zip::ZipArchive::new(File::open(&dest).unwrap())
+                    .unwrap()
+                    .len(),
+                0
+            );
+            std::fs::write(upper, "restored").unwrap();
+            build_mod_zip_to_file(&dirs, &files, &dest, client_only).unwrap();
+            let mut archive = zip::ZipArchive::new(File::open(dest).unwrap()).unwrap();
+            let mut contents = String::new();
+            archive
+                .by_name(relative)
+                .unwrap()
+                .read_to_string(&mut contents)
+                .unwrap();
+            assert_eq!(contents, "restored");
+        }
+    }
 
     fn test_config() -> Arc<parking_lot::RwLock<crate::config::Config>> {
         let mut c = crate::config::Config::default();

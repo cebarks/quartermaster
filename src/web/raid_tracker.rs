@@ -1,5 +1,7 @@
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+use crate::dirs::QumaDirs;
 use std::sync::Arc;
 
 use actix_web::web::Bytes;
@@ -103,16 +105,16 @@ fn decompress_body(body: &[u8]) -> Vec<u8> {
 /// Returns `None` if file doesn't exist or can't be parsed.
 /// Also returns the raw file bytes for snapshot storage.
 pub fn snapshot_profile(
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     profile_id: &str,
     is_scav: bool,
 ) -> Option<(ProfileSnapshot, Vec<u8>)> {
-    let path = crate::spt::layout::runtime_dir(spt_dir)
+    let mut file = crate::spt::profile_store::ProfileReader::open(dirs)
         .ok()?
-        .join("user/profiles")
-        .join(format!("{profile_id}.json"));
-
-    let contents = std::fs::read(&path).ok()?;
+        .read_id(profile_id)
+        .ok()??;
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents).ok()?;
     let parsed: serde_json::Value = serde_json::from_slice(&contents).ok()?;
 
     let character_key = if is_scav { "scav" } else { "pmc" };
@@ -160,7 +162,7 @@ pub fn snapshot_profile(
 pub fn handle_raid_start(
     body: Bytes,
     spt_profile_id: String,
-    spt_dir: PathBuf,
+    dirs: Arc<QumaDirs>,
     db: Arc<parking_lot::Mutex<Database>>,
     events: tokio::sync::broadcast::Sender<ServerEvent>,
     snapshots_enabled: bool,
@@ -178,7 +180,7 @@ pub fn handle_raid_start(
     let is_scav = start_req.player_side.as_deref() == Some("Savage");
 
     // Snapshot the profile and compress BEFORE acquiring the lock
-    let (snapshot, profile_bytes) = match snapshot_profile(&spt_dir, &spt_profile_id, is_scav) {
+    let (snapshot, profile_bytes) = match snapshot_profile(&dirs, &spt_profile_id, is_scav) {
         Some(pair) => pair,
         None => {
             tracing::warn!(profile_id = %spt_profile_id, is_scav, "failed to snapshot profile for raid start");
@@ -366,6 +368,51 @@ pub fn handle_raid_end(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_two_raid_start_and_snapshot_use_upper_profiles() {
+        for lower_exists in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dirs = crate::dirs::QumaDirs::from_root(tmp.path().to_path_buf());
+            let id = "000000000000000000000001";
+            let relative = format!("SPT_Runtime/user/profiles/{id}.json");
+            let base = dirs.spt_server.join(&relative);
+            let upper = dirs.runtime_upper().join(&relative);
+            std::fs::create_dir_all(base.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(upper.parent().unwrap()).unwrap();
+            let profile = |xp| {
+                serde_json::json!({"characters":{"pmc":{"Info":{"Experience":xp,"Level":5,"Side":"Usec"}}}}).to_string()
+            };
+            if lower_exists {
+                std::fs::write(&base, profile(1)).unwrap();
+            }
+            std::fs::write(&upper, profile(200)).unwrap();
+            assert_eq!(snapshot_profile(&dirs, id, false).unwrap().0.xp, 200);
+            let db = Arc::new(parking_lot::Mutex::new(Database::open_in_memory().unwrap()));
+            db.lock()
+                .insert_user("player", Some(id), None, "player", false)
+                .unwrap();
+            let (events, _) = tokio::sync::broadcast::channel(8);
+            let body = Bytes::from(
+                serde_json::json!({"serverId":null,"location":"factory4_day","playerSide":"Pmc"})
+                    .to_string(),
+            );
+            handle_raid_start(
+                body,
+                id.to_string(),
+                Arc::new(dirs),
+                db.clone(),
+                events,
+                true,
+            );
+            let count: i64 = db
+                .lock()
+                .conn()
+                .query_row("SELECT COUNT(*) FROM raids", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 1);
+        }
+    }
     use actix_web::HttpRequest;
 
     fn extract_session_id(req: &HttpRequest) -> Option<String> {

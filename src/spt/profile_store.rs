@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 
 use crate::dirs::QumaDirs;
 use crate::spt::scoped::ScopedDir;
@@ -69,13 +69,7 @@ impl ProfileReader {
     }
 
     pub(crate) fn read(&self, name: &Path) -> Result<Option<File>> {
-        if name.components().count() != 1
-            || !matches!(name.components().next(), Some(Component::Normal(_)))
-            || name.as_os_str().as_encoded_bytes().contains(&b'\\')
-            || name.extension().is_none_or(|extension| extension != "json")
-        {
-            bail!("unsafe profile filename");
-        }
+        validate_profile_name(name)?;
         let relative = self.relative.join(name);
         for layer in &self.layers {
             match layer.read_overlay_file(&relative) {
@@ -93,6 +87,47 @@ impl ProfileReader {
 
     pub(crate) fn read_id(&self, id: &str) -> Result<Option<File>> {
         self.read(Path::new(&format!("{id}.json")))
+    }
+}
+
+fn validate_profile_name(name: &Path) -> Result<()> {
+    if name.components().count() != 1
+        || !matches!(name.components().next(), Some(Component::Normal(_)))
+        || name.as_os_str().as_encoded_bytes().contains(&b'\\')
+        || name.extension().is_none_or(|extension| extension != "json")
+    {
+        bail!("unsafe profile filename");
+    }
+    Ok(())
+}
+
+pub(crate) struct ProfileWriter {
+    scope: ScopedDir,
+}
+
+impl ProfileWriter {
+    pub(crate) fn open(dirs: &QumaDirs) -> Result<Self> {
+        let root = dirs.profile_write_root()?;
+        std::fs::create_dir_all(&root)?;
+        let layer = ScopedDir::open(&root)?;
+        let relative = dirs
+            .server_runtime_dir()?
+            .strip_prefix(&dirs.spt_server)?
+            .join("user/profiles");
+        layer.require_unaliased_directories(&relative)?;
+        layer.create_dir_all(&relative)?;
+        Ok(Self {
+            scope: layer.child(&relative)?,
+        })
+    }
+
+    pub(crate) fn copy_from(&self, name: &Path, source: &mut File) -> Result<u64> {
+        validate_profile_name(name)?;
+        let metadata = source.metadata()?;
+        ensure!(metadata.is_file(), "backup profile is not a regular file");
+        let mut target = self.scope.create_file(name)?;
+        target.set_permissions(metadata.permissions())?;
+        Ok(std::io::copy(source, &mut target)?)
     }
 }
 
@@ -161,6 +196,29 @@ mod tests {
                 assert!(ProfileReader::open(&dirs).is_err());
             }
         }
+    }
+
+    #[test]
+    fn scoped_profile_writer_retains_confined_leaf_aliases() {
+        use std::os::unix::fs::symlink;
+        let (tmp, dirs, _base, upper) = fixture();
+        std::fs::write(upper.join("target.json"), "old").unwrap();
+        symlink("target.json", upper.join("alias.json")).unwrap();
+        let source_path = tmp.path().join("saved.json");
+        std::fs::write(&source_path, "saved").unwrap();
+        let mut source = File::open(source_path).unwrap();
+        ProfileWriter::open(&dirs)
+            .unwrap()
+            .copy_from(Path::new("alias.json"), &mut source)
+            .unwrap();
+        assert!(std::fs::symlink_metadata(upper.join("alias.json"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(upper.join("target.json")).unwrap(),
+            "saved"
+        );
     }
 
     #[test]

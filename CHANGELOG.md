@@ -32,7 +32,12 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Fixed
 
-- Keep authenticated managed headless clients' advertised HTTP and direct backend addresses on explicit loopback ports, including clients with enabled database account links, so public URL rewriting does not send them back through an external route.
+- Confine profile restoration to its writable profile directory, rejecting escaping destination aliases without overwriting base/outside targets while retaining confined leaf aliases.
+- Normalize relative overlay mount targets and decode mount-table escapes so profile/config writes use the actual mounted view, including installation paths with spaces or backslashes.
+- Ignore stale unmounted Fika configuration files; resolve the current installation layers instead.
+- Use the shared layered exporter for join bootstrap and setup cache-miss downloads, preserving configured file selection. Treat native zero-size whiteouts as terminal absence without falling back to lower files, while allowing restored nonempty data.
+- Read registration profiles and raid-start snapshots from the layered profile union rather than the base only.
+- Keep authenticated managed headless clients' advertised HTTP and direct backend addresses on explicit loopback ports, including clients with enabled database account links, so public URL rewriting does not send them back through an external route. Managed direct URLs use the local SPT port, not an external forwarding override.
 - Allow up to 180 seconds for first-boot Fika config generation after locale initialization, rather than aborting valid cold starts at 60 seconds.
 - Clean up empty, inaccessible internal OverlayFS work directories on rootless retries and teardown without following symlinks; abort teardown before deleting data if unmounting fails.
 - Use the live server overlay for Fika configuration changes. Read the visible runtime/mod/base profile union even while unmounted, preserving overrides, whiteouts and opacity so full backups do not omit lower-only profiles; keep profile writes out of the immutable base.

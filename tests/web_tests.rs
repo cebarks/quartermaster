@@ -91,6 +91,48 @@ async fn mod_archive_requires_invite_code() {
 }
 
 #[actix_web::test]
+async fn review_two_join_and_setup_fallback_export_overlay_only_files() {
+    use std::io::Read;
+    for endpoint in [
+        "/quma/join/mods.zip?code=quma-testcode1",
+        "/quma/setup/mods.zip",
+    ] {
+        let mut app = TestAppBuilder::new()
+            .with_nested_layout()
+            .with_invite("quma-testcode1", None)
+            .with_mod(2806, "Convoy", "1.0")
+            .build()
+            .await;
+        for (root, name, contents) in [
+            (app.dirs().runtime_upper(), "upper.dll", "upper data"),
+            (app.dirs().mod_overlay(), "mod.dll", "mod data"),
+        ] {
+            let relative = format!("BepInEx/plugins/{name}");
+            let path = root.join(&relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
+            let db = app.db.lock();
+            let id = db.get_mod_by_forge_id(2806).unwrap().unwrap().id;
+            db.insert_file(id, &relative, None, None).unwrap();
+        }
+        let response = app.get(endpoint).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = actix_web::test::read_body(response).await;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(archive.len(), 2);
+        for (name, expected) in [("upper.dll", "upper data"), ("mod.dll", "mod data")] {
+            let mut contents = String::new();
+            archive
+                .by_name(&format!("BepInEx/plugins/{name}"))
+                .unwrap()
+                .read_to_string(&mut contents)
+                .unwrap();
+            assert_eq!(contents, expected);
+        }
+    }
+}
+
+#[actix_web::test]
 async fn mod_archive_returns_503_when_no_mods_installed() {
     let mut app = TestAppBuilder::new()
         .with_invite("quma-testcode1", None)

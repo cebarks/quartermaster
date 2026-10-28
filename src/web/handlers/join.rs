@@ -477,8 +477,8 @@ pub async fn mod_archive(
     }
 
     // Build ZIP archive in memory
-    let spt_dir = state.dirs.spt_server.clone();
-    let zip_bytes = web::block(move || build_mod_zip(&spt_dir, &files))
+    let dirs = state.dirs.clone();
+    let zip_bytes = web::block(move || build_mod_zip(&dirs, &files))
         .await
         .map_err(WebError::from)?
         .map_err(WebError::Internal)?;
@@ -802,41 +802,15 @@ try {{
 }
 
 pub(crate) fn build_mod_zip(
-    spt_dir: &std::path::Path,
+    dirs: &crate::dirs::QumaDirs,
     files: &[crate::db::mods::InstalledFile],
 ) -> anyhow::Result<Vec<u8>> {
-    use std::io::{Cursor, Write};
-    use zip::write::SimpleFileOptions;
-    use zip::ZipWriter;
-
-    let buf = Cursor::new(Vec::new());
-    let mut zip = ZipWriter::new(buf);
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-
-    for file in files {
-        if std::path::Path::new(&file.file_path).is_absolute()
-            || file.file_path.split('/').any(|c| c == "..")
-            || file.file_path.split('\\').any(|c| c == "..")
-        {
-            tracing::warn!(path = %file.file_path, "skipping file with unsafe path in mod archive");
-            continue;
-        }
-
-        let full_path = spt_dir.join(&file.file_path);
-        match std::fs::read(&full_path) {
-            Ok(data) => {
-                zip.start_file(&file.file_path, options)?;
-                zip.write_all(&data)?;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::warn!(path = %file.file_path, "skipping missing file in mod archive");
-                continue;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-
-    let cursor = zip.finish()?;
+    let cursor = crate::web::mod_zip_cache::build_mod_zip_to_writer(
+        dirs,
+        files,
+        std::io::Cursor::new(Vec::new()),
+        false,
+    )?;
     Ok(cursor.into_inner())
 }
 
@@ -1001,7 +975,8 @@ mod tests {
             source: "archive".to_string(),
         }];
 
-        let zip_bytes = build_mod_zip(spt_dir.path(), &files).unwrap();
+        let dirs = crate::dirs::QumaDirs::from_legacy(spt_dir.path().to_path_buf());
+        let zip_bytes = build_mod_zip(&dirs, &files).unwrap();
         let reader = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
         assert_eq!(reader.len(), 0, "traversal path should be skipped");
 
@@ -1022,7 +997,8 @@ mod tests {
             source: "archive".to_string(),
         }];
 
-        let zip_bytes = build_mod_zip(spt_dir.path(), &files).unwrap();
+        let dirs = crate::dirs::QumaDirs::from_legacy(spt_dir.path().to_path_buf());
+        let zip_bytes = build_mod_zip(&dirs, &files).unwrap();
         let reader = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
         assert_eq!(reader.len(), 0, "absolute path should be skipped");
     }

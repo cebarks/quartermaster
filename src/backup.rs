@@ -508,7 +508,7 @@ pub fn restore_full_backup(
     _config: &crate::config::Config,
     backup_db_id: i64,
 ) -> Result<()> {
-    let profiles_dst = dirs.profiles_dir()?;
+    let _runtime = dirs.server_runtime_dir()?;
     let backup = db
         .get_backup(backup_db_id)?
         .ok_or_else(|| anyhow::anyhow!("backup {backup_db_id} not found"))?;
@@ -633,11 +633,13 @@ pub fn restore_full_backup(
     // Restore profiles
     let profiles_dir = backup_dir.join("profiles");
     if profiles_dir.is_dir() {
-        std::fs::create_dir_all(&profiles_dst)?;
+        let writer = crate::spt::profile_store::ProfileWriter::open(dirs)?;
+        let source =
+            crate::spt::scoped::ScopedDir::open(&backup_dir)?.child(Path::new("profiles"))?;
         for entry in std::fs::read_dir(&profiles_dir)? {
-            let entry = entry?;
-            let dst = profiles_dst.join(entry.file_name());
-            std::fs::copy(entry.path(), &dst)?;
+            let name = entry?.file_name();
+            let mut file = source.read_file(Path::new(&name))?;
+            writer.copy_from(Path::new(&name), &mut file)?;
         }
     }
 
@@ -978,6 +980,46 @@ mod tests {
             std::io::read_to_string(reader.read_id("player").unwrap().unwrap()).unwrap(),
             "saved"
         );
+    }
+
+    #[test]
+    fn review_two_profile_restore_rejects_escaping_leaf_and_parent_aliases() {
+        use std::os::unix::fs::symlink;
+        for alias_kind in ["base", "outside", "parent"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+            let relative = Path::new("SPT_Runtime/user/profiles/player.json");
+            let base = dirs.spt_server.join(relative);
+            std::fs::create_dir_all(base.parent().unwrap()).unwrap();
+            std::fs::write(&base, "saved").unwrap();
+            let db = crate::db::Database::open_in_memory().unwrap();
+            let config = crate::config::Config::default();
+            let id = backup_full(&db, &dirs, &config).unwrap();
+            let outside = tmp.path().join("outside/player.json");
+            std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+            std::fs::write(&base, "preserved").unwrap();
+            std::fs::write(&outside, "preserved").unwrap();
+            let upper = dirs.runtime_upper().join(relative);
+            std::fs::create_dir_all(upper.parent().unwrap()).unwrap();
+            if alias_kind == "parent" {
+                std::fs::remove_dir(upper.parent().unwrap()).unwrap();
+                symlink(outside.parent().unwrap(), upper.parent().unwrap()).unwrap();
+            } else {
+                symlink(
+                    if alias_kind == "base" {
+                        &base
+                    } else {
+                        &outside
+                    },
+                    &upper,
+                )
+                .unwrap();
+            }
+            let result = restore_full_backup(&db, &dirs, &config, id);
+            assert_eq!(std::fs::read_to_string(&base).unwrap(), "preserved");
+            assert_eq!(std::fs::read_to_string(&outside).unwrap(), "preserved");
+            assert!(result.is_err());
+        }
     }
 
     #[test]

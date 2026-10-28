@@ -15,6 +15,31 @@ pub struct OverlayMount {
     pub merged_dir: PathBuf,
 }
 
+fn decode_mount_path(encoded: &[u8]) -> Option<Vec<u8>> {
+    let mut decoded = Vec::with_capacity(encoded.len());
+    let mut index = 0;
+    while index < encoded.len() {
+        if encoded[index] != b'\\' {
+            decoded.push(encoded[index]);
+            index += 1;
+            continue;
+        }
+        let digits = encoded.get(index + 1..index + 4)?;
+        if !digits.iter().all(|byte| (b'0'..=b'7').contains(byte)) {
+            return None;
+        }
+        let value = digits
+            .iter()
+            .fold(0u16, |value, digit| value * 8 + u16::from(digit - b'0'));
+        if value == 0 || value > u16::from(u8::MAX) {
+            return None;
+        }
+        decoded.push(value as u8);
+        index += 4;
+    }
+    Some(decoded)
+}
+
 /// Reinitialize an unused work directory for either a host or Podman overlay.
 /// Call only before mounting, never while the overlay is in use.
 pub(crate) fn prepare_work_dir(work_dir: &Path) -> Result<()> {
@@ -83,12 +108,26 @@ impl OverlayMount {
     }
 
     pub fn is_mounted(&self) -> Result<bool> {
-        let mounts =
-            std::fs::read_to_string("/proc/mounts").context("failed to read /proc/mounts")?;
-        let target = self.merged_dir.display().to_string();
-        Ok(mounts.lines().any(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            parts.len() >= 3 && parts[1] == target && parts[2] == "fuse.fuse-overlayfs"
+        let mounts = std::fs::read("/proc/mounts").context("failed to read /proc/mounts")?;
+        self.is_mounted_in(&mounts)
+    }
+
+    fn is_mounted_in(&self, mounts: &[u8]) -> Result<bool> {
+        let target = match self.merged_dir.canonicalize() {
+            Ok(target) => target,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        Ok(mounts.split(|byte| *byte == b'\n').any(|line| {
+            let mut parts = line
+                .split(|byte| byte.is_ascii_whitespace())
+                .filter(|part| !part.is_empty());
+            let Some(mountpoint) = parts.nth(1) else {
+                return false;
+            };
+            parts.next() == Some(b"fuse.fuse-overlayfs".as_slice())
+                && decode_mount_path(mountpoint)
+                    .is_some_and(|path| path == target.as_os_str().as_encoded_bytes())
         }))
     }
 
@@ -183,6 +222,58 @@ pub fn check_prerequisites() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_mount_path_escapes_are_rejected() {
+        for path in [b"\\".as_slice(), b"\\04", b"\\999", b"\\400", b"\\000"] {
+            assert!(decode_mount_path(path).is_none());
+        }
+        assert_eq!(
+            decode_mount_path(b"/with\\040space\\134slash"),
+            Some(b"/with space\\slash".to_vec())
+        );
+    }
+
+    #[test]
+    fn review_two_mount_lookup_normalizes_relative_and_escaped_paths() {
+        let tmp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        for name in [
+            "plain",
+            "space name",
+            "back\\slash",
+            "tab\tname",
+            "new\nline",
+        ] {
+            let absolute = tmp.path().join(name);
+            std::fs::create_dir_all(&absolute).unwrap();
+            let escaped = absolute
+                .to_str()
+                .unwrap()
+                .replace('\\', "\\134")
+                .replace(' ', "\\040")
+                .replace('\t', "\\011")
+                .replace('\n', "\\012");
+            let mounts = format!("overlay {escaped} fuse.fuse-overlayfs rw 0 0\n");
+            for target in [
+                absolute.clone(),
+                absolute
+                    .strip_prefix(std::env::current_dir().unwrap())
+                    .unwrap()
+                    .to_path_buf(),
+            ] {
+                let mount = OverlayMount {
+                    lower_dirs: vec![],
+                    upper_dir: tmp.path().join("upper"),
+                    work_dir: tmp.path().join("work"),
+                    merged_dir: target,
+                };
+                assert!(mount.is_mounted_in(mounts.as_bytes()).unwrap());
+                assert!(!mount
+                    .is_mounted_in(mounts.replace("fuse.fuse-overlayfs", "ext4").as_bytes())
+                    .unwrap());
+            }
+        }
+    }
 
     #[test]
     fn prepare_dirs_cleans_inaccessible_empty_kernel_work_directory() {

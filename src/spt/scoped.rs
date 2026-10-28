@@ -250,10 +250,17 @@ impl ScopedDir {
     /// Runtime directory names/aliases must remain stable during classification.
     /// Capability confinement does not depend on this namespace prerequisite.
     pub(crate) fn read_client_file(&self, path: &Path) -> Result<File> {
+        self.read_client_overlay_file(path)?
+            .context("client source is deleted")
+    }
+
+    pub(crate) fn read_client_overlay_file(&self, path: &Path) -> Result<Option<File>> {
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::AsRawFd;
-            let file = self.read_file(path)?;
+            let Some(file) = self.read_overlay_file(path)? else {
+                return Ok(None);
+            };
             self.verify_identity()?;
             // Classify the opened descriptor, not a pathname checked before opening.
             // The data stream remains on this capability-opened file handle.
@@ -267,7 +274,7 @@ impl ScopedDir {
                 }
             }
             self.verify_identity()?;
-            Ok(file)
+            Ok(Some(file))
         }
         #[cfg(not(target_os = "linux"))]
         {
