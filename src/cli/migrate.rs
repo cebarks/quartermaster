@@ -127,6 +127,7 @@ const QUMA_OWNED: &[&str] = &[
     // dev/editor artifacts
     ".claude",
     ".mcp.json",
+    "AGENTS.md",
     "CLAUDE.md",
     "docs",
 ];
@@ -535,6 +536,13 @@ mod tests {
         assert!(is_quma_owned(".mcp.json"));
         assert!(is_quma_owned(".quartermaster"));
         assert!(is_quma_owned("quartermaster.db.bak-20260628-135941"));
+    }
+
+    #[test]
+    fn agent_context_files_stay_at_root() {
+        assert!(is_quma_owned("AGENTS.md"));
+        assert!(is_quma_owned("CLAUDE.md"));
+        assert!(!is_quma_owned("BepInEx"));
     }
 
     #[test]

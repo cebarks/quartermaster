@@ -6,8 +6,11 @@ quartermaster.toml
 .superpowers/
 docs/superpowers/
 
-# Override global gitignore
+# Override global gitignore (~/.gitignore_global ignores CLAUDE.md and /.agents/)
 !CLAUDE.md
+!/.agents/
+/.agents/*
+!/.agents/skills/
 
 /spt-server/
 .dev/

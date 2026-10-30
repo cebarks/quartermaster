@@ -7,9 +7,13 @@ description: Use when asked to run, start, test, verify, seed, or interact with 
 
 Run and interact with the Quartermaster dev environment. Accepts an optional mode argument; defaults to `start`.
 
-## SPT Install Discovery
+## Target Environment
 
-On first invocation, if `QUMA_SPT_DIR` is not set (environment or `.claude/settings.json`): ask the user for their SPT install path, validate it contains `SPT/`, and save to `.claude/settings.json` under `"env"`. The `dev-*` recipes override this with `.dev-server/`.
+The `dev-*` recipes are self-contained: `just dev-init` bootstraps a Quartermaster data root at `.dev-server/` (`quma setup --quma-dir .dev-server`), and `just dev-serve`, `just dev-watch`, `just dev-seed`, and `just dev-cli` all depend on `dev-init` and pin `QUMA_DIR=.dev-server` on their own recipe line. Never ask for an unrelated existing SPT install in order to use these modes, and never prefix them with `QUMA_DIR=<path> …` — the recipe's own assignment wins, so the value is ignored.
+
+`QUMA_DIR` selects a Quartermaster **data root**, not an SPT runtime directory: the directory holding `quartermaster.toml`, `quartermaster.db`, and the nested `spt-server/` tree, whose runtime directory inside it is `SPT_Runtime/` (`SPT/` on legacy installs — `src/spt/layout.rs`). The dev install therefore lives at `.dev-server/spt-server/SPT_Runtime/`. `QUMA_SPT_DIR` is a deprecated alias for the same data-root setting (it points at a legacy flat layout, where the data root is the SPT directory); prefer `QUMA_DIR`. See `QumaDirs::detect` in `src/dirs.rs` and `apply_env_overrides` in `src/config.rs`.
+
+To run commands against an existing data root instead of `.dev-server/`, use the raw form, which does honor the selected root: `QUMA_DIR=<data-root> cargo run -- <args>`.
 
 ## Modes
 
