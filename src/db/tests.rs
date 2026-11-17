@@ -5,6 +5,70 @@ fn test_db() -> Database {
 }
 
 #[test]
+fn bundled_sqlite_version_is_patched() {
+    let version = rusqlite::version_number();
+    assert!(
+        version >= 3_054_000,
+        "linked SQLite {} ({version}) is below 3.54.0",
+        rusqlite::version()
+    );
+}
+
+#[test]
+fn sqlite_wal_commit_and_rollback_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wal.db");
+    {
+        let db = Database::open(&path).unwrap();
+        db.conn()
+            .execute("CREATE TABLE wal_probe (id INTEGER PRIMARY KEY)", [])
+            .unwrap();
+        let committed = db.begin_transaction().unwrap();
+        committed
+            .execute("INSERT INTO wal_probe VALUES (1)", [])
+            .unwrap();
+        committed.commit().unwrap();
+        let rolled_back = db.begin_transaction().unwrap();
+        rolled_back
+            .execute("INSERT INTO wal_probe VALUES (2)", [])
+            .unwrap();
+    }
+
+    let db = Database::open(&path).unwrap();
+    let rows: Vec<i64> = {
+        let mut stmt = db
+            .conn()
+            .prepare("SELECT id FROM wal_probe ORDER BY id")
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(rows, [1_i64]);
+    let journal_mode: String = db
+        .conn()
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .unwrap();
+    let busy_timeout: i64 = db
+        .conn()
+        .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+        .unwrap();
+    assert_eq!(journal_mode, "wal");
+    assert_eq!(busy_timeout, 5000);
+    let before: i64 = db
+        .conn()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    super::schema::run_migrations(db.conn()).unwrap();
+    let after: i64 = db
+        .conn()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(after, before);
+}
+
+#[test]
 fn create_in_memory_db() {
     let db = test_db();
     let tables: Vec<String> = {

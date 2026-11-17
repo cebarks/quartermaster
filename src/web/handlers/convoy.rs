@@ -1,4 +1,3 @@
-use actix_files::NamedFile;
 use actix_session::Session;
 use actix_web::{web, HttpRequest, HttpResponse};
 use askama::Template;
@@ -8,6 +7,7 @@ use crate::db::rbac::Permission;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
+use crate::web::handlers::common::open_named_file;
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
@@ -303,7 +303,7 @@ pub async fn download(
         }
     });
 
-    Ok(NamedFile::open_async(&zip_path)
+    Ok(open_named_file(zip_path)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?
         .set_content_disposition(actix_web::http::header::ContentDisposition {
@@ -343,7 +343,7 @@ pub async fn single_mod_archive(
 
     tracing::info!(mod_id, path = %zip_path.display(), "convoy single mod download served");
 
-    Ok(NamedFile::open_async(&zip_path)
+    Ok(open_named_file(zip_path)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?
         .set_content_disposition(actix_web::http::header::ContentDisposition {

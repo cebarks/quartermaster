@@ -17,7 +17,7 @@ use crate::web::state::AppState;
 fn require_container<'a>(
     state: &'a AppState,
     session: &Session,
-) -> Result<(String, &'a Arc<ContainerManager>), HttpResponse> {
+) -> Result<(String, &'a Arc<ContainerManager>), Box<HttpResponse>> {
     let name = state.config().server_container.clone().ok_or_else(|| {
         set_flash(
             session,
@@ -56,7 +56,7 @@ pub async fn start_server(
     }
     let (container, mgr) = match require_container(&state, &session) {
         Ok(pair) => pair,
-        Err(resp) => return Ok(resp),
+        Err(resp) => return Ok(*resp),
     };
 
     state.set_server_transition(Some("starting"));
@@ -127,7 +127,7 @@ pub async fn stop_server(
     }
     let (container, mgr) = match require_container(&state, &session) {
         Ok(pair) => pair,
-        Err(resp) => return Ok(resp),
+        Err(resp) => return Ok(*resp),
     };
 
     state.set_server_transition(Some("stopping"));
@@ -173,7 +173,7 @@ pub async fn restart_server(
     }
     let (container, mgr) = match require_container(&state, &session) {
         Ok(pair) => pair,
-        Err(resp) => return Ok(resp),
+        Err(resp) => return Ok(*resp),
     };
 
     state.set_server_transition(Some("restarting"));

@@ -1,4 +1,3 @@
-use actix_files::NamedFile;
 use actix_session::Session;
 use actix_web::{web, HttpRequest, HttpResponse};
 use askama::Template;
@@ -6,6 +5,7 @@ use askama::Template;
 use crate::web::auth::{require_auth, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
+use crate::web::handlers::common::open_named_file;
 use crate::web::handlers::join::{
     build_mod_zip, build_spt_server_url, generate_bash_script, generate_powershell_script,
     DEFAULT_SERVER_NAME, FIKA_INSTALLER_URL,
@@ -151,7 +151,7 @@ pub async fn setup_mods_zip(
 ) -> actix_web::Result<HttpResponse> {
     // Serve cached file if available — streamed with Range/ETag/Last-Modified support
     if let Some(path) = state.mod_zip_cache.get() {
-        let mut file = NamedFile::open_async(path)
+        let mut file = open_named_file(path)
             .await
             .map_err(WebError::from)?
             .set_content_disposition(actix_web::http::header::ContentDisposition {
