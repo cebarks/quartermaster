@@ -22,6 +22,9 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Security
 
+- Upgrade bundled SQLite to a patched release, retaining file-backed WAL persistence and registered migration behavior.
+- Patch Markdown parser and HTML sanitizer advisories while retaining tables/strikethrough rendering and keeping wikilinks disabled.
+- Update Actix HTTP/file serving and Quinn UDP to patched releases, preserving streamed ZIP ranges and cache validators, HTTP gzip/Brotli, and the existing audit policy without new waivers.
 - Disable the optional HTTP zstd codec to remove vulnerable transitive zstd releases, while retaining HTTP gzip/Brotli and patched archive zstd support; add no audit waivers.
 - Reject duplicate Authorization headers and conflicting proxy session cookies. Normalize EFT's agreeing, valid redundant session cookies into one canonical header shared by authentication and HTTP/WebSocket forwarding, so validated and forwarded identities cannot diverge.
 - Accept Fika Headless's profile-ID Basic credentials only on its exact local WebSocket route, requiring live managed-container identity even for linked player accounts; ordinary API routes remain cookie-authenticated.

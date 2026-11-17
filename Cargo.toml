@@ -24,7 +24,7 @@ toml = "1"
 serde-saphyr = "0.0.28"
 
 # Database
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 
 # HTTP client (for Forge API)
 reqwest = { version = "0.13", features = ["json", "rustls", "stream", "query"], default-features = false }
@@ -69,7 +69,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Web server
 # Keep HTTP gzip/Brotli, but exclude the vulnerable optional HTTP zstd codec.
-actix-web = { version = "4", default-features = false, features = [
+actix-web = { version = "4.18.2", default-features = false, features = [
     "macros", "compress-brotli", "compress-gzip", "cookies", "http2",
     "unicode", "compat", "ws", "rustls-0_23",
 ] }
@@ -81,8 +81,8 @@ actix-ws = "0.4"
 askama = "0.16"
 
 # Markdown rendering
-pulldown-cmark = "0.13"
-ammonia = "4.1.8"
+pulldown-cmark = "0.13.6"
+ammonia = "4.2.5"
 
 # Static asset embedding
 rust-embed = "8"
@@ -109,7 +109,7 @@ tracing-actix-web = "0.7"
 tracing-appender = "0.2"
 rolling-file = "0.2"
 actix-web-lab = "0.26"
-actix-files = "0.6"
+actix-files = "0.7.4"
 tokio-stream = "0.1"
 mini-moka = "0.10.3"
 local-ip-address = "0.6.13"
@@ -122,7 +122,7 @@ predicates = "3"
 temp-env = "0.3"
 wiremock = "0.6"
 urlencoding = "2"
-actix-http = "3"
+actix-http = "3.20.3"
 walkdir = "2"
 
 [profile.release]

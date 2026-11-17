@@ -1,6 +1,14 @@
 use crate::forge::client::ForgeClient;
 use crate::forge::models::FikaCompat;
 
+pub(crate) async fn open_named_file(
+    path: std::path::PathBuf,
+) -> std::io::Result<actix_files::NamedFile> {
+    actix_web::web::block(move || actix_files::NamedFile::open(path))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
 pub struct ForgeSearchResult {
     pub id: i64,
     pub name: String,
@@ -90,6 +98,106 @@ pub async fn forge_search(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::body::to_bytes;
+    use actix_web::http::{header, StatusCode};
+    use actix_web::test::TestRequest;
+    use std::path::PathBuf;
+
+    fn archive_fixture() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.zip");
+        std::fs::write(&path, b"0123456789").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000))
+            .unwrap();
+        (dir, path)
+    }
+
+    #[actix_web::test]
+    async fn named_file_serves_attachment() {
+        let (_dir, path) = archive_fixture();
+        let full = open_named_file(path)
+            .await
+            .unwrap()
+            .set_content_disposition(header::ContentDisposition {
+                disposition: header::DispositionType::Attachment,
+                parameters: vec![header::DispositionParam::Filename("mods.zip".to_string())],
+            })
+            .into_response(&TestRequest::get().to_http_request());
+        assert_eq!(full.status(), StatusCode::OK);
+        assert_eq!(
+            full.headers()
+                .get(header::CONTENT_DISPOSITION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "attachment; filename=\"mods.zip\""
+        );
+        assert_eq!(
+            &to_bytes(full.into_body()).await.unwrap()[..],
+            b"0123456789"
+        );
+    }
+
+    #[actix_web::test]
+    async fn named_file_range_response_is_partial() {
+        let (_dir, path) = archive_fixture();
+        let request = TestRequest::get()
+            .insert_header((header::RANGE, "bytes=2-4"))
+            .to_http_request();
+        let range = open_named_file(path).await.unwrap().into_response(&request);
+        assert_eq!(range.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            range.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 2-4/10"
+        );
+        assert_eq!(&to_bytes(range.into_body()).await.unwrap()[..], b"234");
+    }
+
+    #[actix_web::test]
+    async fn named_file_etag_revalidation_is_not_modified() {
+        let (_dir, path) = archive_fixture();
+        let full = open_named_file(path.clone())
+            .await
+            .unwrap()
+            .into_response(&TestRequest::get().to_http_request());
+        let etag = full.headers().get(header::ETAG).unwrap().clone();
+        let request = TestRequest::get()
+            .insert_header((header::IF_NONE_MATCH, etag))
+            .to_http_request();
+        let cached = open_named_file(path).await.unwrap().into_response(&request);
+        assert_eq!(cached.status(), StatusCode::NOT_MODIFIED);
+        assert!(to_bytes(cached.into_body()).await.unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn named_file_modified_since_revalidation_is_not_modified() {
+        let (_dir, path) = archive_fixture();
+        let full = open_named_file(path.clone())
+            .await
+            .unwrap()
+            .into_response(&TestRequest::get().to_http_request());
+        let modified = full.headers().get(header::LAST_MODIFIED).unwrap().clone();
+        let request = TestRequest::get()
+            .insert_header((header::IF_MODIFIED_SINCE, modified))
+            .to_http_request();
+        let since = open_named_file(path).await.unwrap().into_response(&request);
+        assert_eq!(since.status(), StatusCode::NOT_MODIFIED);
+        assert!(to_bytes(since.into_body()).await.unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn named_file_missing_path_preserves_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = open_named_file(dir.path().join("missing.zip"))
+            .await
+            .err()
+            .expect("missing file must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
 
     #[test]
     fn parse_forge_url_numeric_id() {

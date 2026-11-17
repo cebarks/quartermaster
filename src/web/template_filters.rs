@@ -180,6 +180,14 @@ pub fn format_date_short(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::web::template_filters as filters;
+    use askama::Template;
+
+    #[derive(Template)]
+    #[template(source = "{{ content|markdown|safe }}", ext = "html")]
+    struct MarkdownTemplate<'a> {
+        content: &'a str,
+    }
 
     #[test]
     fn format_bytes_zero() {
@@ -282,6 +290,15 @@ mod tests {
         let mut html_output = String::new();
         html::push_html(&mut html_output, parser);
         ammonia::clean(&html_output)
+    }
+
+    #[test]
+    fn markdown_security_features_are_unchanged() {
+        let render = |content| MarkdownTemplate { content }.render().unwrap();
+        assert_eq!(render("~~x~~").trim(), "<p><del>x</del></p>");
+        assert!(render("| a |\n| --- |\n| b |").contains("<table>"));
+        assert_eq!(render("[[target|label]]").trim(), "<p>[[target|label]]</p>");
+        assert!(!render("<script>alert(1)</script>").contains("<script>"));
     }
 
     #[test]
