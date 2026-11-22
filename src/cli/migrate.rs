@@ -79,6 +79,8 @@ pub async fn run(dry_run: bool, cli: &crate::cli::Cli) -> Result<()> {
     if db_path.exists() {
         let db = Database::open(&db_path).context("failed to open database")?;
         migrate_to_overlay_layout(&db, &dirs).context("failed to migrate to overlay layout")?;
+        crate::ops::rebaseline_pending_hashes(&db, &dirs)
+            .context("failed to recover legacy file hashes")?;
     }
 
     // Remove marker
