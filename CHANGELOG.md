@@ -22,6 +22,7 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Security
 
+- Update Actix HTTP and the transitive URL parser to patch HTTP/1.1 request-handling and URL parsing vulnerabilities without changing the dependency audit policy.
 - Upgrade bundled SQLite to a patched release, retaining file-backed WAL persistence and registered migration behavior.
 - Patch Markdown parser and HTML sanitizer advisories while retaining tables/strikethrough rendering and keeping wikilinks disabled.
 - Update Actix HTTP/file serving and Quinn UDP to patched releases, preserving streamed ZIP ranges and cache validators, HTTP gzip/Brotli, and the existing audit policy without new waivers.
