@@ -428,6 +428,44 @@ impl Database {
         rows.collect()
     }
 
+    /// Pending files with their effective disabled state, including addon parents.
+    pub(crate) fn pending_file_rehashes(&self) -> rusqlite::Result<Vec<(InstalledFile, bool)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source,
+                    COALESCE(m.disabled, 0) OR COALESCE(a.disabled, 0) OR COALESCE(parent.disabled, 0)
+             FROM pending_file_rehashes p
+             JOIN installed_files f ON f.id = p.file_id
+             LEFT JOIN installed_mods m ON m.id = f.mod_id
+             LEFT JOIN installed_addons a ON a.id = f.addon_id
+             LEFT JOIN installed_mods parent ON parent.id = a.parent_mod_id
+             ORDER BY f.id",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row_to_installed_file(row)?, row.get(7)?)))?;
+        rows.collect()
+    }
+
+    /// Commit a recovered hash and queue completion together without replacing a newer hash.
+    pub(crate) fn complete_file_rehash(
+        &self,
+        file_id: i64,
+        hash: &str,
+        size: Option<i64>,
+    ) -> rusqlite::Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let updated = tx.execute(
+            "UPDATE installed_files SET file_hash = ?1, file_size = ?2
+             WHERE id = ?3 AND file_hash IS NULL
+             AND EXISTS (SELECT 1 FROM pending_file_rehashes WHERE file_id = ?3)",
+            params![hash, size, file_id],
+        )?;
+        tx.execute(
+            "DELETE FROM pending_file_rehashes WHERE file_id = ?1",
+            params![file_id],
+        )?;
+        tx.commit()?;
+        Ok(updated)
+    }
+
     pub fn mods_with_server_files(&self) -> rusqlite::Result<std::collections::HashSet<i64>> {
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT mod_id FROM installed_files

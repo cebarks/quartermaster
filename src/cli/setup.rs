@@ -452,6 +452,8 @@ fn create_db_and_admin(dirs: &crate::dirs::QumaDirs, admin_password: &str) -> Re
     let db_path = dirs.db_path();
     let db = Database::open(&db_path)
         .with_context(|| format!("failed to create database at {}", db_path.display()))?;
+    crate::ops::rebaseline_pending_hashes(&db, dirs)
+        .context("failed to recover legacy file hashes")?;
     println!("Database initialized at {}", db_path.display());
 
     if db.has_user_manager()? {

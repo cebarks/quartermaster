@@ -125,6 +125,16 @@ The dashboard provides mod management, server controls, real-time log streaming,
 
 Built with HTMX and server-sent events — no JavaScript build step required.
 
+## Database upgrades and legacy hashes
+
+Database schema upgrades run automatically when Quartermaster opens its database. Older installations gain persistent update-notification state and a queue for completing the SHA-256-to-xxHash3 transition.
+
+On normal CLI or web initialization, queued legacy hashes are recomputed from the current files, including mod and addon files in server, client, overlay, and disabled-stash locations. Already-current xxHash3 hashes and previously unknown hashes are not reset. The first start may take longer in proportion to the queued files' total size; completed work is retained across restarts.
+
+**This transition establishes a new integrity baseline from current disk contents.** Changes made since the old SHA-256 hash was recorded are accepted, not checked against that old digest. Back up the database and installation before upgrading if you need to preserve that historical baseline.
+
+Missing, unreadable, hidden, or unsafe files remain queued with a warning and are retried on subsequent initialization. Their content remains unverified until rehashing succeeds; missing-file detection still applies. One unavailable file does not stop recovery of other files or otherwise prevent startup. No new configuration or command is required.
+
 ## Configuration
 
 Config lives at `<spt_dir>/quartermaster.toml`. All settings can be overridden with `QUMA_*` environment variables. See [USAGE.md](USAGE.md) for the full configuration reference.

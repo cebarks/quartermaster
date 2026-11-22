@@ -83,6 +83,7 @@ fn create_in_memory_db() {
     };
     assert!(tables.contains(&"installed_mods".to_string()));
     assert!(tables.contains(&"installed_files".to_string()));
+    assert!(tables.contains(&"update_notifications".to_string()));
     assert!(tables.contains(&"mod_dependencies".to_string()));
     assert!(tables.contains(&"users".to_string()));
     assert!(tables.contains(&"invite_codes".to_string()));
@@ -91,6 +92,43 @@ fn create_in_memory_db() {
     assert!(tables.contains(&"mod_request_votes".to_string()));
     assert!(tables.contains(&"raids".to_string()));
     assert!(tables.contains(&"raid_kills".to_string()));
+}
+
+#[test]
+fn notification_state_persists_and_deduplicates() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("quartermaster.db");
+    let mod_id;
+    {
+        let db = Database::open(&path).unwrap();
+        mod_id = db
+            .insert_mod(
+                Some(7001),
+                Some(1),
+                "Notify",
+                None,
+                "1.0",
+                "forge",
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(!db.was_update_notified(mod_id, "2.0").unwrap());
+        assert_eq!(db.mark_update_notified(mod_id, "2.0").unwrap(), 1);
+        assert_eq!(db.mark_update_notified(mod_id, "2.0").unwrap(), 0);
+        assert!(!db.was_update_notified(mod_id, "2.1").unwrap());
+    }
+
+    let db = Database::open(&path).unwrap();
+    assert!(db.was_update_notified(mod_id, "2.0").unwrap());
+    db.delete_mod(mod_id).unwrap();
+    let remaining: i64 = db
+        .conn()
+        .query_row("SELECT count(*) FROM update_notifications", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(remaining, 0);
 }
 
 #[test]

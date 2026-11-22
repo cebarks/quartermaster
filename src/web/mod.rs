@@ -943,6 +943,71 @@ pub fn configure_app(
     cfg.default_service(web::to(proxy::proxy_handler));
 }
 
+fn prepare_mod_files_for_startup(
+    db: &crate::db::Database,
+    dirs: &crate::dirs::QumaDirs,
+) -> Result<()> {
+    if let Err(e) = crate::ops::migrate_disabled_to_stash(db, dirs) {
+        tracing::error!(err = %e, "failed to migrate disabled mods to stash");
+    }
+    crate::ops::cleanup_staging(dirs);
+    if let Err(e) = crate::ops::recover_pending_updates(db, dirs) {
+        tracing::error!(err = %e, "failed to recover pending updates on startup");
+    }
+    crate::ops::rebaseline_pending_hashes(db, dirs)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod startup_tests {
+    #[test]
+    fn legacy_disabled_hash_is_recovered_during_first_web_startup() {
+        let temp = tempfile::tempdir().unwrap();
+        let dirs = crate::dirs::QumaDirs::from_root(temp.path().to_path_buf());
+        let old_db = crate::db::schema::tests::database_at_version(21);
+        let mod_id = old_db
+            .insert_mod(
+                Some(7001),
+                Some(1),
+                "Disabled upgrade",
+                None,
+                "1.0",
+                "forge",
+                None,
+                None,
+            )
+            .unwrap();
+        old_db.set_mod_disabled(mod_id, true).unwrap();
+        let old_path = "SPT_Runtime/user/mods/Test.disabled/config.json";
+        old_db
+            .insert_file(mod_id, old_path, Some(&"a".repeat(64)), Some(99))
+            .unwrap();
+        let old_on_disk = dirs.spt_server.join(old_path);
+        std::fs::create_dir_all(old_on_disk.parent().unwrap()).unwrap();
+        std::fs::write(&old_on_disk, b"hello").unwrap();
+        old_db
+            .conn()
+            .execute("VACUUM INTO ?1", [dirs.db_path().to_str().unwrap()])
+            .unwrap();
+
+        let db = crate::db::Database::open(&dirs.db_path()).unwrap();
+        assert_eq!(db.pending_file_rehashes().unwrap().len(), 1);
+        super::prepare_mod_files_for_startup(&db, &dirs).unwrap();
+
+        let files = db.get_files_for_mod(mod_id).unwrap();
+        let canonical = "SPT_Runtime/user/mods/Test/config.json";
+        assert_eq!(files[0].file_path, canonical);
+        assert_eq!(
+            std::fs::read(dirs.disabled_dir().join(canonical)).unwrap(),
+            b"hello"
+        );
+        assert!(!old_on_disk.exists());
+        assert_eq!(files[0].file_hash.as_deref(), Some("9555e8555c62dcfd"));
+        assert_eq!(files[0].file_size, Some(5));
+        assert!(db.pending_file_rehashes().unwrap().is_empty());
+    }
+}
+
 pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
     let ServerContext {
         config,
@@ -974,17 +1039,7 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
     // db is already Arc<Mutex<Database>> from serve.rs
     let db_arc = db;
 
-    // Migrate disabled mods from old .disabled suffix scheme to stash directory
-    if let Err(e) = crate::ops::migrate_disabled_to_stash(&db_arc.lock(), &dirs) {
-        tracing::error!(err = %e, "failed to migrate disabled mods to stash");
-    }
-
-    crate::ops::cleanup_staging(&dirs);
-
-    // Recover any interrupted async mod updates from a previous crash
-    if let Err(e) = crate::ops::recover_pending_updates(&db_arc.lock(), &dirs) {
-        tracing::error!(err = %e, "failed to recover pending updates on startup");
-    }
+    prepare_mod_files_for_startup(&db_arc.lock(), &dirs)?;
 
     // Remove orphaned queued archives (no matching pending operation)
     crate::queue::sweep_orphaned_archives(&dirs, &db_arc.lock());

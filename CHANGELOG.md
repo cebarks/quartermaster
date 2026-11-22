@@ -36,6 +36,8 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Fixed
 
+- Apply the missing update-notification and legacy-hash migrations without replaying the existing GUID migration; persist notification deduplication across restarts.
+- Rebaseline legacy SHA-256 file records to xxHash3 from current disk contents, preserving current hashes and retaining unavailable files as retryable pending work.
 - Serve both Convoy client download endpoints from the installation layers without mounting the overlay. Reject incomplete archives for catalog-advertised client files and ignore ZIP caches from older versions.
 - Confine profile restoration to its writable profile directory, rejecting escaping destination aliases without overwriting base/outside targets while retaining confined leaf aliases.
 - Normalize relative overlay mount targets and decode mount-table escapes so profile/config writes use the actual mounted view, including installation paths with spaces or backslashes.
