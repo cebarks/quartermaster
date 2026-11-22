@@ -4,8 +4,29 @@ All notable changes to Quartermaster will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
+### Upgrade notes
+
+- Back up your installation and database before upgrading. SPT 4.1.6 requires EFT **0.16.9.5.40743** on both player and headless clients. Check Fika, mods, and profiles against the target SPT version; the SPT 4.1.6 release notes do not promise compatibility with 4.0.x profiles or mods.
+- Quartermaster requires the launcher v2 HTTP API. Legacy `SPT/` runtime directories are still supported, but switching between `SPT/` and `SPT_Runtime/` in place is not. Use a clean target installation and explicitly migrate compatible mods and profiles. Configure the current launcher’s remote server address manually.
+- Tracked file checksums now use xxHash3-64. Use a Convoy client that supports it. On first startup, Quartermaster recomputes legacy SHA-256 records from **current file contents**, establishing a new integrity baseline rather than checking against the old digest. Missing or unreadable files stay queued for retry.
+- Convoy client archives now read overlay layers, but bundle discovery and forced catalog rehash still read the base tree. Separate Convoy client validation behavior is unchanged.
+
+### Added
+
+- Add a Quartermaster OCI image and purpose-built SPT server image.
+- Add a headless management API, container rebuilds, status updates, and controls in the CLI and web UI.
+- Add version-specific mod installs, `quma list --tree` for dependencies, and a change queue that resolves dependencies and stages downloads before applying changes.
+- Add bundle predownload support and Forge mod GUIDs to Convoy catalogs.
+- Check GitHub for Quartermaster releases and send optional Discord notifications for mod updates.
+- Add reusable invite codes and a web action to check for mod updates.
+
 ### Changed
 
+- Use OverlayFS to keep managed mod and runtime changes separate from the clean SPT base and isolate headless clients. Use `quma migrate --dry-run` to preview moving a flat installation into the separate data layout.
+- Use xxHash3-64 instead of SHA-256 for tracked files and Convoy catalog checksums.
+- Push status changes to the dashboard using server-sent events instead of polling for them.
 - Discover SPT releases from the current `SP-Tushonka/build` upstream and use the successor Forge API at `sp-mod.com`.
 - Include .NET and ASP.NET Core 9 and 10 in the SPT server container for legacy servers and SPT 4.1.6.
 - Support native `SPT_Runtime/` server paths alongside legacy `SPT/` paths, including mod tracking and server-file filtering.
@@ -58,6 +79,8 @@ All notable changes to Quartermaster will be documented in this file.
 - Isolate the config-path test from concurrent `QUMA_CONFIG` overrides.
 - Use debug-level logging for the hot-path headless CRC diagnostic.
 - Launch the Linux server through its managed DLL so freshly extracted files do not need execute permissions.
+- Improve headless first-boot cleanup, image pulls, overlay permissions, and P2P endpoint handling.
+- Preserve game and mod files when migrating an existing SPT runtime into the nested layout.
 
 ## [0.3.1] - 2026-07-08
 
