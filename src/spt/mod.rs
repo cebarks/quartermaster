@@ -1,6 +1,7 @@
 pub mod detect;
 pub mod game_data;
 pub mod headless;
+pub(crate) mod layered;
 pub mod layout;
 pub mod mods;
 pub(crate) mod profile_store;

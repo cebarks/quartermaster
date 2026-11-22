@@ -262,13 +262,13 @@ pub async fn download(
     tracing::info!(mod_ids = ?body.mods, count = body.mods.len(), "convoy batch download requested");
 
     let db = state.db.clone();
-    let spt_dir = state.dirs.spt_server.clone();
+    let dirs = state.dirs.clone();
     let mod_ids = body.mods.clone();
     let bundles_only = body.bundles_only;
 
     let zip_path = web::block(move || {
         let db = db.lock();
-        crate::convoy::download::get_or_build_convoy_zip(&db, &spt_dir, &mod_ids, bundles_only)
+        crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &mod_ids, bundles_only)
     })
     .await
     .map_err(|e| {
@@ -323,13 +323,13 @@ pub async fn single_mod_archive(
 ) -> actix_web::Result<HttpResponse> {
     let mod_id = path.into_inner();
     let db = state.db.clone();
-    let spt_dir = state.dirs.spt_server.clone();
+    let dirs = state.dirs.clone();
 
     tracing::info!(mod_id, "convoy single mod download requested");
 
     let zip_path = web::block(move || {
         let db = db.lock();
-        crate::convoy::download::get_or_build_convoy_zip(&db, &spt_dir, &[mod_id], false)
+        crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[mod_id], false)
     })
     .await
     .map_err(|e| {

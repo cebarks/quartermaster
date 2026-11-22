@@ -60,6 +60,14 @@ fn resolve_guid(
         .map(|s| s.to_string())
 }
 
+pub(super) fn client_file_checksum(file: &crate::db::mods::InstalledFile) -> Option<&str> {
+    if file.file_path.starts_with("BepInEx/") {
+        file.file_hash.as_deref()
+    } else {
+        None
+    }
+}
+
 fn get_client_file_checksums(
     db: &Database,
     m: &crate::db::mods::InstalledMod,
@@ -67,12 +75,7 @@ fn get_client_file_checksums(
     let files = db.get_files_for_mod_ids(&[m.id])?;
     Ok(files
         .iter()
-        .filter(|f| f.file_path.starts_with("BepInEx/"))
-        .filter_map(|f| {
-            f.file_hash
-                .as_ref()
-                .map(|h| (f.file_path.clone(), h.clone()))
-        })
+        .filter_map(|f| client_file_checksum(f).map(|hash| (f.file_path.clone(), hash.to_owned())))
         .collect())
 }
 
@@ -519,6 +522,7 @@ fn rehash_client_files(db: &Database, spt_dir: &Path, force: bool) -> usize {
 mod tests {
     use super::*;
     use crate::db::Database;
+    use crate::dirs::QumaDirs;
     use tempfile::TempDir;
 
     fn setup() -> (TempDir, Database) {
@@ -573,9 +577,9 @@ mod tests {
             )
             .unwrap();
             assert!(get_bundle_checksums(dir.path(), &db, id).is_empty());
+            let dirs = QumaDirs::from_legacy(dir.path().to_path_buf());
             let path =
-                crate::convoy::download::get_or_build_convoy_zip(&db, dir.path(), &[id], true)
-                    .unwrap();
+                crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], true).unwrap();
             let zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
             assert_eq!(zip.len(), 0);
         }
@@ -609,9 +613,9 @@ mod tests {
             )
             .unwrap();
             assert_eq!(get_bundle_checksums(dir.path(), &db, id).len(), 2);
+            let dirs = QumaDirs::from_legacy(dir.path().to_path_buf());
             let path =
-                crate::convoy::download::get_or_build_convoy_zip(&db, dir.path(), &[id], true)
-                    .unwrap();
+                crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], true).unwrap();
             let mut zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
             assert_eq!(zip.len(), 2);
             for i in 0..zip.len() {
@@ -657,9 +661,9 @@ mod tests {
                 checksums.keys().map(String::as_str).collect::<Vec<_>>(),
                 vec![expected]
             );
+            let dirs = QumaDirs::from_legacy(dir.path().to_path_buf());
             let path =
-                crate::convoy::download::get_or_build_convoy_zip(&db, dir.path(), &[id], true)
-                    .unwrap();
+                crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], true).unwrap();
             let zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
             assert_eq!(
                 zip.file_names()

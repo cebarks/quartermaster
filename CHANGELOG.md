@@ -36,6 +36,7 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Fixed
 
+- Serve both Convoy client download endpoints from the installation layers without mounting the overlay. Reject incomplete archives for catalog-advertised client files and ignore ZIP caches from older versions.
 - Confine profile restoration to its writable profile directory, rejecting escaping destination aliases without overwriting base/outside targets while retaining confined leaf aliases.
 - Normalize relative overlay mount targets and decode mount-table escapes so profile/config writes use the actual mounted view, including installation paths with spaces or backslashes.
 - Ignore stale unmounted Fika configuration files; resolve the current installation layers instead.

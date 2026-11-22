@@ -249,11 +249,6 @@ impl ScopedDir {
 
     /// Runtime directory names/aliases must remain stable during classification.
     /// Capability confinement does not depend on this namespace prerequisite.
-    pub(crate) fn read_client_file(&self, path: &Path) -> Result<File> {
-        self.read_client_overlay_file(path)?
-            .context("client source is deleted")
-    }
-
     pub(crate) fn read_client_overlay_file(&self, path: &Path) -> Result<Option<File>> {
         #[cfg(target_os = "linux")]
         {
