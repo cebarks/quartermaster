@@ -13,7 +13,7 @@ use crate::config::{Config, SetupZipConfig};
 use crate::db::mods::InstalledFile;
 use crate::db::Database;
 use crate::dirs::QumaDirs;
-use crate::spt::scoped::ScopedDir;
+use crate::spt::layered::LayeredFiles;
 
 const NON_ESSENTIAL_NAMES: &[&str] = &[
     "readme",
@@ -135,23 +135,7 @@ pub(crate) fn build_mod_zip_to_writer<W: Write + Seek>(
     writer: W,
     client_only: bool,
 ) -> anyhow::Result<W> {
-    let roots = if dirs.is_legacy() {
-        vec![dirs.spt_server.clone()]
-    } else {
-        vec![
-            dirs.runtime_upper(),
-            dirs.mod_overlay(),
-            dirs.spt_server.clone(),
-        ]
-    };
-    let mut scopes = Vec::new();
-    for root in roots {
-        match ScopedDir::open(&root) {
-            Ok(scope) => scopes.push(scope),
-            Err(e) if is_not_found(&e) => continue,
-            Err(e) => return Err(e),
-        }
-    }
+    let layers = LayeredFiles::open(dirs)?;
     let mut zip = ZipWriter::new(writer);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
@@ -167,7 +151,7 @@ pub(crate) fn build_mod_zip_to_writer<W: Write + Seek>(
         if client_only && crate::spt::layout::is_server_path(&archive_name) {
             continue;
         }
-        let source = read_zip_source(&scopes, &relative, client_only);
+        let source = layers.read(&relative, client_only);
         match source {
             Ok(mut source) => {
                 zip.start_file(archive_name.as_ref(), options)?;
@@ -180,33 +164,6 @@ pub(crate) fn build_mod_zip_to_writer<W: Write + Seek>(
     }
 
     Ok(zip.finish()?)
-}
-
-fn is_not_found(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<std::io::Error>()
-        .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-}
-
-fn read_zip_source(
-    scopes: &[ScopedDir],
-    relative: &Path,
-    client_only: bool,
-) -> anyhow::Result<File> {
-    for scope in scopes {
-        let result = if client_only {
-            scope.read_client_overlay_file(relative)
-        } else {
-            scope.read_overlay_file(relative)
-        };
-        match result {
-            Ok(Some(file)) => return Ok(file),
-            Ok(None) => anyhow::bail!("mod ZIP source is deleted in an installation layer"),
-            Err(e) if is_not_found(&e) && !scope.blocks_lower_layer(relative)? => continue,
-            Err(e) => return Err(e),
-        }
-    }
-    anyhow::bail!("mod ZIP source does not exist in any installation layer")
 }
 
 struct Inner {
@@ -480,8 +437,9 @@ mod tests {
         for path in paths {
             db.insert_file(id, path, None, None).unwrap();
         }
-        let out = crate::convoy::download::get_or_build_convoy_zip(&db, tmp.path(), &[id], false)
-            .unwrap();
+        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
+        let out =
+            crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], false).unwrap();
         let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
         assert_eq!(
             zip.file_names()
@@ -552,8 +510,9 @@ mod tests {
         for file in files {
             db.insert_file(id, &file.file_path, None, None).unwrap();
         }
-        let out = crate::convoy::download::get_or_build_convoy_zip(&db, tmp.path(), &[id], false)
-            .unwrap();
+        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
+        let out =
+            crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], false).unwrap();
         let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
         assert_eq!(
             zip.file_names()

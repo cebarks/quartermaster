@@ -1,11 +1,18 @@
 use std::collections::hash_map::DefaultHasher;
+use std::fs::File;
 use std::hash::{Hash, Hasher};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
 
+use crate::db::mods::InstalledFile;
 use crate::db::Database;
+use crate::dirs::QumaDirs;
+use crate::spt::layered::LayeredFiles;
+
+use super::catalog::client_file_checksum;
 
 const CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 
@@ -15,7 +22,8 @@ fn cache_key(mod_ids: &[i64], bundles_only: bool) -> String {
     let mut hasher = DefaultHasher::new();
     sorted.hash(&mut hasher);
     bundles_only.hash(&mut hasher);
-    format!("convoy-{:016x}.zip", hasher.finish())
+    // Older cache keys can contain incomplete archives built from the base tree alone.
+    format!("convoy-v2-{:016x}.zip", hasher.finish())
 }
 
 fn is_fresh(path: &Path) -> bool {
@@ -29,11 +37,11 @@ fn is_fresh(path: &Path) -> bool {
 /// Builds the ZIP to disk on cache miss; serves from cache on hit (15-min TTL).
 pub fn get_or_build_convoy_zip(
     db: &Database,
-    spt_dir: &Path,
+    dirs: &QumaDirs,
     mod_ids: &[i64],
     bundles_only: bool,
 ) -> anyhow::Result<PathBuf> {
-    let cache_dir = spt_dir.join("quartermaster-cache/convoy");
+    let cache_dir = dirs.spt_server.join("quartermaster-cache/convoy");
     std::fs::create_dir_all(&cache_dir)?;
 
     let dest = cache_dir.join(cache_key(mod_ids, bundles_only));
@@ -44,7 +52,7 @@ pub fn get_or_build_convoy_zip(
 
     let files = db.get_files_for_mod_ids(mod_ids)?;
 
-    let bundles = discover_mod_bundles(spt_dir, &files);
+    let bundles = discover_mod_bundles(&dirs.spt_server, &files);
 
     if !bundles_only
         && files
@@ -55,9 +63,9 @@ pub fn get_or_build_convoy_zip(
         anyhow::bail!("no downloadable client files found for requested mod IDs");
     }
 
-    let tmp = dest.with_extension("zip.tmp");
-    build_convoy_zip_to_file(spt_dir, &files, &bundles, &tmp, bundles_only)?;
-    std::fs::rename(&tmp, &dest)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(&cache_dir)?;
+    build_convoy_zip(dirs, &files, &bundles, tmp.as_file_mut(), bundles_only)?;
+    tmp.persist(&dest)?;
 
     tracing::debug!(path = %dest.display(), "convoy zip built to disk");
     Ok(dest)
@@ -179,41 +187,43 @@ pub(crate) fn discover_mod_bundles(
     bundles
 }
 
-fn build_convoy_zip_to_file(
-    spt_dir: &Path,
-    files: &[crate::db::mods::InstalledFile],
+fn open_client_entry(layers: &LayeredFiles, path: &str) -> anyhow::Result<Option<(PathBuf, File)>> {
+    let relative = crate::spt::scoped::relative_path(path)?;
+    if crate::spt::layout::is_server_path(&relative.to_string_lossy()) {
+        return Ok(None);
+    }
+    let source = layers.read(&relative, true)?;
+    Ok(Some((relative, source)))
+}
+
+fn build_convoy_zip(
+    dirs: &QumaDirs,
+    files: &[InstalledFile],
     bundles: &[BundleFile],
-    dest: &Path,
+    dest: &mut File,
     bundles_only: bool,
 ) -> anyhow::Result<()> {
-    use std::io::BufWriter;
-
-    let scope = crate::spt::scoped::ScopedDir::open(spt_dir)?;
-    let file = BufWriter::new(std::fs::File::create(dest)?);
-    let mut zip = zip::ZipWriter::new(file);
+    let mut zip = zip::ZipWriter::new(BufWriter::new(dest));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
     if !bundles_only {
+        let layers = LayeredFiles::open(dirs)?;
         for f in files {
-            let relative = match crate::spt::scoped::relative_path(&f.file_path) {
-                Ok(path) => path,
-                Err(e) => {
-                    tracing::warn!(path = %f.file_path, err = %e, "unsafe client ZIP path, skipping");
-                    continue;
-                }
-            };
-            let archive_name = relative.to_string_lossy();
-            if crate::spt::layout::is_server_path(&archive_name) {
-                continue;
-            }
-            match scope.read_client_file(&relative) {
-                Ok(mut source) => {
-                    zip.start_file(archive_name.as_ref(), options)?;
+            match open_client_entry(&layers, &f.file_path) {
+                Ok(Some((relative, mut source))) => {
+                    zip.start_file(relative.to_string_lossy().as_ref(), options)?;
                     std::io::copy(&mut source, &mut zip)?;
                 }
+                Ok(None) => {}
+                Err(e) if client_file_checksum(f).is_some() => {
+                    return Err(e.context(format!(
+                        "cannot include advertised Convoy client file {}",
+                        f.file_path
+                    )));
+                }
                 Err(e) => {
-                    tracing::warn!(path = %f.file_path, err = %e, "unsafe or missing client ZIP source, skipping");
+                    tracing::warn!(path = %f.file_path, err = %e, "unsafe or missing unadvertised client ZIP source, skipping");
                 }
             }
         }
@@ -232,6 +242,6 @@ fn build_convoy_zip_to_file(
         }
     }
 
-    zip.finish()?;
+    zip.finish()?.flush()?;
     Ok(())
 }
