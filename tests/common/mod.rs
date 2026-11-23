@@ -295,6 +295,10 @@ impl TestApp {
         self.app_state.config.write().convoy = convoy;
     }
 
+    pub fn set_proxy_auth(&self, enabled: bool) {
+        self.app_state.config.write().proxy_auth = enabled;
+    }
+
     async fn make_service(
         &self,
     ) -> impl Service<actix_http::Request, Response = ServiceResponse, Error = actix_web::Error>

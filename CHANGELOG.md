@@ -4,6 +4,12 @@ All notable changes to Quartermaster will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Allow `proxy_rewrite_http_host` to advertise the player HTTPS hostname without changing the direct notifier or managed headless addresses.
+- Preserve managed headless loopback routing when SPT proxy authentication is disabled, without changing Quartermaster's dashboard or API authentication.
+- Link profiles created by the stock SPT launcher's PUT registration as well as legacy POST registration.
+
 ## [0.4.1] - 2026-11-23
 
 ### Fixed
