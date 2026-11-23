@@ -4,6 +4,8 @@ All notable changes to Quartermaster will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-23
+
 ### Fixed
 
 - Reject Convoy archive requests when Convoy is disabled, even if an archive is cached. The player setup ZIP remains independent of the Convoy setting.
