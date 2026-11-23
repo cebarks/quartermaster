@@ -161,13 +161,18 @@ pub async fn status_partial(
 
 // ── API Endpoints ─────────────────────────────────────────────────────────
 
+fn disabled_response(state: &AppState) -> Option<HttpResponse> {
+    (!state.config().convoy.as_ref().is_some_and(|c| c.enabled))
+        .then(|| HttpResponse::ServiceUnavailable().body("Convoy is not enabled"))
+}
+
 /// GET /quma/convoy/catalog — serve cached catalog JSON with ETag
 pub async fn catalog(
     req: HttpRequest,
     state: web::Data<AppState>,
 ) -> actix_web::Result<HttpResponse> {
-    if !state.config().convoy.as_ref().is_some_and(|c| c.enabled) {
-        return Ok(HttpResponse::ServiceUnavailable().body("Convoy is not enabled"));
+    if let Some(response) = disabled_response(&state) {
+        return Ok(response);
     }
 
     let Some((path, etag)) = state.catalog_cache.get() else {
@@ -254,6 +259,10 @@ pub async fn download(
     state: web::Data<AppState>,
     body: web::Json<DownloadRequest>,
 ) -> actix_web::Result<HttpResponse> {
+    if let Some(response) = disabled_response(&state) {
+        return Ok(response);
+    }
+
     if body.mods.is_empty() {
         tracing::warn!("convoy download requested with empty mod list");
         return Ok(HttpResponse::BadRequest().body("no mods requested"));
@@ -321,6 +330,10 @@ pub async fn single_mod_archive(
     state: web::Data<AppState>,
     path: web::Path<i64>,
 ) -> actix_web::Result<HttpResponse> {
+    if let Some(response) = disabled_response(&state) {
+        return Ok(response);
+    }
+
     let mod_id = path.into_inner();
     let db = state.db.clone();
     let dirs = state.dirs.clone();

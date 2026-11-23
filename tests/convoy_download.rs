@@ -29,6 +29,10 @@ fn write_file(root: &Path, path: &str, bytes: &[u8]) {
 }
 
 fn seed_client_mod(app: &TestApp) -> i64 {
+    app.set_convoy_config(Some(ConvoyConfig {
+        enabled: true,
+        ..ConvoyConfig::default()
+    }));
     let db = app.db.lock();
     let id = db
         .insert_mod(
@@ -107,6 +111,30 @@ async fn assert_archives_fail(app: &mut TestApp, id: i64) {
             StatusCode::INTERNAL_SERVER_ERROR,
             "{uri}"
         );
+    }
+}
+
+#[actix_web::test]
+async fn convoy_archives_require_explicit_enablement_even_when_cached() {
+    let mut app = TestAppBuilder::new().with_nested_layout().build().await;
+    let id = seed_client_mod(&app);
+    write_file(&app.dirs().mod_overlay(), RECEIPT, CONTENT);
+    let warm = app.send_raw(batch_request(id, false)).await;
+    assert_eq!(warm.status(), StatusCode::OK);
+
+    for config in [
+        None,
+        Some(ConvoyConfig {
+            enabled: false,
+            ..ConvoyConfig::default()
+        }),
+    ] {
+        app.set_convoy_config(config);
+        for request in archive_requests(id) {
+            let uri = request.uri().to_string();
+            let response = app.send_raw(request).await;
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        }
     }
 }
 
