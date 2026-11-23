@@ -254,7 +254,7 @@ fn headless_profile_assignments(
     let assignments: Vec<String> = all_profiles
         .iter()
         .filter(|profile| {
-            profile.username.starts_with("headless_")
+            profiles::is_headless_username(&profile.username)
                 && !profile.aid.is_empty()
                 && !already_assigned.contains(&profile.aid)
         })

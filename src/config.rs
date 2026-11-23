@@ -91,6 +91,31 @@ fn default_proxy_rewrite_target_port() -> Option<u16> {
     None
 }
 
+fn deserialize_proxy_rewrite_http_host<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    let host = Option::<String>::deserialize(deserializer)?;
+    if let Some(host) = &host {
+        let name = host.strip_suffix('.').unwrap_or(host);
+        let valid = name.len() <= 253
+            && name.split('.').all(|label| {
+                let bytes = label.as_bytes();
+                bytes.len() <= 63
+                    && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+                    && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+                    && bytes
+                        .iter()
+                        .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+            });
+        if !valid {
+            return Err(serde::de::Error::custom(
+                "proxy_rewrite_http_host must be a DNS hostname or IPv4 address, without a scheme, port, or path",
+            ));
+        }
+    }
+    Ok(host)
+}
+
 fn default_proxy_rewrite_http_paths() -> Vec<String> {
     vec![
         "/launcher/server/connect".to_string(),
@@ -999,6 +1024,7 @@ pub struct Config {
     #[serde(default = "default_proxy_enabled")]
     pub proxy_enabled: bool,
 
+    /// Require a linked SPT session on the passthrough proxy, independently of dashboard/API auth.
     #[serde(default = "default_proxy_auth")]
     pub proxy_auth: bool,
 
@@ -1009,6 +1035,10 @@ pub struct Config {
 
     #[serde(default = "default_proxy_rewrite_target_port")]
     pub proxy_rewrite_target_port: Option<u16>,
+
+    /// Optional player-facing hostname for HTTP rewrites only; defaults to the external URL's host.
+    #[serde(default, deserialize_with = "deserialize_proxy_rewrite_http_host")]
+    pub proxy_rewrite_http_host: Option<String>,
 
     #[serde(default = "default_proxy_rewrite_http_paths")]
     pub proxy_rewrite_http_paths: Vec<String>,
@@ -1065,6 +1095,7 @@ impl Default for Config {
             proxy_auth: true,
             proxy_rewrite_source_port: 6969,
             proxy_rewrite_target_port: None,
+            proxy_rewrite_http_host: None,
             proxy_rewrite_http_paths: default_proxy_rewrite_http_paths(),
             proxy_rewrite_direct_paths: default_proxy_rewrite_direct_paths(),
             snapshots_enabled: true,

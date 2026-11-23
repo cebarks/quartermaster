@@ -4,11 +4,12 @@ Investigation into why SPT game clients fail to connect to a remote dedicated se
 
 ## Root Cause: Hardcoded Backend URLs
 
-SPT 4.x hardcodes all backend URLs to `https://127.0.0.1:6969` regardless of the `backendIp`/`backendPort` values in `SPT_Data/configs/http.json` or the Fika server config override. This affects three endpoints:
+SPT 4.x can advertise its local or upstream-facing URL rather than the origin a remote player can reach. The proxy rewrites URLs on these routes:
 
 | Endpoint | Fields | Purpose |
 |---|---|---|
 | `/launcher/server/connect` | `backendUrl` | Primary backend URL sent to launcher/game |
+| `/client/game/mode` | `backendUrl` | Game endpoint used for the next startup requests |
 | `/client/game/config` | `backend.{Lobby,Trading,Messaging,Main,RagFair}` | Per-subsystem API URLs |
 | `/client/notifier/channel/create` | `ws`, `notifierServer`, `server` | WebSocket notifier connection |
 
@@ -30,10 +31,12 @@ The WebSocket handshake (101 Switching Protocols) succeeds, but the ongoing conn
 
 ## Solution: Split URL Routing
 
-Quartermaster's proxy rewrites the hardcoded `127.0.0.1:6969` URLs in the three affected endpoints using different targets:
+Quartermaster's proxy rewrites the advertised backend URLs using different targets:
 
-- **HTTP API endpoints** (`/launcher/server/connect`, `/client/game/config`): Rewrite to `external_url` hostname (e.g., `tarkov.grovest.io`) for L7 proxying through Caddy on port 443. This preserves Quartermaster proxy features (raid tracking, metrics).
-- **WebSocket/notifier endpoint** (`/client/notifier/channel/create`): Rewrite to `hostname:6969` for direct TCP passthrough, bypassing L7 proxies entirely.
+- **HTTP API endpoints** (`/launcher/server/connect`, `/client/game/mode`, `/client/game/config`): Rewrite to `proxy_rewrite_http_host` if set, otherwise to the `external_url` hostname, for L7 proxying on port 443. This preserves Quartermaster proxy features (raid tracking, metrics).
+- **WebSocket/notifier endpoint** (`/client/notifier/channel/create`): Rewrite to the `external_url` hostname with `proxy_rewrite_target_port` or the SPT server port (normally 6969), bypassing L7 proxies.
+
+When those services have different hostnames, set only `proxy_rewrite_http_host` to the player-facing HTTPS name. Leave the existing direct hostname and ports in place. Managed headless clients still receive loopback addresses, including when `proxy_auth = false` lets SPT and Fika handle their own authentication. That setting does not alter Quartermaster dashboard or API access.
 
 The TCP passthrough on port 6969 is handled via iptables DNAT on the reverse proxy machine:
 

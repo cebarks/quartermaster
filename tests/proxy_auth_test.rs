@@ -6,6 +6,90 @@ use common::TestAppBuilder;
 const PROFILE: &str = "000000000000000000000001";
 
 #[actix_web::test]
+async fn opt_in_proxy_auth_still_protects_spt_routes() {
+    let mut app = TestAppBuilder::new().with_proxy_auth().build().await;
+    for path in [
+        "/launcher/v2/profiles",
+        "/launcher/v2/types",
+        "/launcher/v2/mod-pages",
+        "/singleplayer/bundles",
+        "/files/bundle/example/item.bundle",
+        "/files/trader/avatar/example.png",
+    ] {
+        assert_eq!(
+            app.get(path).await.status(),
+            StatusCode::UNAUTHORIZED,
+            "{path}"
+        );
+    }
+    for path in [
+        "/launcher/v2/register",
+        "/launcher/v2/login",
+        "/launcher/v2/profile",
+        "/launcher/v2/remove",
+        "/launcher/v2/wipe",
+    ] {
+        let request = TestRequest::put().uri(path).to_request();
+        assert_eq!(
+            app.send_raw(request).await.status(),
+            StatusCode::UNAUTHORIZED,
+            "{path}"
+        );
+    }
+}
+
+#[actix_web::test]
+async fn spt_passthrough_keeps_quma_session_and_api_token_auth() {
+    let mut app = TestAppBuilder::new().with_proxy_auth().build().await;
+    app.set_proxy_auth(false);
+    for path in [
+        "/launcher/v2/profiles",
+        "/files/trader/avatar/example.png",
+        "/singleplayer/bundles",
+    ] {
+        // The unreachable test upstream returns 502 only after auth permits forwarding.
+        assert_eq!(app.get(path).await.status(), StatusCode::BAD_GATEWAY);
+    }
+    for request in [
+        TestRequest::put().uri("/launcher/v2/register"),
+        TestRequest::post().uri("/client/game/mode"),
+    ] {
+        assert_eq!(
+            app.send_raw(request.to_request()).await.status(),
+            StatusCode::BAD_GATEWAY
+        );
+    }
+    for path in ["/quma/admin/users", "/quma/api/logs/app/count"] {
+        let response = app.get(path).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(response.headers().get("location").unwrap(), "/quma/login");
+    }
+    let invalid_token = TestRequest::get()
+        .uri("/quma/api/logs/app/count")
+        .insert_header(("X-Quma-Token", "invalid-fixture-token"))
+        .to_request();
+    assert_eq!(
+        app.send_raw(invalid_token).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[actix_web::test]
+async fn spt_passthrough_still_rejects_ambiguous_credentials() {
+    let mut app = TestAppBuilder::new().with_proxy_auth().build().await;
+    app.set_proxy_auth(false);
+    let request = TestRequest::post()
+        .uri("/client/game/mode")
+        .append_header(("authorization", "Basic first"))
+        .append_header(("authorization", "Basic second"))
+        .to_request();
+    assert_eq!(
+        app.send_raw(request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[actix_web::test]
 async fn only_approved_prestige_artwork_gets_bypass_authentication() {
     let mut app = TestAppBuilder::new().with_proxy_auth().build().await;
     for path in [

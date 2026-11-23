@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use actix_web::web::{self, Data};
 use actix_web::{HttpRequest, HttpResponse};
@@ -18,6 +18,7 @@ const MAX_PROXY_BODY: usize = 16 * 1024 * 1024;
 /// Cap zlib decompression output to prevent zip-bomb DoS.
 // ponytail: 64 MB is generous; tighten if memory pressure matters
 const MAX_DECOMPRESSED: u64 = 64 * 1024 * 1024;
+const HEADLESS_REWRITE_LOOKUP_TIMEOUT: Duration = Duration::from_secs(1);
 
 enum BackendRewriteTarget {
     HttpProxy,
@@ -361,8 +362,9 @@ pub async fn proxy_handler(
         tracing::warn!(path = %req.path(), credential_shape = ?proxy_credential_shape(&req), "proxy auth: ambiguous credentials");
         return Err(actix_web::error::ErrorUnauthorized("ambiguous credentials"));
     };
+    let proxy_auth = state.config().proxy_auth;
     let mut managed_headless = false;
-    if state.config().proxy_auth && !is_auth_exempt(req.method(), req.path()) {
+    if proxy_auth && !is_auth_exempt(req.method(), req.path()) {
         let (session_id, requires_managed) =
             proxy_session_credentials_from_headers(&req, &proxy_headers).ok_or_else(|| {
                 tracing::warn!(
@@ -498,8 +500,10 @@ pub async fn proxy_handler(
                 .record_request(req.path(), latency_ms, is_error);
 
             // Check if this is a watched endpoint
-            let is_register = req.method() == actix_web::http::Method::POST
-                && req.path() == "/launcher/v2/register"
+            let is_register = matches!(
+                *req.method(),
+                actix_web::http::Method::POST | actix_web::http::Method::PUT
+            ) && req.path() == "/launcher/v2/register"
                 && status.is_success();
 
             if is_register {
@@ -598,21 +602,16 @@ pub async fn proxy_handler(
                 );
             }
 
-            let rewrite_target = {
-                let cfg = state.config();
-                if !status.is_success() || cfg.external_url.is_none() {
-                    None
-                } else if cfg.proxy_rewrite_http_paths.iter().any(|p| p == req.path()) {
-                    Some(BackendRewriteTarget::HttpProxy)
-                } else if cfg
-                    .proxy_rewrite_direct_paths
-                    .iter()
-                    .any(|p| p == req.path())
-                {
-                    Some(BackendRewriteTarget::DirectTcp)
-                } else {
-                    None
+            let replacement = if status.is_success() {
+                // Passthrough still needs to advertise loopback to managed clients.
+                // Identity here selects an address only; missing identity never denies SPT access.
+                if !proxy_auth {
+                    managed_headless =
+                        managed_passthrough_rewrite(&req, &proxy_headers, &state).await;
                 }
+                backend_rewrite_for_path(&state.config(), req.path(), port, managed_headless)
+            } else {
+                None
             };
 
             let mut builder = HttpResponse::build(
@@ -620,27 +619,12 @@ pub async fn proxy_handler(
                     .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY),
             );
 
-            let (external_url_for_rewrite, target_port, proxy_port) = {
-                let cfg = state.config();
-                (
-                    rewrite_target
-                        .as_ref()
-                        .and_then(|_| cfg.external_url.clone()),
-                    cfg.proxy_rewrite_target_port.unwrap_or(port),
-                    cfg.web_port,
-                )
-            };
-            let will_rewrite = matches!(
-                (&rewrite_target, &external_url_for_rewrite),
-                (Some(_), Some(_))
-            );
-
             for (name, value) in resp_headers.iter() {
                 let name_str = name.as_str().to_lowercase();
                 if HOP_BY_HOP_HEADERS.contains(&name_str.as_str()) {
                     continue;
                 }
-                if will_rewrite && name_str == "content-length" {
+                if replacement.is_some() && name_str == "content-length" {
                     continue;
                 }
                 if let Ok(value_str) = value.to_str() {
@@ -648,15 +632,7 @@ pub async fn proxy_handler(
                 }
             }
 
-            if let (Some(target), Some(external_url)) = (rewrite_target, external_url_for_rewrite) {
-                let replacement = backend_rewrite_authority(
-                    &target,
-                    &external_url,
-                    target_port,
-                    proxy_port,
-                    port,
-                    managed_headless,
-                );
+            if let Some(replacement) = replacement {
                 let raw_body = resp.bytes().await.map_err(|e| {
                     actix_web::error::ErrorBadGateway(format!("failed to read response body: {e}"))
                 })?;
@@ -696,9 +672,93 @@ pub async fn proxy_handler(
     }
 }
 
+async fn managed_passthrough_rewrite(
+    req: &HttpRequest,
+    headers: &actix_web::http::header::HeaderMap,
+    state: &AppState,
+) -> bool {
+    if state.container_mgr.is_none() {
+        return false;
+    }
+    let session = {
+        let cfg = state.config();
+        if cfg.headless.as_ref().is_none_or(|h| h.client_count() == 0) {
+            return false;
+        }
+        headless_rewrite_session(req, headers, &cfg)
+    };
+    let Some(session) = session else {
+        return false;
+    };
+
+    let dirs = state.dirs.clone();
+    let aid = session.clone();
+    tokio::time::timeout(HEADLESS_REWRITE_LOOKUP_TIMEOUT, async {
+        // Most sessions are players. Avoid Docker for them without depending on
+        // supervisor state, which may not know a just-started client's assignment.
+        if !web::block(move || crate::spt::profiles::has_headless_profile(&dirs, &aid))
+            .await
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        is_managed_headless_session(req, state, &session).await
+    })
+    .await
+    .unwrap_or_else(|_| {
+        tracing::debug!(path = %req.path(), "managed headless rewrite lookup timed out");
+        false
+    })
+}
+
+fn headless_rewrite_session(
+    req: &HttpRequest,
+    headers: &actix_web::http::header::HeaderMap,
+    cfg: &crate::config::Config,
+) -> Option<String> {
+    if !is_direct_local_peer(req) || backend_rewrite_target(cfg, req.path()).is_none() {
+        return None;
+    }
+    crate::web::raid_tracker::extract_session_id_from_headers(headers)
+}
+
+fn backend_rewrite_target<'a>(
+    cfg: &'a crate::config::Config,
+    path: &str,
+) -> Option<(BackendRewriteTarget, &'a str)> {
+    let external_url = cfg.external_url.as_deref();
+    if cfg.proxy_rewrite_http_paths.iter().any(|p| p == path) {
+        Some((
+            BackendRewriteTarget::HttpProxy,
+            cfg.proxy_rewrite_http_host.as_deref().or(external_url)?,
+        ))
+    } else if cfg.proxy_rewrite_direct_paths.iter().any(|p| p == path) {
+        Some((BackendRewriteTarget::DirectTcp, external_url?))
+    } else {
+        None
+    }
+}
+
+fn backend_rewrite_for_path(
+    cfg: &crate::config::Config,
+    path: &str,
+    server_port: u16,
+    managed_headless: bool,
+) -> Option<String> {
+    let (target, endpoint) = backend_rewrite_target(cfg, path)?;
+    Some(backend_rewrite_authority(
+        &target,
+        endpoint,
+        cfg.proxy_rewrite_target_port.unwrap_or(server_port),
+        cfg.web_port,
+        server_port,
+        managed_headless,
+    ))
+}
+
 fn backend_rewrite_authority(
     target: &BackendRewriteTarget,
-    external_url: &str,
+    endpoint: &str,
     direct_port: u16,
     proxy_port: u16,
     local_server_port: u16,
@@ -712,8 +772,8 @@ fn backend_rewrite_authority(
         return format!("127.0.0.1:{port}");
     }
     match target {
-        BackendRewriteTarget::HttpProxy => extract_host(external_url),
-        BackendRewriteTarget::DirectTcp => format!("{}:{direct_port}", extract_host(external_url)),
+        BackendRewriteTarget::HttpProxy => extract_host(endpoint),
+        BackendRewriteTarget::DirectTcp => format!("{}:{direct_port}", extract_host(endpoint)),
     }
 }
 
@@ -780,8 +840,8 @@ fn handle_player_registration(
     db: std::sync::Arc<parking_lot::Mutex<crate::db::Database>>,
     events: tokio::sync::broadcast::Sender<crate::web::sse::ServerEvent>,
 ) {
-    // SPT's registration endpoint returns an empty 200. To find the new profile,
-    // scan the profiles directory for any profile IDs not already in quma's DB.
+    // Discover new registrations from the profile store, independently of the
+    // response shape used by the launcher's PUT or the legacy POST client.
     //
     // Phase 1: Read all profile data from disk (no DB lock held).
     // Phase 2: Acquire the lock once and perform all DB lookups/inserts.
@@ -845,7 +905,7 @@ fn handle_player_registration(
             }
         }
 
-        let is_headless = username.starts_with("headless_");
+        let is_headless = crate::spt::profiles::is_headless_username(username);
         match db.insert_user(username, Some(profile_id), None, "player", is_headless) {
             Ok(user_id) => {
                 tracing::info!(
@@ -1274,6 +1334,102 @@ mod tests {
             proxy_session_credentials(&cookie),
             Some((session.to_string(), false))
         );
+    }
+
+    #[test]
+    fn configured_http_host_changes_only_player_http_rewrites() {
+        use crate::config::Config;
+
+        let mut cfg: Config = toml::from_str(
+            r#"
+            external_url = "https://infrastructure.example:9190"
+            proxy_rewrite_http_host = "players.example"
+            proxy_rewrite_target_port = 6970
+            "#,
+        )
+        .unwrap();
+        let mode = "/client/game/mode";
+        let notifier = "/client/notifier/channel/create";
+        for (path, managed, expected) in [
+            (mode, false, Some("players.example")),
+            (notifier, false, Some("infrastructure.example:6970")),
+            (mode, true, Some("127.0.0.1:9190")),
+            (notifier, true, Some("127.0.0.1:6969")),
+            ("/client/game/start", false, None),
+        ] {
+            assert_eq!(
+                backend_rewrite_for_path(&cfg, path, 6969, managed).as_deref(),
+                expected,
+                "{path} (managed={managed})"
+            );
+        }
+        cfg.external_url = None;
+        assert_eq!(
+            backend_rewrite_for_path(&cfg, mode, 6969, false).as_deref(),
+            Some("players.example")
+        );
+        assert!(backend_rewrite_for_path(&cfg, notifier, 6969, false).is_none());
+        cfg.external_url = Some("https://infrastructure.example:9190".to_string());
+        cfg.proxy_rewrite_http_host = None;
+        assert_eq!(
+            backend_rewrite_for_path(&cfg, mode, 6969, false).as_deref(),
+            Some("infrastructure.example")
+        );
+    }
+
+    #[test]
+    fn headless_rewrite_identity_is_only_considered_for_direct_rewrite_requests() {
+        use actix_web::test::TestRequest;
+
+        let cfg = crate::config::Config {
+            proxy_auth: false,
+            external_url: Some("https://infrastructure.example:9190".into()),
+            proxy_rewrite_http_host: Some("players.example".into()),
+            ..Default::default()
+        };
+        let session = "000000000000000000000001";
+        let local = |path: &str| {
+            TestRequest::post()
+                .uri(path)
+                .peer_addr("127.0.0.1:12345".parse().unwrap())
+                .insert_header(("cookie", format!("PHPSESSID={session}")))
+        };
+        let candidate = |req: HttpRequest| {
+            headless_rewrite_session(&req, &normalize_proxy_headers(&req).unwrap(), &cfg)
+        };
+        for path in ["/client/game/mode", "/client/notifier/channel/create"] {
+            assert_eq!(
+                candidate(local(path).to_http_request()).as_deref(),
+                Some(session)
+            );
+            assert!(candidate(
+                local(path)
+                    .insert_header(("forwarded", "for=127.0.0.1"))
+                    .to_http_request()
+            )
+            .is_none());
+        }
+        assert!(candidate(local("/client/game/start").to_http_request()).is_none());
+        assert!(candidate(
+            local("/client/game/mode")
+                .insert_header(("cookie", "unrelated=1"))
+                .to_http_request()
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn proxy_http_host_rejects_a_scheme_port_or_path() {
+        for host in [
+            "",
+            "https://players.example",
+            "players.example:443",
+            "players.example/game",
+        ] {
+            let config = format!("proxy_rewrite_http_host = {host:?}");
+            let error = toml::from_str::<crate::config::Config>(&config).unwrap_err();
+            assert!(error.message().contains("proxy_rewrite_http_host must be"));
+        }
     }
 
     #[test]

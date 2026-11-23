@@ -352,6 +352,19 @@ fn calculate_stash_value(inventory: &InventoryData, prices: &HashMap<String, i64
     total
 }
 
+pub(crate) fn is_headless_username(username: &str) -> bool {
+    username.starts_with("headless_")
+}
+
+/// Prefilter for managed routing; a profile name alone is not proof of assignment.
+pub(crate) fn has_headless_profile(dirs: &QumaDirs, aid: &str) -> bool {
+    let Ok(Some(file)) = ProfileReader::open(dirs).and_then(|reader| reader.read_id(aid)) else {
+        return false;
+    };
+    serde_json::from_reader::<_, ProfileJson>(BufReader::new(file))
+        .is_ok_and(|profile| profile.info.id == aid && is_headless_username(&profile.info.username))
+}
+
 pub fn list_profiles(dirs: &QumaDirs) -> Result<Vec<SptProfile>> {
     let reader = ProfileReader::open(dirs)?;
     let mut profiles = Vec::new();
@@ -605,6 +618,29 @@ mod tests {
         assert_eq!(profiles.len(), 2);
         assert_eq!(profiles[0].username, "Player1");
         assert_eq!(profiles[1].username, "Player2");
+    }
+
+    #[test]
+    fn headless_candidates_use_the_session_profile_in_the_active_layer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(tmp.path().to_path_buf());
+        let base = &dirs.spt_server;
+        let upper = dirs.runtime_upper();
+        create_fake_profile(base, "managed", "headless_1");
+        create_fake_profile(base, "overridden", "headless_2");
+        create_fake_profile(&upper, "overridden", "Player");
+        create_fake_profile(&upper, "new", "headless_3");
+        std::fs::write(
+            upper.join("SPT/user/profiles/mismatch.json"),
+            r#"{"info":{"id":"managed","username":"headless_1"}}"#,
+        )
+        .unwrap();
+
+        assert!(has_headless_profile(&dirs, "managed"));
+        assert!(has_headless_profile(&dirs, "new"));
+        assert!(!has_headless_profile(&dirs, "overridden"));
+        assert!(!has_headless_profile(&dirs, "mismatch"));
+        assert!(!has_headless_profile(&dirs, "missing"));
     }
 
     #[test]

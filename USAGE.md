@@ -218,7 +218,7 @@ quma generate systemd
 
 ## Configuration
 
-Config lives at `<quma_dir>/quartermaster.toml`. All settings can be overridden with `QUMA_*` environment variables.
+Config lives at `<quma_dir>/quartermaster.toml`. Supported `QUMA_*` environment overrides are listed below.
 
 ### Core Settings
 
@@ -256,11 +256,16 @@ Quartermaster can proxy client connections to the SPT server, enabling raid trac
 
 ```toml
 proxy_enabled = true           # default
-proxy_auth = true              # require authentication for proxy connections (default)
+proxy_auth = true              # require a linked SPT session on protected proxy routes (default)
+# proxy_rewrite_http_host = "play.example.com" # optional DNS hostname for player HTTPS only
 tls_enabled = true             # default — generates self-signed cert if no cert/key provided
 tls_cert = "/path/to/cert.pem" # optional — use your own TLS cert
 tls_key = "/path/to/key.pem"   # optional
 ```
+
+Set `proxy_rewrite_http_host` in TOML when the player HTTPS hostname differs from the host used for direct TCP. Supply a DNS hostname or IPv4 address, without a scheme, port, or path. If unset, HTTPS rewrites still use the hostname from `external_url`. Direct TCP rewrites and managed headless loopback addresses are unchanged.
+
+Set `proxy_auth = false` when clients should use native SPT/Fika authentication without an additional Quartermaster session check on the proxy. Anyone who can reach the proxy can then use the routes exposed by SPT/Fika, including stock launcher profile operations, subject to the upstream server's own checks. Quartermaster's dashboard sessions, permissions, and API token checks are unchanged. Managed headless clients still receive loopback URLs.
 
 ### Scanner Guard
 
