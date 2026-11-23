@@ -287,6 +287,8 @@ require_backup = false         # fail operations if backup fails (default: false
 
 Convoy is the built-in client mod syncing system. It replaces the legacy NarcoNet/modsync integration. Existing `[modsync]` config sections are automatically migrated to `[convoy]` on first load.
 
+Without a `[convoy]` section, or with `enabled = false`, the Convoy catalog and archive endpoints return HTTP 503. This setting does not disable the player setup ZIP.
+
 ```toml
 [convoy]
 enabled = true                 # default

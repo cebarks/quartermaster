@@ -291,6 +291,10 @@ impl TestApp {
         &self.app_state.dirs
     }
 
+    pub fn set_convoy_config(&self, convoy: Option<spt_quartermaster::config::ConvoyConfig>) {
+        self.app_state.config.write().convoy = convoy;
+    }
+
     async fn make_service(
         &self,
     ) -> impl Service<actix_http::Request, Response = ServiceResponse, Error = actix_web::Error>
