@@ -60,8 +60,78 @@ fn resolve_guid(
         .map(|s| s.to_string())
 }
 
+/// Canonical portable client paths. Managed dependencies are direct DLL children,
+/// never a recursive export of the game's Managed directory.
+pub(crate) fn is_client_path(path: &str) -> bool {
+    if path.starts_with("BepInEx/config/Convoy/") {
+        return false;
+    }
+    if path.contains(['\\', ':', '\0', '<', '>', '"', '|', '?', '*'])
+        || path.split('/').any(|p| {
+            p.is_empty()
+                || p == "."
+                || p == ".."
+                || p.ends_with(['.', ' '])
+                || p.chars().any(char::is_control)
+                || matches!(
+                    p.split('.')
+                        .next()
+                        .unwrap_or("")
+                        .to_ascii_uppercase()
+                        .as_str(),
+                    "CON"
+                        | "PRN"
+                        | "AUX"
+                        | "NUL"
+                        | "COM1"
+                        | "COM2"
+                        | "COM3"
+                        | "COM4"
+                        | "COM5"
+                        | "COM6"
+                        | "COM7"
+                        | "COM8"
+                        | "COM9"
+                        | "LPT1"
+                        | "LPT2"
+                        | "LPT3"
+                        | "LPT4"
+                        | "LPT5"
+                        | "LPT6"
+                        | "LPT7"
+                        | "LPT8"
+                        | "LPT9"
+                )
+        })
+    {
+        return false;
+    }
+    path.starts_with("BepInEx/")
+        || path
+            .strip_prefix("EscapeFromTarkov_Data/Managed/")
+            .is_some_and(|name| !name.contains('/') && name.ends_with(".dll") && name.len() > 4)
+}
+
+pub(super) fn eligible_client_file(file: &crate::db::mods::InstalledFile) -> bool {
+    is_client_path(&file.file_path)
+        && (file.file_path.starts_with("BepInEx/") || file.source == "archive")
+}
+
+pub(super) fn validate_client_inventory(
+    files: &[crate::db::mods::InstalledFile],
+) -> anyhow::Result<()> {
+    for file in files.iter().filter(|f| eligible_client_file(f)) {
+        anyhow::ensure!(
+            file.file_hash.is_some(),
+            "missing checksum for Convoy client file {}; rehash the package before publishing",
+            file.file_path
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn client_file_checksum(file: &crate::db::mods::InstalledFile) -> Option<&str> {
-    if file.file_path.starts_with("BepInEx/") {
+    if eligible_client_file(file) {
         file.file_hash.as_deref()
     } else {
         None
@@ -73,6 +143,7 @@ fn get_client_file_checksums(
     m: &crate::db::mods::InstalledMod,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let files = db.get_files_for_mod_ids(&[m.id])?;
+    validate_client_inventory(&files)?;
     Ok(files
         .iter()
         .filter_map(|f| client_file_checksum(f).map(|hash| (f.file_path.clone(), hash.to_owned())))
@@ -291,6 +362,7 @@ pub struct CatalogCache {
 
 struct CatalogCacheInner {
     spt_dir: PathBuf,
+    dirs: crate::dirs::QumaDirs,
     db: Arc<parking_lot::Mutex<Database>>,
     config: Arc<parking_lot::RwLock<crate::config::Config>>,
     cache_path: PathBuf,
@@ -310,20 +382,22 @@ impl Drop for ResetOnDrop<'_> {
 
 impl CatalogCache {
     pub fn new(
-        spt_dir: PathBuf,
+        dirs: crate::dirs::QumaDirs,
         db: Arc<parking_lot::Mutex<Database>>,
         config: Arc<parking_lot::RwLock<crate::config::Config>>,
     ) -> Self {
+        let spt_dir = dirs.spt_server.clone();
         let cache_dir = spt_dir.join("quartermaster-cache");
         std::fs::create_dir_all(&cache_dir).ok();
         Self {
             inner: Arc::new(CatalogCacheInner {
                 spt_dir,
+                dirs,
                 db,
                 config,
-                cache_path: cache_dir.join("convoy-catalog.json"),
-                tmp_path: cache_dir.join("convoy-catalog.json.tmp"),
-                rehash_marker_path: cache_dir.join("convoy-last-rehash"),
+                cache_path: cache_dir.join("convoy-catalog-v3.json"),
+                tmp_path: cache_dir.join("convoy-catalog-v3.json.tmp"),
+                rehash_marker_path: cache_dir.join("convoy-last-rehash-v3"),
                 rebuilding: AtomicBool::new(false),
                 dirty: AtomicBool::new(false),
             }),
@@ -372,7 +446,7 @@ impl CatalogCache {
     /// Force rehash all tracked client files from disk, then rebuild catalog.
     pub fn force_rehash(&self) {
         let db = self.inner.db.lock();
-        let updated = rehash_client_files(&db, &self.inner.spt_dir, true);
+        let updated = rehash_client_files(&db, &self.inner.dirs, true);
         drop(db);
         tracing::info!(updated, "force rehash complete");
         self.invalidate();
@@ -442,7 +516,7 @@ impl CatalogCacheInner {
         }
 
         let db = self.db.lock();
-        let updated = rehash_client_files(&db, &self.spt_dir, false);
+        let updated = rehash_client_files(&db, &self.dirs, false);
         drop(db);
 
         // Touch marker regardless of whether anything changed
@@ -456,11 +530,18 @@ impl CatalogCacheInner {
 
 const REHASH_STALE_SECS: u64 = 30 * 60;
 
-/// Rehash all tracked BepInEx files from disk, updating DB where the hash differs.
+/// Rehash eligible tracked client files from scoped overlay layers, updating changed hashes.
 /// If `force` is true, rehash everything; otherwise only files whose on-disk mtime
 /// is newer than `REHASH_STALE_SECS`.
 /// Returns the number of DB rows updated.
-fn rehash_client_files(db: &Database, spt_dir: &Path, force: bool) -> usize {
+fn rehash_client_files(db: &Database, dirs: &crate::dirs::QumaDirs, force: bool) -> usize {
+    let layers = match crate::spt::layered::LayeredFiles::open(dirs) {
+        Ok(layers) => layers,
+        Err(e) => {
+            tracing::warn!(err = %e, "cannot open client layers for rehash");
+            return 0;
+        }
+    };
     let files = match db.get_all_tracked_files() {
         Ok(f) => f,
         Err(e) => {
@@ -471,20 +552,23 @@ fn rehash_client_files(db: &Database, spt_dir: &Path, force: bool) -> usize {
 
     let mut updated = 0;
     for file in &files {
-        if !file.file_path.starts_with("BepInEx/") {
+        if !is_client_path(&file.file_path)
+            || (!file.file_path.starts_with("BepInEx/") && file.source != "archive")
+        {
             continue;
         }
 
-        let abs_path = spt_dir.join(&file.file_path);
-        if !abs_path.is_file() {
-            continue;
-        }
+        let source = match layers.read(Path::new(&file.file_path), true) {
+            Ok(source) => source,
+            Err(_) => continue,
+        };
+        let metadata = source.metadata().ok();
 
         // Skip files not modified recently unless forced
         if !force {
-            let dominated_by_mtime = abs_path
-                .metadata()
-                .and_then(|m| m.modified())
+            let dominated_by_mtime = metadata
+                .as_ref()
+                .and_then(|m| m.modified().ok())
                 .map(|mtime| {
                     mtime.elapsed().unwrap_or(Duration::MAX)
                         < Duration::from_secs(REHASH_STALE_SECS)
@@ -495,7 +579,7 @@ fn rehash_client_files(db: &Database, spt_dir: &Path, force: bool) -> usize {
             }
         }
 
-        let disk_hash = match crate::spt::mods::compute_file_hash(&abs_path) {
+        let disk_hash = match crate::spt::mods::compute_reader_hash(source) {
             Ok(h) => h,
             Err(e) => {
                 tracing::warn!(path = %file.file_path, err = %e, "failed to hash file during rehash");
@@ -505,7 +589,7 @@ fn rehash_client_files(db: &Database, spt_dir: &Path, force: bool) -> usize {
 
         let db_hash = file.file_hash.as_deref().unwrap_or("");
         if disk_hash != db_hash {
-            let size = abs_path.metadata().map(|m| m.len() as i64).ok();
+            let size = metadata.map(|m| m.len() as i64);
             if let Err(e) = db.update_file_hash(file.id, &disk_hash, size) {
                 tracing::warn!(path = %file.file_path, err = %e, "failed to update file hash");
             } else {
@@ -530,6 +614,35 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let db = Database::open(&db_path).unwrap();
         (dir, db)
+    }
+
+    #[test]
+    fn tracked_managed_dependencies_are_published_and_rehashed() {
+        let (dir, db) = setup();
+        let id = db
+            .insert_mod(None, None, "Dependency", None, "1", "local", None, None)
+            .unwrap();
+        let path = "EscapeFromTarkov_Data/Managed/Unity.VectorGraphics.dll";
+        let absolute = dir.path().join(path);
+        std::fs::create_dir_all(absolute.parent().unwrap()).unwrap();
+        std::fs::write(&absolute, b"synthetic dependency").unwrap();
+        db.insert_file(id, path, Some("stale"), None).unwrap();
+        assert_eq!(
+            rehash_client_files(&db, &QumaDirs::from_legacy(dir.path().to_path_buf()), true),
+            1
+        );
+        let catalog = generate_catalog(&db, dir.path(), &ConvoyConfig::default()).unwrap();
+        assert_eq!(
+            catalog.groups[0].mods[0].file_checksums[path],
+            crate::spt::mods::compute_file_hash(&absolute).unwrap()
+        );
+        let dirs = QumaDirs::from_legacy(dir.path().to_path_buf());
+        let zip =
+            super::super::download::get_or_build_convoy_zip(&db, &dirs, &[id], false).unwrap();
+        assert!(zip::ZipArchive::new(std::fs::File::open(zip).unwrap())
+            .unwrap()
+            .by_name(path)
+            .is_ok());
     }
 
     #[test]
