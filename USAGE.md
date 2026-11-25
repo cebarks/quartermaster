@@ -41,6 +41,42 @@ quma --quma-dir /path/to/dir server start
 
 The default login URL is `https://<server-host>:9190/quma/login`. TLS is enabled by default with a self-signed certificate. If the default `spt-server` container already belongs to another installation, choose a distinct `--container-name` rather than deleting it.
 
+## Player Client Bootstrap
+
+The **Client Setup** page (`/quma/setup`) provides Linux and Windows scripts for an existing, owned SPT client matching the running server. Invite downloads use the same implementation with the invite-scoped archive URL; their ZIP now serves the same full filtered client pack, not just Convoy. Script and archive fetches still validate the invite. After registration consumes an invite, use the authenticated Client Setup page for fresh downloads. The instance archive supplies its matching Fika/Convoy client components; a separate Fika Installer is not needed.
+
+Close the game and launcher first. Linux requires Bash and Python 3; Windows requires Windows PowerShell 5.1 or PowerShell 7. The scripts do not acquire/install EFT or SPT, initialize Wine/Proton, install system packages, or modify player profiles.
+
+```bash
+bash quma-bootstrap.sh --spt-dir "/path/to/SPT" --dry-run
+bash quma-bootstrap.sh --spt-dir "/path/to/SPT"  # review plan and confirm
+# For an already-approved unattended run, add --yes.
+```
+
+Review the downloaded script first. If Windows PowerShell blocks downloaded scripts, use an explicit, process-only invocation:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\quma-bootstrap.ps1 -SptDir 'C:\Games\SPT' -DryRun
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\quma-bootstrap.ps1 -SptDir 'C:\Games\SPT'  # review plan and confirm
+# For an already-approved unattended run, add -Yes.
+```
+
+This does not change the system's execution policy and cannot override organization policy. With PowerShell 7, invoke `pwsh -NoProfile -File` instead.
+
+Omit the target argument when running from the SPT root. An already downloaded instance ZIP can be supplied with `--archive PATH` / `-ArchivePath PATH`; this is an operator-supplied trusted archive, not an arbitrary mod installer. ZIP64 archives are supported and processed with bounded buffers.
+
+The pre-download gate reserves the advertised archive size plus a 16 MiB safety margin. After download, before staging or replacing client files, the remaining-free-space gate conservatively requires `2*E + 2*B + 2*(Lnew + Lold) + 16 MiB`: `E` is every expanded ZIP file, `B` is existing non-preserved archive-target bytes, and `Lnew`/`Lold` are the new/existing launcher-settings bytes (unchanged settings count at their existing size). This covers simultaneously staged and installed copies, backups, and atomic replacement/rollback temporary copies. The downloaded archive already occupies disk and is not counted again in this remaining-space bound.
+
+ZIP components containing `~` are rejected portably to exclude Windows short-name aliases. On Windows, each existing destination component is also expanded with `GetLongPathNameW`; a long leaf differing from the requested leaf (ignoring case) is rejected, including custom short aliases without a tilde. Existing destination links/reparse points remain prohibited. Use long destination names rather than aliases.
+
+Both scripts validate SPT/EFT compatibility metadata, reject unsafe ZIP paths and destination links/reparse points, verify ZIP checksums before replacing client files, and configure `SPT_Runtime/user/Launcher/LauncherSettings.json` (or the equivalent supported runtime directory). The server entry uses a scheme-less `IpAddress`; existing server IDs, other servers, preferred profiles and Linux settings are preserved. The launcher itself still performs its normal first-run/game preparation checks.
+
+Existing editable files under `BepInEx/config/` (`.cfg`, `.ini`, `.json`, `.jsonc`, `.yaml`, `.yml`, `.toml`, `.xml`) are preserved. Missing defaults are seeded. Resource assets in that directory are updated with backups like other mod files. Files unrelated to the archive are not deleted. Changed existing files and a recovery journal are retained under `.quma-bootstrap-backups/`; a caught application failure restores replaced files, while an interrupted transaction blocks a subsequent run and identifies its backup location for recovery. Do not delete that evidence or blindly restore it over newer player changes.
+
+A dry run does not change the client. Cancellation, malformed settings, failed downloads, incompatible versions, unsafe archives and incomplete installation all exit nonzero without a completion banner. A successful bootstrap verifies files and the saved launcher entry; it is not a native game launch, multiplayer or Wine/Proton test.
+
+Developers can run `just test-bootstrap --require-powershell` to execute both generated scripts against disposable fixtures. On Linux, point `DOTNET_ROOT`/`DOTNET_ROOT_X64` at a runtime compatible with the installed `pwsh` apphost. Linux-hosted PowerShell tests do not establish native Windows behavior.
+
 ## Managing Mods
 
 ### Installing

@@ -3,13 +3,11 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::web::auth::{require_auth, SessionUser};
+use crate::web::bootstrap::{for_instance, generate_bash_script, generate_powershell_script};
 use crate::web::error::WebError;
 use crate::web::flash::{take_flash, FlashMessage};
 use crate::web::handlers::common::open_named_file;
-use crate::web::handlers::join::{
-    build_mod_zip, build_spt_server_url, generate_bash_script, generate_powershell_script,
-    DEFAULT_SERVER_NAME, FIKA_INSTALLER_URL,
-};
+use crate::web::handlers::join::{build_mod_zip, build_spt_server_url, DEFAULT_SERVER_NAME};
 use crate::web::mod_zip_cache::filter_setup_zip_files;
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
@@ -24,7 +22,6 @@ struct SetupTemplate {
     server_name: String,
     spt_version: String,
     spt_server_url: String,
-    fika_installer_url: &'static str,
     fika_installed: bool,
     external_url_configured: bool,
 }
@@ -61,7 +58,6 @@ pub async fn setup_page(
         server_name,
         spt_version: state.spt_info.spt_version.clone(),
         spt_server_url,
-        fika_installer_url: FIKA_INSTALLER_URL,
         fika_installed: state.fika_installed,
         external_url_configured,
     };
@@ -77,25 +73,28 @@ pub async fn setup_bootstrap_bash(
 ) -> actix_web::Result<HttpResponse> {
     require_auth(&req)?;
 
-    let config = state.config.read();
-    let external_url = match &config.external_url {
-        Some(url) if !url.is_empty() => url.clone(),
-        _ => {
-            return Ok(HttpResponse::ServiceUnavailable()
-                .content_type("text/plain")
-                .body("Bootstrap not configured: external_url is required"));
-        }
+    let (external_url, server_name) = {
+        let config = state.config.read();
+        let external_url = match &config.external_url {
+            Some(url) if !url.is_empty() => url.clone(),
+            _ => {
+                return Ok(HttpResponse::ServiceUnavailable()
+                    .content_type("text/plain")
+                    .body("Bootstrap not configured: external_url is required"));
+            }
+        };
+        let server_name = config
+            .server_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
+        (external_url, server_name)
     };
-    let server_name = config
-        .server_name
-        .clone()
-        .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
-    drop(config);
 
     let spt_server_url = build_spt_server_url(&external_url);
 
     let archive_url = format!("{}/quma/setup/mods.zip", external_url.trim_end_matches('/'));
-    let script = generate_bash_script(&server_name, &archive_url, &spt_server_url);
+    let bootstrap = for_instance(&state, server_name, archive_url, spt_server_url).await?;
+    let script = generate_bash_script(&bootstrap);
 
     Ok(HttpResponse::Ok()
         .content_type("text/x-shellscript")
@@ -113,25 +112,28 @@ pub async fn setup_bootstrap_powershell(
 ) -> actix_web::Result<HttpResponse> {
     require_auth(&req)?;
 
-    let config = state.config.read();
-    let external_url = match &config.external_url {
-        Some(url) if !url.is_empty() => url.clone(),
-        _ => {
-            return Ok(HttpResponse::ServiceUnavailable()
-                .content_type("text/plain")
-                .body("Bootstrap not configured: external_url is required"));
-        }
+    let (external_url, server_name) = {
+        let config = state.config.read();
+        let external_url = match &config.external_url {
+            Some(url) if !url.is_empty() => url.clone(),
+            _ => {
+                return Ok(HttpResponse::ServiceUnavailable()
+                    .content_type("text/plain")
+                    .body("Bootstrap not configured: external_url is required"));
+            }
+        };
+        let server_name = config
+            .server_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
+        (external_url, server_name)
     };
-    let server_name = config
-        .server_name
-        .clone()
-        .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
-    drop(config);
 
     let spt_server_url = build_spt_server_url(&external_url);
 
     let archive_url = format!("{}/quma/setup/mods.zip", external_url.trim_end_matches('/'));
-    let script = generate_powershell_script(&server_name, &archive_url, &spt_server_url);
+    let bootstrap = for_instance(&state, server_name, archive_url, spt_server_url).await?;
+    let script = generate_powershell_script(&bootstrap);
 
     Ok(HttpResponse::Ok()
         .content_type("text/plain")

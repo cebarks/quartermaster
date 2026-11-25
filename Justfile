@@ -10,6 +10,10 @@ check:
 test:
     cargo test
 
+# Execute generated Linux and (when available) PowerShell client bootstraps.
+test-bootstrap *ARGS:
+    python3 scripts/test_bootstrap.py {{ARGS}}
+
 clippy:
     cargo clippy -- -D warnings
 
