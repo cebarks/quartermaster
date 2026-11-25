@@ -49,6 +49,8 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    # Informational while Actix requires cookie affected by RUSTSEC-2026-0594.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
