@@ -7,6 +7,368 @@ fn recreate_upper(f: &Fixture) {
 }
 
 #[test]
+fn recycled_root_identity_does_not_authorize_replacement_teardown() {
+    let f = Fixture::new(false, false);
+    let guard = f.guard().unwrap();
+    assert!(destroy_private_overlay_with(
+        &f.dirs,
+        1,
+        &guard,
+        || Ok(()),
+        |path| {
+            std::fs::remove_dir_all(path)?;
+            bail!("interrupted before acknowledgement")
+        }
+    )
+    .is_err());
+    drop(guard);
+    recreate_upper(&f);
+    let sentinel = f.dirs.headless_overlay(1).join("replacement.txt");
+    std::fs::write(&sentinel, b"replacement must survive").unwrap();
+    {
+        let root = Scope::open(&f.dirs.root).unwrap();
+        let state = Scope::open(&f.dirs.root.join(state_path(1))).unwrap();
+        let mut j = load(&root, 1).unwrap();
+        let current = generation(&f.dirs, 1).unwrap();
+        let old = j.generation.as_mut().unwrap();
+        old.overlay = current.overlay.clone();
+        old.upper = current.upper;
+        j.retiring = Some(current.overlay);
+        save(&state, &j).unwrap();
+    }
+    let journal = f.dirs.root.join(state_path(1)).join("journal.json");
+    let before = std::fs::read(&journal).unwrap();
+    let guard = f.guard().unwrap();
+    let result = destroy_private_overlay(&f.dirs, 1, &guard);
+    assert!(
+        result.is_err(),
+        "replacement teardown unexpectedly succeeded"
+    );
+    assert_eq!(
+        std::fs::read(sentinel).unwrap(),
+        b"replacement must survive"
+    );
+    assert_eq!(std::fs::read(journal).unwrap(), before);
+}
+
+#[test]
+fn recycled_upper_identity_does_not_authorize_replacement_teardown() {
+    let f = Fixture::new(false, false);
+    let guard = f.guard().unwrap();
+    assert!(destroy_private_overlay_with(
+        &f.dirs,
+        1,
+        &guard,
+        || Ok(()),
+        |_| {
+            std::fs::remove_dir_all(f.dirs.headless_upper(1))?;
+            bail!("interrupted after upper removal")
+        }
+    )
+    .is_err());
+    drop(guard);
+    recreate_upper(&f);
+    let sentinel = f.dirs.headless_upper(1).join("replacement.txt");
+    std::fs::write(&sentinel, b"replacement upper").unwrap();
+    {
+        let root = Scope::open(&f.dirs.root).unwrap();
+        let state = Scope::open(&f.dirs.root.join(state_path(1))).unwrap();
+        let mut j = load(&root, 1).unwrap();
+        j.generation.as_mut().unwrap().upper = generation(&f.dirs, 1).unwrap().upper;
+        save(&state, &j).unwrap();
+    }
+    let journal = f.dirs.root.join(state_path(1)).join("journal.json");
+    let before = std::fs::read(&journal).unwrap();
+    let guard = f.guard().unwrap();
+    assert!(resume_overlay_retirement(&f.dirs, 1, &guard).is_err());
+    assert_eq!(std::fs::read(sentinel).unwrap(), b"replacement upper");
+    assert_eq!(std::fs::read(journal).unwrap(), before);
+}
+
+#[test]
+fn active_generation_numeric_collision_never_adopts_replacement_proof() {
+    for replace_root in [false, true] {
+        let f = Fixture::new(false, false);
+        f.apply().unwrap();
+        std::fs::remove_dir_all(if replace_root {
+            f.dirs.headless_overlay(1)
+        } else {
+            f.dirs.headless_upper(1)
+        })
+        .unwrap();
+        recreate_upper(&f);
+        // Give the replacement its own real valid proof, not merely missing metadata.
+        let current = proof::initialize_generation(&f.dirs, 1).unwrap();
+        let sentinel = f.dirs.headless_upper(1).join("keep");
+        std::fs::write(&sentinel, b"new generation").unwrap();
+        {
+            let root = Scope::open(&f.dirs.root).unwrap();
+            let state = Scope::open(&f.dirs.root.join(state_path(1))).unwrap();
+            let mut j = load(&root, 1).unwrap();
+            let old = j.generation.as_mut().unwrap();
+            old.overlay = current.overlay;
+            old.upper = current.upper;
+            save(&state, &j).unwrap();
+        }
+        let journal = f.dirs.root.join(state_path(1)).join("journal.json");
+        let before = std::fs::read(&journal).unwrap();
+        assert!(check_private_overlay(&f.dirs, &f.policy, 1).is_err());
+        assert!(f.apply().is_err());
+        let guard = f.guard().unwrap();
+        assert!(destroy_private_overlay(&f.dirs, 1, &guard).is_err());
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"new generation");
+        assert_eq!(std::fs::read(journal).unwrap(), before);
+    }
+}
+
+// Modify only metadata in disposable fixtures, never provide substitute authority.
+fn edit_proof(path: &Path, value: Option<&[u8]>) {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::File::open(path).unwrap();
+    let result = unsafe {
+        match value {
+            Some(value) => libc::fsetxattr(
+                file.as_raw_fd(),
+                c"user.quma.overlay-generation.v1".as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            ),
+            None => libc::fremovexattr(
+                file.as_raw_fd(),
+                c"user.quma.overlay-generation.v1".as_ptr(),
+            ),
+        }
+    };
+    assert_eq!(result, 0, "{}", std::io::Error::last_os_error());
+}
+
+#[test]
+fn missing_malformed_changed_and_oversized_directory_proof_refuse_without_writes() {
+    for upper in [false, true] {
+        for value in [
+            None,
+            Some(b"bad".to_vec()),
+            Some(format!("v1:{}", "a".repeat(64)).into_bytes()),
+            Some(vec![b'x'; 4096]),
+        ] {
+            let f = Fixture::new(false, false);
+            f.apply().unwrap();
+            let path = if upper {
+                f.dirs.headless_upper(1)
+            } else {
+                f.dirs.headless_overlay(1)
+            };
+            edit_proof(&path, value.as_deref());
+            let sentinel = f.dirs.headless_upper(1).join("keep");
+            std::fs::write(&sentinel, b"unchanged").unwrap();
+            let journal = f.dirs.root.join(state_path(1)).join("journal.json");
+            let before = std::fs::read(&journal).unwrap();
+            assert!(check_private_overlay(&f.dirs, &f.policy, 1).is_err());
+            assert!(f.apply().is_err());
+            let guard = f.guard().unwrap();
+            assert!(destroy_private_overlay(&f.dirs, 1, &guard).is_err());
+            assert_eq!(std::fs::read(&sentinel).unwrap(), b"unchanged");
+            assert_eq!(std::fs::read(&journal).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn unbound_initialization_reopens_and_check_never_allocates_proof() {
+    for initialized in [0, 1, 2] {
+        let f = Fixture::new(false, false);
+        if initialized >= 1 {
+            proof::initialize(&Scope::open(&f.dirs.headless_overlay(1)).unwrap()).unwrap();
+        }
+        if initialized >= 2 {
+            proof::initialize(&Scope::open(&f.dirs.headless_upper(1)).unwrap()).unwrap();
+        }
+        let before = generation(&f.dirs, 1).unwrap();
+        check_private_overlay(&f.dirs, &f.policy, 1).unwrap();
+        assert_eq!(generation(&f.dirs, 1).unwrap(), before);
+        assert!(!f.dirs.root.join(state_path(1)).exists());
+        f.apply().unwrap();
+        let after = generation(&f.dirs, 1).unwrap();
+        if before.overlay_proof.is_some() {
+            assert_eq!(before.overlay_proof, after.overlay_proof);
+        }
+        if before.upper_proof.is_some() {
+            assert_eq!(before.upper_proof, after.upper_proof);
+        }
+        assert!(after.overlay_proof.as_deref().is_some_and(proof::valid));
+        assert!(after.upper_proof.as_deref().is_some_and(proof::valid));
+        assert_ne!(after.overlay_proof, after.upper_proof);
+        f.apply().unwrap();
+        assert_eq!(generation(&f.dirs, 1).unwrap(), after);
+    }
+}
+
+#[test]
+fn malformed_unbound_initialization_never_grants_authority() {
+    let f = Fixture::new(true, false);
+    edit_proof(&f.dirs.headless_overlay(1), Some(b"not-a-generation"));
+    assert!(check_private_overlay(&f.dirs, &f.policy, 1).is_err());
+    assert!(f.apply().is_err());
+    assert!(!f
+        .dirs
+        .root
+        .join(state_path(1))
+        .join("journal.json")
+        .exists());
+    assert_eq!(
+        std::fs::read(f.dirs.headless_upper(1).join(REL)).unwrap(),
+        b"published"
+    );
+}
+
+#[test]
+fn unsupported_directory_xattrs_refuse_instead_of_falling_back() {
+    // procfs supplies a real Linux unsupported-xattr boundary, without mounts
+    // or global failure injection shared by parallel reconciler tests.
+    let scope = Scope::open(&PathBuf::from(format!("/proc/{}", std::process::id()))).unwrap();
+    for error in [
+        proof::read(&scope).unwrap_err(),
+        proof::initialize(&scope).unwrap_err(),
+    ] {
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(libc::EOPNOTSUPP)
+        );
+    }
+}
+
+#[test]
+fn pending_proof_damage_refuses_but_original_absence_recovers_after_reopen() {
+    for absent in [false, true] {
+        let f = Fixture::new(false, false);
+        let guard = f.guard().unwrap();
+        assert!(destroy_private_overlay_with(
+            &f.dirs,
+            1,
+            &guard,
+            || Ok(()),
+            |_| bail!("interruption")
+        )
+        .is_err());
+        drop(guard);
+        if absent {
+            std::fs::remove_dir_all(f.dirs.headless_overlay(1)).unwrap();
+        } else {
+            edit_proof(&f.dirs.headless_overlay(1), None);
+        }
+        let journal = f.dirs.root.join(state_path(1)).join("journal.json");
+        let before = std::fs::read(&journal).unwrap();
+        let guard = f.guard().unwrap();
+        let result = resume_overlay_retirement(&f.dirs, 1, &guard);
+        if absent {
+            result.unwrap();
+            assert!(load(&Scope::open(&f.dirs.root).unwrap(), 1)
+                .unwrap()
+                .generation
+                .is_none());
+        } else {
+            assert!(result.is_err());
+            assert_eq!(std::fs::read(journal).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn legacy_pending_and_invalid_journal_proof_never_authorize_writes() {
+    for kind in [
+        "legacy-active",
+        "legacy-pending",
+        "missing",
+        "malformed",
+        "unsupported",
+    ] {
+        let f = Fixture::new(false, false);
+        let guard = f.guard().unwrap();
+        assert!(destroy_private_overlay_with(
+            &f.dirs,
+            1,
+            &guard,
+            || Ok(()),
+            |_| bail!("interruption")
+        )
+        .is_err());
+        drop(guard);
+        let journal = f.dirs.root.join(state_path(1)).join("journal.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+        match kind {
+            "legacy-active" => {
+                value["version"] = 2.into();
+                value["retiring"] = serde_json::Value::Null;
+            }
+            "legacy-pending" => value["version"] = 2.into(),
+            "missing" => value["generation"]
+                .as_object_mut()
+                .unwrap()
+                .remove("overlay_proof")
+                .map(|_| ())
+                .unwrap(),
+            "malformed" => value["generation"]["upper_proof"] = "invalid".into(),
+            "unsupported" => value["version"] = 999.into(),
+            _ => unreachable!(),
+        }
+        if kind.starts_with("legacy-") {
+            let generation = value["generation"].as_object_mut().unwrap();
+            generation.remove("overlay_proof");
+            generation.remove("upper_proof");
+        }
+        std::fs::write(&journal, serde_json::to_vec(&value).unwrap()).unwrap();
+        let before = std::fs::read(&journal).unwrap();
+        assert!(check_private_overlay(&f.dirs, &f.policy, 1).is_err());
+        assert!(f.apply().is_err());
+        let guard = f.guard().unwrap();
+        assert!(resume_overlay_retirement(&f.dirs, 1, &guard).is_err());
+        assert!(destroy_private_overlay(&f.dirs, 1, &guard).is_err());
+        assert_eq!(std::fs::read(journal).unwrap(), before);
+        assert!(f.dirs.headless_upper(1).exists());
+    }
+}
+
+#[test]
+fn legacy_unbound_and_retired_intent_can_initialize_without_adopting_masks() {
+    for version in [1, 2] {
+        let f = Fixture::new(false, false);
+        let guard = f.guard().unwrap();
+        create_private_state(&f.dirs.root.join(state_path(1)));
+        let state = Scope::open(&f.dirs.root.join(state_path(1))).unwrap();
+        let mut j = Journal {
+            version,
+            ..Journal::default()
+        };
+        j.entries.insert(
+            PathBuf::from(REL),
+            Entry {
+                phase: "retired".into(),
+                original_hash: Some(hash(b"published")),
+                mask: None,
+                restored_hash: None,
+                previous_hash: None,
+            },
+        );
+        save(&state, &j).unwrap();
+        let before = state.data(Path::new("journal.json")).unwrap();
+        check_private_overlay(&f.dirs, &f.policy, 1).unwrap();
+        assert_eq!(state.data(Path::new("journal.json")).unwrap(), before);
+        reconcile_private_overlay(&f.dirs, &f.policy, 1, &guard).unwrap();
+        assert_eq!(
+            load(&Scope::open(&f.dirs.root).unwrap(), 1)
+                .unwrap()
+                .version,
+            3
+        );
+    }
+}
+
+#[test]
 fn headless_overlay_cleanup_preserves_data_on_unmount_failure() {
     let f = Fixture::new(true, true);
     let sentinel = f.dirs.headless_upper(1).join("keep.txt");
@@ -158,6 +520,8 @@ fn partially_removed_upper_finishes_only_via_durable_generation_intent() {
     );
     assert!(result.is_err());
     assert!(f.dirs.headless_overlay(1).exists());
+    drop(guard);
+    let guard = f.guard().unwrap();
     resume_overlay_retirement(&f.dirs, 1, &guard).unwrap();
     assert!(!f.dirs.headless_overlay(1).exists());
     recreate_upper(&f);
@@ -189,7 +553,25 @@ fn new_generation_never_inherits_unowned_native_mask_authority() {
 }
 
 #[test]
-fn legacy_adoption_is_readonly_in_check_and_retains_same_upper_ownership() {
+fn work_recreation_preserves_bound_generation_and_native_ownership() {
+    let f = Fixture::new(false, true);
+    f.apply().unwrap();
+    let before = load(&Scope::open(&f.dirs.root).unwrap(), 1).unwrap();
+    std::fs::remove_dir_all(f.dirs.headless_work(1)).unwrap();
+    std::fs::create_dir_all(f.dirs.headless_work(1)).unwrap();
+    crate::overlay::prepare_work_dir(&f.dirs.headless_work(1)).unwrap();
+    f.apply().unwrap();
+    let after = load(&Scope::open(&f.dirs.root).unwrap(), 1).unwrap();
+    assert_eq!(before.generation, after.generation);
+    assert_eq!(
+        before.entries[Path::new(REL)].mask,
+        after.entries[Path::new(REL)].mask
+    );
+    assert_eq!(f.visible(), None);
+}
+
+#[test]
+fn legacy_active_ownership_refuses_without_writes() {
     let f = Fixture::new(false, true);
     f.apply().unwrap();
     let root = Scope::open(&f.dirs.root).unwrap();
@@ -199,20 +581,15 @@ fn legacy_adoption_is_readonly_in_check_and_retains_same_upper_ownership() {
     legacy.generation = None;
     save(&state, &legacy).unwrap();
     let bytes = state.data(Path::new("journal.json")).unwrap().unwrap();
-    check_private_overlay(&f.dirs, &f.policy, 1).unwrap();
+    assert!(check_private_overlay(&f.dirs, &f.policy, 1).is_err());
+    assert!(f.apply().is_err());
+    let guard = f.guard().unwrap();
+    assert!(destroy_private_overlay(&f.dirs, 1, &guard).is_err());
     assert_eq!(
         state.data(Path::new("journal.json")).unwrap().unwrap(),
         bytes
     );
-    crate::overlay::prepare_work_dir(&f.dirs.headless_work(1)).unwrap();
-    f.apply().unwrap();
-    let adopted = load(&root, 1).unwrap();
-    assert_eq!(adopted.version, 2);
-    assert_eq!(
-        adopted.entries[Path::new(REL)].mask,
-        legacy.entries[Path::new(REL)].mask
-    );
-    assert!(adopted.generation.is_some());
+    assert_eq!(f.visible(), None);
 }
 // Fixture-created journals/native views must honor the hardened adapter's
 // private-state permission contract, just as PolicyOperationGuard does.
@@ -440,7 +817,8 @@ fn interrupted_before_unlink_retries_and_after_restore_finalizes() {
     create_private_state(&state_abs);
     let state = Scope::open(&state_abs).unwrap();
     let mut j = Journal {
-        version: 1,
+        version: 3,
+        generation: Some(proof::initialize_generation(&f.dirs, 1).unwrap()),
         ..Journal::default()
     };
     j.entries.insert(
@@ -620,7 +998,8 @@ fn persist_pending_hide(f: &Fixture) {
     create_private_state(&state_abs);
     let state = Scope::open(&state_abs).unwrap();
     let mut j = Journal {
-        version: 1,
+        version: 3,
+        generation: Some(proof::initialize_generation(&f.dirs, 1).unwrap()),
         ..Journal::default()
     };
     j.entries.insert(

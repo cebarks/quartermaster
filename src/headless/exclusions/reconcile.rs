@@ -1,6 +1,7 @@
 //! Reversible private overlay edits. The caller MUST keep the managed client stopped
 //! under the operation guard through reconciliation and start. Mount detection is
 //! an additional refusal gate, not a substitute for container lifecycle inspection.
+mod proof;
 use super::{PolicyOperationGuard, PolicySnapshot};
 use crate::{
     dirs::QumaDirs,
@@ -58,6 +59,10 @@ struct Journal {
 struct Generation {
     overlay: Identity,
     upper: Identity,
+    #[serde(default)]
+    overlay_proof: Option<String>,
+    #[serde(default)]
+    upper_proof: Option<String>,
 }
 fn generation(dirs: &QumaDirs, client: u32) -> Result<Generation> {
     let root = Scope::open(&dirs.root)?;
@@ -69,6 +74,8 @@ fn generation(dirs: &QumaDirs, client: u32) -> Result<Generation> {
     Ok(Generation {
         overlay: identity(dirs.headless_overlay(client))?,
         upper: identity(dirs.headless_upper(client))?,
+        overlay_proof: proof::read(&Scope::open(&dirs.headless_overlay(client))?)?,
+        upper_proof: proof::read(&Scope::open(&dirs.headless_upper(client))?)?,
     })
 }
 struct Scope {
@@ -193,12 +200,29 @@ fn load(root: &Scope, client: u32) -> Result<Journal> {
     match root.data(&p)? {
         Some(b) => {
             let j: Journal = serde_json::from_slice(&b)?;
-            if !matches!(j.version, 1 | 2)
+            if !matches!(j.version, 1..=3)
                 || (j.version == 1 && (j.generation.is_some() || j.retiring.is_some()))
             {
                 bail!("unsupported policy journal");
             }
-            if j.version == 2
+            if j.version < 3
+                && (j.generation.is_some()
+                    || j.retiring.is_some()
+                    || j.entries
+                        .values()
+                        .any(|e| e.phase != "retired" || e.mask.is_some()))
+            {
+                bail!("legacy policy ownership lacks durable generation proof");
+            }
+            if j.version == 3
+                && j.generation.as_ref().is_some_and(|g| {
+                    !g.overlay_proof.as_deref().is_some_and(proof::valid)
+                        || !g.upper_proof.as_deref().is_some_and(proof::valid)
+                })
+            {
+                bail!("missing or malformed policy generation proof");
+            }
+            if j.version >= 2
                 && ((j.generation.is_none()
                     && (j.retiring.is_some() || j.entries.values().any(|e| e.phase != "retired")))
                     || j.entries
@@ -287,13 +311,26 @@ fn destroy_private_overlay_with(
         if named.as_ref().is_some_and(|id| id != pending) {
             bail!("retiring overlay namespace changed");
         }
+        if named.is_some() {
+            proof::verify_retiring(
+                dirs,
+                client,
+                j.generation
+                    .as_ref()
+                    .context("missing retiring generation")?,
+            )?;
+        }
     } else if named.is_some() {
         let current = generation(dirs, client)?;
         if j.generation.as_ref().is_some_and(|old| old != &current) {
             bail!("cannot destroy an unrecognized overlay generation");
         }
-        j.generation = Some(current);
-        j.version = 2;
+        j.generation = Some(if j.generation.is_none() {
+            proof::initialize_generation(dirs, client)?
+        } else {
+            current
+        });
+        j.version = 3;
     } else {
         if j.generation.is_some() || j.entries.values().any(|e| e.phase != "retired") {
             bail!("owned overlay disappeared without retirement intent");
@@ -343,7 +380,7 @@ fn destroy_private_overlay_with(
         let evidence = PathBuf::from(format!("retired/journal-{}.json", hash(&bytes)));
         state.backup(&evidence, &bytes)?;
         j.retiring = named.clone();
-        j.version = 2;
+        j.version = 3;
         save(&state, &j)?;
     }
     guard.validate(dirs, client)?;
@@ -351,6 +388,13 @@ fn destroy_private_overlay_with(
         bail!("overlay changed during retirement");
     }
     if named.is_some() {
+        proof::verify_retiring(
+            dirs,
+            client,
+            j.generation
+                .as_ref()
+                .context("missing retiring generation")?,
+        )?;
         remove(&overlay)?;
         if root.identity(relative)?.is_some() {
             bail!("overlay removal did not finish");
@@ -805,12 +849,20 @@ pub fn reconcile_private_overlay(
     let rel = state_path(client);
     root.validate(&rel)?;
     root.dir.create_dir_all(&rel)?;
+    // The journal directory's name must survive a crash before native edits.
+    root.dir
+        .open_dir("headless-policy")?
+        .open(".")?
+        .sync_all()?;
+    root.sync()?;
     let state_abs = dirs.root.join(&rel);
     let state = Scope::open(&state_abs)?;
     let upper = Scope::open(&dirs.headless_upper(client))?;
-    // Adopt legacy journals only after the complete original preflight succeeds.
-    j.version = 2;
-    j.generation = Some(generation(dirs, client)?);
+    // Only an unbound journal can initialize proof; never repair owned metadata.
+    j.version = 3;
+    if j.generation.is_none() {
+        j.generation = Some(proof::initialize_generation(dirs, client)?);
+    }
     save(&state, &j)?;
     // Validate the entire plan (including backup paths) before any destructive action.
     for a in &actions {
