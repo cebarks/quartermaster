@@ -435,7 +435,13 @@ mod tests {
             .insert_mod(None, None, "Hybrid", None, "1", "local", None, None)
             .unwrap();
         for path in paths {
-            db.insert_file(id, path, None, None).unwrap();
+            db.insert_file(
+                id,
+                path,
+                Some(&crate::spt::mods::compute_file_hash(&tmp.path().join(path)).unwrap()),
+                None,
+            )
+            .unwrap();
         }
         let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
         let out =
@@ -508,18 +514,25 @@ mod tests {
             .insert_mod(None, None, "Hybrid", None, "1", "local", None, None)
             .unwrap();
         for file in files {
-            db.insert_file(id, &file.file_path, None, None).unwrap();
+            db.insert_file(
+                id,
+                &file.file_path,
+                Some(
+                    &crate::spt::mods::compute_file_hash(&tmp.path().join(&file.file_path))
+                        .unwrap(),
+                ),
+                None,
+            )
+            .unwrap();
         }
         let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
-        let out =
-            crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], false).unwrap();
-        let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
-        assert_eq!(
-            zip.file_names()
-                .collect::<zip::result::ZipResult<Vec<_>>>()
-                .unwrap(),
-            vec!["BepInEx/plugins/Client.dll"]
-        );
+        // Convoy cannot claim a complete advertised package when any eligible source
+        // is unsafe; the independent setup ZIP above still skips unsafe aliases.
+        let error =
+            crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], false).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot include advertised Convoy client file"));
     }
 
     #[test]
@@ -849,6 +862,75 @@ mod tests {
         // Rebuild with empty DB should remove it
         cache.rebuild_sync();
         assert!(cache.get().is_none());
+    }
+
+    #[test]
+    fn setup_legacy_tracked_content_filter_and_cold_warm_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open_in_memory().unwrap();
+        let id = db
+            .insert_mod(None, None, "setup fixture", None, "1", "local", None, None)
+            .unwrap();
+        let supported = [
+            "winhttp.dll",
+            "doorstop_config.ini",
+            "user/mod-assets/example.bundle",
+        ];
+        for path in supported
+            .into_iter()
+            .chain(["SPT/user/profiles/private.json"])
+        {
+            make_test_file(dir.path(), path, b"synthetic setup bytes");
+            db.insert_file(id, path, Some("fixture"), None).unwrap();
+        }
+        let tracked = db.get_all_enabled_mod_files().unwrap();
+        let filtered = filter_setup_zip_files(tracked.clone(), &SetupZipConfig::default());
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|f| f.file_path.as_str())
+                .collect::<Vec<_>>()
+                .len(),
+            3
+        );
+        for path in supported {
+            assert!(
+                filtered.iter().any(|f| f.file_path == path),
+                "missing {path}"
+            );
+        }
+        let config = test_config();
+        config.write().setup_zip = SetupZipConfig::default();
+        let cache = ModZipCache::new(
+            QumaDirs::from_legacy(dir.path().to_owned()),
+            Arc::new(Mutex::new(db)),
+            config.clone(),
+        );
+        assert!(cache.get().is_none());
+        cache.rebuild_sync();
+        for _ in 0..2 {
+            let mut zip = zip::ZipArchive::new(File::open(cache.get().unwrap()).unwrap()).unwrap();
+            assert_eq!(zip.len(), 3);
+            for path in supported {
+                assert!(zip.by_name(path).is_ok(), "missing {path}");
+            }
+            assert!(zip.by_name("SPT/user/profiles/private.json").is_err());
+        }
+        let overrides = SetupZipConfig {
+            exclude_patterns: vec!["**".into()],
+            include_patterns: vec!["doorstop_config.ini".into()],
+            ..Default::default()
+        };
+        let filtered = filter_setup_zip_files(tracked, &overrides);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].file_path, "doorstop_config.ini");
+        config.write().setup_zip = overrides;
+        cache.rebuild_sync();
+        for _ in 0..2 {
+            let mut zip = zip::ZipArchive::new(File::open(cache.get().unwrap()).unwrap()).unwrap();
+            assert_eq!(zip.len(), 1);
+            assert!(zip.by_name("doorstop_config.ini").is_ok());
+        }
     }
 
     #[test]

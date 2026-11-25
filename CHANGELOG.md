@@ -4,8 +4,13 @@ All notable changes to Quartermaster will be documented in this file.
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- Upgrade/restart Convoy clients with Managed-path ownership support before using the expanded publisher. Old clients lack safe game-assembly ownership and miss same-version file additions. See [Convoy file policy](docs/convoy-client-files.md); mixed-client capability negotiation is not implemented.
+
 ### Fixed
 
+- Include package-tracked direct `EscapeFromTarkov_Data/Managed/*.dll` dependencies in Convoy catalogs and both archive routes. Rehash uses the same overlay layers as delivery; versioned caches and manifest-bound archive identity prevent stale omission. Default setup ZIP filtering retains its independent tracked-file/server-root policy and explicit overrides. Reject incomplete Convoy packages with missing eligible file checksums before catalog publication or archive cache lookup; rehash before publishing.
 - Allow `proxy_rewrite_http_host` to advertise the player HTTPS hostname without changing the direct notifier or managed headless addresses.
 - Preserve managed headless loopback routing when SPT proxy authentication is disabled, without changing Quartermaster's dashboard or API authentication.
 - Link profiles created by the stock SPT launcher's PUT registration as well as legacy POST registration.

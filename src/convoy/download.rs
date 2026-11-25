@@ -23,7 +23,7 @@ fn cache_key(mod_ids: &[i64], bundles_only: bool) -> String {
     sorted.hash(&mut hasher);
     bundles_only.hash(&mut hasher);
     // Older cache keys can contain incomplete archives built from the base tree alone.
-    format!("convoy-v2-{:016x}.zip", hasher.finish())
+    format!("convoy-v3-{:016x}.zip", hasher.finish())
 }
 
 fn is_fresh(path: &Path) -> bool {
@@ -44,13 +44,26 @@ pub fn get_or_build_convoy_zip(
     let cache_dir = dirs.spt_server.join("quartermaster-cache/convoy");
     std::fs::create_dir_all(&cache_dir)?;
 
-    let dest = cache_dir.join(cache_key(mod_ids, bundles_only));
+    let files = db.get_files_for_mod_ids(mod_ids)?;
+    // Reject incomplete packages before cache lookup, including previously cached ZIPs.
+    super::catalog::validate_client_inventory(&files)?;
+    // Bind cached archives to the advertised file set and hashes as well as IDs.
+    let mut identity = DefaultHasher::new();
+    let mut entries: Vec<_> = files
+        .iter()
+        .map(|f| (&f.file_path, &f.file_hash, &f.source))
+        .collect();
+    entries.sort();
+    entries.hash(&mut identity);
+    let dest = cache_dir.join(format!(
+        "{}-{:016x}.zip",
+        cache_key(mod_ids, bundles_only),
+        identity.finish()
+    ));
     if is_fresh(&dest) {
         tracing::debug!(path = %dest.display(), "convoy zip cache hit");
         return Ok(dest);
     }
-
-    let files = db.get_files_for_mod_ids(mod_ids)?;
 
     let bundles = discover_mod_bundles(&dirs.spt_server, &files);
 
@@ -209,7 +222,20 @@ fn build_convoy_zip(
 
     if !bundles_only {
         let layers = LayeredFiles::open(dirs)?;
+        let mut seen = std::collections::BTreeMap::<String, (String, Option<String>)>::new();
         for f in files {
+            if client_file_checksum(f).is_none() {
+                continue;
+            }
+            let alias = f.file_path.to_ascii_lowercase();
+            if let Some((name, hash)) = seen.get(&alias) {
+                anyhow::ensure!(
+                    name == &f.file_path && hash == &f.file_hash,
+                    "conflicting Convoy archive paths"
+                );
+                continue;
+            }
+            seen.insert(alias, (f.file_path.clone(), f.file_hash.clone()));
             match open_client_entry(&layers, &f.file_path) {
                 Ok(Some((relative, mut source))) => {
                     zip.start_file(relative.to_string_lossy().as_ref(), options)?;

@@ -237,7 +237,7 @@ impl TestAppBuilder {
             integrity_cache: spt_quartermaster::web::integrity_cache::IntegrityCache::new(300),
             log_level_counts,
             catalog_cache: spt_quartermaster::convoy::catalog::CatalogCache::new(
-                spt_dir.clone(),
+                dirs.clone(),
                 db_arc.clone(),
                 config_arc.clone(),
             ),
@@ -278,7 +278,7 @@ impl Default for TestAppBuilder {
 pub struct TestApp {
     /// Database handle for direct assertions
     pub db: Arc<Mutex<Database>>,
-    app_state: web::Data<AppState>,
+    pub(crate) app_state: web::Data<AppState>,
     session_key: Key,
     api_token_state: Option<web::Data<spt_quartermaster::web::api_auth::ApiTokenState>>,
     cookies: Vec<String>,

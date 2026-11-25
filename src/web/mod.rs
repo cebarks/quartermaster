@@ -1106,7 +1106,7 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
     };
 
     let catalog_cache = crate::convoy::catalog::CatalogCache::new(
-        dirs.spt_server.clone(),
+        dirs.clone(),
         db_arc.clone(),
         config_handle.clone(),
     );

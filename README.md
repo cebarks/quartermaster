@@ -50,7 +50,7 @@ prevents outside-installation reads independently of that classification prerequ
 - **Multi-user auth** — Invite-based registration, admin/player roles, session cookies
 - **Fika support** — Dedicated headless client management, scaling, and Fika settings configuration
 - **HTTPS/WSS proxy** — Transparent reverse proxy to SPT server so clients connect through Quartermaster
-- **Convoy mod distribution** — Built-in mod distribution system for syncing mods to connected clients (replaces NarcoNet/modsync)
+- **Convoy mod distribution** — Built-in mod distribution system for syncing mods to connected clients (replaces NarcoNet/modsync). See [client roots, ownership and coordinated upgrade requirements](docs/convoy-client-files.md).
 - **Player profiles** — View player profiles with quest, trader, and hideout progress, plus stash viewer
 - **Raid statistics** — Per-raid stats tracking via proxy interception, with leaderboard
 - **Server Value Modifiers (SVM)** — Browse and configure server value modifiers from the web UI
