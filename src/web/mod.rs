@@ -1,5 +1,6 @@
 pub mod api_auth;
 pub mod auth;
+pub(crate) mod bootstrap;
 pub mod csrf;
 pub mod error;
 pub mod flash;

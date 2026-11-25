@@ -1,19 +1,15 @@
 use actix_session::Session;
 use actix_web::web::Form;
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use askama::Template;
 
 use crate::web::auth::{hash_password, validate_password_complexity};
+use crate::web::bootstrap::{for_instance, generate_bash_script, generate_powershell_script};
 use crate::web::error::WebError;
 use crate::web::invite::validate_invite_code;
 use crate::web::state::AppState;
 
 pub(crate) const DEFAULT_SERVER_NAME: &str = "SPT Server";
-
-pub(crate) const FIKA_INSTALLER_URL: &str =
-    "https://github.com/project-fika/Fika-Installer/releases/latest/download/Fika-Installer.exe";
-
-pub(crate) const BOOTSTRAP_FORGE_IDS: &[i64] = &[2806];
 
 const SPT_EDITIONS: &[&str] = &[
     "Standard",
@@ -432,11 +428,11 @@ pub async fn join_submit(
     }
 }
 
-/// Scan SPT profiles directory to find a profile by username.
-/// Returns the AID (filename stem) if found.
+/// Serve the full filtered client pack after validating the invite.
 pub async fn mod_archive(
     query: web::Query<JoinQuery>,
     state: web::Data<AppState>,
+    req: HttpRequest,
 ) -> actix_web::Result<HttpResponse> {
     let code = query.code.clone().unwrap_or_default();
 
@@ -458,40 +454,10 @@ pub async fn mod_archive(
         ));
     }
 
-    // Get files for bootstrap mods
-    let db = state.db.clone();
-    let files = web::block(move || {
-        let db = db.lock();
-        db.get_files_for_forge_ids(BOOTSTRAP_FORGE_IDS)
-    })
-    .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
-
-    if files.is_empty() {
-        return Ok(referrer_policy(
-            HttpResponse::ServiceUnavailable()
-                .content_type("text/plain")
-                .body("No bootstrap mods (Convoy) are installed on this server"),
-        ));
-    }
-
-    // Build ZIP archive in memory
-    let dirs = state.dirs.clone();
-    let zip_bytes = web::block(move || build_mod_zip(&dirs, &files))
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::Internal)?;
-
-    Ok(referrer_policy(
-        HttpResponse::Ok()
-            .content_type("application/zip")
-            .insert_header((
-                "content-disposition",
-                "attachment; filename=\"quma-mods.zip\"",
-            ))
-            .body(zip_bytes),
-    ))
+    // The complete filtered instance pack contains Fika and dependencies too.
+    // Reuse setup's disk cache/Range behavior, while retaining invite validation.
+    let response = crate::web::handlers::setup::setup_mods_zip(state, req).await?;
+    Ok(referrer_policy(response))
 }
 
 pub async fn bootstrap_bash(
@@ -517,22 +483,24 @@ pub async fn bootstrap_bash(
         ));
     }
 
-    let config = state.config.read();
-    let external_url = match &config.external_url {
-        Some(url) if !url.is_empty() => url.clone(),
-        _ => {
-            return Ok(referrer_policy(
-                HttpResponse::ServiceUnavailable()
-                    .content_type("text/plain")
-                    .body("Bootstrap not configured: external_url is required"),
-            ));
-        }
+    let (external_url, server_name) = {
+        let config = state.config.read();
+        let external_url = match &config.external_url {
+            Some(url) if !url.is_empty() => url.clone(),
+            _ => {
+                return Ok(referrer_policy(
+                    HttpResponse::ServiceUnavailable()
+                        .content_type("text/plain")
+                        .body("Bootstrap not configured: external_url is required"),
+                ));
+            }
+        };
+        let server_name = config
+            .server_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
+        (external_url, server_name)
     };
-    let server_name = config
-        .server_name
-        .clone()
-        .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
-    drop(config);
 
     let spt_server_url = build_spt_server_url(&external_url);
 
@@ -541,7 +509,8 @@ pub async fn bootstrap_bash(
         external_url.trim_end_matches('/'),
         code
     );
-    let script = generate_bash_script(&server_name, &archive_url, &spt_server_url);
+    let bootstrap = for_instance(&state, server_name, archive_url, spt_server_url).await?;
+    let script = generate_bash_script(&bootstrap);
 
     Ok(referrer_policy(
         HttpResponse::Ok()
@@ -577,22 +546,24 @@ pub async fn bootstrap_powershell(
         ));
     }
 
-    let config = state.config.read();
-    let external_url = match &config.external_url {
-        Some(url) if !url.is_empty() => url.clone(),
-        _ => {
-            return Ok(referrer_policy(
-                HttpResponse::ServiceUnavailable()
-                    .content_type("text/plain")
-                    .body("Bootstrap not configured: external_url is required"),
-            ));
-        }
+    let (external_url, server_name) = {
+        let config = state.config.read();
+        let external_url = match &config.external_url {
+            Some(url) if !url.is_empty() => url.clone(),
+            _ => {
+                return Ok(referrer_policy(
+                    HttpResponse::ServiceUnavailable()
+                        .content_type("text/plain")
+                        .body("Bootstrap not configured: external_url is required"),
+                ));
+            }
+        };
+        let server_name = config
+            .server_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
+        (external_url, server_name)
     };
-    let server_name = config
-        .server_name
-        .clone()
-        .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
-    drop(config);
 
     let spt_server_url = build_spt_server_url(&external_url);
 
@@ -601,7 +572,8 @@ pub async fn bootstrap_powershell(
         external_url.trim_end_matches('/'),
         code
     );
-    let script = generate_powershell_script(&server_name, &archive_url, &spt_server_url);
+    let bootstrap = for_instance(&state, server_name, archive_url, spt_server_url).await?;
+    let script = generate_powershell_script(&bootstrap);
 
     Ok(referrer_policy(
         HttpResponse::Ok()
@@ -623,184 +595,6 @@ pub(crate) fn build_spt_server_url(external_url: &str) -> String {
     format!("https://{}", without_scheme)
 }
 
-fn escape_bash(s: &str) -> String {
-    s.replace('\'', "'\\''")
-}
-
-fn escape_powershell(s: &str) -> String {
-    s.replace('\'', "''")
-}
-
-pub(crate) fn generate_bash_script(
-    server_name: &str,
-    archive_url: &str,
-    spt_server_url: &str,
-) -> String {
-    let server_name = escape_bash(server_name);
-    let archive_url = escape_bash(archive_url);
-    let spt_server_url = escape_bash(spt_server_url);
-    let fika_installer_url = FIKA_INSTALLER_URL;
-
-    format!(
-        r#"#!/usr/bin/env bash
-set -euo pipefail
-
-SERVER_NAME='{server_name}'
-SPT_SERVER_URL='{spt_server_url}'
-ARCHIVE_URL='{archive_url}'
-LAUNCHER_CONFIG='SPT/user/launcher/config.json'
-FIKA_INSTALLER_URL='{fika_installer_url}'
-
-echo "=== Quartermaster Bootstrap ==="
-echo "Setting up client for: $SERVER_NAME"
-echo ""
-
-# Check we're in an SPT directory
-if [ ! -d "BepInEx" ]; then
-    echo "ERROR: BepInEx/ directory not found."
-    echo "Run this script from your SPT installation directory."
-    exit 1
-fi
-
-# Check required tools
-for cmd in curl unzip wine; do
-    if ! command -v "$cmd" &>/dev/null; then
-        echo "ERROR: '$cmd' is required but not installed."
-        exit 1
-    fi
-done
-
-cleanup() {{
-    rm -f "${{TMPFILE:-}}" Fika-Installer.exe
-}}
-trap cleanup EXIT
-
-# Step 1: Install Fika via official installer (Wine)
-echo "Downloading Fika Installer..."
-curl -fsSL -o Fika-Installer.exe "$FIKA_INSTALLER_URL"
-
-echo "Installing Fika (via Wine)..."
-wine Fika-Installer.exe install fika
-
-# Step 2: Download additional mods (Convoy, etc.)
-TMPFILE=$(mktemp /tmp/quma-mods-XXXXXX.zip)
-
-echo "Downloading additional mods..."
-curl -fsSL -o "$TMPFILE" "$ARCHIVE_URL"
-
-echo "Extracting mods..."
-unzip -o "$TMPFILE" -d .
-
-# Configure launcher server address
-if [ -f "$LAUNCHER_CONFIG" ]; then
-    if command -v python3 &>/dev/null; then
-        python3 -c "
-import json, sys
-with open(sys.argv[1]) as f: cfg = json.load(f)
-cfg['Server'] = cfg.get('Server') or {{}}
-cfg['Server']['Url'] = sys.argv[2]
-with open(sys.argv[1], 'w') as f: json.dump(cfg, f, indent=2)
-" "$LAUNCHER_CONFIG" "$SPT_SERVER_URL"
-        echo "Launcher configured: server address set to $SPT_SERVER_URL"
-    else
-        echo "NOTE: python3 not found — set the server address manually in SPT Launcher:"
-        echo "  $SPT_SERVER_URL"
-    fi
-else
-    echo "NOTE: Launcher config not found at $LAUNCHER_CONFIG"
-    echo "  Launch SPT once, then re-run this script, or set the server address manually:"
-    echo "  $SPT_SERVER_URL"
-fi
-
-echo ""
-echo "=== Setup Complete ==="
-echo ""
-echo "Next steps:"
-echo "  1. Launch SPT and connect to: $SPT_SERVER_URL"
-"#
-    )
-}
-
-pub(crate) fn generate_powershell_script(
-    server_name: &str,
-    archive_url: &str,
-    spt_server_url: &str,
-) -> String {
-    let server_name = escape_powershell(server_name);
-    let archive_url = escape_powershell(archive_url);
-    let spt_server_url = escape_powershell(spt_server_url);
-    let fika_installer_url = FIKA_INSTALLER_URL;
-
-    format!(
-        r#"$ErrorActionPreference = 'Stop'
-
-$ServerName = '{server_name}'
-$SptServerUrl = '{spt_server_url}'
-$ArchiveUrl = '{archive_url}'
-$LauncherConfig = 'SPT\user\launcher\config.json'
-$FikaInstallerUrl = '{fika_installer_url}'
-
-Write-Host "=== Quartermaster Bootstrap ==="
-Write-Host "Setting up client for: $ServerName"
-Write-Host ""
-
-# Check we're in an SPT directory
-if (-not (Test-Path "BepInEx")) {{
-    Write-Host "ERROR: BepInEx\ directory not found." -ForegroundColor Red
-    Write-Host "Run this script from your SPT installation directory."
-    exit 1
-}}
-
-$FikaInstallerPath = Join-Path . "Fika-Installer.exe"
-$TmpFile = Join-Path $env:TEMP "quma-mods-$([System.IO.Path]::GetRandomFileName()).zip"
-
-try {{
-    # Step 1: Install Fika via official installer
-    Write-Host "Downloading Fika Installer..."
-    Invoke-WebRequest -Uri $FikaInstallerUrl -OutFile $FikaInstallerPath -UseBasicParsing
-
-    Write-Host "Installing Fika..."
-    & $FikaInstallerPath install fika
-    if ($LASTEXITCODE -ne 0) {{
-        Write-Host "WARNING: Fika Installer returned exit code $LASTEXITCODE" -ForegroundColor Yellow
-    }}
-
-    # Step 2: Download additional mods (Convoy, etc.)
-    Write-Host "Downloading additional mods..."
-    Invoke-WebRequest -Uri $ArchiveUrl -OutFile $TmpFile -UseBasicParsing
-
-    Write-Host "Extracting mods..."
-    Expand-Archive -Path $TmpFile -DestinationPath . -Force
-
-    # Configure launcher server address
-    if (Test-Path $LauncherConfig) {{
-        $cfg = Get-Content $LauncherConfig -Raw | ConvertFrom-Json
-        if (-not $cfg.Server) {{
-            $cfg | Add-Member -NotePropertyName 'Server' -NotePropertyValue ([PSCustomObject]@{{Url=$SptServerUrl}})
-        }} else {{
-            $cfg.Server | Add-Member -NotePropertyName 'Url' -NotePropertyValue $SptServerUrl -Force
-        }}
-        $cfg | ConvertTo-Json -Depth 10 | Set-Content $LauncherConfig -Encoding UTF8
-        Write-Host "Launcher configured: server address set to $SptServerUrl" -ForegroundColor Green
-    }} else {{
-        Write-Host "NOTE: Launcher config not found at $LauncherConfig" -ForegroundColor Yellow
-        Write-Host "  Launch SPT once, then re-run this script, or set the server address manually:"
-        Write-Host "  $SptServerUrl"
-    }}
-
-    Write-Host ""
-    Write-Host "=== Setup Complete ===" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Next steps:"
-    Write-Host "  1. Launch SPT and connect to: $SptServerUrl"
-}} finally {{
-    if (Test-Path $TmpFile) {{ Remove-Item $TmpFile -Force }}
-    if (Test-Path $FikaInstallerPath) {{ Remove-Item $FikaInstallerPath -Force }}
-}}
-"#
-    )
-}
-
 pub(crate) fn build_mod_zip(
     dirs: &crate::dirs::QumaDirs,
     files: &[crate::db::mods::InstalledFile],
@@ -817,118 +611,6 @@ pub(crate) fn build_mod_zip(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const TEST_SPT_URL: &str = "https://example.com:6969";
-
-    #[test]
-    fn bash_script_escapes_shell_metacharacters() {
-        let script = generate_bash_script(
-            "My'; rm -rf /; echo 'Server",
-            "https://example.com/quma/join/mods.zip?code=code1",
-            TEST_SPT_URL,
-        );
-        assert!(script.contains("My'\\''"));
-        assert!(script.contains("SERVER_NAME='My'\\''"));
-        let server_name_line = script
-            .lines()
-            .find(|line| line.starts_with("SERVER_NAME="))
-            .expect("SERVER_NAME line should exist");
-        assert!(server_name_line.starts_with("SERVER_NAME='My'\\''"));
-    }
-
-    #[test]
-    fn bash_script_escapes_single_quotes_in_url() {
-        let script = generate_bash_script(
-            "Server",
-            "https://example.com'injected/quma/join/mods.zip?code=code1",
-            TEST_SPT_URL,
-        );
-        assert!(script.contains("example.com'\\''injected"));
-    }
-
-    #[test]
-    fn bash_script_uses_fika_installer() {
-        let script = generate_bash_script(
-            "Server",
-            "https://example.com/quma/join/mods.zip?code=code1",
-            TEST_SPT_URL,
-        );
-        assert!(script.contains("FIKA_INSTALLER_URL="));
-        assert!(script.contains("Fika-Installer.exe"));
-        assert!(script.contains("wine Fika-Installer.exe install fika"));
-        assert!(
-            !script.contains("|| echo"),
-            "wine failure should not be swallowed"
-        );
-    }
-
-    #[test]
-    fn bash_script_uses_spt_server_url_for_launcher() {
-        let script = generate_bash_script(
-            "Server",
-            "https://example.com/quma/join/mods.zip?code=code1",
-            "https://example.com:6969",
-        );
-        assert!(script.contains("SPT_SERVER_URL='https://example.com:6969'"));
-        assert!(script.contains("server address set to $SPT_SERVER_URL"));
-    }
-
-    #[test]
-    fn bash_script_uses_curl_fail_flag() {
-        let script = generate_bash_script(
-            "Server",
-            "https://example.com/quma/join/mods.zip?code=code1",
-            TEST_SPT_URL,
-        );
-        assert!(script.contains("curl -fsSL"), "curl should use --fail flag");
-        assert!(
-            !script.contains("curl -sSL "),
-            "should not have curl without --fail"
-        );
-    }
-
-    #[test]
-    fn powershell_script_escapes_single_quotes() {
-        let script = generate_powershell_script(
-            "My' Server",
-            "https://example.com/quma/join/mods.zip?code=code1",
-            TEST_SPT_URL,
-        );
-        assert!(script.contains("My'' Server"));
-    }
-
-    #[test]
-    fn powershell_script_escapes_single_quotes_in_url() {
-        let script = generate_powershell_script(
-            "Server",
-            "https://example.com'injected/quma/join/mods.zip?code=code1",
-            TEST_SPT_URL,
-        );
-        assert!(script.contains("example.com''injected"));
-    }
-
-    #[test]
-    fn powershell_script_uses_fika_installer() {
-        let script = generate_powershell_script(
-            "Server",
-            "https://example.com/quma/join/mods.zip?code=code1",
-            TEST_SPT_URL,
-        );
-        assert!(script.contains("$FikaInstallerUrl ="));
-        assert!(script.contains("Fika-Installer.exe"));
-        assert!(script.contains("install fika"));
-    }
-
-    #[test]
-    fn powershell_script_uses_spt_server_url_for_launcher() {
-        let script = generate_powershell_script(
-            "Server",
-            "https://example.com/quma/join/mods.zip?code=code1",
-            "https://example.com:6969",
-        );
-        assert!(script.contains("$SptServerUrl = 'https://example.com:6969'"));
-        assert!(script.contains("server address set to $SptServerUrl"));
-    }
 
     #[test]
     fn build_spt_server_url_normalizes_external_url() {

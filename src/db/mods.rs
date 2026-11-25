@@ -323,6 +323,7 @@ impl Database {
         rows.collect()
     }
 
+    #[allow(dead_code)] // Retained public DB export API; bootstraps now use the complete pack.
     pub fn get_files_for_forge_ids(
         &self,
         forge_ids: &[i64],
