@@ -150,7 +150,9 @@ fn missing_malformed_changed_and_oversized_directory_proof_refuse_without_writes
             None,
             Some(b"bad".to_vec()),
             Some(format!("v1:{}", "a".repeat(64)).into_bytes()),
-            Some(vec![b'x'; 4096]),
+            // Exceed the proof reader's 68-byte buffer without requiring a
+            // filesystem to store a 4096-byte xattr plus its metadata overhead.
+            Some(vec![b'x'; 69]),
         ] {
             let f = Fixture::new(false, false);
             f.apply().unwrap();
@@ -160,6 +162,18 @@ fn missing_malformed_changed_and_oversized_directory_proof_refuse_without_writes
                 f.dirs.headless_overlay(1)
             };
             edit_proof(&path, value.as_deref());
+            if value.as_ref().is_some_and(|value| value.len() == 69) {
+                // The successful write above must reach the real bounded
+                // reader's size refusal, not fail for an unrelated reason.
+                let error = proof::read(&Scope::open(&path).unwrap()).unwrap_err();
+                assert_eq!(
+                    error
+                        .downcast_ref::<std::io::Error>()
+                        .unwrap()
+                        .raw_os_error(),
+                    Some(libc::ERANGE)
+                );
+            }
             let sentinel = f.dirs.headless_upper(1).join("keep");
             std::fs::write(&sentinel, b"unchanged").unwrap();
             let journal = f.dirs.root.join(state_path(1)).join("journal.json");
