@@ -157,11 +157,22 @@ async fn ensure_fika_headless(forge: &ForgeClient, install_dir: &Path) -> Result
 ///
 /// Returns the number of containers removed. Used before re-convergence
 /// after a middle deletion to ensure clean index renumbering.
-pub async fn remove_all_managed_containers(container_mgr: &ContainerManager) -> Result<u32> {
+pub async fn remove_all_managed_containers(
+    container_mgr: &ContainerManager,
+    dirs: &crate::dirs::QumaDirs,
+    guards: &[Arc<crate::headless::exclusions::PolicyOperationGuard>],
+) -> Result<u32> {
+    if guards.len() != crate::config::MAX_HEADLESS_CLIENTS as usize {
+        bail!("incomplete destructive headless guard set");
+    }
+    for (offset, guard) in guards.iter().enumerate() {
+        guard.validate(dirs, (offset + 1) as u32)?;
+    }
     let managed = container_mgr
         .detect_containers_by_label(MANAGED_BY_LABEL, MANAGED_BY_VALUE)
         .await?;
 
+    validate_managed_client_names(&managed)?;
     let mut removed = 0u32;
     for name in &managed {
         if container_mgr.is_running(name).await.unwrap_or(false) {
@@ -181,6 +192,22 @@ pub async fn remove_all_managed_containers(container_mgr: &ContainerManager) -> 
         info!("Removed {removed} managed container(s) for clean re-convergence");
     }
     Ok(removed)
+}
+
+fn validate_managed_client_names(names: &[String]) -> Result<()> {
+    for name in names {
+        let index = name
+            .strip_prefix("fika-headless-")
+            .and_then(|n| n.parse::<u32>().ok())
+            .context("unsupported managed headless name")?;
+        if index == 0
+            || index > crate::config::MAX_HEADLESS_CLIENTS
+            || *name != client_container_name(index)
+        {
+            bail!("managed headless client is outside the guarded namespace");
+        }
+    }
+    Ok(())
 }
 
 /// Discover new profile IDs that appeared after a baseline snapshot.
@@ -767,6 +794,10 @@ pub async fn converge(ctx: &ConvergeContext<'_>) -> Result<()> {
     }
 
     let _guard = ConvergingGuard(ctx.converging.clone());
+    let policy_guards = crate::headless::exclusions::lifecycle::acquire_all(ctx.dirs)?;
+    for (offset, guard) in policy_guards.iter().enumerate() {
+        crate::headless::exclusions::resume_overlay_retirement(ctx.dirs, offset as u32 + 1, guard)?;
+    }
 
     let container_mgr = ctx.container_mgr;
     let headless_config = ctx.headless_config;
@@ -883,6 +914,7 @@ pub async fn converge(ctx: &ConvergeContext<'_>) -> Result<()> {
         .await?;
 
     debug!("Found {} managed containers", managed.len());
+    validate_managed_client_names(&managed)?;
 
     // Check for name conflicts with unmanaged containers
     // For each desired container name, check if it exists but isn't in our managed list
@@ -936,10 +968,11 @@ pub async fn converge(ctx: &ConvergeContext<'_>) -> Result<()> {
             ntsync_available,
             &topology,
             fika_version.as_deref(),
+            &policy_guards,
         )
         .await?;
     } else if current_count > desired_count {
-        remove_excess_clients(ctx, current_count, desired_count).await?;
+        remove_excess_clients(ctx, current_count, desired_count, &policy_guards).await?;
     } else {
         info!("Already at desired count ({desired_count}), checking for overlay updates");
     }
@@ -988,6 +1021,7 @@ pub async fn converge(ctx: &ConvergeContext<'_>) -> Result<()> {
 
         let topology = &topology;
         let fika_version = fika_version.as_deref();
+        let policy_guard = policy_guards[(i - 1) as usize].clone();
         recreate_assigned_client(profile_id, |profile_id| async move {
             info!(
                 "Client {i}: NUMA pinning changed ({:?} → {:?}), recreating container",
@@ -1009,6 +1043,7 @@ pub async fn converge(ctx: &ConvergeContext<'_>) -> Result<()> {
                 ntsync_available,
                 topology,
                 fika_version,
+                policy_guard,
             )
             .await
         })
@@ -1056,7 +1091,12 @@ async fn await_server_ready(spt_client: &SptClient, timeout_secs: u64) -> bool {
 /// After the SPT server is restarted (for config changes, scale-up, or scale-down),
 /// existing headless containers retain stale connections and won't appear in the Fika
 /// headless API. Restarting them forces a fresh connection to the new server instance.
-async fn restart_running_clients(container_mgr: &ContainerManager, count: u32) -> Result<()> {
+async fn restart_running_clients(
+    ctx: &ConvergeContext<'_>,
+    count: u32,
+    guards: &[Arc<crate::headless::exclusions::PolicyOperationGuard>],
+) -> Result<()> {
+    let container_mgr = ctx.container_mgr;
     let futs: Vec<_> = (1..=count)
         .map(|i| {
             let name = client_container_name(i);
@@ -1064,7 +1104,15 @@ async fn restart_running_clients(container_mgr: &ContainerManager, count: u32) -
                 match container_mgr.is_running(&name).await {
                     Ok(true) => {
                         info!("Restarting {name} to reconnect to fresh SPT server");
-                        if let Err(e) = container_mgr.restart(&name).await {
+                        if let Err(e) = crate::headless::exclusions::lifecycle::restart_locked(
+                            container_mgr,
+                            ctx.dirs,
+                            ctx.db,
+                            i,
+                            guards[(i - 1) as usize].clone(),
+                        )
+                        .await
+                        {
                             warn!("Failed to restart {name} after server restart: {e}");
                             return Some(format!("{name}: {e}"));
                         }
@@ -1127,6 +1175,7 @@ async fn ensure_clients(
     ntsync_available: bool,
     topology: &NumaTopology,
     fika_version: Option<&str>,
+    guards: &[Arc<crate::headless::exclusions::PolicyOperationGuard>],
 ) -> Result<()> {
     info!("Ensuring clients: {current_count} → {desired_count}");
 
@@ -1174,7 +1223,7 @@ async fn ensure_clients(
     }
 
     // 3. Restart existing containers so they reconnect to the fresh server
-    restart_running_clients(ctx.container_mgr, current_count).await?;
+    restart_running_clients(ctx, current_count, guards).await?;
 
     // 4. Discover available profiles for assignment
     // Headless profiles are created by the SPT server when it starts with Fika's
@@ -1200,6 +1249,7 @@ async fn ensure_clients(
             ntsync_available,
             topology,
             fika_version,
+            guards[(i - 1) as usize].clone(),
         )
         .await?;
     }
@@ -1211,21 +1261,11 @@ async fn ensure_clients(
 ///
 /// In-raid checks are now handled by the CLI `headless delete` command before calling
 /// converge, so this function simply stops and removes excess containers.
-fn cleanup_removed_client_overlay(
-    overlay_dir: &Path,
-    unmount: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    unmount().context("failed to unmount removed client overlay")?;
-    if overlay_dir.exists() {
-        crate::overlay::remove_unused_overlay_dir(overlay_dir)?;
-    }
-    Ok(())
-}
-
 async fn remove_excess_clients(
     ctx: &ConvergeContext<'_>,
     current_count: u32,
     desired_count: u32,
+    guards: &[Arc<crate::headless::exclusions::PolicyOperationGuard>],
 ) -> Result<()> {
     info!("Removing excess clients: {current_count} → {desired_count}");
 
@@ -1244,9 +1284,11 @@ async fn remove_excess_clients(
 
     // Clean up overlay mounts and directories for removed clients
     for i in (desired_count + 1)..=current_count {
-        cleanup_removed_client_overlay(&ctx.dirs.headless_overlay(i), || {
-            ctx.dirs.headless_overlay_mount(i).unmount()
-        })
+        crate::headless::exclusions::destroy_private_overlay(
+            ctx.dirs,
+            i,
+            &guards[(i - 1) as usize],
+        )
         .with_context(|| format!("failed to clean overlay for removed client {i}"))?;
         info!("Cleaned overlay directory for client {i}");
     }
@@ -1271,13 +1313,9 @@ async fn remove_excess_clients(
     warn_active_players(ctx.spt_client, "scaling down headless clients").await;
     info!("Restarting SPT server to deregister removed headless clients");
     ctx.container_mgr
-        .stop(container)
+        .restart(container)
         .await
-        .context("failed to stop SPT server for client deregistration")?;
-    ctx.container_mgr
-        .start(container)
-        .await
-        .context("failed to start SPT server after client deregistration")?;
+        .context("failed to restart SPT server for client deregistration")?;
 
     // 4. Wait for server readiness before restarting remaining clients
     info!(
@@ -1294,7 +1332,7 @@ async fn remove_excess_clients(
     }
 
     // 5. Restart remaining clients so they reconnect to the fresh server
-    restart_running_clients(ctx.container_mgr, desired_count).await?;
+    restart_running_clients(ctx, desired_count, guards).await?;
 
     Ok(())
 }
@@ -1380,7 +1418,9 @@ async fn create_client_container(
     ntsync_available: bool,
     topology: &NumaTopology,
     fika_version: Option<&str>,
+    guard: Arc<crate::headless::exclusions::PolicyOperationGuard>,
 ) -> Result<()> {
+    guard.validate(ctx.dirs, index)?;
     let profile_id = profile_id
         .filter(|id| !id.is_empty())
         .context("refusing to create headless client without a profile ID")?;
@@ -1489,14 +1529,32 @@ async fn create_client_container(
         network_mode: Some("host".to_string()),
     };
 
-    let container_id = container_mgr.create_container(opts).await?;
-    info!("Created container {name} (id: {container_id})");
+    let created = crate::headless::exclusions::runtime::create_owned_client(
+        container_mgr,
+        dirs,
+        index,
+        opts,
+        guard.clone(),
+    )
+    .await?;
+    let mut created = Some(created);
+    info!("Created owned container {name}");
 
     // First-boot config flow: check if Fika config already exists in upper layer
     let fika_cfg = upper_dir.join("BepInEx/config/com.fika.core.cfg");
     if !fika_cfg.exists() {
         // First boot: let Fika generate the config
         info!("First boot for client {index} — waiting for Fika config generation");
+        let policy = crate::headless::exclusions::lifecycle::current_policy(ctx.db)?;
+        crate::headless::exclusions::runtime::prepare_created_client(
+            container_mgr,
+            dirs,
+            policy,
+            index,
+            created.take().context("missing owned creation proof")?,
+        )
+        .await?;
+        guard.validate(dirs, index)?;
         container_mgr.start(&name).await?;
 
         match await_fika_config(
@@ -1531,7 +1589,28 @@ async fn create_client_container(
     )?;
 
     // Start the container for real
-    container_mgr.start(&name).await?;
+    if let Some(created) = created {
+        let policy = crate::headless::exclusions::lifecycle::current_policy(ctx.db)?;
+        crate::headless::exclusions::runtime::prepare_created_client(
+            container_mgr,
+            dirs,
+            policy,
+            index,
+            created,
+        )
+        .await?;
+        guard.validate(dirs, index)?;
+        container_mgr.start(&name).await?;
+    } else {
+        crate::headless::exclusions::lifecycle::start_locked(
+            container_mgr,
+            dirs,
+            ctx.db,
+            index,
+            guard.clone(),
+        )
+        .await?;
+    }
     info!("Started container {name}");
 
     Ok(())
@@ -1540,22 +1619,206 @@ async fn create_client_container(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    #[test]
+    fn scale_down_reuse_and_container_only_recreation_preserve_generation_boundaries() {
+        for case in ["generation-scale", "generation-container"] {
+            crate::headless::exclusions::test_support::run(
+                "client::converge::tests::scale_down_reuse_and_container_only_recreation_preserve_generation_boundaries",
+                case,
+                |f| async move {
+                    crate::headless::exclusions::test_support::seed_generation(&f, &[1, 2]);
+                    let journal = f.dirs.root.join("headless-policy/client-1/journal.json");
+                    let before_bytes = std::fs::read(&journal).unwrap();
+                    let before: serde_json::Value = serde_json::from_slice(&before_bytes).unwrap();
+                    let peer = f.dirs.root.join("headless-policy/client-2/journal.json");
+                    let peer_before = std::fs::read(&peer).unwrap();
+                    let config = crate::config::Config::default();
+                    let hc = crate::config::HeadlessConfig::default();
+                    let spt = crate::spt::server::SptClient::new("127.0.0.1", 1).unwrap();
+                    let forge = crate::forge::client::ForgeClient::new().unwrap();
+                    let flag = Default::default();
+                    let ctx = super::ConvergeContext {
+                        container_mgr: &f.manager, headless_config: &hc, config: &config,
+                        dirs: &f.dirs, spt_client: &spt, forge: &forge, converging: &flag, db: &f.db,
+                    };
+                    let guards = crate::headless::exclusions::lifecycle::acquire_all(&f.dirs).unwrap();
+                    let scaling = std::env::var("QUMA_TASK2_CASE").unwrap() == "generation-scale";
+                    if scaling {
+                        // Deliberately no server Fika config: this bounds the test
+                        // after real excess-client teardown, before server access.
+                        assert!(super::remove_excess_clients(&ctx, 1, 0, &guards).await.is_err());
+                        assert!(!f.dirs.headless_overlay(1).exists());
+                    } else {
+                        super::remove_all_managed_containers(&f.manager, &f.dirs, &guards).await.unwrap();
+                        assert_eq!(std::fs::read(&journal).unwrap(), before_bytes);
+                    }
+                    assert_eq!(std::fs::read(peer).unwrap(), peer_before);
+                    let cfg = f.dirs.headless_upper(1).join("BepInEx/config/com.fika.core.cfg");
+                    std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+                    std::fs::write(cfg, "[Network]\nUDPPort = 0\n").unwrap();
+                    super::create_client_container(&ctx, 1, Some("profile".into()), false,
+                        &crate::numa::NumaTopology::empty(), None, guards[0].clone()).await.unwrap();
+                    let after: serde_json::Value = serde_json::from_slice(&std::fs::read(journal).unwrap()).unwrap();
+                    if !scaling {
+                        assert_eq!(after["generation"], before["generation"]);
+                        assert_eq!(after["entries"]["BepInEx/plugins/Excluded.dll"]["mask"], before["entries"]["BepInEx/plugins/Excluded.dll"]["mask"]);
+                    }
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn destroyed_overlay_generation_can_prepare_reused_index() {
+        use crate::headless::exclusions::{
+            reconcile_private_overlay, PolicyOperationGuard, PolicySnapshot,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let dirs = crate::dirs::QumaDirs::from_root(temp.path().to_owned());
+        let relative = "BepInEx/plugins/Excluded.dll";
+        for root in [
+            dirs.headless_base.clone(),
+            dirs.mod_overlay(),
+            dirs.headless_upper(1),
+        ] {
+            std::fs::create_dir_all(root.join("BepInEx/plugins")).unwrap();
+            std::fs::write(root.join(relative), b"published").unwrap();
+        }
+        std::fs::create_dir_all(dirs.headless_work(1)).unwrap();
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let id = db
+            .insert_mod(None, None, "Excluded", None, "1", "local", None, None)
+            .unwrap();
+        db.save_groups_atomic(&[(
+            "No Headless".into(),
+            "no-headless".into(),
+            "optional".into(),
+            true,
+            vec![id],
+        )])
+        .unwrap();
+        let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"published"));
+        db.insert_file(id, relative, Some(&hash), Some(9)).unwrap();
+        let policy = PolicySnapshot::load(&db).unwrap();
+        let guard = PolicyOperationGuard::acquire(&dirs, 1).unwrap();
+        reconcile_private_overlay(&dirs, &policy, 1, &guard).unwrap();
+        let journal = dirs.root.join("headless-policy/client-1/journal.json");
+        let populated: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+        assert!(
+            populated["entries"][relative]["mask"].is_object(),
+            "requires real native lower whiteout ownership"
+        );
+        assert!(dirs
+            .root
+            .join("headless-policy/client-1/quarantine")
+            .join(relative)
+            .join(&hash)
+            .is_file());
+        crate::headless::exclusions::destroy_private_overlay(&dirs, 1, &guard).unwrap();
+        std::fs::create_dir_all(dirs.headless_upper(1)).unwrap();
+        std::fs::create_dir_all(dirs.headless_work(1)).unwrap();
+        reconcile_private_overlay(&dirs, &policy, 1, &guard)
+            .expect("first preparation of replacement generation must reapply exclusions");
+    }
+
+    #[test]
+    fn convergence_restarts_prepare_and_refuse_invalid_policy() {
+        for case in ["memory", "memory-invalid"] {
+            crate::headless::exclusions::test_support::run(
+                "client::converge::tests::convergence_restarts_prepare_and_refuse_invalid_policy",
+                case,
+                |f| async move {
+                    let invalid = std::env::var("QUMA_TASK2_CASE").unwrap() == "memory-invalid";
+                    if invalid {
+                        f.db.lock()
+                            .conn()
+                            .execute("DROP TABLE mod_groups", [])
+                            .unwrap();
+                    }
+                    let config = crate::config::Config::default();
+                    let hc = crate::config::HeadlessConfig::default();
+                    let spt = crate::spt::server::SptClient::new("127.0.0.1", 1).unwrap();
+                    let forge = crate::forge::client::ForgeClient::new().unwrap();
+                    let flag = Default::default();
+                    let ctx = super::ConvergeContext {
+                        container_mgr: &f.manager,
+                        headless_config: &hc,
+                        config: &config,
+                        dirs: &f.dirs,
+                        spt_client: &spt,
+                        forge: &forge,
+                        converging: &flag,
+                        db: &f.db,
+                    };
+                    let guards =
+                        crate::headless::exclusions::lifecycle::acquire_all(&f.dirs).unwrap();
+                    let result = super::restart_running_clients(&ctx, 1, &guards).await;
+                    if invalid {
+                        assert!(result.is_err());
+                    } else {
+                        result.unwrap();
+                    }
+                },
+            );
+        }
+    }
+    #[test]
+    fn creation_prepares_before_initial_boot_and_refuses_bad_policy_or_identity() {
+        for case in [
+            "valid",
+            "invalid",
+            "wrong-id",
+            "cancel",
+            "native",
+            "preconfigured",
+            "boot-policy-change",
+        ] {
+            crate::headless::exclusions::test_support::run(
+                "client::converge::tests::creation_prepares_before_initial_boot_and_refuses_bad_policy_or_identity",
+                case,
+                |f| async move {
+                    let case = std::env::var("QUMA_TASK2_CASE").unwrap();
+                    if case == "invalid" { f.db.lock().conn().execute("DROP TABLE mod_groups", []).unwrap(); }
+                    if case=="cancel" || case=="native" {
+                        let db=f.db.lock();let id=db.insert_mod(None,None,"Excluded",None,"1","local",None,None).unwrap();
+                        db.save_groups_atomic(&[("No Headless".into(),"no-headless".into(),"optional".into(),true,vec![id])]).unwrap();
+                        let bytes=b"published";let hash=format!("{:016x}",xxhash_rust::xxh3::xxh3_64(bytes));
+                        db.insert_file(id,"BepInEx/plugins/Excluded.dll",Some(&hash),Some(9)).unwrap();
+                        for root in [f.dirs.headless_upper(1),f.dirs.headless_base.clone(),f.dirs.mod_overlay()] {std::fs::create_dir_all(root.join("BepInEx/plugins")).unwrap();std::fs::write(root.join("BepInEx/plugins/Excluded.dll"),bytes).unwrap();}
+                    }
+                    let config = crate::config::Config::default();
+                    let hc = crate::config::HeadlessConfig::default();
+                    let spt = crate::spt::server::SptClient::new("127.0.0.1", 1).unwrap();
+                    let forge = crate::forge::client::ForgeClient::new().unwrap();
+                    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let ctx = super::ConvergeContext {container_mgr:&f.manager,headless_config:&hc,config:&config,dirs:&f.dirs,spt_client:&spt,forge:&forge,converging:&flag,db:&f.db};
+                    let guard = crate::headless::exclusions::lifecycle::acquire(&f.dirs,1).unwrap();
+                    let topology=crate::numa::NumaTopology::empty();
+                    let mut future = Box::pin(super::create_client_container(&ctx,1,Some("profile".into()),false,&topology,None,guard));
+                    if case=="cancel" {
+                        let entered=f.dirs.root.join("entered");
+                        tokio::time::timeout(std::time::Duration::from_secs(10),async {
+                            loop {tokio::select! { result=&mut future=>panic!("preparation ended before cancellation: {result:?}"),_ = tokio::time::sleep(std::time::Duration::from_millis(5))=>{if entered.exists(){break}}}}
+                        }).await.unwrap();
+                        drop(future);
+                        let retained=crate::headless::exclusions::PolicyOperationGuard::acquire(&f.dirs,1).is_err();
+                        std::fs::write(f.dirs.root.join("release"),b"go").unwrap();
+                        assert!(retained,"detached blocking work lost guard");
+                        tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {if let Ok(guard)=crate::headless::exclusions::PolicyOperationGuard::acquire(&f.dirs,1){drop(guard);break}tokio::time::sleep(std::time::Duration::from_millis(5)).await;}}).await.unwrap();
+                        let journal=std::fs::read_to_string(f.dirs.root.join("headless-policy/client-1/journal.json")).unwrap();assert!(journal.contains("hidden"));
+                    } else {
+                        let result=future.await;
+                        if ["valid","native","preconfigured"].contains(&case.as_str()) { result.unwrap(); } else { assert!(result.is_err(), "unsafe creation must refuse"); }
+                        if case=="native" {assert_eq!(std::fs::read(f.dirs.headless_base.join("BepInEx/plugins/Excluded.dll")).unwrap(),b"published");assert_eq!(std::fs::read(f.dirs.mod_overlay().join("BepInEx/plugins/Excluded.dll")).unwrap(),b"published");}
+                    }
+                },
+            );
+        }
+    }
     use super::*;
     use crate::config::HeadlessClientDef;
     use std::collections::HashSet;
-
-    #[test]
-    fn headless_overlay_cleanup_preserves_data_on_unmount_failure() {
-        let tmp = tempfile::tempdir().unwrap();
-        let overlay = tmp.path().join("client-1");
-        std::fs::create_dir_all(overlay.join("upper")).unwrap();
-        let sentinel = overlay.join("upper/keep.txt");
-        std::fs::write(&sentinel, b"preserve on failed unmount").unwrap();
-        let result =
-            cleanup_removed_client_overlay(&overlay, || anyhow::bail!("simulated unmount failure"));
-        assert!(sentinel.exists(), "data was deleted after failed unmount");
-        assert!(result.is_err());
-    }
 
     #[test]
     fn headless_firstboot_window_covers_measured_locale_load() {

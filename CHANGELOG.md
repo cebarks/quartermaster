@@ -4,8 +4,15 @@ All notable changes to Quartermaster will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add `quma headless reconcile-exclusions <client> [--check]` for offline, stopped-client exclusion reconciliation without migrations, lifecycle controls or startup convergence.
+
 ### Fixed
 
+- Enforce mod-group headless exclusions before managed first boot, start, restart and recovery using guarded private overlays, verified quarantine and current-publication restoration; preserve player/server payloads and per-client configuration.
+- Retire generation-bound exclusion ownership during authorized headless overlay destruction so rebuilt/reused indices can prepare safely, preserving retired-path protection, quarantine evidence and persistent operation locks.
+- Clear omitted group memberships when replacing the complete mod-group set so reused group IDs cannot inherit stale assignments.
 - Allow `proxy_rewrite_http_host` to advertise the player HTTPS hostname without changing the direct notifier or managed headless addresses.
 - Preserve managed headless loopback routing when SPT proxy authentication is disabled, without changing Quartermaster's dashboard or API authentication.
 - Link profiles created by the stock SPT launcher's PUT registration as well as legacy POST registration.

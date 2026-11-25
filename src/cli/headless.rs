@@ -22,6 +22,14 @@ impl std::error::Error for ClientInRaidError {}
 
 #[derive(Subcommand)]
 pub enum HeadlessAction {
+    /// Reconcile tracked headless exclusions offline (never stops or starts clients)
+    ReconcileExclusions {
+        #[arg(value_parser = clap::value_parser!(u32).range(1..))]
+        client: u32,
+        /// Plan only; do not create policy state, locks, masks or mounts
+        #[arg(long)]
+        check: bool,
+    },
     /// Show headless client status
     Status {
         /// Client number for detailed view
@@ -233,6 +241,9 @@ impl HeadlessApiClient {
 }
 
 pub async fn run(action: &HeadlessAction, dirs: &crate::dirs::QumaDirs) -> Result<()> {
+    if let HeadlessAction::ReconcileExclusions { client, check } = action {
+        return cmd_reconcile_exclusions(dirs, *client, *check).await;
+    }
     if !is_fika_installed(dirs) {
         bail!(
             "Fika server mod is not installed.\n\
@@ -259,7 +270,41 @@ pub async fn run(action: &HeadlessAction, dirs: &crate::dirs::QumaDirs) -> Resul
         HeadlessAction::Rename { client, name } => cmd_rename(&api, *client, name).await,
         HeadlessAction::Logs { client, follow } => cmd_logs(&api, *client, *follow).await,
         HeadlessAction::Rebuild => cmd_rebuild(&api).await,
+        HeadlessAction::ReconcileExclusions { .. } => bail!("offline command dispatch invariant"),
     }
+}
+
+async fn cmd_reconcile_exclusions(
+    dirs: &crate::dirs::QumaDirs,
+    client: u32,
+    check: bool,
+) -> Result<()> {
+    use crate::headless::exclusions::{runtime, PolicyOperationGuard, PolicySnapshot};
+    use std::sync::Arc;
+    if client == 0 {
+        bail!("headless client indices start at 1");
+    }
+    let owned = dirs.clone();
+    let (policy, guard) = tokio::task::spawn_blocking(move || -> Result<_> {
+        let guard = if check {
+            None
+        } else {
+            Some(Arc::new(PolicyOperationGuard::acquire(&owned, client)?))
+        };
+        let db = crate::db::Database::open_read_only(&owned.db_path())?;
+        let policy = PolicySnapshot::load(&db)?;
+        Ok((policy, guard))
+    })
+    .await??;
+    // No config/API token/profile/Forge construction is needed for inspection.
+    let manager = crate::container::ContainerManager::new(30)?;
+    let report = if let Some(guard) = guard {
+        runtime::prepare_stopped_client(&manager, dirs, policy, client, guard).await?
+    } else {
+        runtime::check_stopped_client(&manager, dirs, policy, client).await?
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 async fn cmd_status(api: &HeadlessApiClient, client: Option<u32>) -> Result<()> {

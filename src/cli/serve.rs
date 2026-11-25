@@ -165,6 +165,7 @@ pub async fn run(bind: Option<&str>, port: Option<u16>, cli: &Cli) -> Result<()>
                     let cancel_token = tokio_util::sync::CancellationToken::new();
                     let supervisor = crate::client::supervisor::ClientSupervisor::new(
                         container_mgr_arc.as_ref().clone(),
+                        Arc::new(dirs.clone()),
                         spt_client,
                         Arc::clone(&config_arc),
                         config_path.clone(),

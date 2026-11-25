@@ -22,6 +22,8 @@ use crate::spt::server::SptClient;
 /// changes take effect without restarting the supervisor.
 struct ExitWatcherCtx {
     container_mgr: ContainerManager,
+    dirs: Arc<crate::dirs::QumaDirs>,
+    db: Arc<parking_lot::Mutex<crate::db::Database>>,
     state: Arc<RwLock<Vec<ClientState>>>,
     watcher_handles: Arc<RwLock<HashMap<u32, CancellationToken>>>,
     converging: Arc<AtomicBool>,
@@ -49,6 +51,7 @@ impl Drop for RestartingGuard {
 
 pub struct ClientSupervisor {
     container_mgr: ContainerManager,
+    dirs: Arc<crate::dirs::QumaDirs>,
     spt_client: SptClient,
     config: Arc<parking_lot::RwLock<Config>>,
     config_path: PathBuf,
@@ -61,8 +64,10 @@ pub struct ClientSupervisor {
 }
 
 impl ClientSupervisor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         container_mgr: ContainerManager,
+        dirs: Arc<crate::dirs::QumaDirs>,
         spt_client: SptClient,
         config: Arc<parking_lot::RwLock<Config>>,
         config_path: PathBuf,
@@ -73,6 +78,7 @@ impl ClientSupervisor {
         let state = Arc::new(RwLock::new(Vec::new()));
         Self {
             container_mgr,
+            dirs,
             spt_client,
             config,
             config_path,
@@ -248,7 +254,7 @@ impl ClientSupervisor {
                     continue;
                 }
                 let container_name = s.container_name.clone();
-                let mgr = self.container_mgr.clone();
+                let index = s.index;
                 tracing::warn!(
                     container = %container_name,
                     memory_mb = mem_mb as u64,
@@ -256,7 +262,7 @@ impl ClientSupervisor {
                     "Idle client exceeds memory threshold, restarting"
                 );
                 drop(state_lock);
-                if let Err(e) = mgr.restart(&container_name).await {
+                if let Err(e) = self.restart_ready_client(index).await {
                     tracing::error!(container = %container_name, err = %e, "Failed to restart for memory threshold");
                 }
                 // Only restart one per tick to avoid thundering herd
@@ -265,6 +271,58 @@ impl ClientSupervisor {
         }
 
         Ok(())
+    }
+
+    async fn restart_ready_client(&self, index: u32) -> anyhow::Result<()> {
+        let guard = crate::headless::exclusions::lifecycle::acquire(&self.dirs, index)?;
+        // Recheck after lock acquisition, before stopping. Do not hold a stale
+        // tick snapshot across another lifecycle operation.
+        let states = self.state.read().await;
+        let eligible = states.iter().any(|s| {
+            s.index == index
+                && s.container_status == ContainerStatus::Running
+                && s.fika_status == Some(EHeadlessStatus::Ready)
+                && !s.restarting
+                && !s.manually_stopped
+        });
+        if !eligible || self.cancel_token.is_cancelled() || self.converging.load(Ordering::Acquire)
+        {
+            return Ok(());
+        }
+        drop(states);
+        let restart = async {
+            let name = crate::client::converge::client_container_name(index);
+            if self.container_mgr.is_running(&name).await? {
+                self.container_mgr.stop(&name).await?;
+            }
+            let policy = crate::headless::exclusions::lifecycle::current_policy(&self.db)?;
+            crate::headless::exclusions::runtime::prepare_stopped_client(
+                &self.container_mgr,
+                &self.dirs,
+                policy,
+                index,
+                guard.clone(),
+            )
+            .await?;
+            guard.validate(&self.dirs, index)?;
+            let states = self.state.read().await;
+            if self.cancel_token.is_cancelled()
+                || !states.iter().any(|s| {
+                    s.index == index
+                        && !s.manually_stopped
+                        && s.fika_status == Some(EHeadlessStatus::Ready)
+                })
+            {
+                anyhow::bail!("headless memory restart no longer permitted");
+            }
+            drop(states);
+            self.container_mgr.start(&name).await
+        };
+        tokio::select! {
+            biased;
+            _ = self.cancel_token.cancelled() => Ok(()),
+            result = restart => result,
+        }
     }
 
     async fn check_client(
@@ -414,6 +472,8 @@ impl ClientSupervisor {
     async fn spawn_exit_watcher(&self, index: u32, container_name: String) {
         let ctx = ExitWatcherCtx {
             container_mgr: self.container_mgr.clone(),
+            dirs: self.dirs.clone(),
+            db: self.db.clone(),
             state: Arc::clone(&self.state),
             watcher_handles: Arc::clone(&self.watcher_handles),
             converging: self.converging.clone(),
@@ -631,12 +691,53 @@ async fn exit_watcher_loop(
                 failures,
                 "Backing off before restart"
             );
-            tokio::time::sleep(delay).await;
+            tokio::select! {
+                biased;
+                _ = cancel_token.cancelled() => { ctx.watcher_handles.write().await.remove(&index); return; }
+                _ = tokio::time::sleep(delay) => (),
+            }
         }
 
         // Start the already-stopped container (don't use restart() —
         // calling stop() on an exited container errors with 304)
-        match ctx.container_mgr.start(&container_name).await {
+        let restart = async {
+            let guard = crate::headless::exclusions::lifecycle::acquire(&ctx.dirs, index)?;
+            let policy = crate::headless::exclusions::lifecycle::current_policy(&ctx.db)?;
+            crate::headless::exclusions::runtime::prepare_stopped_client(
+                &ctx.container_mgr,
+                &ctx.dirs,
+                policy,
+                index,
+                guard.clone(),
+            )
+            .await?;
+            guard.validate(&ctx.dirs, index)?;
+            let states = ctx.state.read().await;
+            let allowed = states.iter().any(|s| {
+                s.index == index && !s.manually_stopped && s.health != ClientHealth::GivenUp
+            });
+            let auto = ctx
+                .config
+                .read()
+                .headless
+                .as_ref()
+                .is_some_and(|h| h.restart_policy == RestartPolicy::Auto);
+            if !allowed
+                || !auto
+                || cancel_token.is_cancelled()
+                || ctx.converging.load(Ordering::Acquire)
+            {
+                anyhow::bail!("headless recovery no longer permitted");
+            }
+            drop(states);
+            ctx.container_mgr.start(&container_name).await
+        };
+        let result = tokio::select! {
+            biased;
+            _ = cancel_token.cancelled() => { ctx.watcher_handles.write().await.remove(&index); return; }
+            result = restart => result,
+        };
+        match result {
             Ok(()) => {
                 let mut state_lock = ctx.state.write().await;
                 if let Some(s) = state_lock.iter_mut().find(|s| s.index == index) {
@@ -719,6 +820,86 @@ pub fn backoff_duration(failures: u32, cap: u64) -> Duration {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    #[test]
+    fn ready_memory_restart_uses_explicit_installation_not_external_config_root() {
+        for case in ["memory", "memory-invalid", "memory-raid", "memory-manual"] {
+            crate::headless::exclusions::test_support::run("client::supervisor::tests::ready_memory_restart_uses_explicit_installation_not_external_config_root",case,|f| async move {
+                let case=std::env::var("QUMA_TASK2_CASE").unwrap();
+                if case=="memory-invalid" {f.db.lock().conn().execute("DROP TABLE mod_groups",[]).unwrap();}
+                let external=tempfile::tempdir().unwrap();
+                let config=crate::config::Config { quma_dir:Some(external.path().to_owned()),headless:Some(crate::config::HeadlessConfig::default()),..Default::default()};
+                let supervisor=super::ClientSupervisor::new(f.manager,std::sync::Arc::new(f.dirs.clone()),crate::spt::server::SptClient::new("127.0.0.1",1).unwrap(),std::sync::Arc::new(parking_lot::RwLock::new(config)),external.path().join("elsewhere.toml"),f.db,Default::default(),tokio_util::sync::CancellationToken::new());
+                let mut state=recovery_state();state.container_status=crate::client::ContainerStatus::Running;state.fika_status=Some(crate::spt::headless::EHeadlessStatus::Ready);
+                if case=="memory-raid" {state.fika_status=Some(crate::spt::headless::EHeadlessStatus::InRaid);}
+                if case=="memory-manual" {state.manually_stopped=true;}
+                supervisor.state.write().await.push(state);
+                let result=supervisor.restart_ready_client(1).await;
+                if case=="memory-invalid" {assert!(result.is_err());}else{result.unwrap();}
+                assert!(!external.path().join("headless-policy").exists());
+                if case=="memory" {assert!(f.dirs.root.join("headless-policy/client-1").is_dir());}
+            });
+        }
+    }
+    fn recovery_state() -> crate::client::ClientState {
+        crate::client::ClientState {
+            index: 1,
+            container_name: "fika-headless-1".into(),
+            container_status: crate::client::ContainerStatus::Stopped,
+            fika_status: None,
+            players: vec![],
+            cpu_percent: None,
+            memory_mb: None,
+            restart_count: 0,
+            last_restart: None,
+            health: crate::client::ClientHealth::Down,
+            restarting: false,
+            consecutive_failures: 0,
+            first_seen: chrono::Utc::now(),
+            manually_stopped: false,
+            profile_id: Some("profile".into()),
+            prev_fika_status: None,
+        }
+    }
+
+    #[test]
+    fn clean_and_crash_recovery_refuse_invalid_policy() {
+        for case in ["clean", "crash"] {
+            crate::headless::exclusions::test_support::run(
+                "client::supervisor::tests::clean_and_crash_recovery_refuse_invalid_policy",
+                case,
+                |f| async move {
+                    f.db.lock()
+                        .conn()
+                        .execute("DROP TABLE mod_groups", [])
+                        .unwrap();
+                    let cfg = crate::config::Config {
+                        headless: Some(crate::config::HeadlessConfig::default()),
+                        ..Default::default()
+                    };
+                    let state =
+                        std::sync::Arc::new(tokio::sync::RwLock::new(vec![recovery_state()]));
+                    let cancel = tokio_util::sync::CancellationToken::new();
+                    let ctx = super::ExitWatcherCtx {
+                        container_mgr: f.manager,
+                        dirs: std::sync::Arc::new(f.dirs),
+                        db: f.db,
+                        state: state.clone(),
+                        watcher_handles: Default::default(),
+                        converging: Default::default(),
+                        cancel_token: cancel.clone(),
+                        config: std::sync::Arc::new(parking_lot::RwLock::new(cfg)),
+                    };
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        super::exit_watcher_loop(ctx, 1, "fika-headless-1".into(), cancel),
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(state.read().await[0].restart_count, 0);
+                },
+            );
+        }
+    }
     use super::*;
 
     #[test]

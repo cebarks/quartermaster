@@ -173,10 +173,31 @@ impl HeadlessService {
                 .ok_or(HeadlessError::ClientNotFound(index))?
         };
 
+        let guard = crate::headless::exclusions::lifecycle::acquire(&self.dirs, index)
+            .map_err(HeadlessError::Internal)?;
+
         let result = match action {
-            LifecycleAction::Start => self.container_mgr.start(&container_name).await,
+            LifecycleAction::Start => {
+                crate::headless::exclusions::lifecycle::start_locked(
+                    &self.container_mgr,
+                    &self.dirs,
+                    &self.db,
+                    index,
+                    guard.clone(),
+                )
+                .await
+            }
             LifecycleAction::Stop => self.container_mgr.stop(&container_name).await,
-            LifecycleAction::Restart => self.container_mgr.restart(&container_name).await,
+            LifecycleAction::Restart => {
+                crate::headless::exclusions::lifecycle::restart_locked(
+                    &self.container_mgr,
+                    &self.dirs,
+                    &self.db,
+                    index,
+                    guard.clone(),
+                )
+                .await
+            }
         };
 
         result.map_err(|e| HeadlessError::ContainerError(e.to_string()))?;
@@ -200,6 +221,8 @@ impl HeadlessService {
     }
 
     pub async fn graceful_restart(&self, index: u32) -> Result<GracefulResult, HeadlessError> {
+        let guard = crate::headless::exclusions::lifecycle::acquire(&self.dirs, index)
+            .map_err(HeadlessError::Internal)?;
         let (profile_id, fika_status) = {
             let states = self.client_states.read().await;
             let client = states
@@ -240,6 +263,45 @@ impl HeadlessService {
                 .await
                 .unwrap_or(true)
             {
+                // This endpoint historically delegated the restart to the Auto
+                // exit watcher. Keep that policy/manual-stop decision, but own
+                // the complete guarded sequence instead of racing that watcher.
+                let auto = self
+                    .config
+                    .read()
+                    .headless
+                    .as_ref()
+                    .is_some_and(|h| h.restart_policy == crate::config::RestartPolicy::Auto);
+                let manually_stopped = self
+                    .client_states
+                    .read()
+                    .await
+                    .iter()
+                    .find(|c| c.index == index)
+                    .is_none_or(|c| c.manually_stopped);
+                if !auto || manually_stopped {
+                    return Ok(GracefulResult::Exited);
+                }
+                crate::headless::exclusions::lifecycle::start_locked(
+                    &self.container_mgr,
+                    &self.dirs,
+                    &self.db,
+                    index,
+                    guard.clone(),
+                )
+                .await
+                .map_err(HeadlessError::Internal)?;
+                if let Some(client) = self
+                    .client_states
+                    .write()
+                    .await
+                    .iter_mut()
+                    .find(|c| c.index == index)
+                {
+                    client.consecutive_failures = 0;
+                    client.health = ClientHealth::Degraded;
+                    client.manually_stopped = false;
+                }
                 return Ok(GracefulResult::Exited);
             }
         }
@@ -561,8 +623,28 @@ impl HeadlessService {
         updated_config.clients.remove((index - 1) as usize);
 
         tokio::spawn(async move {
-            if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr).await {
+            let guards = match crate::headless::exclusions::lifecycle::acquire_all(&dirs) {
+                Ok(guards) => guards,
+                Err(e) => {
+                    ops.fail(&op_id, format!("Headless lifecycle is busy or unsafe: {e}"));
+                    return;
+                }
+            };
+            if let Err(e) =
+                crate::client::converge::remove_all_managed_containers(&mgr, &dirs, &guards).await
+            {
                 ops.fail(&op_id, format!("Failed to remove containers: {e}"));
+                let _ = events.send(ServerEvent::HeadlessChanged);
+                return;
+            }
+
+            // Keep the configured selection available for retry if teardown fails.
+            if let Err(e) = crate::headless::exclusions::destroy_private_overlay(
+                &dirs,
+                index,
+                &guards[(index - 1) as usize],
+            ) {
+                ops.fail(&op_id, format!("Failed to retire selected overlay: {e}"));
                 let _ = events.send(ServerEvent::HeadlessChanged);
                 return;
             }
@@ -591,10 +673,7 @@ impl HeadlessService {
                 }
             }
 
-            let overlay = dirs.headless_overlay(index);
-            if overlay.exists() {
-                let _ = std::fs::remove_dir_all(&overlay);
-            }
+            drop(guards);
 
             let ctx = crate::client::converge::ConvergeContext {
                 container_mgr: &mgr,
@@ -679,17 +758,36 @@ impl HeadlessService {
                 return;
             }
 
-            if let Err(e) = crate::client::converge::remove_all_managed_containers(&mgr).await {
+            let guards = match crate::headless::exclusions::lifecycle::acquire_all(&dirs) {
+                Ok(guards) => guards,
+                Err(e) => {
+                    converging.store(false, std::sync::atomic::Ordering::Release);
+                    ops.fail(&op_id, format!("Headless lifecycle is busy or unsafe: {e}"));
+                    return;
+                }
+            };
+            if let Err(e) =
+                crate::client::converge::remove_all_managed_containers(&mgr, &dirs, &guards).await
+            {
                 converging.store(false, std::sync::atomic::Ordering::Release);
                 ops.fail(&op_id, format!("Failed to remove containers: {e}"));
                 let _ = events.send(ServerEvent::HeadlessChanged);
                 return;
             }
 
-            let headless_overlays = dirs.overlays.join("headless");
-            if headless_overlays.is_dir() {
-                let _ = std::fs::remove_dir_all(&headless_overlays);
+            for (offset, guard) in guards.iter().enumerate() {
+                if let Err(e) = crate::headless::exclusions::destroy_private_overlay(
+                    &dirs,
+                    offset as u32 + 1,
+                    guard,
+                ) {
+                    converging.store(false, std::sync::atomic::Ordering::Release);
+                    ops.fail(&op_id, format!("Failed to retire rebuilt overlay: {e}"));
+                    let _ = events.send(ServerEvent::HeadlessChanged);
+                    return;
+                }
             }
+            drop(guards);
 
             converging.store(false, std::sync::atomic::Ordering::Release);
 
@@ -727,5 +825,134 @@ impl HeadlessService {
             .ok_or(HeadlessError::NotConfigured)?;
 
         Ok(self.spawn_convergence(headless_config))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn destructive_service_paths_retire_only_destroyed_generations_before_reuse() {
+        for case in ["generation-delete", "generation-rebuild"] {
+            crate::headless::exclusions::test_support::run(
+                "headless::service::lifecycle_tests::destructive_service_paths_retire_only_destroyed_generations_before_reuse",
+                case,
+                |f| async move {
+                    use std::os::unix::fs::MetadataExt;
+                    crate::headless::exclusions::test_support::seed_generation(&f, &[1, 2]);
+                    let peer_journal = f.dirs.root.join("headless-policy/client-2/journal.json");
+                    let peer_before = std::fs::read(&peer_journal).unwrap();
+                    let lock = f.dirs.root.join("headless-policy/client-1.lock");
+                    let lock_inode = std::fs::metadata(&lock).unwrap().ino();
+                    let peer_lock = f.dirs.root.join("headless-policy/client-2.lock");
+                    let peer_inode = std::fs::metadata(&peer_lock).unwrap().ino();
+                    let hc = crate::config::HeadlessConfig {
+                        clients: vec![Default::default(), Default::default()],
+                        ..Default::default()
+                    };
+                    let config = Config { headless: Some(hc), ..Default::default() };
+                    config.save(&f.dirs.config_path()).unwrap();
+                    let (events, _) = broadcast::channel(8);
+                    let svc = HeadlessService::new(
+                        f.manager.clone(), Arc::new(parking_lot::RwLock::new(config)),
+                        f.dirs.config_path(), Arc::new(Mutex::new(())), Arc::new(f.dirs.clone()),
+                        f.db.clone(), Default::default(), Default::default(), None,
+                        Arc::new(Mutex::new(())), ForgeClient::new().unwrap(), events,
+                    );
+                    let operation = if std::env::var("QUMA_TASK2_CASE").unwrap() == "generation-delete" {
+                        svc.delete(1, false).await.unwrap()
+                    } else {
+                        svc.rebuild(false).await.unwrap()
+                    };
+                    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                        loop {
+                            match svc.operations.poll(operation.0) {
+                                Some(crate::headless::operations::OperationStatus::Failed { error }) => {
+                                    assert!(error.contains("Podman 3.0"), "unexpected teardown failure: {error}");
+                                    break;
+                                }
+                                Some(crate::headless::operations::OperationStatus::Completed) => panic!("fixture must bound external convergence"),
+                                _ => tokio::task::yield_now().await,
+                            }
+                        }
+                    }).await.unwrap();
+                    assert!(!f.dirs.headless_overlay(1).exists());
+                    if std::env::var("QUMA_TASK2_CASE").unwrap() == "generation-delete" {
+                        assert!(f.dirs.headless_upper(2).exists());
+                        assert_eq!(std::fs::read(peer_journal).unwrap(), peer_before);
+                    } else {
+                        assert!(!f.dirs.headless_overlay(2).exists());
+                    }
+                    assert_eq!(std::fs::metadata(peer_lock).unwrap().ino(), peer_inode);
+                    assert_eq!(std::fs::metadata(lock).unwrap().ino(), lock_inode);
+                    for client in [1, 2] {
+                        let quarantine = f.dirs.root.join(format!("headless-policy/client-{client}/quarantine/BepInEx/plugins/Excluded.dll"));
+                        let backup = std::fs::read_dir(quarantine).unwrap().next().unwrap().unwrap().path();
+                        assert_eq!(std::fs::read(backup).unwrap(), b"published");
+                    }
+                    std::fs::create_dir_all(f.dirs.headless_upper(1)).unwrap();
+                    std::fs::create_dir_all(f.dirs.headless_work(1)).unwrap();
+                    let guard = crate::headless::exclusions::lifecycle::acquire(&f.dirs, 1).unwrap();
+                    crate::headless::exclusions::lifecycle::start_locked(&f.manager, &f.dirs, &f.db, 1, guard).await.unwrap();
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn graceful_restart_prepares_and_preserves_raid_and_manual_stop_checks() {
+        for case in [
+            "graceful-valid",
+            "graceful-invalid",
+            "graceful-raid",
+            "graceful-manual",
+        ] {
+            crate::headless::exclusions::test_support::run("headless::service::lifecycle_tests::graceful_restart_prepares_and_preserves_raid_and_manual_stop_checks",case,|f| async move {
+                let case=std::env::var("QUMA_TASK2_CASE").unwrap();
+                let server=wiremock::MockServer::start().await;
+                wiremock::Mock::given(wiremock::matchers::method("POST")).and(wiremock::matchers::path("/fika/api/restartheadless")).respond_with(wiremock::ResponseTemplate::new(200)).expect(if case=="graceful-raid" {0}else{1}).mount(&server).await;
+                if case=="graceful-invalid" {f.db.lock().conn().execute("DROP TABLE mod_groups",[]).unwrap();}
+                let cfg=Config{headless:Some(crate::config::HeadlessConfig::default()),..Default::default()};
+                let states=Arc::new(RwLock::new(vec![crate::client::ClientState{index:1,container_name:"fika-headless-1".into(),container_status:crate::client::ContainerStatus::Running,fika_status:Some(if case=="graceful-raid"{EHeadlessStatus::InRaid}else{EHeadlessStatus::Ready}),players:vec![],cpu_percent:None,memory_mb:None,restart_count:0,last_restart:None,health:ClientHealth::Healthy,restarting:false,consecutive_failures:0,first_seen:chrono::Utc::now(),manually_stopped:case=="graceful-manual",profile_id:Some("profile".into()),prev_fika_status:None}]));
+                let (events,_)=broadcast::channel(8);
+                let fika=Arc::new(FikaClient::new(&server.uri(),"fixture".into()).unwrap());
+                let svc=HeadlessService::new(f.manager,Arc::new(parking_lot::RwLock::new(cfg)),f.dirs.config_path(),Arc::new(Mutex::new(())),Arc::new(f.dirs),f.db,Default::default(),states.clone(),Some(fika),Arc::new(Mutex::new(())),ForgeClient::new().unwrap(),events);
+                let result=svc.graceful_restart(1).await;
+                if case=="graceful-raid" {assert!(matches!(result,Err(HeadlessError::ClientInRaid{..})));}
+                else if case=="graceful-invalid" {assert!(result.is_err());}
+                else {assert!(matches!(result,Ok(GracefulResult::Exited)));}
+                if case=="graceful-manual" {assert!(states.read().await[0].manually_stopped);}
+            });
+        }
+    }
+
+    #[test]
+    fn busy_preparation_blocks_scale_delete_rebuild_and_preserves_stop_intent() {
+        for case in ["busy-scale", "busy-delete", "busy-rebuild", "busy-stop"] {
+            crate::headless::exclusions::test_support::run("headless::service::lifecycle_tests::busy_preparation_blocks_scale_delete_rebuild_and_preserves_stop_intent",case,|f| async move {
+                let case=std::env::var("QUMA_TASK2_CASE").unwrap();
+                let hc=crate::config::HeadlessConfig{clients:vec![Default::default()],..Default::default()};
+                let cfg=Config{headless:Some(hc),..Default::default()};cfg.save(&f.dirs.config_path()).unwrap();
+                let sentinel=f.dirs.headless_upper(1).join("preserve");std::fs::write(&sentinel,b"unchanged").unwrap();
+                let states=Arc::new(RwLock::new(vec![crate::client::ClientState{index:1,container_name:"fika-headless-1".into(),container_status:crate::client::ContainerStatus::Stopped,fika_status:None,players:vec![],cpu_percent:None,memory_mb:None,restart_count:0,last_restart:None,health:ClientHealth::Down,restarting:false,consecutive_failures:0,first_seen:chrono::Utc::now(),manually_stopped:true,profile_id:Some("profile".into()),prev_fika_status:None}]));
+                let (events,_)=broadcast::channel(8);
+                let svc=HeadlessService::new(f.manager,Arc::new(parking_lot::RwLock::new(cfg)),f.dirs.config_path(),Arc::new(Mutex::new(())),Arc::new(f.dirs.clone()),f.db,Default::default(),states.clone(),None,Arc::new(Mutex::new(())),ForgeClient::new().unwrap(),events);
+                // Multi-client acquisition must roll back client 1 when client 2
+                // is busy, before any destructive API or upper-directory change.
+                let index=if case=="busy-stop" {1}else{2};
+                let held=crate::headless::exclusions::PolicyOperationGuard::acquire(&f.dirs,index).unwrap();
+                if case=="busy-stop" {
+                    assert!(svc.client_lifecycle(1,LifecycleAction::Stop).await.is_err());
+                    assert!(states.read().await[0].manually_stopped);
+                }else{
+                    let op=match case.as_str(){"busy-scale"=>svc.scale(0,false).await.unwrap(),"busy-delete"=>svc.delete(1,false).await.unwrap(),_=>svc.rebuild(false).await.unwrap()};
+                    tokio::time::timeout(std::time::Duration::from_secs(5),async {loop {match svc.operations.poll(op.0){Some(crate::headless::operations::OperationStatus::Failed{error})=>{assert!(error.contains("busy"));break},Some(crate::headless::operations::OperationStatus::Completed)=>panic!("destructive operation bypassed busy guard"),_=>tokio::task::yield_now().await}}}).await.unwrap();
+                    let first=crate::headless::exclusions::PolicyOperationGuard::acquire(&f.dirs,1).unwrap();drop(first);
+                }
+                assert_eq!(std::fs::read(sentinel).unwrap(),b"unchanged");drop(held);
+            });
+        }
     }
 }
