@@ -288,13 +288,15 @@ mod tests {
 
     #[test]
     fn detect_from_cwd_walkup() {
-        let tmp = TempDir::new().unwrap();
-        let spt = create_fake_spt_dir(tmp.path());
+        temp_env::with_vars_unset(["QUMA_SPT_DIR", "QUMA_DIR"], || {
+            let tmp = TempDir::new().unwrap();
+            let spt = create_fake_spt_dir(tmp.path());
 
-        // Simulate being inside SPT/user/mods/ — walkup should find the root.
-        let deep = spt.join("SPT/user/mods");
-        let dirs = crate::dirs::QumaDirs::detect(None, Some(&deep)).unwrap();
-        assert_eq!(dirs.spt_server, spt);
+            // Simulate being inside SPT/user/mods/ — walkup should find the root.
+            let deep = spt.join("SPT/user/mods");
+            let dirs = crate::dirs::QumaDirs::detect(None, Some(&deep)).unwrap();
+            assert_eq!(dirs.spt_server, spt);
+        });
     }
 
     #[test]
