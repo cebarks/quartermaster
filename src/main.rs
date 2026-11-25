@@ -161,7 +161,7 @@ async fn main() -> Result<()> {
         }
         Command::Headless { action } => {
             init_early_logging(&cli, &reload_handles);
-            let dirs = dirs::QumaDirs::detect(cli.spt_dir.as_deref(), None)?;
+            let dirs = dirs::QumaDirs::detect(cli.effective_quma_dir(), None)?;
             cli::headless::run(action, &dirs).await
         }
         Command::Spt { action } => {

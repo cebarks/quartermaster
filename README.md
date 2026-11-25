@@ -117,6 +117,19 @@ Options:
 
 Mods can be referenced by name, Forge slug, or numeric Forge ID. Use `--force` on install/update/remove to bypass the change queue and apply immediately.
 
+### Headless mod exclusions
+
+Mod groups marked `exclude_headless` are reconciled in each managed client's private overlay before its next safe first boot, start, restart or recovery. Saving a group does not interrupt a running client. Player/server payloads and per-client configuration are not removed; re-inclusion uses verified current published files rather than an obsolete quarantined copy.
+
+For an already stopped original managed client, inspect or apply policy offline:
+
+```sh
+quma --quma-dir /path/to/quma headless reconcile-exclusions 1 --check
+quma --quma-dir /path/to/quma headless reconcile-exclusions 1
+```
+
+The command never stops or starts clients, runs migrations, drains queues or performs initial convergence. `--check` creates no policy state, locks, masks or mounts; unsupported running/container/database states refuse. Updating a CLI alone does not update an already-running older daemon. See [headless exclusion reconciliation](docs/headless-exclusions.md) for safety, read-only database and lifecycle contracts.
+
 ## Web UI
 
 Start with `quma --quma-dir /path/to/spt-server serve` (default: `https://localhost:9190/quma/login`, listening on `0.0.0.0:9190`). The default self-signed TLS certificate requires a browser exception.
@@ -150,6 +163,7 @@ QUMA_DIR=~/spt-server quma status
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Development setup, workflow, and code style
 - [docs/forge-api-notes.md](docs/forge-api-notes.md) — Undocumented Forge API quirks and behaviors
 - [docs/spt-remote-client-connectivity.md](docs/spt-remote-client-connectivity.md) — SPT remote client connectivity investigation and proxy setup
+- [docs/headless-exclusions.md](docs/headless-exclusions.md) — Headless mod-group policy, guarded lifecycle preparation and offline reconciliation
 
 ## Development
 

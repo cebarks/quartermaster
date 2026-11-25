@@ -785,7 +785,9 @@ impl Database {
     ) -> anyhow::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
 
-        // Clear all groups
+        // Memberships have no foreign-key constraint in older databases. Clear
+        // them explicitly before group IDs can be reused by the replacement set.
+        tx.execute("UPDATE installed_mods SET group_id = NULL", [])?;
         tx.execute("DELETE FROM mod_groups", [])?;
 
         // Insert new groups and assign mods
