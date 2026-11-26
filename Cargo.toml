@@ -37,12 +37,13 @@ tokio = { version = "1", features = ["full"] }
 
 # Container management (Podman/Docker API)
 bollard = "0.21"
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["io"] }
 
 # Error handling
 anyhow = "1"
 
 # Crypto & hashing
+sha2 = "0.10"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 rand = "0.10"
 subtle = "2"

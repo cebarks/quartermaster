@@ -6,7 +6,7 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Upgrade notes
 
-- Upgrade/restart Convoy clients with Managed-path ownership support before using the expanded publisher. Old clients lack safe game-assembly ownership and miss same-version file additions. See [Convoy file policy](docs/convoy-client-files.md); mixed-client capability negotiation is not implemented.
+- Upgrade Quartermaster and the standalone Convoy client as a pair. Legacy Convoy catalog and ZIP delivery return `410 Gone` when enabled; setup and invite ZIPs are unchanged. See [Convoy file policy and rollback](docs/convoy-client-files.md#paired-upgrade-and-rollback).
 - Headless exclusion ownership uses journal format 3 and requires durable directory user xattrs. Active or pending format-1/2 ownership cannot be upgraded safely from inode numbers alone and now refuses automatic adoption or teardown; preserve its data/evidence for separately authorized recovery. Keep the updated daemon and CLI paired. See [overlay generation and recovery requirements](docs/headless-exclusions.md#overlay-generations-and-destructive-lifecycle-operations).
 
 ### Added
@@ -15,7 +15,7 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Fixed
 
-- Include package-tracked direct `EscapeFromTarkov_Data/Managed/*.dll` dependencies in Convoy catalogs and both archive routes. Rehash uses the same overlay layers as delivery; versioned caches and manifest-bound archive identity prevent stale omission. Default setup ZIP filtering retains its independent tracked-file/server-root policy and explicit overrides. Reject incomplete Convoy packages with missing eligible file checksums before catalog publication or archive cache lookup; rehash before publishing.
+- Publish scoped client files, package-tracked Managed DLLs, and eligible bundles as immutable, resumable Convoy v2 objects. Queue rehash and republish in the background and expose publication status in the Convoy admin tabs.
 - Enforce mod-group headless exclusions before managed first boot, start, restart and recovery using guarded private overlays, verified quarantine and current-publication restoration; preserve player/server payloads and per-client configuration.
 - Retire generation-bound exclusion ownership during authorized headless overlay destruction so rebuilt/reused indices can prepare safely, preserving retired-path protection, quarantine evidence and persistent operation locks. Durable directory proof prevents recycled inode numbers from authorizing deletion of a replacement overlay while preserving proven partial-removal and restart recovery.
 - Clear omitted group memberships when replacing the complete mod-group set so reused group IDs cannot inherit stale assignments.

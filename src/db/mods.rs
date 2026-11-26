@@ -361,6 +361,7 @@ impl Database {
         rows.collect()
     }
 
+    #[cfg(test)]
     pub fn get_files_for_mod_ids(&self, mod_ids: &[i64]) -> rusqlite::Result<Vec<InstalledFile>> {
         if mod_ids.is_empty() {
             return Ok(Vec::new());
@@ -515,6 +516,7 @@ impl Database {
         )
     }
 
+    #[cfg(test)]
     pub fn update_file_hash(
         &self,
         file_id: i64,

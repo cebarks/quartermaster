@@ -9,7 +9,7 @@ use super::scoped::ScopedDir;
 
 /// Scoped reads from the installation's overlay view, without mounting it.
 pub(crate) struct LayeredFiles {
-    scopes: Vec<ScopedDir>,
+    scopes: Vec<(usize, ScopedDir)>,
 }
 
 impl LayeredFiles {
@@ -24,9 +24,9 @@ impl LayeredFiles {
             ]
         };
         let mut scopes = Vec::new();
-        for root in roots {
+        for (layer, root) in roots.into_iter().enumerate() {
             match ScopedDir::open(&root) {
-                Ok(scope) => scopes.push(scope),
+                Ok(scope) => scopes.push((layer, scope)),
                 Err(e) if is_not_found(&e) => continue,
                 Err(e) => return Err(e),
             }
@@ -35,20 +35,58 @@ impl LayeredFiles {
     }
 
     pub(crate) fn read(&self, relative: &Path, client_only: bool) -> Result<File> {
-        for scope in &self.scopes {
+        self.read_inner(relative, client_only, None)?
+            .map(|(_, file)| file)
+            .ok_or_else(|| anyhow::anyhow!("file does not exist in any installation layer"))
+    }
+
+    #[allow(dead_code)] // Convoy v2 mounts only in the ephemeral service for now.
+    pub(crate) fn read_filtered(
+        &self,
+        relative: &Path,
+        accept: &dyn Fn(&Path) -> bool,
+    ) -> Result<File> {
+        self.read_inner(relative, true, Some(accept))?
+            .map(|(_, file)| file)
+            .ok_or_else(|| anyhow::anyhow!("file does not exist in any installation layer"))
+    }
+
+    /// Returns the exact logical layer and file, or absence from all layers.
+    pub(crate) fn read_exact_source(
+        &self,
+        relative: &Path,
+        client_only: bool,
+    ) -> Result<Option<(usize, File)>> {
+        self.read_inner(relative, client_only, Some(&|opened| opened == relative))
+    }
+
+    fn read_inner(
+        &self,
+        relative: &Path,
+        client_only: bool,
+        accept: Option<&dyn Fn(&Path) -> bool>,
+    ) -> Result<Option<(usize, File)>> {
+        for (layer, scope) in &self.scopes {
             let result = if client_only {
                 scope.read_client_overlay_file(relative)
             } else {
                 scope.read_overlay_file(relative)
             };
             match result {
-                Ok(Some(file)) => return Ok(file),
+                Ok(Some(file)) => {
+                    if let Some(accept) = accept {
+                        if !accept(&scope.opened_relative_path(&file)?) {
+                            bail!("opened file is outside the allowed namespace");
+                        }
+                    }
+                    return Ok(Some((*layer, file)));
+                }
                 Ok(None) => bail!("file is deleted in an installation layer"),
                 Err(e) if is_not_found(&e) && !scope.blocks_lower_layer(relative)? => continue,
                 Err(e) => return Err(e),
             }
         }
-        bail!("file does not exist in any installation layer")
+        Ok(None)
     }
 }
 

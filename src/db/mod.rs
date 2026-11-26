@@ -20,6 +20,18 @@ pub struct Database {
 }
 
 impl Database {
+    /// Share a single SQLite read view across metadata queries, including concurrent writers.
+    #[allow(dead_code)] // Convoy v2 mounts only in the ephemeral service for now.
+    pub(crate) fn read_snapshot<T>(
+        &self,
+        capture: impl FnOnce() -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let captured = capture()?;
+        transaction.commit()?;
+        Ok(captured)
+    }
+
     /// SQL-readonly reader: no migrations, RBAC, payload or sidecar creation.
     /// WAL requires BOTH existing WAL and SHM. Native SQLite reader-lock/SHM
     /// bookkeeping is allowed. The database namespace must remain stable while
