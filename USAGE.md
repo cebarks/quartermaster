@@ -140,6 +140,16 @@ quma reindex                   # dry-run — shows what would change
 quma reindex --apply           # apply changes
 ```
 
+### Legacy integrity baselines
+
+Tracked files use XXH3-128. Legacy checksums remain pending rather than being rehashed automatically on startup; NULL baselines stay unknown. `quma status --json` exposes `integrity.unverified_files` with record IDs and reasons. Back up and inspect the selected files before explicitly trusting their current bytes:
+
+```bash
+quma --quma-dir /path/to/installation rebaseline --file-id 42 --file-id 43 --trust-current
+```
+
+This records a new baseline, not a check against the old checksum. Unselected records and historical evidence remain intact. Missing, unreadable, hidden or changed files stay pending; retry the unresolved IDs after fixing the cause. See [Convoy migration and rollback](docs/convoy-client-files.md#paired-upgrade-and-rollback).
+
 ## Server Management
 
 Control the SPT server container:
@@ -333,6 +343,8 @@ require_backup = false         # fail operations if backup fails (default: false
 Convoy is the built-in client mod syncing system. It replaces the legacy NarcoNet/modsync integration. Existing `[modsync]` config sections are automatically migrated to `[convoy]` on first load.
 
 Without a `[convoy]` section, or with `enabled = false`, the Convoy catalog and archive endpoints return HTTP 503. This setting does not disable the player setup ZIP.
+
+Delivery uses protocol 3 (`/quma/convoy/v3/catalog` and generation-scoped raw objects with `xxh3_128` plus length). Upgrade the standalone client and publisher together; enabled v2 routes return `410 Gone`. Legacy client assets prevent publication until explicitly rebaselined; **Rehash and republish** cannot bypass pending legacy baselines. Retained old and candidate objects both count toward the existing storage cap. See [the file/ownership policy](docs/convoy-client-files.md).
 
 ```toml
 [convoy]

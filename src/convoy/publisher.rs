@@ -186,6 +186,13 @@ fn build_candidate(
     let rehash = matches!(mode, PublishMode::Rehash);
     for m in input.mods.iter().filter(|m| !m.disabled) {
         let rows = input.files.get(&m.id).map_or(&[][..], Vec::as_slice);
+        for file in rows.iter().filter(|file| is_candidate_client_file(file)) {
+            ensure!(
+                !file.legacy_pending,
+                "client file requires explicit XXH3-128 rebaseline: {}",
+                file.file_path
+            );
+        }
         let key = input.package_key(m, runtime, spt_version)?;
         let reused = previous.filter(|_| !rehash).and_then(|snapshot| {
             snapshot
@@ -200,7 +207,7 @@ fn build_candidate(
                     asset,
                     snapshot
                         .objects
-                        .get(&asset.sha256)
+                        .get(&asset.xxh3_128)
                         .context("missing verified object record")?,
                 )?;
             }
@@ -272,7 +279,7 @@ fn build_candidate(
     exclusions.sort_unstable();
     exclusions.dedup();
     let mut manifest = CatalogManifest {
-        protocol: 2,
+        protocol: 3,
         generation: String::new(),
         spt_version: spt_version.to_owned(),
         quartermaster_version: env!("QUMA_VERSION").to_owned(),
@@ -311,6 +318,13 @@ fn build_package(
             manifest::portable_path(path) && catalog::is_client_path(path),
             "invalid portable client path: {path}"
         );
+        ensure!(
+            !f.legacy_pending
+                && f.file_hash
+                    .as_deref()
+                    .is_some_and(|hash| manifest::lower_hex(hash, 32)),
+            "client file requires explicit XXH3-128 rebaseline: {path}"
+        );
         let relative = Path::new(path);
         let tracked = if rehash {
             (None, None)
@@ -331,7 +345,7 @@ fn build_package(
             .with_context(|| format!("cannot verify Convoy client file {path}"))?
             .with_context(|| format!("missing Convoy client file {path}"))?;
         if rehash {
-            updates.insert(f.id, (asset.xxh3_64.clone(), asset.length as i64));
+            updates.insert(f.id, (asset.xxh3_128.clone(), asset.length as i64));
         }
         files.push(asset);
     }
@@ -344,14 +358,23 @@ fn build_package(
             rehash,
             witnesses,
             |path, source, row| {
-                let tracked = row
-                    .filter(|_| !rehash)
+                let row = row.with_context(|| format!("untracked Convoy bundle: {path}"))?;
+                ensure!(
+                    !row.legacy_pending
+                        && row
+                            .file_hash
+                            .as_deref()
+                            .is_some_and(|hash| manifest::lower_hex(hash, 32)),
+                    "bundle requires explicit XXH3-128 rebaseline: {path}"
+                );
+                let tracked = (!rehash)
+                    .then_some(row)
                     .map_or((None, None), |r| (r.file_hash.as_deref(), r.file_size));
                 let asset = pending
                     .stage(path.clone(), source, tracked)
                     .with_context(|| format!("cannot verify declared Convoy bundle {path}"))?;
-                if let Some(row) = row.filter(|_| rehash) {
-                    updates.insert(row.id, (asset.xxh3_64.clone(), asset.length as i64));
+                if rehash {
+                    updates.insert(row.id, (asset.xxh3_128.clone(), asset.length as i64));
                 }
                 bundles.push(asset);
                 Ok(())

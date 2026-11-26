@@ -154,7 +154,7 @@ impl ExtractionLimits {
     }
 }
 
-/// Wraps a writer and computes xxHash3-64 on the fly, enforcing a per-entry byte limit.
+/// Wraps a writer and computes XXH3-128 on the fly, enforcing a per-entry byte limit.
 struct HashingWriter<W> {
     inner: W,
     hasher: Xxh3,
@@ -173,7 +173,10 @@ impl<W: Write> HashingWriter<W> {
     }
 
     fn finish(self) -> (u64, String) {
-        (self.bytes_written, format!("{:016x}", self.hasher.digest()))
+        (
+            self.bytes_written,
+            format!("{:032x}", self.hasher.digest128()),
+        )
     }
 }
 
@@ -568,7 +571,7 @@ fn validate_dest_under_root(dest: &Path, spt_root: &Path, raw_name: &str) -> Res
     Ok(())
 }
 
-/// Compute the xxHash3-64 hash of a file on disk, returned as a lowercase hex string.
+/// Compute the XXH3-128 hash of a file on disk, returned as a lowercase hex string.
 /// Streams through a BufReader to avoid loading the entire file into memory.
 pub fn compute_file_hash(path: &Path) -> Result<String> {
     let file = fs::File::open(path)
@@ -589,7 +592,7 @@ pub(crate) fn compute_reader_hash(reader: impl Read) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("{:016x}", hasher.digest()))
+    Ok(format!("{:032x}", hasher.digest128()))
 }
 
 /// Delete mod files from `spt_root` and clean up empty parent directories.
@@ -639,13 +642,13 @@ pub fn scan_mod_directories(dirs: &QumaDirs) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Compute xxHash3-64 of a byte slice, returned as a lowercase hex string.
+/// Compute XXH3-128 of a byte slice, returned as a lowercase hex string.
 pub fn compute_hash_public(data: &[u8]) -> String {
     compute_hash(data)
 }
 
 fn compute_hash(data: &[u8]) -> String {
-    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(data))
+    format!("{:032x}", xxhash_rust::xxh3::xxh3_128(data))
 }
 
 /// Recursively scan a directory, collecting file paths relative to `spt_root`.
@@ -871,7 +874,7 @@ pub(crate) mod tests {
                 "hash should be hex: {}",
                 f.hash
             );
-            assert_eq!(f.hash.len(), 16, "xxHash3-64 hex should be 16 chars");
+            assert_eq!(f.hash.len(), 32, "XXH3-128 hex should be 32 chars");
         }
 
         // Verify sizes match content
@@ -888,11 +891,7 @@ pub(crate) mod tests {
         fs::write(tmp.path(), b"hello world").unwrap();
 
         let hash = compute_file_hash(tmp.path()).unwrap();
-        // xxHash3-64 of "hello world"
-        assert_eq!(
-            hash,
-            format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"hello world"))
-        );
+        assert_eq!(hash, "df8d09e93f874900a99b8775cc15b6c7");
     }
 
     #[test]
@@ -900,8 +899,8 @@ pub(crate) mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         fs::write(tmp.path(), b"hello world").unwrap();
         let hash = compute_file_hash(tmp.path()).unwrap();
-        // xxHash3-64 of "hello world" = 16-char hex
-        assert_eq!(hash.len(), 16, "hash should be 16 hex chars (xxHash3-64)");
+        // Canonical XXH3-128 uses 32 hex digits.
+        assert_eq!(hash.len(), 32, "hash should be 32 hex chars (XXH3-128)");
         // Verify it's valid hex
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -1057,7 +1056,7 @@ pub(crate) mod tests {
                 "hash should be hex: {}",
                 f.hash
             );
-            assert_eq!(f.hash.len(), 16, "xxHash3-64 hex should be 16 chars");
+            assert_eq!(f.hash.len(), 32, "XXH3-128 hex should be 32 chars");
         }
 
         let pkg = files
@@ -1109,10 +1108,7 @@ pub(crate) mod tests {
         let (size, hash) = writer.finish();
         assert_eq!(size, 11);
         assert_eq!(buf, b"hello world");
-        assert_eq!(
-            hash,
-            format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"hello world"))
-        );
+        assert_eq!(hash, "df8d09e93f874900a99b8775cc15b6c7");
     }
 
     #[test]

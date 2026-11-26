@@ -10,9 +10,9 @@ use std::os::unix::fs::FileExt;
 use crate::convoy::publisher::{Admission, DeliveryError, ObjectLease, Publisher};
 
 pub fn configure_v2(cfg: &mut web::ServiceConfig) {
-    cfg.route("/convoy/v2/catalog", web::get().to(catalog))
+    cfg.route("/convoy/v3/catalog", web::get().to(catalog))
         .route(
-            "/convoy/v2/generations/{generation}/objects/{sha256}",
+            "/convoy/v3/generations/{generation}/objects/{digest}",
             web::get().to(object),
         );
 }

@@ -1,5 +1,5 @@
 mod hash_recovery;
-pub(crate) use hash_recovery::rebaseline_pending_hashes;
+pub(crate) use hash_recovery::rebaseline_selected_hashes;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

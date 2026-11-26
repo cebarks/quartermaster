@@ -347,6 +347,7 @@ mod tests {
                 file_hash: None,
                 file_size: None,
                 source: "archive".into(),
+                legacy_pending: false,
             }];
             let dest = tmp.path().join("mods.zip");
             build_mod_zip_to_file(&dirs, &files, &dest, client_only).unwrap();
@@ -392,6 +393,7 @@ mod tests {
             file_hash: None,
             file_size: None,
             source: "archive".to_string(),
+            legacy_pending: false,
         }
     }
 

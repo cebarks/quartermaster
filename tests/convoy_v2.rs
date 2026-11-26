@@ -15,8 +15,8 @@ use spt_quartermaster::{
 };
 use std::{fs, net::TcpListener, path::Path, sync::Arc};
 
-const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const ABC: &str = "06b05ab6733a618578af5f94892f3950";
+const EMPTY: &str = "99aa06d3014798d86001c324468d497f";
 const PLUGIN: &str = "BepInEx/plugins/Test/item.dll";
 const MANAGED: &str = "EscapeFromTarkov_Data/Managed/Dependency.dll";
 
@@ -64,7 +64,7 @@ impl Fixture {
     }
 
     fn track(&self, id: i64, path: &str, bytes: &[u8]) {
-        let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(bytes));
+        let hash = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(bytes));
         self.db
             .lock()
             .insert_file(id, path, Some(&hash), Some(bytes.len() as i64))
@@ -97,7 +97,7 @@ impl Fixture {
 
 async fn serve(publisher: Arc<Publisher>) -> (String, actix_web::dev::ServerHandle) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/quma/convoy/v2", listener.local_addr().unwrap());
+    let url = format!("http://{}/quma/convoy/v3", listener.local_addr().unwrap());
     let publisher = web::Data::from(publisher);
     let server = HttpServer::new(move || {
         App::new()
@@ -114,11 +114,217 @@ async fn serve(publisher: Arc<Publisher>) -> (String, actix_web::dev::ServerHand
 }
 
 #[actix_web::test]
+async fn v3_publishes_fresh_xxh128_object_and_rejects_v2() {
+    let f = Fixture::new(true);
+    write(&f.dirs.spt_server, PLUGIN, b"abc");
+    let digest = "06b05ab6733a618578af5f94892f3950";
+    f.db.lock()
+        .insert_file(f.id, PLUGIN, Some(digest), Some(3))
+        .unwrap();
+    let publisher = Arc::new(f.publisher(64));
+    let generation = publication::ready(&publisher).await;
+    let (base, server) = serve(publisher).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let v3 = base.replace("/v2", "/v3");
+    let catalog = client.get(format!("{v3}/catalog")).send().await.unwrap();
+    let status = catalog.status();
+    let body = catalog.bytes().await.unwrap();
+    let object = client
+        .get(format!("{v3}/generations/{generation}/objects/{digest}"))
+        .send()
+        .await
+        .unwrap();
+    let object_status = object.status();
+    let object_bytes = object.bytes().await.unwrap();
+    let old_status = client
+        .get(format!("{}/catalog", base.replace("/v3", "/v2")))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    server.stop(true).await;
+    assert_eq!(status.as_u16(), 200);
+    assert_eq!(object_status.as_u16(), 200);
+    assert_eq!(object_bytes.as_ref(), b"abc");
+    assert_ne!(
+        old_status.as_u16(),
+        200,
+        "v2 delivery must not remain available"
+    );
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["protocol"], 3);
+    assert_eq!(json["generation"], generation);
+    assert_eq!(generation.len(), 32);
+    let item = &json["groups"][0]["mods"][0]["files"][0];
+    assert_eq!(item["length"], 3);
+    assert_eq!(item["xxh3_128"], digest);
+    assert!(item.get("sha256").is_none());
+    assert!(item.get("xxh3_64").is_none());
+}
+
+#[test]
+fn v3_forced_rehash_does_not_silently_rebaseline_legacy_client_file() {
+    let f = Fixture::new(true);
+    write(&f.dirs.spt_server, PLUGIN, b"abc");
+    f.db.lock()
+        .insert_file(f.id, PLUGIN, Some("78af5f94892f3950"), Some(3))
+        .unwrap();
+    let input = f.input();
+    let store = f.store(64);
+    assert!(build_snapshot(&input, &store, None, PublishMode::Rehash).is_err());
+    let rows = f.db.lock().get_files_for_mod(f.id).unwrap();
+    assert_eq!(rows[0].file_hash.as_deref(), Some("78af5f94892f3950"));
+    assert_eq!(fs::read(f.dirs.spt_server.join(PLUGIN)).unwrap(), b"abc");
+}
+
+#[test]
+fn v3_refuses_untracked_bundle_payload() {
+    let f = Fixture::new(true);
+    write(&f.dirs.spt_server, PLUGIN, b"abc");
+    f.db.lock()
+        .insert_file(
+            f.id,
+            PLUGIN,
+            Some("06b05ab6733a618578af5f94892f3950"),
+            Some(3),
+        )
+        .unwrap();
+    f.add("SPT_Runtime/user/mods/Test/index.js", b"marker");
+    write(
+        &f.dirs.spt_server,
+        "SPT_Runtime/user/mods/Test/bundles.json",
+        br#"{"manifest":[{"key":"data.bundle"}]}"#,
+    );
+    write(
+        &f.dirs.spt_server,
+        "SPT_Runtime/user/mods/Test/bundles/data.bundle",
+        b"untracked bundle",
+    );
+    let result = build_snapshot(&f.input(), &f.store(1024), None, PublishMode::Managed);
+    assert!(result.is_err(), "untracked bundle must not be published");
+}
+
+#[test]
+fn v3_rehash_refuses_legacy_bundle_declaration() {
+    let f = Fixture::new(true);
+    write(&f.dirs.spt_server, PLUGIN, b"abc");
+    f.db.lock()
+        .insert_file(
+            f.id,
+            PLUGIN,
+            Some("06b05ab6733a618578af5f94892f3950"),
+            Some(3),
+        )
+        .unwrap();
+    let declaration = "SPT_Runtime/user/mods/Test/bundles.json";
+    let declaration_bytes = br#"{"manifest":[{"key":"data.bundle"}]}"#;
+    write(&f.dirs.spt_server, declaration, declaration_bytes);
+    f.db.lock()
+        .insert_file(
+            f.id,
+            declaration,
+            Some("78af5f94892f3950"),
+            Some(declaration_bytes.len() as i64),
+        )
+        .unwrap();
+    let bundle = "SPT_Runtime/user/mods/Test/bundles/data.bundle";
+    write(&f.dirs.spt_server, bundle, b"abc");
+    f.db.lock()
+        .insert_file(
+            f.id,
+            bundle,
+            Some("06b05ab6733a618578af5f94892f3950"),
+            Some(3),
+        )
+        .unwrap();
+    let result = build_snapshot(&f.input(), &f.store(1024), None, PublishMode::Rehash);
+    assert!(
+        result.is_err(),
+        "legacy bundle declaration must not be rebaselined implicitly"
+    );
+}
+
+#[test]
+fn v3_rejects_pending_row_even_if_hash_looks_current() {
+    let f = Fixture::new(true);
+    write(&f.dirs.spt_server, PLUGIN, b"abc");
+    let db = f.db.lock();
+    let id = db
+        .insert_file(
+            f.id,
+            PLUGIN,
+            Some("06b05ab6733a618578af5f94892f3950"),
+            Some(3),
+        )
+        .unwrap();
+    db.conn()
+        .execute(
+            "INSERT INTO pending_file_rehashes (file_id) VALUES (?1)",
+            [id],
+        )
+        .unwrap();
+    drop(db);
+    assert!(build_snapshot(&f.input(), &f.store(64), None, PublishMode::Managed).is_err());
+}
+
+#[actix_web::test]
+async fn v3_promotion_preserves_unowned_digest_named_files() {
+    let f = Fixture::new(true);
+    f.add(PLUGIN, b"abc");
+    let store = f.dirs.convoy_store_dir();
+    let _ = f.store(128);
+    let unrelated_digest = format!(
+        "{:032x}",
+        xxhash_rust::xxh3::xxh3_128(b"not a Convoy object")
+    );
+    let unrelated = store.join(unrelated_digest);
+    fs::write(&unrelated, b"not a Convoy object").unwrap();
+    let publisher = f.publisher(128);
+    publication::ready(&publisher).await;
+    assert_eq!(fs::read(unrelated).unwrap(), b"not a Convoy object");
+}
+
+#[actix_web::test]
+async fn v3_retirement_preserves_a_replacement_at_an_old_object_path() {
+    use std::os::unix::fs::PermissionsExt;
+    const OTHER: &str = "BepInEx/plugins/Test/other.dll";
+    let f = Fixture::new(true);
+    f.add(PLUGIN, b"abc");
+    f.add(OTHER, b"def");
+    let publisher = f.publisher(128);
+    let old = publication::ready(&publisher).await;
+    let other_digest = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(b"def"));
+    let pinned_a = publisher.admit(Some(&old), Some(ABC)).await.unwrap();
+    let pinned_b = publisher
+        .admit(Some(&old), Some(&other_digest))
+        .await
+        .unwrap();
+    write(&f.dirs.spt_server, PLUGIN, b"ghi");
+    write(&f.dirs.spt_server, OTHER, b"ghi");
+    publisher.refresh(PublishMode::Rehash);
+    assert_ne!(publication::ready(&publisher).await, old);
+    let store = f.dirs.convoy_store_dir();
+    let replaced = store.join(ABC);
+    fs::remove_file(&replaced).unwrap();
+    fs::write(&replaced, b"user replacement").unwrap();
+    fs::set_permissions(&replaced, fs::Permissions::from_mode(0o400)).unwrap();
+    drop(pinned_a);
+    drop(pinned_b);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while store.join(&other_digest).exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("retirement did not run for the control object");
+    assert_eq!(fs::read(replaced).unwrap(), b"user replacement");
+}
+
+#[actix_web::test]
 async fn v2_external_commit_fences_admission() {
-    use sha2::{Digest, Sha256};
     let f = Fixture::new(true);
     let payload = vec![b'x'; 16 * 1024 * 1024];
-    let digest = format!("{:x}", Sha256::digest(&payload));
+    let digest = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(&payload));
     f.add(PLUGIN, &payload);
     const ADDON: &str = "BepInEx/plugins/Test/Addon.dll";
     write(&f.dirs.spt_server, ADDON, b"abc");
@@ -194,7 +400,7 @@ async fn v2_external_commit_fences_admission() {
         .insert_addon(1, f.id, 1, "Fixture addon", None, "1", None)
         .unwrap();
     writer
-        .insert_addon_file(addon_id, ADDON, Some("78af5f94892f3950"), Some(3))
+        .insert_addon_file(addon_id, ADDON, Some(ABC), Some(3))
         .unwrap();
     tx.commit().unwrap();
     let status = client.get(&url).send().await.unwrap().status().as_u16();
@@ -295,7 +501,7 @@ async fn v2_reuses_unaffected_objects() {
     assert_eq!(metadata_reads, (0, 0));
 
     write(&f.dirs.spt_server, PLUGIN, b"def");
-    let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"def"));
+    let hash = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(b"def"));
     f.db.lock()
         .conn()
         .execute(
@@ -332,7 +538,7 @@ async fn v2_rehash_rebaselines_the_published_bytes() {
             .unwrap();
     assert_eq!(
         hash,
-        format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"new bytes"))
+        format!("{:032x}", xxhash_rust::xxh3::xxh3_128(b"new bytes"))
     );
     assert_eq!(length, 9);
 }
@@ -467,7 +673,11 @@ async fn v2_restart_never_confuses_equal_revisions_with_equal_inventory() {
     .unwrap();
     let publisher = restored.publisher(64);
     assert_ne!(publication::ready(&publisher).await, original);
-    assert!(!restored.dirs.convoy_store_dir().join(ABC).exists());
+    // A receipt from another inventory is not proof of ownership after restart.
+    assert_eq!(
+        fs::read(restored.dirs.convoy_store_dir().join(ABC)).unwrap(),
+        b"abc"
+    );
 }
 
 #[actix_web::test]
@@ -568,7 +778,7 @@ async fn v2_rehash_uses_and_rebaselines_the_same_bundle_declaration() {
         assert_eq!(
             file,
             (
-                format!("{:016x}", xxhash_rust::xxh3::xxh3_64(expected)),
+                format!("{:032x}", xxhash_rust::xxh3::xxh3_128(expected)),
                 expected.len() as i64
             )
         );
@@ -623,13 +833,14 @@ async fn v2_published_file_and_ranges() {
     println!("catalog fixture: {wire}");
     let json: Value = serde_json::from_str(&wire).unwrap();
     let generation = json["generation"].as_str().unwrap();
-    assert_eq!(json["protocol"], 2);
+    assert_eq!(json["protocol"], 3);
     assert_eq!(etag, format!("\"{generation}\""));
     let item = &json["groups"][0]["mods"][0]["files"][1];
     assert_eq!(item["path"], PLUGIN);
     assert_eq!(item["length"], 3);
-    assert_eq!(item["sha256"], ABC);
-    assert_eq!(item["xxh3_64"], "78af5f94892f3950");
+    assert_eq!(item["xxh3_128"], ABC);
+    assert!(item.get("sha256").is_none());
+    assert!(item.get("xxh3_64").is_none());
     let object = format!("{base}/generations/{generation}/objects/{ABC}");
     let validator = format!("\"{ABC}\"");
     // Source disappears and SQLite remains write-locked during raw delivery.
@@ -701,14 +912,14 @@ async fn v2_published_file_and_ranges() {
     assert_eq!(res.headers()["content-length"], "0");
     assert!(res.bytes().await.unwrap().is_empty());
     let res = client
-        .get(object.replace(ABC, &"0".repeat(64)))
+        .get(object.replace(ABC, &"0".repeat(32)))
         .send()
         .await
         .unwrap();
     assert_eq!(res.status().as_u16(), 404);
     assert_eq!(res.json::<Value>().await.unwrap()["code"], "not_published");
     let res = client
-        .get(object.replace(generation, &"0".repeat(64)))
+        .get(object.replace(generation, &"0".repeat(32)))
         .send()
         .await
         .unwrap();
@@ -778,6 +989,7 @@ fn v2_scoped_complete_snapshot() {
             f.dirs.spt_server.clone()
         };
         write(&mod_root, &bundle, b"abc");
+        f.track(f.id, &bundle, b"abc");
         let declaration = format!("{runtime}/user/mods/Test/bundles.json");
         write(
             &mod_root,
@@ -797,7 +1009,7 @@ fn v2_scoped_complete_snapshot() {
         assert_eq!(
             m.files
                 .iter()
-                .map(|e| (e.path.as_str(), e.sha256.as_str()))
+                .map(|e| (e.path.as_str(), e.xxh3_128.as_str()))
                 .collect::<Vec<_>>(),
             [(PLUGIN, ABC), (MANAGED, ABC)]
         );
@@ -806,7 +1018,7 @@ fn v2_scoped_complete_snapshot() {
             m.bundles[0].path,
             format!("{runtime}/user/cache/bundles/test.bundle")
         );
-        assert_eq!(m.bundles[0].sha256, ABC);
+        assert_eq!(m.bundles[0].xxh3_128, ABC);
         let builds = || build_snapshot(&input, &store, None, PublishMode::Managed);
         fs::remove_file(mod_root.join(&bundle)).unwrap();
         assert!(builds().is_err(), "declared missing bundle");
@@ -917,6 +1129,8 @@ fn v2_rejects_changed_tracked_bundle_declaration() {
     f.add(DECL, br#"{"manifest":[{"key":"a"}]}"#);
     write(&f.dirs.spt_server, "SPT/user/mods/Test/bundles/a", b"abc");
     write(&f.dirs.spt_server, "SPT/user/mods/Test/bundles/b", b"abc");
+    f.track(f.id, "SPT/user/mods/Test/bundles/a", b"abc");
+    f.track(f.id, "SPT/user/mods/Test/bundles/b", b"abc");
     let store = f.store(8);
     let input = f.input();
     assert!(build_snapshot(&input, &store, None, PublishMode::Managed).is_ok());

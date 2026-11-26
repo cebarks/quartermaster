@@ -28,6 +28,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/022_update_notifications.sql"),
     include_str!("../../migrations/023_rebaseline_legacy_hashes.sql"),
     include_str!("../../migrations/024_convoy_publication.sql"),
+    include_str!("../../migrations/025_xxh3_128_baselines.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
@@ -37,6 +38,18 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         let target_version = (i + 1) as i32;
         if current_version < target_version {
             let tx = conn.unchecked_transaction()?;
+            if target_version == 23 {
+                // Migration 023 clears old hashes. Preserve them before it runs;
+                // already-upgraded databases can only retain its pending marker.
+                tx.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS legacy_file_hashes (
+                        file_id INTEGER PRIMARY KEY REFERENCES installed_files(id) ON DELETE CASCADE,
+                        algorithm TEXT NOT NULL, hash TEXT
+                    );
+                    INSERT OR IGNORE INTO legacy_file_hashes (file_id, algorithm, hash)
+                    SELECT id, 'sha256', file_hash FROM installed_files WHERE length(file_hash) = 64;",
+                )?;
+            }
             tx.execute_batch(sql)?;
             tx.pragma_update(None, "user_version", target_version)?;
             tx.commit()?;
@@ -130,12 +143,90 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn v24_xxh128_upgrade_preserves_each_owner_and_legacy_provenance() {
+        let db = database_at_version(24);
+        seed_legacy_hashes(&db);
+        db.conn()
+            .execute_batch(
+                "UPDATE installed_mods SET disabled = 1 WHERE id = 1;
+             UPDATE installed_files SET file_path = 'missing.dll' WHERE id = 3;",
+            )
+            .unwrap();
+        let before: Vec<(i64, Option<String>)> = db
+            .conn()
+            .prepare("SELECT id, file_hash FROM installed_files ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let revision = db.convoy_revision().unwrap();
+        run_migrations(db.conn()).unwrap();
+        assert!(
+            db.conn()
+                .execute(
+                    "UPDATE installed_files SET file_path = 'server-old' WHERE id = 2",
+                    []
+                )
+                .is_err(),
+            "the existing unique-path constraint must survive migration"
+        );
+        assert_eq!(pending_ids(&db), vec![1, 2, 3, 4]);
+        let evidence: Vec<(i64, String, Option<String>)> = db
+            .conn()
+            .prepare("SELECT file_id, algorithm, hash FROM legacy_file_hashes ORDER BY file_id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            evidence,
+            vec![
+                (1, "sha256".into(), Some("a".repeat(64))),
+                (2, "sha256".into(), Some("b".repeat(64))),
+                (3, "xxh3_64".into(), Some("9555e8555c62dcfd".into())),
+                (4, "xxh3_64".into(), Some("b3f41db614dd77fa".into())),
+            ]
+        );
+        let after: Vec<(i64, Option<String>)> = db
+            .conn()
+            .prepare("SELECT id, file_hash FROM installed_files ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            after, before,
+            "migration must not read or trust filesystem bytes"
+        );
+        run_migrations(db.conn()).unwrap();
+        assert_eq!(pending_ids(&db), vec![1, 2, 3, 4]);
+        assert_eq!(db.convoy_revision().unwrap(), revision);
+        db.conn()
+            .execute("DELETE FROM installed_files WHERE id = 2", [])
+            .unwrap();
+        assert_eq!(pending_ids(&db), vec![1, 3, 4]);
+        let retained: i64 = db
+            .conn()
+            .query_row("SELECT count(*) FROM legacy_file_hashes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(retained, 3);
+        assert!(db.convoy_revision().unwrap() > revision);
+    }
+
+    #[test]
     fn legacy_hash_upgrade_queues_only_legacy_files() {
         for version in [20, 21, 22] {
             let db = database_at_version(version);
             seed_legacy_hashes(&db);
             run_migrations(db.conn()).unwrap();
-            assert_eq!(pending_ids(&db), vec![1, 2], "upgrading version {version}");
+            assert_eq!(
+                pending_ids(&db),
+                vec![1, 2, 3, 4],
+                "upgrading version {version}"
+            );
             let hashes: Vec<Option<String>> = db
                 .conn()
                 .prepare("SELECT file_hash FROM installed_files ORDER BY id")
@@ -158,17 +249,17 @@ pub(crate) mod tests {
             db.mark_update_notified(1, "2.0").unwrap();
             db.conn()
                 .execute_batch(
-                    "UPDATE installed_files SET file_hash = '94c7978acb932996' WHERE id = 2;
+                    "UPDATE installed_files SET file_hash = '3cdd8eceaad870d00a730e86e7b01817' WHERE id = 2;
                      DELETE FROM pending_file_rehashes WHERE file_id = 2;",
                 )
                 .unwrap();
             run_migrations(db.conn()).unwrap();
-            assert_eq!(pending_ids(&db), vec![1]);
+            assert_eq!(pending_ids(&db), vec![1, 3, 4]);
             assert!(db.was_update_notified(1, "2.0").unwrap());
             db.conn()
                 .execute("DELETE FROM installed_files WHERE id = 1", [])
                 .unwrap();
-            assert!(pending_ids(&db).is_empty());
+            assert_eq!(pending_ids(&db), vec![3, 4]);
         }
     }
 
@@ -184,10 +275,10 @@ pub(crate) mod tests {
             .unwrap();
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(pending_ids(&db), vec![1, 2]);
+            assert_eq!(pending_ids(&db), vec![1, 2, 3, 4]);
         }
         let db = Database::open(&path).unwrap();
-        assert_eq!(pending_ids(&db), vec![1, 2]);
+        assert_eq!(pending_ids(&db), vec![1, 2, 3, 4]);
         db.delete_mod(1).unwrap();
         assert!(pending_ids(&db).is_empty());
     }

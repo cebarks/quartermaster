@@ -1,6 +1,6 @@
 use super::*;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use xxhash_rust::xxh3::xxh3_128;
 
 pub(super) type Sources = BTreeMap<i64, Package>;
 pub(crate) type Rebaseline = BTreeMap<i64, (String, i64)>;
@@ -24,8 +24,86 @@ pub(super) struct Receipt {
     manifest: CatalogManifest,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receipt_rejects_wrong_protocol_even_with_consistent_v3_identities() {
+        for protocol in [0, 1, 2, 4, 255] {
+            let mut manifest: CatalogManifest = serde_json::from_value(serde_json::json!({
+                "protocol": protocol, "generation": "", "spt_version": "test", "quartermaster_version": "test",
+                "groups": [{"slug": "default", "name": "Default", "tier": "required", "mods": [{
+                    "id": 1, "forge_id": null, "guid": null, "name": "A", "version": "1", "bundles": [],
+                    "files": [{"path": "BepInEx/plugins/a.dll", "length": 3,
+                        "xxh3_128": "06b05ab6733a618578af5f94892f3950"}]}]}], "exclusions": []
+            })).unwrap();
+            manifest.generation = digest(&serde_json::to_vec(&manifest).unwrap());
+            let data = serde_json::to_vec(&Receipt {
+                input: "unused".into(),
+                runtime: "SPT_Runtime".into(),
+                sources: BTreeMap::new(),
+                manifest,
+            })
+            .unwrap();
+            let stored = StoredConvoyReceipt {
+                revision: 1,
+                id: digest(&data),
+                data,
+            };
+            assert!(
+                !Receipt::is_legacy(&stored),
+                "32-digit identities are not the legacy namespace"
+            );
+            let error = Receipt::decode(&stored)
+                .err()
+                .expect("wrong protocol must fail before durable receipt restoration");
+            assert!(
+                error.to_string().contains("unsupported Convoy protocol"),
+                "{error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn receipt_rejects_conflicting_object_lengths_even_with_consistent_identities() {
+        let mut manifest: CatalogManifest = serde_json::from_value(serde_json::json!({
+            "protocol": 3, "generation": "", "spt_version": "test", "quartermaster_version": "test",
+            "groups": [{"slug": "default", "name": "Default", "tier": "required", "mods": [{
+                "id": 1, "forge_id": null, "guid": null, "name": "A", "version": "1", "bundles": [],
+                "files": [
+                    {"path": "BepInEx/plugins/a.dll", "length": 3, "xxh3_128": "06b05ab6733a618578af5f94892f3950"},
+                    {"path": "BepInEx/plugins/b.dll", "length": 4, "xxh3_128": "06b05ab6733a618578af5f94892f3950"}
+                ]}]}], "exclusions": []
+        })).unwrap();
+        // Reproduce a self-consistent but structurally invalid persisted receipt.
+        manifest.generation = digest(&serde_json::to_vec(&manifest).unwrap());
+        let data = serde_json::to_vec(&Receipt {
+            input: "unused".into(),
+            runtime: "SPT_Runtime".into(),
+            sources: BTreeMap::new(),
+            manifest,
+        })
+        .unwrap();
+        let stored = StoredConvoyReceipt {
+            revision: 1,
+            id: digest(&data),
+            data,
+        };
+        let error = Receipt::decode(&stored)
+            .err()
+            .expect("invalid object metadata must fail before restore deduplication");
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting Convoy object lengths"),
+            "{error:#}"
+        );
+    }
+}
+
 pub(super) fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    format!("{:032x}", xxh3_128(bytes))
 }
 
 impl CatalogInput {
@@ -114,6 +192,7 @@ fn file_keys(files: &[InstalledFile]) -> impl Serialize + '_ {
                 &f.file_hash,
                 f.file_size,
                 &f.source,
+                f.legacy_pending,
             )
         })
         .collect();
@@ -122,6 +201,22 @@ fn file_keys(files: &[InstalledFile]) -> impl Serialize + '_ {
 }
 
 impl Receipt {
+    /// Classify an old namespace only, never authenticate or reuse its contents.
+    /// Migration must rebuild exclusively from current tracked source proofs.
+    pub(super) fn is_legacy(stored: &StoredConvoyReceipt) -> bool {
+        #[derive(Deserialize)]
+        struct Header {
+            manifest: Protocol,
+        }
+        #[derive(Deserialize)]
+        struct Protocol {
+            protocol: u32,
+        }
+        manifest::lower_hex(&stored.id, 64)
+            && serde_json::from_slice::<Header>(&stored.data)
+                .is_ok_and(|header| header.manifest.protocol == 2)
+    }
+
     /// Validate only the stored contents. Database reads and object I/O are
     /// deliberately outside this boundary.
     fn decode(stored: &StoredConvoyReceipt) -> Result<Self> {
@@ -149,7 +244,7 @@ impl Receipt {
             .into_iter()
             .flat_map(|g| g.mods)
             .flat_map(|m| m.files.into_iter().chain(m.bundles))
-            .map(|asset| asset.sha256))
+            .map(|asset| asset.xxh3_128))
     }
 
     pub(super) fn encode(
@@ -213,7 +308,7 @@ impl Receipt {
             )
         };
         for asset in assets {
-            if !objects.contains_key(&asset.sha256) {
+            if !objects.contains_key(&asset.xxh3_128) {
                 let object = store.verify(asset)?;
                 total = total
                     .checked_add(object.length)
@@ -222,7 +317,7 @@ impl Receipt {
                     total <= policy.max_store_bytes,
                     "publication exceeds object budget"
                 );
-                objects.insert(asset.sha256.clone(), object);
+                objects.insert(asset.xxh3_128.clone(), object);
             }
         }
         let json = serde_json::to_vec(&manifest)?.into();

@@ -212,6 +212,14 @@ pub fn configure_app(
 
     quma_scope = quma_scope
         .configure(handlers::convoy_v2::configure_v2)
+        .route(
+            "/convoy/v2/catalog",
+            web::get().to(handlers::convoy::retired),
+        )
+        .route(
+            "/convoy/v2/generations/{generation}/objects/{digest}",
+            web::get().to(handlers::convoy::retired),
+        )
         .route("/convoy/catalog", web::get().to(handlers::convoy::retired))
         .route(
             "/convoy/download",
@@ -948,14 +956,13 @@ fn prepare_mod_files_for_startup(
     if let Err(e) = crate::ops::recover_pending_updates(db, dirs) {
         tracing::error!(err = %e, "failed to recover pending updates on startup");
     }
-    crate::ops::rebaseline_pending_hashes(db, dirs)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod startup_tests {
     #[test]
-    fn legacy_disabled_hash_is_recovered_during_first_web_startup() {
+    fn legacy_disabled_hash_remains_unverified_during_web_startup() {
         let temp = tempfile::tempdir().unwrap();
         let dirs = crate::dirs::QumaDirs::from_root(temp.path().to_path_buf());
         let old_db = crate::db::schema::tests::database_at_version(21);
@@ -996,9 +1003,9 @@ mod startup_tests {
             b"hello"
         );
         assert!(!old_on_disk.exists());
-        assert_eq!(files[0].file_hash.as_deref(), Some("9555e8555c62dcfd"));
-        assert_eq!(files[0].file_size, Some(5));
-        assert!(db.pending_file_rehashes().unwrap().is_empty());
+        assert!(files[0].file_hash.is_none());
+        assert_eq!(files[0].file_size, Some(99));
+        assert_eq!(db.pending_file_rehashes().unwrap().len(), 1);
     }
 }
 

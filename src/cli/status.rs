@@ -102,6 +102,7 @@ fn print_report(report: &health::HealthReport, spt_info: &crate::spt::detect::Sp
 
     if report.integrity.missing_files.is_empty()
         && report.integrity.modified_files.is_empty()
+        && report.integrity.unverified_files.is_empty()
         && report.integrity.untracked_dirs.is_empty()
     {
         println!("  All mod files present on disk, hashes match.");
@@ -122,6 +123,15 @@ fn print_report(report: &health::HealthReport, spt_info: &crate::spt::detect::Sp
             );
             for f in &report.integrity.modified_files {
                 println!("    - {f}");
+            }
+        }
+        if !report.integrity.unverified_files.is_empty() {
+            println!(
+                "  {} file(s) UNVERIFIED (no current baseline):",
+                report.integrity.unverified_files.len()
+            );
+            for f in &report.integrity.unverified_files {
+                println!("    - #{} {} ({})", f.id, f.path, f.reason);
             }
         }
         for dir in &report.integrity.untracked_dirs {

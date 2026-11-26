@@ -14,8 +14,9 @@ use std::{
 const ITEM: &str = "BepInEx/plugins/Test/item.dll";
 const DEPENDENCY: &str = "EscapeFromTarkov_Data/Managed/Dependency.dll";
 const CHILD_ARGS: &str = "-config={\"BackendUrl\":\"http://127.0.0.1:1\",\"Version\":\"live\"}";
-const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+const ABC128: &str = "06b05ab6733a618578af5f94892f3950";
+const EMPTY128: &str = "99aa06d3014798d86001c324468d497f";
 
 fn assert_artifacts(stdout: &str, dll: &std::path::Path, exe: &std::path::Path) {
     for (label, artifact) in [
@@ -64,8 +65,8 @@ async fn convoy_v2_e2e_fresh_and_existing() {
         .insert_mod(None, None, "Mono bridge", None, "1", "local", None, None)
         .unwrap();
     for (relative, bytes, xxh) in [
-        (ITEM, &b"abc"[..], "78af5f94892f3950"),
-        (DEPENDENCY, &b""[..], "2d06800538d394c2"),
+        (ITEM, &b"abc"[..], ABC128),
+        (DEPENDENCY, &b""[..], EMPTY128),
     ] {
         let path = dirs.spt_server.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -165,7 +166,7 @@ async fn convoy_v2_e2e_fresh_and_existing() {
         }
     }
     let disabled = http
-        .get(format!("{origin}/quma/convoy/v2/catalog"))
+        .get(format!("{origin}/quma/convoy/v3/catalog"))
         .send()
         .await
         .unwrap();
@@ -195,23 +196,21 @@ async fn convoy_v2_e2e_fresh_and_existing() {
         assert!(stdout.lines().any(|line| line == format!("PASS: {name}")));
         assert_artifacts(&stdout, &dll, &exe);
         let owned = if matching { "False" } else { "True" };
-        for (path, len, sha, xxh) in [
-            (ITEM, 3, ABC, "78af5f94892f3950"),
-            (DEPENDENCY, 0, EMPTY, "2d06800538d394c2"),
-        ] {
-            assert!(stdout.lines().any(|line| line
-                == format!("LIVE {path} length={len} sha256={sha} xxh3={xxh} owned={owned}")));
+        for (path, len, xxh) in [(ITEM, 3, ABC128), (DEPENDENCY, 0, EMPTY128)] {
+            assert!(stdout.lines().any(
+                |line| line == format!("LIVE {path} length={len} xxh3_128={xxh} owned={owned}")
+            ));
         }
-        let mut objects = BTreeMap::from([(ABC, 0), (EMPTY, 0)]);
+        let mut objects = BTreeMap::from([(ABC128, 0), (EMPTY128, 0)]);
         let mut catalogs = 0;
         let mut reports = 0;
         for (method, path, range) in &requests {
             assert!(!range, "Task 2 must use full GETs");
             match (method.as_str(), path.as_str()) {
-                ("GET", "/quma/convoy/v2/catalog") => catalogs += 1,
+                ("GET", "/quma/convoy/v3/catalog") => catalogs += 1,
                 ("POST", "/quma/convoy/report") => reports += 1,
                 ("GET", path)
-                    if path.starts_with("/quma/convoy/v2/generations/")
+                    if path.starts_with("/quma/convoy/v3/generations/")
                         && path.contains("/objects/") =>
                 {
                     let digest = path.rsplit_once('/').unwrap().1;
@@ -224,14 +223,16 @@ async fn convoy_v2_e2e_fresh_and_existing() {
         assert_eq!((catalogs, reports), (4, 2));
         assert_eq!(
             objects,
-            BTreeMap::from([(ABC, i32::from(!matching)), (EMPTY, i32::from(!matching))])
+            BTreeMap::from([
+                (ABC128, i32::from(!matching)),
+                (EMPTY128, i32::from(!matching))
+            ])
         );
     }
 }
 
 #[actix_web::test]
 async fn convoy_v2_e2e_source_republish_fences_owned_update() {
-    use sha2::{Digest, Sha256};
     use spt_quartermaster::convoy::publisher::PublishMode;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -249,8 +250,8 @@ async fn convoy_v2_e2e_source_republish_fences_owned_update() {
     const DRIFT: &[u8] = b"different tracked source bytes after staging and before apply";
     const NEW_PATH: &str = "BepInEx/plugins/Test/also-new.dll";
     const NEW_BYTES: &[u8] = b"new target must not be applied";
-    const CATALOG: &str = "/quma/convoy/v2/catalog";
-    let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    const CATALOG: &str = "/quma/convoy/v3/catalog";
+    let digest = |bytes: &[u8]| format!("{:032x}", xxhash_rust::xxh3::xxh3_128(bytes));
 
     let app = common::TestAppBuilder::new().build().await;
     let game = tempfile::tempdir().unwrap();
@@ -273,13 +274,8 @@ async fn convoy_v2_e2e_source_republish_fences_owned_update() {
                 None,
             )
             .unwrap();
-        db.insert_file(
-            id,
-            ITEM,
-            Some(&format!("{:016x}", xxhash_rust::xxh3::xxh3_64(OLD))),
-            Some(OLD.len() as i64),
-        )
-        .unwrap();
+        db.insert_file(id, ITEM, Some(&digest(OLD)), Some(OLD.len() as i64))
+            .unwrap();
         id
     };
     app.set_convoy_config(Some(ConvoyConfig {
@@ -366,12 +362,21 @@ async fn convoy_v2_e2e_source_republish_fences_owned_update() {
     assert_eq!(state["mods"][0]["files"][0]["path"], ITEM);
     assert_eq!(state["mods"][0]["files"][0]["owned"], true);
     assert_eq!(state["mods"][0]["files"][0]["length"], OLD.len());
-    assert_eq!(state["mods"][0]["files"][0]["sha256"], digest(OLD));
+    assert_eq!(state["mods"][0]["files"][0]["hash"], digest(OLD));
+    assert!(state["mods"][0]["files"][0].get("sha256").is_none());
     assert_eq!(fs::read(root.join(ITEM)).unwrap(), OLD);
 
     fs::write(&source, STAGED).unwrap();
     fs::write(app.dirs().spt_server.join(NEW_PATH), NEW_BYTES).unwrap();
-    app.db.lock().insert_file(id, NEW_PATH, None, None).unwrap();
+    app.db
+        .lock()
+        .insert_file(
+            id,
+            NEW_PATH,
+            Some(&digest(NEW_BYTES)),
+            Some(NEW_BYTES.len() as i64),
+        )
+        .unwrap();
     publisher.refresh(PublishMode::Rehash);
     let staged_generation = publication::ready(&publisher).await;
     assert_ne!(original_generation, staged_generation);
@@ -406,11 +411,11 @@ async fn convoy_v2_e2e_source_republish_fences_owned_update() {
         assert_eq!(catalog["generation"], generation);
         let files = catalog["groups"][0]["mods"][0]["files"].as_array().unwrap();
         let changed = files.iter().find(|file| file["path"] == ITEM).unwrap();
-        assert_eq!(changed["sha256"], digest(DRIFT));
+        assert_eq!(changed["xxh3_128"], digest(DRIFT));
         assert_eq!(changed["length"], DRIFT.len());
         let bytes = http
             .get(format!(
-                "{origin}/quma/convoy/v2/generations/{generation}/objects/{}",
+                "{origin}/quma/convoy/v3/generations/{generation}/objects/{}",
                 digest(DRIFT)
             ))
             .send()
@@ -423,7 +428,7 @@ async fn convoy_v2_e2e_source_republish_fences_owned_update() {
             .unwrap();
         assert_eq!(bytes.as_ref(), DRIFT);
         println!(
-            "real republished object: {} bytes, sha256={}",
+            "real republished object: {} bytes, xxh3_128={}",
             DRIFT.len(),
             digest(DRIFT)
         );
@@ -465,40 +470,36 @@ struct Wire {
 }
 
 fn fixture_file(path: &std::path::Path, size: u64, salt: u8) -> (String, String) {
-    use sha2::{Digest, Sha256};
     use std::io::Write;
     let mut file = fs::File::create(path).unwrap();
-    let mut sha = Sha256::new();
     let mut xxh = xxhash_rust::xxh3::Xxh3::new();
     let mut chunk = vec![salt; SMALL_LEN as usize];
     for offset in (0..size).step_by(chunk.len()) {
         chunk[..8].copy_from_slice(&offset.to_le_bytes());
         let bytes = &chunk[..(size - offset).min(SMALL_LEN) as usize];
         file.write_all(bytes).unwrap();
-        sha.update(bytes);
         xxh.update(bytes);
     }
     file.sync_all().unwrap();
     (
-        format!("{:x}", sha.finalize()),
-        format!("{:016x}", xxh.digest()),
+        format!("{:032x}", xxh.digest128()),
+        format!("{:032x}", xxh.digest128()),
     )
 }
 
 fn destination_hash(path: &std::path::Path) -> String {
-    use sha2::{Digest, Sha256};
     use std::io::Read;
     let mut file = fs::File::open(path).unwrap();
     let mut block = vec![0; SMALL_LEN as usize];
-    let mut sha = Sha256::new();
+    let mut xxh = xxhash_rust::xxh3::Xxh3::new();
     loop {
         let n = file.read(&mut block).unwrap();
         if n == 0 {
             break;
         }
-        sha.update(&block[..n]);
+        xxh.update(&block[..n]);
     }
-    format!("{:x}", sha.finalize())
+    format!("{:032x}", xxh.digest128())
 }
 
 struct Activity(Arc<Mutex<(usize, usize)>>);
@@ -661,7 +662,7 @@ async fn convoy_v2_e2e_large_resume() {
                         bodies.clone(),
                     );
                     if stage == 3
-                        && req.path() == "/quma/convoy/v2/catalog"
+                        && req.path() == "/quma/convoy/v3/catalog"
                         && req.headers().contains_key("If-None-Match")
                         && !fence.swap(true, Ordering::SeqCst)
                     {
@@ -851,7 +852,7 @@ async fn convoy_v2_e2e_large_resume() {
     let ttfb_start = Instant::now();
     let mut first_byte_probe = http
         .get(format!(
-            "{origin}/quma/convoy/v2/generations/{generation}/objects/{}",
+            "{origin}/quma/convoy/v3/generations/{generation}/objects/{}",
             big.0
         ))
         .send()
@@ -1028,7 +1029,7 @@ async fn convoy_v2_e2e_large_resume() {
     for (path, len, hash) in [(large_path, BIG_LEN, &big), (small_path, SMALL_LEN, &small)] {
         let entry = receipt.iter().find(|item| item["path"] == path).unwrap();
         assert_eq!(entry["length"], len);
-        assert_eq!(entry["sha256"], hash.0);
+        assert!(entry.get("sha256").is_none());
         assert_eq!(entry["hash"], hash.1);
         assert_eq!(entry["owned"], true);
     }

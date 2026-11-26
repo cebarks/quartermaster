@@ -180,6 +180,13 @@ async fn main() -> Result<()> {
                 cli::reindex::run(!apply, &ctx).await
             }
         }
+        Command::Rebaseline {
+            file_ids,
+            trust_current,
+        } => {
+            let ctx = init_context(&cli, &reload_handles)?;
+            cli::rebaseline::run(file_ids, *trust_current, &ctx)
+        }
         Command::Backup { mod_ref, list } => {
             let ctx = init_context(&cli, &reload_handles)?;
             cli::backup::run(mod_ref.as_deref(), *list, &ctx)

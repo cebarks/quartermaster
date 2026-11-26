@@ -53,9 +53,6 @@ pub fn resolve_context(cli: &Cli) -> Result<CliContext> {
         tracing::error!(err = %e, "failed to migrate disabled mods to stash");
     }
 
-    crate::ops::rebaseline_pending_hashes(&db, &dirs)
-        .context("failed to recover legacy file hashes")?;
-
     let forge = ForgeClient::new()?;
 
     let container_mgr = ContainerManager::new(config.container_stop_timeout).ok();

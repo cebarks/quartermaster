@@ -1,7 +1,7 @@
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use xxhash_rust::xxh3::xxh3_128;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogManifest {
@@ -37,8 +37,7 @@ pub struct CatalogMod {
 pub struct AssetEntry {
     pub path: String,
     pub length: u64,
-    pub sha256: String,
-    pub xxh3_64: String,
+    pub xxh3_128: String,
 }
 
 pub(super) fn lower_hex(s: &str, length: usize) -> bool {
@@ -73,9 +72,11 @@ pub(super) fn portable_path(path: &str) -> bool {
 
 impl CatalogManifest {
     pub(super) fn seal(&mut self, runtime: &str) -> Result<()> {
+        ensure!(self.protocol == 3, "unsupported Convoy protocol");
         let mut groups = BTreeSet::new();
         let mut mods = BTreeSet::new();
         let mut paths = BTreeMap::new();
+        let mut digests = BTreeMap::new();
         let bundle_prefix = format!("{runtime}/user/cache/bundles/");
         for group in &self.groups {
             ensure!(
@@ -111,11 +112,12 @@ impl CatalogManifest {
                             entry.path
                         );
                         ensure!(
-                            entry.length <= i64::MAX as u64
-                                && lower_hex(&entry.sha256, 64)
-                                && lower_hex(&entry.xxh3_64, 16),
+                            entry.length <= i64::MAX as u64 && lower_hex(&entry.xxh3_128, 32),
                             "invalid Convoy object identity"
                         );
+                        if let Some(length) = digests.insert(&entry.xxh3_128, entry.length) {
+                            ensure!(length == entry.length, "conflicting Convoy object lengths");
+                        }
                         // Insert all parents as directory nodes as well; reject aliases and
                         // parent/file collisions regardless of group selection or order.
                         for (part, identity) in entry
@@ -133,7 +135,38 @@ impl CatalogManifest {
                 }
             }
         }
-        self.generation = format!("{:x}", Sha256::digest(serde_json::to_vec(self)?));
+        self.generation = format!("{:032x}", xxh3_128(&serde_json::to_vec(self)?));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_digest_requires_one_length_across_optional_groups_and_bundles() {
+        let mut manifest: CatalogManifest = serde_json::from_value(serde_json::json!({
+            "protocol": 3, "generation": "", "spt_version": "test", "quartermaster_version": "test",
+            "groups": [
+                {"slug": "required", "name": "Required", "tier": "required", "mods": [{
+                    "id": 1, "forge_id": null, "guid": null, "name": "A", "version": "1",
+                    "files": [{"path": "BepInEx/plugins/a.dll", "length": 3,
+                        "xxh3_128": "06b05ab6733a618578af5f94892f3950"}], "bundles": []}]},
+                {"slug": "optional", "name": "Optional", "tier": "optional", "mods": [{
+                    "id": 2, "forge_id": null, "guid": null, "name": "B", "version": "1",
+                    "files": [], "bundles": [{"path": "SPT_Runtime/user/cache/bundles/shared.bundle",
+                        "length": 3, "xxh3_128": "06b05ab6733a618578af5f94892f3950"}]}]}
+            ], "exclusions": []
+        })).unwrap();
+        assert!(
+            manifest.seal("SPT_Runtime").is_ok(),
+            "matching shared identity is allowed"
+        );
+        manifest.groups[1].mods[0].bundles[0].length = 4;
+        assert!(
+            manifest.seal("SPT_Runtime").is_err(),
+            "conflicting lengths must be rejected before selection"
+        );
     }
 }

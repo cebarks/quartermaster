@@ -42,7 +42,15 @@ pub struct IntegrityHealth {
     pub tracked_files: usize,
     pub missing_files: Vec<String>,
     pub modified_files: Vec<String>,
+    pub unverified_files: Vec<UnverifiedFile>,
     pub untracked_dirs: Vec<UntrackedDir>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnverifiedFile {
+    pub id: i64,
+    pub path: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +72,7 @@ impl HealthReport {
             || !self.mods.load_failures.is_empty()
             || !self.integrity.missing_files.is_empty()
             || !self.integrity.modified_files.is_empty()
+            || !self.integrity.unverified_files.is_empty()
         {
             return 2;
         }
@@ -97,10 +106,12 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
     )
     .await;
 
-    let integrity = match try_fetch_cached_integrity(&ctx.config).await {
+    let tracked_files = ctx.db.get_all_enabled_mod_files()?;
+    let enabled_count = tracked_files.len();
+    let pending = ctx.db.pending_file_rehashes()?;
+    let mut integrity = match try_fetch_cached_integrity(&ctx.config).await {
         Some(cached) => cached,
         None => {
-            let tracked_files = ctx.db.get_all_enabled_mod_files()?;
             let dirs_clone = ctx.dirs.clone();
             tokio::task::spawn_blocking(move || {
                 let progress = std::sync::atomic::AtomicUsize::new(0);
@@ -112,6 +123,7 @@ pub async fn run_checks(ctx: &CliContext) -> Result<HealthReport> {
         }
     };
 
+    include_disabled_pending(&mut integrity, enabled_count, &pending);
     Ok(HealthReport {
         server,
         mods,
@@ -247,6 +259,31 @@ pub async fn check_mods_health(
     }
 }
 
+/// Disabled pending records remain visible without reading an inactive live path
+/// or claiming that their stashed bytes have been verified.
+pub(crate) fn include_disabled_pending(
+    report: &mut IntegrityHealth,
+    enabled_count: usize,
+    pending: &[(crate::db::mods::InstalledFile, bool)],
+) {
+    let mut reported: std::collections::HashSet<_> =
+        report.unverified_files.iter().map(|f| f.id).collect();
+    report.tracked_files = enabled_count;
+    for (file, disabled) in pending {
+        if !disabled {
+            continue;
+        }
+        report.tracked_files += 1;
+        if reported.insert(file.id) {
+            report.unverified_files.push(UnverifiedFile {
+                id: file.id,
+                path: file.file_path.clone(),
+                reason: "legacy".into(),
+            });
+        }
+    }
+}
+
 /// Integrity check: hash each tracked file and compare against stored hashes.
 /// Updates `progress` and `total` atomics for progress reporting.
 pub fn check_integrity_parallel(
@@ -258,15 +295,22 @@ pub fn check_integrity_parallel(
     total.store(tracked_files.len(), Ordering::Relaxed);
     progress.store(0, Ordering::Relaxed);
 
-    let results: Vec<(Option<String>, Option<String>)> = tracked_files
+    let results: Vec<(Option<String>, Option<String>, Option<UnverifiedFile>)> = tracked_files
         .iter()
         .map(|file| {
             let full_path = dirs.mod_file_path(&file.file_path);
+            let verified = !file.legacy_pending
+                && file.file_hash.as_deref().is_some_and(|hash| {
+                    hash.len() == 32
+                        && hash
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                });
             let result = if !full_path.exists() {
                 (Some(file.file_path.clone()), None)
-            } else if let Some(ref expected_hash) = file.file_hash {
+            } else if let Some(expected_hash) = file.file_hash.as_deref().filter(|_| verified) {
                 match compute_file_hash(&full_path) {
-                    Ok(actual_hash) if actual_hash != *expected_hash => {
+                    Ok(actual_hash) if actual_hash != expected_hash => {
                         (None, Some(file.file_path.clone()))
                     }
                     Err(_) => (None, Some(file.file_path.clone())),
@@ -276,18 +320,32 @@ pub fn check_integrity_parallel(
                 (None, None)
             };
             progress.fetch_add(1, Ordering::Relaxed);
-            result
+            let unverified = (!verified).then(|| UnverifiedFile {
+                id: file.id,
+                path: file.file_path.clone(),
+                reason: if file.legacy_pending {
+                    "legacy"
+                } else {
+                    "unknown"
+                }
+                .into(),
+            });
+            (result.0, result.1, unverified)
         })
         .collect();
 
     let mut missing_files = Vec::new();
     let mut modified_files = Vec::new();
-    for (missing, modified) in results {
+    let mut unverified_files = Vec::new();
+    for (missing, modified, unverified) in results {
         if let Some(path) = missing {
             missing_files.push(path);
         }
         if let Some(path) = modified {
             modified_files.push(path);
+        }
+        if let Some(path) = unverified {
+            unverified_files.push(path);
         }
     }
 
@@ -313,6 +371,7 @@ pub fn check_integrity_parallel(
         tracked_files: tracked_files.len(),
         missing_files,
         modified_files,
+        unverified_files,
         untracked_dirs,
     })
 }
@@ -451,6 +510,45 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn status_includes_disabled_mod_addon_and_parent_legacy_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut ctx = test_cli_context(temp.path());
+        ctx.config.server_host = Some("127.0.0.1".into());
+        ctx.config.server_port = Some(1);
+        ctx.config.web_port = 1;
+        ctx.db.conn().execute_batch(
+            "INSERT INTO installed_mods (id,name,version,disabled) VALUES (1,'Off','1',1),(2,'On','1',0);
+             INSERT INTO installed_addons (id,forge_addon_id,forge_version_id,parent_mod_id,name,version,disabled)
+                 VALUES (1,1,1,2,'Off addon','1',1),(2,2,1,1,'Off parent','1',0);
+             INSERT INTO installed_files (id,mod_id,addon_id,file_path,file_hash) VALUES
+                 (1,1,NULL,'BepInEx/plugins/off.dll','0123456789abcdef'),
+                 (2,NULL,1,'BepInEx/plugins/addon.dll','0123456789abcdef'),
+                 (3,NULL,2,'BepInEx/plugins/parent.dll','0123456789abcdef');
+             INSERT INTO pending_file_rehashes SELECT id FROM installed_files;"
+        ).unwrap();
+        for enabled in [false, true] {
+            if enabled {
+                ctx.db.conn().execute_batch("UPDATE installed_mods SET disabled = 0; UPDATE installed_addons SET disabled = 0;").unwrap();
+            }
+            let report = run_checks(&ctx).await.unwrap();
+            let mut ids: Vec<_> = report
+                .integrity
+                .unverified_files
+                .iter()
+                .map(|f| f.id)
+                .collect();
+            ids.sort_unstable();
+            assert_eq!(ids, vec![1, 2, 3]);
+            assert_eq!(report.integrity.tracked_files, 3);
+            assert!(report
+                .integrity
+                .unverified_files
+                .iter()
+                .all(|f| f.reason == "legacy"));
+        }
+    }
+
     fn good_server() -> ServerHealth {
         ServerHealth {
             reachable: true,
@@ -480,6 +578,7 @@ mod tests {
             tracked_files: 100,
             missing_files: vec![],
             modified_files: vec![],
+            unverified_files: vec![],
             untracked_dirs: vec![],
         }
     }
@@ -659,6 +758,7 @@ mod tests {
                 tracked_files: 50,
                 missing_files: vec!["user/mods/Gone/file.dll".to_string()],
                 modified_files: vec![],
+                unverified_files: vec![],
                 untracked_dirs: vec![],
             },
         };
@@ -674,6 +774,7 @@ mod tests {
                 tracked_files: 50,
                 missing_files: vec![],
                 modified_files: vec!["user/mods/X/x.dll".to_string()],
+                unverified_files: vec![],
                 untracked_dirs: vec![],
             },
         };
@@ -722,6 +823,7 @@ mod tests {
                 tracked_files: 50,
                 missing_files: vec!["a.dll".to_string()],
                 modified_files: vec![],
+                unverified_files: vec![],
                 untracked_dirs: vec![],
             },
         };
@@ -770,6 +872,65 @@ mod tests {
         assert_eq!(result.tracked_files, 1);
         assert_eq!(result.missing_files, vec!["SPT/user/mods/TestMod/test.dll"]);
         assert!(result.modified_files.is_empty());
+    }
+
+    #[test]
+    fn legacy_hash_is_reported_unverified_not_modified() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("SPT/user/mods/TestMod")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("BepInEx/plugins")).unwrap();
+        std::fs::write(tmp.path().join("SPT/user/mods/TestMod/test.dll"), b"abc").unwrap();
+        let ctx = test_cli_context(tmp.path());
+        let id = ctx
+            .db
+            .insert_mod(
+                Some(100),
+                Some(200),
+                "TestMod",
+                None,
+                "1",
+                "forge",
+                None,
+                None,
+            )
+            .unwrap();
+        let pending_id = ctx
+            .db
+            .insert_file(
+                id,
+                "SPT/user/mods/TestMod/test.dll",
+                Some("78af5f94892f3950"),
+                Some(3),
+            )
+            .unwrap();
+        let unknown_id = ctx
+            .db
+            .insert_file(id, "SPT/user/mods/TestMod/unknown.dll", None, None)
+            .unwrap();
+        ctx.db
+            .conn()
+            .execute(
+                "INSERT INTO pending_file_rehashes(file_id) VALUES (?1)",
+                [pending_id],
+            )
+            .unwrap();
+        let files = ctx.db.get_all_tracked_files().unwrap();
+        let result = check_integrity_parallel(
+            &files,
+            &ctx.dirs,
+            &AtomicUsize::new(0),
+            &AtomicUsize::new(0),
+        )
+        .unwrap();
+        let json = serde_json::to_value(result).unwrap();
+        assert_eq!(
+            json["unverified_files"],
+            serde_json::json!([
+                {"id": pending_id, "path": "SPT/user/mods/TestMod/test.dll", "reason": "legacy"},
+                {"id": unknown_id, "path": "SPT/user/mods/TestMod/unknown.dll", "reason": "unknown"}
+            ])
+        );
+        assert_eq!(json["modified_files"], serde_json::json!([]));
     }
 
     #[test]

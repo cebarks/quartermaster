@@ -1697,7 +1697,7 @@ mod tests {
             vec![id],
         )])
         .unwrap();
-        let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"published"));
+        let hash = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(b"published"));
         db.insert_file(id, relative, Some(&hash), Some(9)).unwrap();
         let policy = PolicySnapshot::load(&db).unwrap();
         let guard = PolicyOperationGuard::acquire(&dirs, 1).unwrap();
@@ -1783,7 +1783,7 @@ mod tests {
                     if case=="cancel" || case=="native" {
                         let db=f.db.lock();let id=db.insert_mod(None,None,"Excluded",None,"1","local",None,None).unwrap();
                         db.save_groups_atomic(&[("No Headless".into(),"no-headless".into(),"optional".into(),true,vec![id])]).unwrap();
-                        let bytes=b"published";let hash=format!("{:016x}",xxhash_rust::xxh3::xxh3_64(bytes));
+                        let bytes=b"published";let hash=format!("{:032x}",xxhash_rust::xxh3::xxh3_128(bytes));
                         db.insert_file(id,"BepInEx/plugins/Excluded.dll",Some(&hash),Some(9)).unwrap();
                         for root in [f.dirs.headless_upper(1),f.dirs.headless_base.clone(),f.dirs.mod_overlay()] {std::fs::create_dir_all(root.join("BepInEx/plugins")).unwrap();std::fs::write(root.join("BepInEx/plugins/Excluded.dll"),bytes).unwrap();}
                     }

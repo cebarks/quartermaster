@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 
 use crate::db::Database;
 use crate::dirs::QumaDirs;
-use crate::health::{check_integrity_parallel, IntegrityHealth};
+use crate::health::{check_integrity_parallel, include_disabled_pending, IntegrityHealth};
 use crate::web::sse::ServerEvent;
 
 struct CachedIntegrity {
@@ -87,9 +87,12 @@ impl IntegrityCache {
         let generation_at_start = self.generation.load(Ordering::Relaxed);
         let cache = self.clone();
         tokio::task::spawn_blocking(move || {
-            let tracked_files = {
+            let (tracked_files, pending) = {
                 let db = db.lock();
-                match db.get_all_enabled_mod_files() {
+                match db
+                    .get_all_enabled_mod_files()
+                    .and_then(|files| db.pending_file_rehashes().map(|pending| (files, pending)))
+                {
                     Ok(files) => files,
                     Err(e) => {
                         tracing::warn!(err = %e, "integrity check: failed to query tracked files");
@@ -100,7 +103,8 @@ impl IntegrityCache {
             };
 
             match check_integrity_parallel(&tracked_files, &dirs, &cache.progress, &cache.total) {
-                Ok(result) => {
+                Ok(mut result) => {
+                    include_disabled_pending(&mut result, tracked_files.len(), &pending);
                     cache.complete_check(result, generation_at_start);
                     let _ = events.send(ServerEvent::IntegrityChanged);
                 }
@@ -133,8 +137,41 @@ mod tests {
             tracked_files: 10,
             missing_files: vec![],
             modified_files: vec![],
+            unverified_files: vec![],
             untracked_dirs: vec![],
         }
+    }
+
+    #[tokio::test]
+    async fn cache_reports_disabled_pending_files_without_claiming_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let dirs = QumaDirs::from_root(temp.path().into());
+        let db = Database::open_in_memory().unwrap();
+        db.conn().execute_batch(
+            "INSERT INTO installed_mods (id,name,version,disabled) VALUES (1,'Off','1',1);
+             INSERT INTO installed_addons (id,forge_addon_id,forge_version_id,parent_mod_id,name,version,disabled) VALUES (1,1,1,1,'Addon','1',0);
+             INSERT INTO installed_files (id,mod_id,addon_id,file_path,file_hash) VALUES
+                 (1,1,NULL,'BepInEx/plugins/off.dll','0123456789abcdef'),
+                 (2,NULL,1,'BepInEx/plugins/addon.dll','0123456789abcdef');
+             INSERT INTO pending_file_rehashes SELECT id FROM installed_files;"
+        ).unwrap();
+        let db = Arc::new(parking_lot::Mutex::new(db));
+        let cache = IntegrityCache::new(600);
+        let (events, _) = broadcast::channel(4);
+        cache.start_check(db, dirs, events);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while cache.is_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let result = cache.get().expect("completed real integrity check");
+        let mut ids: Vec<_> = result.unverified_files.iter().map(|f| f.id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2]);
+        assert_eq!(result.tracked_files, 2);
+        assert!(result.unverified_files.iter().all(|f| f.reason == "legacy"));
     }
 
     #[test]

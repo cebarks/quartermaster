@@ -140,7 +140,7 @@ impl Fixture {
 }
 
 fn hash(bytes: &[u8]) -> String {
-    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(bytes))
+    format!("{:032x}", xxhash_rust::xxh3::xxh3_128(bytes))
 }
 
 async fn wait(p: &Publisher, predicate: impl Fn(&PublicationStatus) -> bool) -> PublicationStatus {
@@ -313,7 +313,6 @@ async fn v2_cold_candidate_is_reclaimed_when_promotion_is_disabled() {
 
 #[tokio::test]
 async fn v2_retry_preserves_rehash_when_a_pin_drops_during_the_attempt() {
-    use sha2::{Digest, Sha256};
     const PLUGIN: &str = "BepInEx/plugins/pin/r1-pin.dll";
     let f = Fixture::new();
     f.config
@@ -325,7 +324,7 @@ async fn v2_retry_preserves_rehash_when_a_pin_drops_during_the_attempt() {
     f.track(PLUGIN, b"abc");
     let publisher = f.publisher();
     let old = ready(&publisher).await;
-    let digest = format!("{:x}", Sha256::digest(b"abc"));
+    let digest = receipt::digest(b"abc");
     let lease = publisher
         .admit(Some(&old), Some(&digest))
         .await
@@ -385,6 +384,94 @@ async fn corrupt_receipt(f: &Fixture, corruption: &str) {
             rusqlite::params![id, data],
         )
         .expect("fixture operation must succeed");
+}
+
+#[tokio::test]
+async fn v3_cold_legacy_receipt_rebuilds_without_implicit_rebaseline_or_data_loss() {
+    const PLUGIN: &str = "BepInEx/plugins/cold/legacy.dll";
+    // Opaque legacy-format evidence; never authenticate it or calculate SHA.
+    const SHA: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    for (cap, pending) in [(6, false), (3, false), (6, true)] {
+        let f = Fixture::new();
+        f.track(PLUGIN, b"abc");
+        f.config.write().convoy.as_mut().unwrap().max_store_bytes = cap;
+        let asset = serde_json::json!({"path": PLUGIN, "length": 3, "sha256": SHA});
+        let data = serde_json::to_vec(&serde_json::json!({
+            "input": SHA, "runtime": "SPT_Runtime",
+            "sources": {"1": {"key": SHA, "guid": null, "fallback_checked": false,
+                "files": [asset.clone()], "bundles": []}},
+            "manifest": {"protocol": 2, "generation": SHA, "spt_version": "unknown",
+                "quartermaster_version": "legacy", "groups": [{"slug": "default", "name": "Default",
+                    "tier": "required", "mods": [{"id": f.id, "forge_id": null, "guid": null,
+                        "name": "Fixture", "version": "1", "files": [asset], "bundles": []}]}],
+                "exclusions": []}
+        }))
+        .unwrap();
+        let store = ObjectStore::new(&f.dirs.convoy_store_dir(), cap).unwrap();
+        let legacy_path = f.dirs.convoy_store_dir().join(SHA);
+        std::fs::write(&legacy_path, b"abc").unwrap();
+        {
+            let db = f.db.lock();
+            db.conn()
+                .execute(
+                    "UPDATE convoy_publication SET receipt = ?1, receipt_data = ?2,
+                receipt_revision = revision WHERE id = 1",
+                    rusqlite::params![SHA, data],
+                )
+                .unwrap();
+            if pending {
+                db.conn()
+                    .execute_batch(
+                        "INSERT INTO pending_file_rehashes SELECT id FROM installed_files",
+                    )
+                    .unwrap();
+            }
+        }
+        let before = f.db.lock().convoy_stamp().unwrap();
+        let publisher = f.publisher();
+        let status = wait(&publisher, |s| {
+            matches!(
+                s,
+                PublicationStatus::Ready { .. } | PublicationStatus::Failed { .. }
+            )
+        })
+        .await;
+        if cap == 6 && !pending {
+            assert!(
+                matches!(status, PublicationStatus::Ready { .. }),
+                "{status:?}"
+            );
+            let Admission::Manifest { json, .. } = publisher.admit(None, None).await.unwrap()
+            else {
+                panic!("expected v3 manifest")
+            };
+            let manifest: serde_json::Value = serde_json::from_slice(&json).unwrap();
+            assert_eq!(manifest["protocol"], 3);
+            assert_eq!(
+                manifest["groups"][0]["mods"][0]["files"][0]["xxh3_128"],
+                hash(b"abc")
+            );
+            assert_ne!(f.db.lock().convoy_stamp().unwrap(), before);
+            assert_eq!(
+                std::fs::read(f.dirs.convoy_store_dir().join(hash(b"abc"))).unwrap(),
+                b"abc"
+            );
+        } else {
+            assert!(
+                matches!(status, PublicationStatus::Failed { .. }),
+                "{status:?}"
+            );
+            assert_eq!(f.db.lock().convoy_stamp().unwrap(), before);
+            let stored = f.db.lock().convoy_receipt().unwrap().unwrap();
+            assert_eq!(stored.data, data);
+        }
+        assert_eq!(std::fs::read(legacy_path).unwrap(), b"abc");
+        assert_eq!(
+            std::fs::read(f.dirs.spt_server.join(PLUGIN)).unwrap(),
+            b"abc"
+        );
+        drop(store);
+    }
 }
 
 #[tokio::test]
@@ -458,7 +545,11 @@ async fn v2_cold_rehash_replaces_invalid_receipt_only_after_verified_cas() {
                 .expect("fixture operation must succeed");
             assert_eq!(checksum, hash(b"verified replacement"));
         }
-        assert!(!old.exists());
+        // An invalid receipt cannot authorize deletion, even after promotion.
+        assert_eq!(
+            std::fs::read(&old).expect("preserve unverified old object"),
+            b"old bytes"
+        );
         let Admission::Object { mut file, .. } = publisher
             .admit(Some(&generation), Some(&new_digest))
             .await
@@ -522,13 +613,12 @@ async fn v2_cold_rehash_keeps_invalid_receipt_and_old_bytes_at_hard_cap() {
 
 #[tokio::test]
 async fn v2_aborted_warm_candidate_keeps_the_committed_and_leased_digest() {
-    use sha2::{Digest, Sha256};
     const PLUGIN: &str = "BepInEx/plugins/warm/r1-warm.dll";
     let f = Fixture::new();
     f.track(PLUGIN, b"original bytes");
     let publisher = f.publisher();
     let generation = ready(&publisher).await;
-    let digest = format!("{:x}", Sha256::digest(b"original bytes"));
+    let digest = receipt::digest(b"original bytes");
     let lease = publisher
         .admit(Some(&generation), Some(&digest))
         .await
