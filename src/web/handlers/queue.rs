@@ -469,6 +469,7 @@ pub(super) async fn apply_install(op: &PendingOperation, state: &AppState) -> an
         }
     }
 
+    state.refresh_svm();
     Ok(())
 }
 
@@ -519,6 +520,7 @@ pub(super) async fn apply_update(op: &PendingOperation, state: &AppState) -> any
     })
     .await??;
 
+    state.refresh_svm();
     Ok(())
 }
 
@@ -550,6 +552,7 @@ pub(super) async fn apply_remove(op: &PendingOperation, state: &AppState) -> any
     })
     .await??;
 
+    state.refresh_svm();
     Ok(())
 }
 

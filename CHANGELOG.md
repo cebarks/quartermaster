@@ -4,6 +4,10 @@ All notable changes to Quartermaster will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Detect SVM in the managed server overlay and expose its preset editor. Leave SVM inactive until a preset is explicitly activated; for overlay-based installations, editing requires the mounted SPT runtime.
+
 ## [0.5.0] - 2026-11-26
 
 ### Upgrade notes

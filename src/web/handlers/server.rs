@@ -43,6 +43,16 @@ fn require_container<'a>(
     Ok((name, mgr))
 }
 
+// Keep overlay transitions serialized with SVM configuration writes.
+fn change_server_overlay(state: &AppState, mount: bool) -> anyhow::Result<()> {
+    let _svm = state.svm.write();
+    if mount {
+        state.dirs.spt_overlay().mount()
+    } else {
+        state.dirs.spt_overlay().unmount()
+    }
+}
+
 pub async fn start_server(
     state: Data<AppState>,
     req: HttpRequest,
@@ -76,7 +86,7 @@ pub async fn start_server(
                 .insert_header(("Location", "/quma/"))
                 .finish());
         }
-        if let Err(e) = state.dirs.spt_overlay().mount() {
+        if let Err(e) = change_server_overlay(&state, true) {
             tracing::error!(err = %e, "failed to mount SPT overlay");
             set_flash(
                 &session,
@@ -100,8 +110,8 @@ pub async fn start_server(
         );
     } else {
         tracing::info!(container, "server started");
-        if let Some(ref svm) = state.svm {
-            svm.write().clear_dirty();
+        if let Some(svm) = state.svm.write().as_mut() {
+            svm.clear_dirty();
         }
         set_flash(&session, "Server starting", FlashType::Success);
     }
@@ -144,7 +154,7 @@ pub async fn stop_server(
         tracing::info!(container, "server stopped");
 
         if !state.dirs.is_legacy() {
-            if let Err(e) = state.dirs.spt_overlay().unmount() {
+            if let Err(e) = change_server_overlay(&state, false) {
                 tracing::warn!(err = %e, "failed to unmount SPT overlay");
             }
         }
@@ -195,7 +205,7 @@ pub async fn restart_server(
     }
 
     if !state.dirs.is_legacy() {
-        if let Err(e) = state.dirs.spt_overlay().unmount() {
+        if let Err(e) = change_server_overlay(&state, false) {
             tracing::warn!(err = %e, "failed to unmount SPT overlay");
         }
     }
@@ -259,7 +269,7 @@ pub async fn restart_server(
                 .insert_header(("Location", "/quma/"))
                 .finish());
         }
-        if let Err(e) = state.dirs.spt_overlay().mount() {
+        if let Err(e) = change_server_overlay(&state, true) {
             tracing::error!(err = %e, "failed to mount SPT overlay");
             set_flash(
                 &session,
@@ -283,8 +293,8 @@ pub async fn restart_server(
         );
     } else {
         tracing::info!(container, "server restarted");
-        if let Some(ref svm) = state.svm {
-            svm.write().clear_dirty();
+        if let Some(svm) = state.svm.write().as_mut() {
+            svm.clear_dirty();
         }
         set_flash(&session, "Server restarted", FlashType::Success);
     }

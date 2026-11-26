@@ -23,7 +23,7 @@ fn app_state(
             update_cache::UpdateCache,
         },
     };
-    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::sync::atomic::AtomicUsize;
     let (events, _) = tokio::sync::broadcast::channel(16);
     {
         let mut config = f.config.write();
@@ -53,8 +53,7 @@ fn app_state(
         container_mgr: None,
         converging: Default::default(),
         fika_installed: false,
-        svm: None,
-        svm_installed: AtomicBool::new(false),
+        svm: Arc::new(parking_lot::RwLock::new(None)),
         config_mgmt: ConfigManager::new(&f.dirs),
         server_transition: Default::default(),
         game_data: Arc::new(GameData::load_empty()),

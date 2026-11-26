@@ -29,6 +29,7 @@ struct SvmManagerTemplate<'a> {
     presets: Vec<String>,
     is_dirty: bool,
     unknown_field_count: usize,
+    writes_available: bool,
 }
 
 // ─── Form Structs ────────────────────────────────────────────────────────────
@@ -75,8 +76,9 @@ pub struct ReloadForm {
 /// Get a reference to the SVM manager, returning 404 if SVM is not installed.
 fn require_svm(
     state: &AppState,
-) -> actix_web::Result<&std::sync::Arc<parking_lot::RwLock<crate::svm::SvmManager>>> {
-    state.svm.as_ref().ok_or_else(|| WebError::NotFound.into())
+) -> actix_web::Result<parking_lot::MappedRwLockWriteGuard<'_, crate::svm::SvmManager>> {
+    parking_lot::RwLockWriteGuard::try_map(state.svm.write(), |manager| manager.as_mut())
+        .map_err(|_| WebError::NotFound.into())
 }
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
@@ -95,21 +97,21 @@ pub async fn manager_page(
             .finish());
     }
 
-    let svm = require_svm(&state)?;
-    {
-        let _ = svm.write().reload_from_disk();
-    }
-    let svm = svm.read();
+    let nav = NavContext::from_state(&state);
+    let mut svm = require_svm(&state)?;
+    svm.reload_from_disk().map_err(WebError::from)?;
 
     let tmpl = SvmManagerTemplate {
         user,
         flash: take_flash(&session),
         csrf_token: crate::web::csrf::get_or_create_token(&session),
-        nav: NavContext::from_state(&state),
+        nav,
         active_preset: svm.active_preset_name(),
         presets: svm.list_presets().to_vec(),
         is_dirty: svm.is_dirty(),
         unknown_field_count: svm.unknown_fields().len(),
+        writes_available: state.dirs.is_legacy()
+            || state.dirs.spt_overlay().is_mounted().unwrap_or(false),
     };
 
     Ok(HttpResponse::Ok()
@@ -131,7 +133,7 @@ pub async fn switch_preset(
 
     let svm = require_svm(&state)?;
     {
-        let mut svm = svm.write();
+        let mut svm = svm;
         svm.set_active_preset(&form.preset)
             .map_err(WebError::from)?;
     }
@@ -160,7 +162,7 @@ pub async fn create_preset(
 
     let svm = require_svm(&state)?;
     {
-        let mut svm = svm.write();
+        let mut svm = svm;
         svm.create_preset(&form.name).map_err(WebError::from)?;
     }
 
@@ -188,7 +190,7 @@ pub async fn duplicate_preset(
 
     let svm = require_svm(&state)?;
     {
-        let mut svm = svm.write();
+        let mut svm = svm;
         svm.duplicate_preset(&form.src, &form.dst)
             .map_err(WebError::from)?;
     }
@@ -217,7 +219,7 @@ pub async fn delete_preset(
 
     let svm = require_svm(&state)?;
     {
-        let mut svm = svm.write();
+        let mut svm = svm;
         svm.delete_preset(&form.name).map_err(WebError::from)?;
     }
 
@@ -245,7 +247,7 @@ pub async fn reload_from_disk(
 
     let svm = require_svm(&state)?;
     {
-        let mut svm = svm.write();
+        let mut svm = svm;
         svm.reload_from_disk().map_err(WebError::from)?;
     }
 
@@ -268,15 +270,12 @@ pub async fn export_preset(
         .map_err(|e| WebError::BadRequest(e.to_string()))?;
 
     let svm = require_svm(&state)?;
-    let svm = svm.read();
 
     if !svm.list_presets().contains(&preset_name) {
         return Err(WebError::NotFound.into());
     }
 
-    let preset_path = svm.preset_path(&preset_name);
-    let json_content = std::fs::read_to_string(&preset_path)
-        .map_err(|e| WebError::Internal(anyhow::anyhow!("Failed to read preset file: {e}")))?;
+    let json_content = svm.read_preset(&preset_name).map_err(WebError::from)?;
 
     Ok(HttpResponse::Ok()
         .content_type("application/json")
@@ -304,14 +303,9 @@ pub async fn import_preset(
 
     let svm = require_svm(&state)?;
 
-    let config: crate::svm::config::SvmConfig = serde_json::from_str(&form.json_content)
-        .map_err(|e| WebError::BadRequest(format!("Invalid JSON: {e}")))?;
-
-    {
-        let mut svm = svm.write();
-        svm.save_preset(&form.name, &config)
-            .map_err(WebError::from)?;
-    }
+    let mut svm = svm;
+    svm.import_preset(&form.name, &form.json_content)
+        .map_err(WebError::from)?;
 
     set_flash(
         &session,
@@ -418,8 +412,13 @@ pub async fn editor_page(
     let user = require_auth(&req)?;
     require_permission(&user, Permission::SvmEdit)?;
 
+    let nav = NavContext::from_state(&state);
     let svm = require_svm(&state)?;
-    let svm = svm.read();
+    if svm.active_preset_name().is_empty() {
+        return Ok(HttpResponse::SeeOther()
+            .insert_header(("Location", "/quma/svm"))
+            .finish());
+    }
 
     let active_section = query.section.as_deref().unwrap_or("raids");
     let fields = metadata::fields_for_section(active_section).ok_or(WebError::NotFound)?;
@@ -431,7 +430,7 @@ pub async fn editor_page(
         user,
         flash: take_flash(&session),
         csrf_token: crate::web::csrf::get_or_create_token(&session),
-        nav: NavContext::from_state(&state),
+        nav,
         active_preset: svm.active_preset_name().to_string(),
         is_dirty: svm.is_dirty(),
         sections: sections_with_counts(),
@@ -466,7 +465,9 @@ pub async fn section_partial(
 
     let section = path.into_inner();
     let svm = require_svm(&state)?;
-    let svm = svm.read();
+    if svm.active_preset_name().is_empty() {
+        return Err(WebError::NotFound.into());
+    }
 
     let fields = metadata::fields_for_section(&section).ok_or(WebError::NotFound)?;
     let config_json = section_to_json(svm.config(), &section).map_err(WebError::from)?;
@@ -503,45 +504,42 @@ pub async fn save_section(
     }
 
     let section = path.into_inner();
-    let svm_lock = require_svm(&state)?.clone();
-
-    // Clone current config + parse section update (no lock held during deser)
-    let mut config = {
-        let svm = svm_lock.read();
-        svm.config().clone()
-    };
-
+    if metadata::fields_for_section(&section).is_none() {
+        return Err(WebError::NotFound.into());
+    }
     let mut section_data = body.into_inner();
     section_data.as_object_mut().map(|o| o.remove("csrf_token"));
 
-    // Deserialize into the appropriate section struct
-    match section.as_str() {
-        "items" => config.items = serde_json::from_value(section_data)?,
-        "hideout" => config.hideout = serde_json::from_value(section_data)?,
-        "traders" => config.traders = serde_json::from_value(section_data)?,
-        "loot" => config.loot = serde_json::from_value(section_data)?,
-        "player" => config.player = serde_json::from_value(section_data)?,
-        "raids" => config.raids = serde_json::from_value(section_data)?,
-        "fleamarket" => config.fleamarket = serde_json::from_value(section_data)?,
-        "services" => config.services = serde_json::from_value(section_data)?,
-        "quests" => config.quests = serde_json::from_value(section_data)?,
-        "csm" => config.csm = serde_json::from_value(section_data)?,
-        "scav" => config.scav = serde_json::from_value(section_data)?,
-        "bots" => config.bots = serde_json::from_value(section_data)?,
-        "pmc" => config.pmc = serde_json::from_value(section_data)?,
-        "custom" => config.custom = serde_json::from_value(section_data)?,
-        _ => return Err(WebError::NotFound.into()),
-    }
-
-    // File I/O inside web::block to avoid blocking the async runtime
-    web::block(move || {
-        let mut svm = svm_lock.write();
-        let preset = svm.active_preset_name().to_string();
-        svm.save_preset(&preset, &config)
+    let svm_lock = state.svm.clone();
+    web::block(move || -> Result<(), WebError> {
+        let mut guard = svm_lock.write();
+        let svm = guard.as_mut().ok_or(WebError::NotFound)?;
+        let preset = svm.active_preset_name().to_owned();
+        if preset.is_empty() {
+            return Err(WebError::NotFound);
+        }
+        let mut config = svm.config().clone();
+        match section.as_str() {
+            "items" => config.items = serde_json::from_value(section_data)?,
+            "hideout" => config.hideout = serde_json::from_value(section_data)?,
+            "traders" => config.traders = serde_json::from_value(section_data)?,
+            "loot" => config.loot = serde_json::from_value(section_data)?,
+            "player" => config.player = serde_json::from_value(section_data)?,
+            "raids" => config.raids = serde_json::from_value(section_data)?,
+            "fleamarket" => config.fleamarket = serde_json::from_value(section_data)?,
+            "services" => config.services = serde_json::from_value(section_data)?,
+            "quests" => config.quests = serde_json::from_value(section_data)?,
+            "csm" => config.csm = serde_json::from_value(section_data)?,
+            "scav" => config.scav = serde_json::from_value(section_data)?,
+            "bots" => config.bots = serde_json::from_value(section_data)?,
+            "pmc" => config.pmc = serde_json::from_value(section_data)?,
+            "custom" => config.custom = serde_json::from_value(section_data)?,
+            _ => return Err(WebError::NotFound),
+        }
+        svm.save_preset(&preset, &config).map_err(WebError::from)
     })
     .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    .map_err(WebError::from)??;
 
     set_flash(&session, "SVM config saved", FlashType::Success);
     Ok(HttpResponse::Ok().json(serde_json::json!({"ok": true})))
@@ -572,8 +570,11 @@ pub async fn player_view(
     let user = require_auth(&req)?;
     // No capability check — any authenticated user can view
 
+    let nav = NavContext::from_state(&state);
     let svm = require_svm(&state)?;
-    let svm = svm.read();
+    if svm.active_preset_name().is_empty() {
+        return Err(WebError::NotFound.into());
+    }
 
     let active_section = query.section.as_deref().unwrap_or("raids");
     let fields = metadata::fields_for_section(active_section).ok_or(WebError::NotFound)?;
@@ -584,7 +585,7 @@ pub async fn player_view(
         user,
         flash: take_flash(&session),
         csrf_token: crate::web::csrf::get_or_create_token(&session),
-        nav: NavContext::from_state(&state),
+        nav,
         active_preset: svm.active_preset_name().to_string(),
         sections: sections_with_counts(),
         active_section: active_section.to_string(),

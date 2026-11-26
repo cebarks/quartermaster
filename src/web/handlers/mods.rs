@@ -1386,6 +1386,7 @@ async fn install_mod_from_url(
         match result {
             Ok(_) => {
                 tracing::info!(url = url_owned, "mod installed from URL successfully");
+                state_clone.refresh_svm();
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
                 state_clone.regenerate_convoy();
@@ -1704,14 +1705,7 @@ pub async fn install_mod(
                 mod_zip_cache.invalidate();
                 integrity_cache.invalidate();
                 if mod_id == crate::svm::SVM_FORGE_ID {
-                    state_clone
-                        .svm_installed
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                    if let Some(ref svm_lock) = state_clone.svm {
-                        if let Some(mgr) = crate::svm::SvmManager::detect(&dirs.spt_server) {
-                            *svm_lock.write() = mgr;
-                        }
-                    }
+                    state_clone.refresh_svm();
                     tracing::info!("SVM installed — config editor reinitialized");
                 }
                 state_clone.clear_fika_items();
@@ -1737,6 +1731,21 @@ async fn github_update(installed: &InstalledMod) -> Option<crate::github::Latest
     let r = crate::github::parse_release_url(installed.source_url.as_deref()?)?;
     let rel = crate::github::latest_release_cached(&r).await?;
     (rel.version != crate::github::normalize_version(&installed.version)).then_some(rel)
+}
+
+// Caller holds the SVM write lock, shared with overlay transitions.
+fn require_unmounted_overlay(state: &AppState) -> Result<(), WebError> {
+    if state
+        .dirs
+        .spt_overlay()
+        .is_mounted()
+        .map_err(WebError::from)?
+    {
+        return Err(WebError::BadRequest(
+            "Stop the server and unmount its overlay before changing mods".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Update a mod that was installed from a GitHub release.
@@ -1768,7 +1777,10 @@ async fn update_mod_from_github(
     let config = state.config_cloned();
     let version = rel.version.clone();
     let url = rel.download_url.clone();
+    let state_guard = state.clone();
     web::block(move || {
+        let _overlay_guard = state_guard.svm.write();
+        require_unmounted_overlay(&state_guard)?;
         let db = db.lock();
         crate::ops::update_mod_from_archive(
             &db,
@@ -1780,11 +1792,12 @@ async fn update_mod_from_github(
             &archive_path,
             Some(&url),
         )
+        .map_err(WebError::from)
     })
     .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    .map_err(WebError::from)??;
 
+    state.refresh_svm();
     state.integrity_cache.invalidate();
     set_flash(
         session,
@@ -1944,6 +1957,7 @@ pub async fn update_mod(
 
         match result {
             Ok(()) => {
+                state_clone.refresh_svm();
                 tracing::info!(mod_db_id, "mod updated successfully");
                 update_cache.invalidate();
                 mod_zip_cache.invalidate();
@@ -2009,26 +2023,23 @@ pub async fn remove_mod(
     let db = state.db.clone();
     let config = state.config_cloned();
 
+    let state_guard = state.clone();
     tracing::info!(mod_db_id, mod_name = %installed.name, "removing mod");
     web::block(move || {
+        let _overlay_guard = state_guard.svm.write();
+        require_unmounted_overlay(&state_guard)?;
         let db = db.lock();
-        crate::ops::remove_mod_by_id(&db, &dirs, &config, mod_db_id)
+        crate::ops::remove_mod_by_id(&db, &dirs, &config, mod_db_id).map_err(WebError::from)
     })
     .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    .map_err(WebError::from)??;
 
     state.update_cache.invalidate();
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
     state.regenerate_convoy();
     state.clear_fika_items();
-    if installed.forge_mod_id == Some(crate::svm::SVM_FORGE_ID) {
-        state
-            .svm_installed
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!("SVM removed — config editor disabled");
-    }
+    state.refresh_svm();
     set_flash(&session, "Mod removed", FlashType::Success);
     Ok(HttpResponse::SeeOther()
         .insert_header(("Location", "/quma/mods"))
@@ -2064,18 +2075,21 @@ pub async fn toggle_disable(
     let config = state.config_cloned();
     let was_disabled = installed.disabled;
     let mod_name = installed.name.clone();
+    let state_guard = state.clone();
 
     web::block(move || {
+        let _overlay_guard = state_guard.svm.write();
+        require_unmounted_overlay(&state_guard)?;
         let db = db.lock();
         if was_disabled {
             crate::ops::enable_mod(&db, &dirs, &config, mod_db_id)
         } else {
             crate::ops::disable_mod(&db, &dirs, &config, mod_db_id)
         }
+        .map_err(WebError::from)
     })
     .await
-    .map_err(WebError::from)?
-    .map_err(WebError::from)?;
+    .map_err(WebError::from)??;
 
     state.mod_zip_cache.invalidate();
     state.integrity_cache.invalidate();
@@ -2290,11 +2304,15 @@ pub async fn update_all_mods(
             .await;
 
             match result {
-                Ok(()) => success_count += 1,
+                Ok(()) => {
+                    // Refresh before the next download yields: the SVM editor must
+                    // never retain the pre-update preset during a long bulk update.
+                    state_clone.refresh_svm();
+                    success_count += 1;
+                }
                 Err(e) => tracing::error!(mod_db_id, err = %e, "update failed during update-all"),
             }
         }
-
         // Regenerate convoy catalog after all updates
         state_clone.regenerate_convoy();
 
