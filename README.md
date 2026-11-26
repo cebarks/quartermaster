@@ -53,7 +53,7 @@ prevents outside-installation reads independently of that classification prerequ
 - **Convoy mod distribution** — Built-in mod distribution system for syncing mods to connected clients (replaces NarcoNet/modsync). See [client roots, ownership and coordinated upgrade requirements](docs/convoy-client-files.md).
 - **Player profiles** — View player profiles with quest, trader, and hideout progress, plus stash viewer
 - **Raid statistics** — Per-raid stats tracking via proxy interception, with leaderboard
-- **Server Value Modifiers (SVM)** — Browse and configure server value modifiers from the web UI
+- **Server Value Modifier (SVM)** — Manage presets in **Admin → SVM Config**. A preset is not selected automatically; create or import one, then activate it explicitly. For overlay-based installations, changes require the SPT runtime overlay to be mounted; restart SPT to apply them.
 - **Settings management** — View and manage Quartermaster configuration from the web UI
 - **Mod requests** — Players can request mods; admins review and approve with a voting system
 - **Mod enable/disable** — Toggle mods on and off without uninstalling

@@ -308,7 +308,6 @@ async fn trigger_install_for_request(
         let tasks = state.tasks.clone();
         let forge = state.forge.clone();
         let dirs = Arc::clone(&state.dirs);
-        let spt_dir = state.dirs.spt_server.clone();
         let db = state.db.clone();
         let db_edges = db.clone();
         let version = version.clone();
@@ -375,14 +374,7 @@ async fn trigger_install_for_request(
                     update_cache.invalidate();
                     mod_zip_cache.invalidate();
                     if forge_mod_id == crate::svm::SVM_FORGE_ID {
-                        state_clone
-                            .svm_installed
-                            .store(true, std::sync::atomic::Ordering::Relaxed);
-                        if let Some(ref svm_lock) = state_clone.svm {
-                            if let Some(mgr) = crate::svm::SvmManager::detect(&spt_dir) {
-                                *svm_lock.write() = mgr;
-                            }
-                        }
+                        state_clone.refresh_svm();
                         tracing::info!("SVM installed via request — config editor reinitialized");
                     }
                     state_clone.clear_fika_items();

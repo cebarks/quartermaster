@@ -15,6 +15,7 @@ All notable changes to Quartermaster will be documented in this file.
 
 ### Fixed
 
+- Detect SVM in the managed server overlay and expose its preset editor. Leave SVM inactive until a preset is explicitly activated; for overlay-based installations, editing requires the mounted SPT runtime.
 - Include package-tracked direct `EscapeFromTarkov_Data/Managed/*.dll` dependencies in Convoy catalogs and both archive routes. Rehash uses the same overlay layers as delivery; versioned caches and manifest-bound archive identity prevent stale omission. Default setup ZIP filtering retains its independent tracked-file/server-root policy and explicit overrides. Reject incomplete Convoy packages with missing eligible file checksums before catalog publication or archive cache lookup; rehash before publishing.
 - Enforce mod-group headless exclusions before managed first boot, start, restart and recovery using guarded private overlays, verified quarantine and current-publication restoration; preserve player/server payloads and per-client configuration.
 - Retire generation-bound exclusion ownership during authorized headless overlay destruction so rebuilt/reused indices can prepare safely, preserving retired-path protection, quarantine evidence and persistent operation locks. Durable directory proof prevents recycled inode numbers from authorizing deletion of a replacement overlay while preserving proven partial-removal and restart recovery.

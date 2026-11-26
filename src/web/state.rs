@@ -42,8 +42,7 @@ pub struct AppState {
     pub container_mgr: Option<Arc<ContainerManager>>,
     pub converging: Arc<AtomicBool>,
     pub fika_installed: bool,
-    pub svm: Option<Arc<parking_lot::RwLock<SvmManager>>>,
-    pub svm_installed: AtomicBool,
+    pub svm: Arc<parking_lot::RwLock<Option<SvmManager>>>,
     pub config_mgmt: ConfigManager,
     pub server_transition: Arc<Mutex<Option<String>>>,
     pub game_data: Arc<GameData>,
@@ -111,8 +110,19 @@ impl AppState {
     }
 
     pub fn is_svm_installed(&self) -> bool {
-        self.svm_installed
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.svm.read().is_some()
+    }
+
+    pub fn refresh_svm(&self) {
+        let mut svm = self.svm.write();
+        let was_dirty = svm.as_ref().is_some_and(SvmManager::is_dirty);
+        let mut refreshed = SvmManager::detect_dirs(&self.dirs);
+        if was_dirty {
+            if let Some(manager) = refreshed.as_mut() {
+                manager.mark_dirty();
+            }
+        }
+        *svm = refreshed;
     }
 
     pub fn regenerate_convoy(&self) {

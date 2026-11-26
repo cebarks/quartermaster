@@ -223,8 +223,7 @@ impl TestAppBuilder {
             fika_config_lock: Arc::new(parking_lot::Mutex::new(())),
             headless_service: None,
             fika_items: Arc::new(parking_lot::Mutex::new(None)),
-            svm: None,
-            svm_installed: std::sync::atomic::AtomicBool::new(false),
+            svm: Arc::new(parking_lot::RwLock::new(None)),
             server_transition: Arc::new(parking_lot::Mutex::new(None)),
             game_data: Arc::new(GameData::load_empty()),
             proxy_metrics: ProxyMetrics::new(),
@@ -360,6 +359,14 @@ impl TestApp {
         }
         self.send(req.set_payload(body.to_string()).to_request())
             .await
+    }
+
+    pub async fn post_json(&mut self, path: &str, body: &serde_json::Value) -> ServiceResponse {
+        let mut req = TestRequest::post().uri(path);
+        if !self.cookies.is_empty() {
+            req = req.insert_header(("cookie", self.cookies.join("; ")));
+        }
+        self.send(req.set_json(body).to_request()).await
     }
 
     /// Extract and save cookies from a response, replacing existing cookies with the same name.

@@ -5,6 +5,12 @@
 {% block content %}
 <h1>Server Value Modifier</h1>
 
+{% if !writes_available %}
+<div class="toast toast-warning">
+    SVM presets can be viewed while the server is stopped, but editing requires the server runtime overlay to be mounted.
+</div>
+{% endif %}
+
 {% if is_dirty %}
 <div class="toast toast-warning">
     SVM changes pending — restart required
@@ -18,8 +24,13 @@
 {% endif %}
 
 <div class="card">
+    {% if active_preset.is_empty() %}
+    <h2>No active preset</h2>
+    <p>Create or import a preset, then activate it.</p>
+    {% else %}
     <h2>Active Preset: <strong>{{ active_preset }}</strong></h2>
     <a href="/quma/svm/edit" class="btn btn-primary">Edit Configuration</a>
+    {% endif %}
 </div>
 
 <div class="card">

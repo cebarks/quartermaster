@@ -179,6 +179,40 @@ impl ScopedDir {
         self.verify_identity()
     }
 
+    /// Return visible directory entries and whether this layer hides lower directories.
+    pub(crate) fn overlay_directory(&self, path: &Path) -> Result<(Vec<std::ffi::OsString>, bool)> {
+        validate_relative(path)?;
+        self.verify_identity()?;
+        let mut dir = self.dir.try_clone()?;
+        let mut opaque = false;
+        for component in path.components() {
+            opaque |= directory_is_opaque(&dir)?;
+            let name = component.as_os_str();
+            let mut whiteout = std::ffi::OsString::from(".wh.");
+            whiteout.push(name);
+            match dir.symlink_metadata(&whiteout) {
+                Ok(_) => return Ok((Vec::new(), true)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+            match dir.symlink_metadata(name) {
+                Ok(meta) if meta.is_dir() => dir = dir.open_dir(name)?,
+                Ok(_) => return Ok((Vec::new(), true)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok((Vec::new(), opaque))
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        opaque |= directory_is_opaque(&dir)?;
+        let names = dir
+            .entries()?
+            .map(|entry| Ok(entry?.file_name()))
+            .collect::<Result<_>>()?;
+        self.verify_identity()?;
+        Ok((names, opaque))
+    }
+
     pub(crate) fn file_names(&self, path: &Path) -> Result<Vec<std::ffi::OsString>> {
         let child = self.child(path)?;
         let names = child
@@ -301,6 +335,175 @@ impl ScopedDir {
         }
         file.set_len(0)?;
         Ok(file.into_std())
+    }
+
+    pub(crate) fn create_new_file(&self, path: &Path) -> Result<File> {
+        let relative = self.resolve(path)?;
+        if let Some(parent) = relative.parent().filter(|p| !p.as_os_str().is_empty()) {
+            self.dir.create_dir_all(parent)?;
+        }
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        Ok(self.dir.open_with(relative, &options)?.into_std())
+    }
+
+    pub(crate) fn remove_file(&self, path: &Path) -> Result<()> {
+        validate_relative(path)?;
+        let parent = path.parent().context("file has no parent")?;
+        let parent = if parent.as_os_str().is_empty() {
+            PathBuf::new()
+        } else {
+            self.resolve(parent)?
+        };
+        let name = path.file_name().context("file has no name")?;
+        self.dir.remove_file(parent.join(name))?;
+        Ok(())
+    }
+
+    pub(crate) fn replace_file(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        let original = self.read_file(path)?;
+        self.publish_file(path, bytes, &original, false)
+    }
+
+    pub(crate) fn duplicate_file(&self, source: &Path, target: &Path) -> Result<()> {
+        use std::io::Read;
+        let mut original = self.read_file(source)?;
+        let mut bytes = Vec::new();
+        original.read_to_end(&mut bytes)?;
+        self.publish_file(target, &bytes, &original, true)
+    }
+
+    fn publish_file(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        original: &File,
+        no_clobber: bool,
+    ) -> Result<()> {
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::MetadataExt;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+        let target = if no_clobber {
+            validate_relative(path)?;
+            let parent = path.parent().context("destination has no parent")?;
+            let parent = if parent.as_os_str().is_empty() {
+                PathBuf::new()
+            } else {
+                self.resolve(parent)?
+            };
+            parent.join(path.file_name().context("destination has no name")?)
+        } else {
+            self.resolve(path)?
+        };
+        let metadata = original.metadata()?;
+        // SAFETY: both file descriptors and the static C string remain valid for each call.
+        let size = unsafe {
+            libc::fgetxattr(
+                original.as_raw_fd(),
+                c"system.posix_acl_access".as_ptr(),
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        let acl = if size >= 0 {
+            let size = usize::try_from(size)?;
+            if size > 65536 {
+                bail!("file ACL is unexpectedly large");
+            }
+            let mut value = vec![0u8; size];
+            // SAFETY: `value` has exactly `size` writable bytes.
+            let actual = unsafe {
+                libc::fgetxattr(
+                    original.as_raw_fd(),
+                    c"system.posix_acl_access".as_ptr(),
+                    value.as_mut_ptr().cast(),
+                    size,
+                )
+            };
+            if actual < 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            if usize::try_from(actual)? != size {
+                bail!("file ACL changed while reading it");
+            }
+            Some(value)
+        } else {
+            let error = std::io::Error::last_os_error();
+            if !matches!(error.raw_os_error(), Some(libc::ENODATA | libc::ENOTSUP)) {
+                return Err(error.into());
+            }
+            None
+        };
+        let parent = target.parent().context("destination has no parent")?;
+        let temp = parent.join(format!(
+            ".quma-svm-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut options = OpenOptions::new();
+        use cap_std::fs::OpenOptionsExt;
+        options.write(true).create_new(true).mode(0o600);
+        let mut file = self.dir.open_with(&temp, &options)?;
+        let result = (|| -> Result<()> {
+            let fresh = file.metadata()?;
+            use cap_std::fs::MetadataExt as CapMetadataExt;
+            if !no_clobber && (fresh.uid() != metadata.uid() || fresh.gid() != metadata.gid()) {
+                // SAFETY: the temporary file descriptor is live and owned by this scope.
+                if unsafe { libc::fchown(file.as_raw_fd(), metadata.uid(), metadata.gid()) } != 0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+            }
+            // Write while mode 0600 masks any inherited default ACL entries.
+            file.write_all(bytes)?;
+            // Clear inherited ACL before restoring wider permissions.
+            // SAFETY: the temporary descriptor and C string are live.
+            if unsafe { libc::fremovexattr(file.as_raw_fd(), c"system.posix_acl_access".as_ptr()) }
+                != 0
+            {
+                let error = std::io::Error::last_os_error();
+                if !matches!(error.raw_os_error(), Some(libc::ENODATA | libc::ENOTSUP)) {
+                    return Err(error.into());
+                }
+            }
+            if let Some(acl) = &acl {
+                // Setting the ACL atomically restores its corresponding permission bits;
+                // chmod first could transiently expose a masked group entry.
+                // SAFETY: the descriptor and ACL buffer are valid.
+                if unsafe {
+                    libc::fsetxattr(
+                        file.as_raw_fd(),
+                        c"system.posix_acl_access".as_ptr(),
+                        acl.as_ptr().cast(),
+                        acl.len(),
+                        0,
+                    )
+                } != 0
+                {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+            }
+            // SAFETY: the temporary file descriptor is live. For an ACL this
+            // only restores the same mode bits (plus any special bits).
+            if unsafe { libc::fchmod(file.as_raw_fd(), metadata.mode() & 0o7777) } != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            file.sync_all()?;
+            self.verify_identity()?;
+            if no_clobber {
+                self.dir.hard_link(&temp, &self.dir, &target)?;
+                self.dir.remove_file(&temp)?;
+            } else {
+                self.dir.rename(&temp, &self.dir, &target)?;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = self.dir.remove_file(&temp);
+        }
+        result
     }
 }
 

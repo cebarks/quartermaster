@@ -1045,9 +1045,10 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
     // Remove orphaned queued archives (no matching pending operation)
     crate::queue::sweep_orphaned_archives(&dirs, &db_arc.lock());
 
-    let svm = crate::svm::SvmManager::detect(&dirs.spt_server)
-        .map(|mgr| Arc::new(parking_lot::RwLock::new(mgr)));
-    let svm_installed_flag = svm.is_some();
+    let svm = Arc::new(parking_lot::RwLock::new(
+        crate::svm::SvmManager::detect_dirs(&dirs),
+    ));
+    let svm_installed_flag = svm.read().is_some();
     if svm_installed_flag {
         tracing::info!("SVM detected — web config editor enabled");
     }
@@ -1155,7 +1156,6 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         converging,
         fika_installed,
         svm,
-        svm_installed: std::sync::atomic::AtomicBool::new(svm_installed_flag),
         config_mgmt,
         server_transition: Arc::new(parking_lot::Mutex::new(None)),
         game_data,
