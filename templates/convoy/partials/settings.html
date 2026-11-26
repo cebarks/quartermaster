@@ -1,3 +1,4 @@
+<p>Publication: {{ publication }}</p>
 <h2>Convoy Settings</h2>
 
 <form method="post" action="/quma/convoy/settings">
@@ -30,12 +31,12 @@
 <hr>
 
 <h3>File Checksums</h3>
-<p class="text-muted text-sm">Rehash all tracked client-side mod files from disk. The catalog automatically rehashes files older than 30 minutes, but you can force it here if you've just updated mod files manually.</p>
+<p class="text-muted text-sm">Queue a background rehash and republish after changing payloads outside Quartermaster. Wait for Ready before retrying sync.</p>
 <button class="btn btn-secondary" id="rehash-btn"
         hx-post="/quma/convoy/rehash"
         hx-headers='{"x-csrf-token": "{{ csrf_token }}"}'
         hx-swap="none"
         hx-disabled-elt="this"
         hx-on::after-request="if(event.detail.successful){window.location.href=event.detail.xhr.response&&JSON.parse(event.detail.xhr.response).redirect||'/quma/convoy?tab=settings'}">
-    Rehash File Checksums
+    Rehash and republish
 </button>

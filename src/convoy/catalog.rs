@@ -1,13 +1,17 @@
+#[cfg(test)]
 use serde::Serialize;
+#[cfg(test)]
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::path::Path;
+#[cfg(test)]
 use std::time::Duration;
 
+#[cfg(test)]
 use crate::config::ConvoyConfig;
+#[cfg(test)]
 use crate::db::Database;
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 pub struct Catalog {
     pub spt_version: String,
@@ -16,6 +20,7 @@ pub struct Catalog {
     pub exclusions: Vec<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 pub struct CatalogGroup {
     pub slug: String,
@@ -24,6 +29,7 @@ pub struct CatalogGroup {
     pub mods: Vec<CatalogMod>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 pub struct CatalogMod {
     pub id: i64,
@@ -35,6 +41,7 @@ pub struct CatalogMod {
     pub bundle_checksums: BTreeMap<String, String>,
 }
 
+#[cfg(test)]
 fn resolve_guid(
     m: &crate::db::mods::InstalledMod,
     spt_dir: &Path,
@@ -53,7 +60,11 @@ fn resolve_guid(
         .join(mod_dir)
         .join("package.json");
     let content = std::fs::read_to_string(&pkg_path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    package_guid(content.as_bytes())
+}
+
+pub(super) fn package_guid(reader: impl std::io::Read) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_reader(reader).ok()?;
     v.get("name")
         .or_else(|| v.get("uid"))
         .and_then(|n| n.as_str())
@@ -66,8 +77,19 @@ pub(crate) fn is_client_path(path: &str) -> bool {
     if path.starts_with("BepInEx/config/Convoy/") {
         return false;
     }
-    if path.contains(['\\', ':', '\0', '<', '>', '"', '|', '?', '*'])
-        || path.split('/').any(|p| {
+    portable_path(path) && has_client_namespace(path)
+}
+
+pub(super) fn has_client_namespace(path: &str) -> bool {
+    path.starts_with("BepInEx/")
+        || path
+            .strip_prefix("EscapeFromTarkov_Data/Managed/")
+            .is_some_and(|name| !name.contains('/') && name.ends_with(".dll") && name.len() > 4)
+}
+
+pub(super) fn portable_path(path: &str) -> bool {
+    !path.contains(['\\', ':', '\0', '<', '>', '"', '|', '?', '*'])
+        && !path.split('/').any(|p| {
             p.is_empty()
                 || p == "."
                 || p == ".."
@@ -103,13 +125,6 @@ pub(crate) fn is_client_path(path: &str) -> bool {
                         | "LPT9"
                 )
         })
-    {
-        return false;
-    }
-    path.starts_with("BepInEx/")
-        || path
-            .strip_prefix("EscapeFromTarkov_Data/Managed/")
-            .is_some_and(|name| !name.contains('/') && name.ends_with(".dll") && name.len() > 4)
 }
 
 pub(super) fn eligible_client_file(file: &crate::db::mods::InstalledFile) -> bool {
@@ -117,6 +132,7 @@ pub(super) fn eligible_client_file(file: &crate::db::mods::InstalledFile) -> boo
         && (file.file_path.starts_with("BepInEx/") || file.source == "archive")
 }
 
+#[cfg(test)]
 pub(super) fn validate_client_inventory(
     files: &[crate::db::mods::InstalledFile],
 ) -> anyhow::Result<()> {
@@ -130,6 +146,7 @@ pub(super) fn validate_client_inventory(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn client_file_checksum(file: &crate::db::mods::InstalledFile) -> Option<&str> {
     if eligible_client_file(file) {
         file.file_hash.as_deref()
@@ -138,6 +155,7 @@ pub(super) fn client_file_checksum(file: &crate::db::mods::InstalledFile) -> Opt
     }
 }
 
+#[cfg(test)]
 fn get_client_file_checksums(
     db: &Database,
     m: &crate::db::mods::InstalledMod,
@@ -150,6 +168,7 @@ fn get_client_file_checksums(
         .collect())
 }
 
+#[cfg(test)]
 fn get_bundle_checksums(spt_dir: &Path, db: &Database, mod_id: i64) -> BTreeMap<String, String> {
     let files = match db.get_files_for_mod_ids(&[mod_id]) {
         Ok(f) => f,
@@ -160,7 +179,7 @@ fn get_bundle_checksums(spt_dir: &Path, db: &Database, mod_id: i64) -> BTreeMap<
     };
 
     let mut checksums = BTreeMap::new();
-    for bundle in super::download::discover_mod_bundles(spt_dir, &files) {
+    for bundle in super::bundles::discover_mod_bundles(spt_dir, &files) {
         match bundle
             .open()
             .and_then(crate::spt::mods::compute_reader_hash)
@@ -176,6 +195,7 @@ fn get_bundle_checksums(spt_dir: &Path, db: &Database, mod_id: i64) -> BTreeMap<
     checksums
 }
 
+#[cfg(test)]
 pub fn generate_catalog(
     db: &Database,
     spt_dir: &Path,
@@ -272,6 +292,66 @@ pub fn generate_catalog(
 
 // Runtime exclusion detection - ported from modsync.rs
 
+pub(super) fn scoped_runtime_exclusions(
+    scope: &crate::spt::scoped::ScopedDir,
+    files: &[crate::db::mods::InstalledFile],
+) -> anyhow::Result<Vec<String>> {
+    use std::collections::BTreeSet;
+    let tracked: BTreeSet<_> = files
+        .iter()
+        .filter(|f| f.source == "archive")
+        .map(|f| f.file_path.as_str())
+        .collect();
+    let roots: BTreeSet<_> = files
+        .iter()
+        .filter(|f| eligible_client_file(f))
+        .filter_map(|f| f.file_path.strip_prefix("BepInEx/plugins/"))
+        .filter_map(|p| {
+            p.split_once('/')
+                .map(|(dir, _)| format!("BepInEx/plugins/{dir}"))
+        })
+        .collect();
+    let mut exclusions = Vec::new();
+    let mut dirs: Vec<_> = roots.into_iter().collect();
+    while let Some(dir) = dirs.pop() {
+        let relative = Path::new(&dir);
+        // Existing directory links are not a source of automatic exclusions.
+        if scope.resolve(relative)? != relative
+            || !scope.entry_type(relative)?.is_some_and(|ty| ty.is_dir())
+        {
+            continue;
+        }
+        for name in scope.file_names(relative)? {
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let path = format!("{dir}/{name}");
+            if !super::manifest::portable_path(&path) {
+                continue;
+            }
+            let Some(ty) = scope.entry_type(Path::new(&path))? else {
+                continue;
+            };
+            if ty.is_dir() {
+                let prefix = format!("{path}/");
+                if tracked
+                    .range(prefix.as_str()..)
+                    .next()
+                    .is_some_and(|p| p.starts_with(&prefix))
+                {
+                    dirs.push(path);
+                } else {
+                    exclusions.push(path);
+                }
+            } else if ty.is_file() && !tracked.contains(path.as_str()) {
+                exclusions.push(path);
+            }
+        }
+    }
+    Ok(exclusions)
+}
+
+#[cfg(test)]
 fn collect_runtime_exclusions(db: &Database, spt_dir: &Path) -> anyhow::Result<Vec<String>> {
     let all_files = db.get_all_tracked_files()?;
     let archive_paths: std::collections::BTreeSet<String> = all_files
@@ -306,6 +386,7 @@ fn collect_runtime_exclusions(db: &Database, spt_dir: &Path) -> anyhow::Result<V
 /// Walk `dir` and add exclusions for files/subdirectories not in `archive_paths`.
 /// If a subdirectory contains zero archive files, exclude it wholesale instead of
 /// listing every file individually.
+#[cfg(test)]
 fn exclude_untracked_recursive(
     dir: &Path,
     spt_dir: &Path,
@@ -355,185 +436,14 @@ fn exclude_untracked_recursive(
     }
 }
 
-#[derive(Clone)]
-pub struct CatalogCache {
-    inner: Arc<CatalogCacheInner>,
-}
-
-struct CatalogCacheInner {
-    spt_dir: PathBuf,
-    dirs: crate::dirs::QumaDirs,
-    db: Arc<parking_lot::Mutex<Database>>,
-    config: Arc<parking_lot::RwLock<crate::config::Config>>,
-    cache_path: PathBuf,
-    tmp_path: PathBuf,
-    rehash_marker_path: PathBuf,
-    rebuilding: AtomicBool,
-    dirty: AtomicBool,
-}
-
-/// RAII guard that resets `rebuilding` to false on drop.
-struct ResetOnDrop<'a>(&'a AtomicBool);
-impl Drop for ResetOnDrop<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
-
-impl CatalogCache {
-    pub fn new(
-        dirs: crate::dirs::QumaDirs,
-        db: Arc<parking_lot::Mutex<Database>>,
-        config: Arc<parking_lot::RwLock<crate::config::Config>>,
-    ) -> Self {
-        let spt_dir = dirs.spt_server.clone();
-        let cache_dir = spt_dir.join("quartermaster-cache");
-        std::fs::create_dir_all(&cache_dir).ok();
-        Self {
-            inner: Arc::new(CatalogCacheInner {
-                spt_dir,
-                dirs,
-                db,
-                config,
-                cache_path: cache_dir.join("convoy-catalog-v3.json"),
-                tmp_path: cache_dir.join("convoy-catalog-v3.json.tmp"),
-                rehash_marker_path: cache_dir.join("convoy-last-rehash-v3"),
-                rebuilding: AtomicBool::new(false),
-                dirty: AtomicBool::new(false),
-            }),
-        }
-    }
-
-    /// Returns (file_path, etag) if cached catalog exists.
-    pub fn get(&self) -> Option<(PathBuf, String)> {
-        if self.inner.cache_path.exists() {
-            let metadata = std::fs::metadata(&self.inner.cache_path).ok()?;
-            let modified = metadata.modified().ok()?;
-            let etag = format!(
-                "\"{:x}\"",
-                modified
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-            );
-            Some((self.inner.cache_path.clone(), etag))
-        } else {
-            None
-        }
-    }
-
-    /// Trigger a background rebuild. Coalesces concurrent calls.
-    pub fn invalidate(&self) {
-        if self
-            .inner
-            .rebuilding
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            let cache = self.clone();
-            tokio::task::spawn_blocking(move || {
-                cache.inner.do_rebuild(&cache);
-            });
-        } else {
-            self.inner.dirty.store(true, Ordering::Release);
-        }
-    }
-
-    pub fn clear(&self) {
-        let _ = std::fs::remove_file(&self.inner.cache_path);
-    }
-
-    /// Force rehash all tracked client files from disk, then rebuild catalog.
-    pub fn force_rehash(&self) {
-        let db = self.inner.db.lock();
-        let updated = rehash_client_files(&db, &self.inner.dirs, true);
-        drop(db);
-        tracing::info!(updated, "force rehash complete");
-        self.invalidate();
-    }
-
-    /// Synchronous rebuild for tests. Guarded by compare_exchange.
-    #[cfg(test)]
-    pub fn rebuild_sync(&self) {
-        if self
-            .inner
-            .rebuilding
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            self.inner.do_rebuild(self);
-        }
-    }
-}
-
-impl CatalogCacheInner {
-    fn do_rebuild(&self, cache: &CatalogCache) {
-        let _guard = ResetOnDrop(&self.rebuilding);
-
-        if let Err(e) = self.build_cache() {
-            tracing::error!(err = %e, "failed to rebuild convoy catalog cache");
-        }
-
-        if self.dirty.swap(false, Ordering::AcqRel) {
-            cache.invalidate();
-        }
-    }
-
-    fn build_cache(&self) -> anyhow::Result<()> {
-        self.rehash_if_stale();
-
-        let convoy_config = self
-            .config
-            .read()
-            .convoy
-            .as_ref()
-            .cloned()
-            .unwrap_or_default();
-
-        let db = self.db.lock();
-        let catalog = generate_catalog(&db, &self.spt_dir, &convoy_config)?;
-        drop(db);
-
-        let json = serde_json::to_string_pretty(&catalog)?;
-        std::fs::write(&self.tmp_path, &json)?;
-        std::fs::rename(&self.tmp_path, &self.cache_path)?;
-
-        tracing::info!("rebuilt convoy catalog cache");
-        Ok(())
-    }
-
-    /// Rehash client files if the last rehash was more than 30 minutes ago.
-    fn rehash_if_stale(&self) {
-        let stale = self
-            .rehash_marker_path
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|mtime| mtime.elapsed().unwrap_or(Duration::MAX) > Duration::from_secs(30 * 60))
-            .unwrap_or(true);
-
-        if !stale {
-            return;
-        }
-
-        let db = self.db.lock();
-        let updated = rehash_client_files(&db, &self.dirs, false);
-        drop(db);
-
-        // Touch marker regardless of whether anything changed
-        std::fs::write(&self.rehash_marker_path, b"").ok();
-
-        if updated > 0 {
-            tracing::info!(updated, "rehashed stale convoy file checksums");
-        }
-    }
-}
-
+#[cfg(test)]
 const REHASH_STALE_SECS: u64 = 30 * 60;
 
 /// Rehash eligible tracked client files from scoped overlay layers, updating changed hashes.
 /// If `force` is true, rehash everything; otherwise only files whose on-disk mtime
 /// is newer than `REHASH_STALE_SECS`.
 /// Returns the number of DB rows updated.
+#[cfg(test)]
 fn rehash_client_files(db: &Database, dirs: &crate::dirs::QumaDirs, force: bool) -> usize {
     let layers = match crate::spt::layered::LayeredFiles::open(dirs) {
         Ok(layers) => layers,
@@ -605,6 +515,7 @@ fn rehash_client_files(db: &Database, dirs: &crate::dirs::QumaDirs, force: bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(test)]
     use crate::db::Database;
     use crate::dirs::QumaDirs;
     use tempfile::TempDir;
@@ -636,13 +547,6 @@ mod tests {
             catalog.groups[0].mods[0].file_checksums[path],
             crate::spt::mods::compute_file_hash(&absolute).unwrap()
         );
-        let dirs = QumaDirs::from_legacy(dir.path().to_path_buf());
-        let zip =
-            super::super::download::get_or_build_convoy_zip(&db, &dirs, &[id], false).unwrap();
-        assert!(zip::ZipArchive::new(std::fs::File::open(zip).unwrap())
-            .unwrap()
-            .by_name(path)
-            .is_ok());
     }
 
     #[test]
@@ -690,11 +594,6 @@ mod tests {
             )
             .unwrap();
             assert!(get_bundle_checksums(dir.path(), &db, id).is_empty());
-            let dirs = QumaDirs::from_legacy(dir.path().to_path_buf());
-            let path =
-                crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], true).unwrap();
-            let zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
-            assert_eq!(zip.len(), 0);
         }
     }
 
@@ -726,17 +625,6 @@ mod tests {
             )
             .unwrap();
             assert_eq!(get_bundle_checksums(dir.path(), &db, id).len(), 2);
-            let dirs = QumaDirs::from_legacy(dir.path().to_path_buf());
-            let path =
-                crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], true).unwrap();
-            let mut zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
-            assert_eq!(zip.len(), 2);
-            for i in 0..zip.len() {
-                let mut contents = String::new();
-                std::io::Read::read_to_string(&mut zip.by_index(i).unwrap(), &mut contents)
-                    .unwrap();
-                assert_eq!(contents, "allowed bundle");
-            }
         }
     }
 
@@ -772,16 +660,6 @@ mod tests {
             let checksums = get_bundle_checksums(dir.path(), &db, id);
             assert_eq!(
                 checksums.keys().map(String::as_str).collect::<Vec<_>>(),
-                vec![expected]
-            );
-            let dirs = QumaDirs::from_legacy(dir.path().to_path_buf());
-            let path =
-                crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], true).unwrap();
-            let zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
-            assert_eq!(
-                zip.file_names()
-                    .collect::<zip::result::ZipResult<Vec<_>>>()
-                    .unwrap(),
                 vec![expected]
             );
         }
@@ -919,6 +797,7 @@ mod tests {
         let config = ConvoyConfig {
             enabled: true,
             exclusions: vec!["BepInEx/plugins/SAIN/BotTypes.json".to_string()],
+            ..ConvoyConfig::default()
         };
         let catalog = generate_catalog(&db, dir.path(), &config).unwrap();
         assert!(catalog

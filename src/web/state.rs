@@ -54,7 +54,7 @@ pub struct AppState {
     pub fika_client: Option<Arc<crate::fika::client::FikaClient>>,
     #[allow(dead_code)] // ponytail: used in later tasks
     pub fika_config_lock: Arc<parking_lot::Mutex<()>>,
-    pub catalog_cache: crate::convoy::catalog::CatalogCache,
+    pub convoy_publisher: actix_web::web::Data<crate::convoy::publisher::Publisher>,
     #[allow(clippy::type_complexity)]
     pub fika_items:
         Arc<parking_lot::Mutex<Option<Arc<HashMap<String, crate::fika::client::FikaItemInfo>>>>>,
@@ -86,7 +86,16 @@ impl AppState {
     /// Call this after saving config to disk (while still holding config_lock).
     pub fn update_config_from_disk(&self) -> anyhow::Result<()> {
         let fresh = Config::load_with_env(&self.config_path)?;
-        *self.config.write() = fresh;
+        let convoy_changed = {
+            let mut current = self.config.write();
+            let changed = current.convoy != fresh.convoy;
+            *current = fresh;
+            changed
+        };
+        if convoy_changed {
+            self.convoy_publisher
+                .refresh(crate::convoy::publisher::PublishMode::Managed);
+        }
         self.mod_zip_cache.invalidate();
         Ok(())
     }
@@ -126,17 +135,9 @@ impl AppState {
     }
 
     pub fn regenerate_convoy(&self) {
-        if self
-            .config
-            .read()
-            .convoy
-            .as_ref()
-            .is_some_and(|c| c.enabled)
-        {
-            self.catalog_cache.invalidate();
-            self.mod_zip_cache.invalidate();
-            crate::convoy::download::clear_convoy_cache(&self.dirs.spt_server);
-        }
+        self.convoy_publisher
+            .refresh(crate::convoy::publisher::PublishMode::Managed);
+        self.mod_zip_cache.invalidate();
     }
 
     pub fn clear_fika_items(&self) {

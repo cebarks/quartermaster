@@ -213,6 +213,17 @@ impl ScopedDir {
         Ok((names, opaque))
     }
 
+    #[allow(dead_code)] // Convoy v2 mounts only in the ephemeral service for now.
+    pub(crate) fn entry_type(&self, path: &Path) -> Result<Option<cap_std::fs::FileType>> {
+        validate_relative(path)?;
+        self.verify_identity()?;
+        match self.dir.symlink_metadata(path) {
+            Ok(m) => Ok(Some(m.file_type())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub(crate) fn file_names(&self, path: &Path) -> Result<Vec<std::ffi::OsString>> {
         let child = self.child(path)?;
         let names = child
@@ -286,17 +297,12 @@ impl ScopedDir {
     pub(crate) fn read_client_overlay_file(&self, path: &Path) -> Result<Option<File>> {
         #[cfg(target_os = "linux")]
         {
-            use std::os::fd::AsRawFd;
             let Some(file) = self.read_overlay_file(path)? else {
                 return Ok(None);
             };
-            self.verify_identity()?;
             // Classify the opened descriptor, not a pathname checked before opening.
             // The data stream remains on this capability-opened file handle.
-            let opened = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
-            let relative = opened
-                .strip_prefix(&self.path)
-                .context("opened client source is outside the bound installation")?;
+            let relative = self.opened_relative_path(&file)?;
             for runtime in ["SPT_Runtime", "SPT"] {
                 if relative.starts_with(self.resolve(Path::new(runtime))?) {
                     bail!("client source targets a server runtime tree");
@@ -310,6 +316,16 @@ impl ScopedDir {
             let _ = path;
             bail!("opened client-source classification requires Linux");
         }
+    }
+
+    pub(crate) fn opened_relative_path(&self, file: &File) -> Result<PathBuf> {
+        use std::os::fd::AsRawFd;
+        self.verify_identity()?;
+        let opened = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+        Ok(opened
+            .strip_prefix(&self.path)
+            .context("opened source is outside the bound installation")?
+            .to_owned())
     }
 
     pub(crate) fn create_dir_all(&self, path: &Path) -> Result<()> {

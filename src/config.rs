@@ -473,6 +473,13 @@ pub struct ConvoyConfig {
 
     #[serde(default)]
     pub exclusions: Vec<String>,
+
+    #[serde(default = "default_convoy_store_bytes")]
+    pub max_store_bytes: u64,
+}
+
+fn default_convoy_store_bytes() -> u64 {
+    68_719_476_736
 }
 
 impl Default for ConvoyConfig {
@@ -480,6 +487,7 @@ impl Default for ConvoyConfig {
         Self {
             enabled: true,
             exclusions: Vec::new(),
+            max_store_bytes: default_convoy_store_bytes(),
         }
     }
 }
@@ -1191,6 +1199,7 @@ impl Config {
                         config.convoy = Some(ConvoyConfig {
                             enabled: ms.enabled,
                             exclusions: ms.exclusions.clone(),
+                            ..ConvoyConfig::default()
                         });
                         save_needed = true;
                         tracing::info!("migrated [modsync] config section to [convoy]");

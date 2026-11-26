@@ -180,17 +180,7 @@ pub fn configure_app(
                 web::resource("/setup/mods.zip")
                     .wrap(Governor::new(gov))
                     .route(web::get().to(handlers::setup::setup_mods_zip)),
-            )
-            .route("/convoy/catalog", web::get().to(handlers::convoy::catalog))
-            .route(
-                "/convoy/download",
-                web::post().to(handlers::convoy::download),
-            )
-            .route(
-                "/convoy/mod/{mod_id}/archive",
-                web::get().to(handlers::convoy::single_mod_archive),
-            )
-            .route("/convoy/report", web::post().to(handlers::convoy::report));
+            );
     } else {
         // Same routes without rate limiting (for tests)
         quma_scope = quma_scope
@@ -217,18 +207,21 @@ pub fn configure_app(
             .route(
                 "/setup/mods.zip",
                 web::get().to(handlers::setup::setup_mods_zip),
-            )
-            .route("/convoy/catalog", web::get().to(handlers::convoy::catalog))
-            .route(
-                "/convoy/download",
-                web::post().to(handlers::convoy::download),
-            )
-            .route(
-                "/convoy/mod/{mod_id}/archive",
-                web::get().to(handlers::convoy::single_mod_archive),
-            )
-            .route("/convoy/report", web::post().to(handlers::convoy::report));
+            );
     }
+
+    quma_scope = quma_scope
+        .configure(handlers::convoy_v2::configure_v2)
+        .route("/convoy/catalog", web::get().to(handlers::convoy::retired))
+        .route(
+            "/convoy/download",
+            web::post().to(handlers::convoy::retired),
+        )
+        .route(
+            "/convoy/mod/{mod_id}/archive",
+            web::get().to(handlers::convoy::retired),
+        )
+        .route("/convoy/report", web::post().to(handlers::convoy::report));
 
     // Build the API scope
     // Wrap order: last .wrap() = outermost (runs first on request, last on response).
@@ -1107,11 +1100,19 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         None
     };
 
-    let catalog_cache = crate::convoy::catalog::CatalogCache::new(
+    // Migrate the source inventory before the publisher takes its first snapshot.
+    if let Err(e) = crate::convoy::migrate::migrate_modsync_to_convoy(
+        &config_handle.read(),
+        &db_arc.lock(),
+        &dirs.spt_server,
+    ) {
+        tracing::error!("failed to migrate modsync groups to convoy: {e}");
+    }
+    let convoy_publisher = web::Data::new(crate::convoy::publisher::Publisher::start(
         dirs.clone(),
-        db_arc.clone(),
         config_handle.clone(),
-    );
+        db_arc.clone(),
+    )?);
 
     let dirs = Arc::new(dirs);
 
@@ -1165,7 +1166,7 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         log_level_counts,
         fika_client,
         fika_config_lock,
-        catalog_cache,
+        convoy_publisher: convoy_publisher.clone(),
         fika_items: Arc::new(parking_lot::Mutex::new(None)),
         headless_service,
         sse_connections: std::sync::atomic::AtomicUsize::new(0),
@@ -1183,30 +1184,6 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         config.discord_webhook_url.clone(),
         config.update_notify_interval,
     );
-
-    // One-time modsync-to-convoy migration
-    {
-        let config = app_state.config.read();
-        let db = app_state.db.lock();
-        if let Err(e) = crate::convoy::migrate::migrate_modsync_to_convoy(
-            &config,
-            &db,
-            &app_state.dirs.spt_server,
-        ) {
-            tracing::error!("failed to migrate modsync groups to convoy: {e}");
-        }
-    }
-
-    // Invalidate convoy catalog on startup if enabled
-    if app_state
-        .config
-        .read()
-        .convoy
-        .as_ref()
-        .is_some_and(|c| c.enabled)
-    {
-        app_state.catalog_cache.invalidate();
-    }
 
     // Clean up old convoy sync data (30 day retention)
     {
@@ -1250,6 +1227,7 @@ pub async fn start_server(ctx: ServerContext, api_token: String) -> Result<()> {
         let search_gov = search_governor_conf.clone();
         let mut app = App::new()
             .app_data(app_state.clone())
+            .app_data(convoy_publisher.clone())
             .app_data(api_token_state.clone())
             .app_data(web::PayloadConfig::new(64 * 1024 * 1024));
 

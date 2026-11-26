@@ -1,3 +1,6 @@
+use actix_governor::{
+    governor::middleware::NoOpMiddleware, GovernorConfig, GovernorConfigBuilder, PeerIpKeyExtractor,
+};
 use std::sync::Arc;
 
 use actix_web::cookie::Key;
@@ -116,8 +119,8 @@ impl TestAppBuilder {
         std::fs::create_dir_all(spt_dir.join("SPT/user/profiles")).unwrap();
         std::fs::create_dir_all(spt_dir.join("BepInEx/plugins")).unwrap();
 
-        // Create an in-memory database
-        let db = Database::open_in_memory().expect("failed to create in-memory DB");
+        // The publisher uses independent SQLite connections.
+        let db = Database::open(&dirs.db_path()).expect("failed to create fixture DB");
 
         // Seed users
         for (username, password, role) in &self.users {
@@ -235,10 +238,13 @@ impl TestAppBuilder {
             ),
             integrity_cache: spt_quartermaster::web::integrity_cache::IntegrityCache::new(300),
             log_level_counts,
-            catalog_cache: spt_quartermaster::convoy::catalog::CatalogCache::new(
-                dirs.clone(),
-                db_arc.clone(),
-                config_arc.clone(),
+            convoy_publisher: web::Data::new(
+                spt_quartermaster::convoy::publisher::Publisher::start(
+                    dirs.clone(),
+                    config_arc.clone(),
+                    db_arc.clone(),
+                )
+                .unwrap(),
             ),
             config_mgmt: spt_quartermaster::config_mgmt::ConfigManager::new(&dirs),
             sse_connections: std::sync::atomic::AtomicUsize::new(0),
@@ -258,6 +264,7 @@ impl TestAppBuilder {
             session_key,
             api_token_state,
             cookies: Vec::new(),
+            governor: None,
             _tmp_dir: tmp_dir,
             _mock_server: mock_server,
         }
@@ -278,10 +285,11 @@ pub struct TestApp {
     /// Database handle for direct assertions
     pub db: Arc<Mutex<Database>>,
     pub(crate) app_state: web::Data<AppState>,
-    session_key: Key,
+    pub(crate) session_key: Key,
     api_token_state: Option<web::Data<spt_quartermaster::web::api_auth::ApiTokenState>>,
     cookies: Vec<String>,
-    _tmp_dir: TempDir,
+    governor: Option<GovernorConfig<PeerIpKeyExtractor, NoOpMiddleware>>,
+    pub(crate) _tmp_dir: TempDir,
     _mock_server: wiremock::MockServer,
 }
 
@@ -298,6 +306,17 @@ impl TestApp {
         self.app_state.config.write().proxy_auth = enabled;
     }
 
+    #[allow(dead_code)] // Opt-in for the production-route cutover matrix.
+    pub fn enable_fixture_governor(&mut self) {
+        self.governor = Some(
+            GovernorConfigBuilder::default()
+                .seconds_per_request(60)
+                .burst_size(8)
+                .finish()
+                .unwrap(),
+        );
+    }
+
     async fn make_service(
         &self,
     ) -> impl Service<actix_http::Request, Response = ServiceResponse, Error = actix_web::Error>
@@ -307,19 +326,32 @@ impl TestApp {
         let api_token_state = self.api_token_state.clone().unwrap(); // always Some now
         test::init_service(
             App::new()
+                .app_data(app_state.convoy_publisher.clone())
                 .app_data(app_state)
                 .app_data(api_token_state)
                 .app_data(web::PayloadConfig::new(64 * 1024 * 1024))
                 .wrap(middleware::NormalizePath::new(
                     middleware::TrailingSlash::MergeOnly,
                 ))
-                .configure(|cfg| configure_app(cfg, session_key, false, false, None, None)),
+                .configure(|cfg| {
+                    configure_app(
+                        cfg,
+                        session_key,
+                        false,
+                        self.governor.is_some(),
+                        self.governor.clone(),
+                        self.governor.clone(),
+                    )
+                }),
         )
         .await
     }
 
     /// Send a request, handling middleware errors by converting them to error responses.
-    async fn send(&mut self, req: actix_http::Request) -> ServiceResponse {
+    async fn send(&mut self, mut req: actix_http::Request) -> ServiceResponse {
+        if self.governor.is_some() && req.peer_addr().is_none() {
+            req.head_mut().peer_addr = Some(std::net::SocketAddr::from(([127, 0, 0, 1], 49152)));
+        }
         let service = self.make_service().await;
         let resp = match service.call(req).await {
             Ok(resp) => resp,
@@ -338,6 +370,14 @@ impl TestApp {
     /// Send a raw request without automatic cookie handling. Useful for API token tests.
     pub async fn send_raw(&mut self, req: actix_http::Request) -> ServiceResponse {
         self.send(req).await
+    }
+
+    #[allow(dead_code)] // Used by the Convoy route test.
+    pub async fn send_authenticated(&mut self, mut request: TestRequest) -> ServiceResponse {
+        if !self.cookies.is_empty() {
+            request = request.insert_header(("cookie", self.cookies.join("; ")));
+        }
+        self.send_raw(request.to_request()).await
     }
 
     /// Make a GET request with current cookies. Automatically saves response cookies.
