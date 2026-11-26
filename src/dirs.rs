@@ -121,6 +121,11 @@ impl QumaDirs {
         }
     }
 
+    #[allow(dead_code)] // Convoy v2 mounts only in the ephemeral service for now.
+    pub fn convoy_store_dir(&self) -> PathBuf {
+        self.staging_dir().with_file_name(".convoy-objects")
+    }
+
     pub fn disabled_dir(&self) -> PathBuf {
         if self.legacy {
             self.root.join("quartermaster/disabled")

@@ -2,6 +2,12 @@ use rusqlite::{params, OptionalExtension};
 
 use super::Database;
 
+pub(crate) struct StoredConvoyReceipt {
+    pub revision: i64,
+    pub id: String,
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SyncReportSummary {
     pub aid: String,
@@ -20,6 +26,59 @@ pub struct SyncActivity {
 }
 
 impl Database {
+    pub fn convoy_revision(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row(
+            "SELECT revision FROM convoy_publication WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+    }
+
+    pub(crate) fn convoy_stamp(&self) -> rusqlite::Result<(i64, Option<String>)> {
+        self.conn.query_row(
+            "SELECT revision, receipt FROM convoy_publication WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    }
+
+    pub(crate) fn convoy_receipt(&self) -> rusqlite::Result<Option<StoredConvoyReceipt>> {
+        self.conn.query_row(
+            "SELECT receipt_revision, receipt, receipt_data FROM convoy_publication WHERE id = 1 AND receipt IS NOT NULL",
+            [], |row| Ok(StoredConvoyReceipt { revision: row.get(0)?, id: row.get(1)?, data: row.get(2)? }),
+        ).optional()
+    }
+
+    pub(crate) fn commit_convoy_publication(
+        &self,
+        expected: &(i64, Option<String>),
+        receipt: (&str, &[u8]),
+        updates: &crate::convoy::publisher::Rebaseline,
+        #[cfg(test)] before_commit: impl FnOnce(),
+    ) -> rusqlite::Result<Option<i64>> {
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        if &self.convoy_stamp()? != expected {
+            return Ok(None);
+        }
+        for (id, (hash, length)) in updates {
+            tx.execute(
+                "UPDATE installed_files SET file_hash = ?1, file_size = ?2 WHERE id = ?3",
+                params![hash, length, id],
+            )?;
+            tx.execute("DELETE FROM pending_file_rehashes WHERE file_id = ?1", [id])?;
+        }
+        let revision = self.convoy_revision()?;
+        tx.execute("UPDATE convoy_publication SET receipt = ?1, receipt_data = ?2, receipt_revision = ?3 WHERE id = 1", params![receipt.0, receipt.1, revision])?;
+        #[cfg(test)]
+        before_commit();
+        tx.commit()?;
+        Ok(Some(revision))
+    }
+
+    #[cfg(test)]
     pub fn insert_sync_event(
         &self,
         event_type: &str,

@@ -27,6 +27,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/021_mod_guid.sql"),
     include_str!("../../migrations/022_update_notifications.sql"),
     include_str!("../../migrations/023_rebaseline_legacy_hashes.sql"),
+    include_str!("../../migrations/024_convoy_publication.sql"),
 ];
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
@@ -61,6 +62,38 @@ pub(crate) mod tests {
             tx.commit().unwrap();
         }
         Database { conn }
+    }
+
+    #[test]
+    fn convoy_revision_tracks_committed_inventory_only() -> rusqlite::Result<()> {
+        let db = Database::open_in_memory()?;
+        let revision = || {
+            db.conn().query_row(
+                "SELECT revision FROM convoy_publication WHERE id = 1",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+        };
+        let initial = revision()?;
+        seed_legacy_hashes(&db);
+        assert!(revision()? > initial);
+        let seeded = revision()?;
+        db.insert_sync_report("aid", "updated", None, None, None, None)?;
+        db.mark_update_notified(1, "2.0")?;
+        db.conn().execute_batch("UPDATE installed_mods SET name = name; UPDATE installed_files SET file_hash = file_hash;")?;
+        assert_eq!(revision()?, seeded);
+        {
+            let tx = db.begin_transaction()?;
+            tx.execute("UPDATE installed_addons SET disabled = 1", [])?;
+            assert!(revision()? > seeded);
+        }
+        assert_eq!(revision()?, seeded);
+        db.conn().execute(
+            "UPDATE installed_files SET file_hash = '0123456789abcdef' WHERE id = 3",
+            [],
+        )?;
+        assert!(revision()? > seeded);
+        Ok(())
     }
 
     fn seed_legacy_hashes(db: &Database) {

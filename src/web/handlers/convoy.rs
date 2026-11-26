@@ -3,11 +3,11 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use askama::Template;
 use serde::{Deserialize, Serialize};
 
+use crate::convoy::publisher::{Admission, DeliveryError, PublicationStatus, PublishMode};
 use crate::db::rbac::Permission;
 use crate::web::auth::{require_auth, require_permission, SessionUser};
 use crate::web::error::WebError;
 use crate::web::flash::{set_flash, take_flash, FlashMessage, FlashType};
-use crate::web::handlers::common::open_named_file;
 use crate::web::nav::NavContext;
 use crate::web::state::AppState;
 
@@ -90,6 +90,7 @@ pub async fn convoy_page(
 #[template(path = "convoy/partials/preview.html")]
 struct PreviewPartialTemplate {
     json: String,
+    publication: &'static str,
 }
 
 // ── Status Tab ────────────────────────────────────────────────────────────
@@ -102,16 +103,21 @@ struct StatusPartialTemplate {
 }
 
 async fn render_preview_tab(state: &AppState) -> Result<String, WebError> {
-    let Some((path, _etag)) = state.catalog_cache.get() else {
-        return Ok("<p class=\"text-muted\">Catalog is being built...</p>".to_string());
+    let publisher = &state.convoy_publisher;
+    let (json, publication) = match publisher.admit(None, None).await {
+        Ok(Admission::Manifest { json, .. }) => (
+            String::from_utf8_lossy(&json).into_owned(),
+            publication_status(publisher.status()),
+        ),
+        Err(DeliveryError::Disabled) => (String::new(), "Disabled"),
+        Err(DeliveryError::Preparing) => (String::new(), "Preparing"),
+        Err(DeliveryError::Busy) => (String::new(), "Busy — retry the preview shortly"),
+        _ => (
+            String::new(),
+            "Failed — check the server log, then rehash and republish",
+        ),
     };
-
-    let json = web::block(move || std::fs::read_to_string(path))
-        .await
-        .map_err(WebError::from)?
-        .map_err(WebError::from)?;
-
-    let tmpl = PreviewPartialTemplate { json };
+    let tmpl = PreviewPartialTemplate { json, publication };
     tmpl.render().map_err(WebError::from)
 }
 
@@ -161,81 +167,37 @@ pub async fn status_partial(
 
 // ── API Endpoints ─────────────────────────────────────────────────────────
 
-fn disabled_response(state: &AppState) -> Option<HttpResponse> {
-    (!state.config().convoy.as_ref().is_some_and(|c| c.enabled))
-        .then(|| HttpResponse::ServiceUnavailable().body("Convoy is not enabled"))
+fn publication_status(status: PublicationStatus) -> &'static str {
+    match status {
+        PublicationStatus::Disabled => "Disabled",
+        PublicationStatus::Preparing => "Preparing",
+        PublicationStatus::Ready { .. } => "Ready",
+        PublicationStatus::Failed { .. } => {
+            "Failed — check the server log, then rehash and republish"
+        }
+    }
 }
 
-/// GET /quma/convoy/catalog — serve cached catalog JSON with ETag
-pub async fn catalog(
-    req: HttpRequest,
-    state: web::Data<AppState>,
-) -> actix_web::Result<HttpResponse> {
-    if let Some(response) = disabled_response(&state) {
-        return Ok(response);
-    }
-
-    let Some((path, etag)) = state.catalog_cache.get() else {
-        state.catalog_cache.invalidate();
-        tracing::warn!("convoy catalog requested but cache not yet built, triggered rebuild");
-        return Ok(HttpResponse::ServiceUnavailable()
-            .body("Convoy catalog is being built, try again shortly"));
+pub async fn retired(state: web::Data<AppState>) -> HttpResponse {
+    let enabled = state.config().convoy.as_ref().is_some_and(|c| c.enabled);
+    let (mut response, body) = if enabled {
+        (
+            HttpResponse::Gone(),
+            serde_json::json!({
+                "code": "upgrade_required",
+                "message": "Install the standalone Convoy v2 client with the game closed, paired with a Convoy v2 Quartermaster server.",
+                "instructions": "https://github.com/cebarks/convoy#installation"
+            }),
+        )
+    } else {
+        (
+            HttpResponse::ServiceUnavailable(),
+            serde_json::json!({"code": "disabled"}),
+        )
     };
-
-    // Check If-None-Match for 304
-    if let Some(if_none_match) = req.headers().get("if-none-match") {
-        if let Ok(val) = if_none_match.to_str() {
-            if val == etag {
-                tracing::debug!("convoy catalog 304 (ETag match)");
-                // Log catalog 304 event (fire-and-forget)
-                let db = state.db.clone();
-                let ip = req
-                    .connection_info()
-                    .realip_remote_addr()
-                    .map(str::to_owned);
-                tokio::task::spawn_blocking(move || {
-                    let db = db.lock();
-                    if let Err(e) = db.insert_sync_event("catalog_304", ip.as_deref(), None, None) {
-                        tracing::warn!(err = %e, "failed to log convoy catalog 304 event");
-                    }
-                });
-                return Ok(HttpResponse::NotModified().finish());
-            }
-        }
-    }
-
-    let body = web::block(move || std::fs::read(path))
-        .await
-        .map_err(actix_web::error::ErrorInternalServerError)?
-        .map_err(actix_web::error::ErrorInternalServerError)?;
-
-    tracing::debug!(bytes = body.len(), "served convoy catalog");
-
-    let db_log = state.db.clone();
-    let ip = req
-        .connection_info()
-        .realip_remote_addr()
-        .map(str::to_owned);
-    let body_len = body.len() as i64;
-    tokio::task::spawn_blocking(move || {
-        let db = db_log.lock();
-        if let Err(e) = db.insert_sync_event("catalog_fetch", ip.as_deref(), None, Some(body_len)) {
-            tracing::warn!(err = %e, "failed to log convoy catalog fetch event");
-        }
-    });
-
-    Ok(HttpResponse::Ok()
-        .content_type("application/json")
-        .insert_header(("etag", etag))
-        .insert_header(("cache-control", "no-cache"))
-        .body(body))
-}
-
-#[derive(Deserialize)]
-pub struct DownloadRequest {
-    pub mods: Vec<i64>,
-    #[serde(default)]
-    pub bundles_only: bool,
+    response
+        .insert_header(("Cache-Control", "no-store"))
+        .json(body)
 }
 
 #[derive(Deserialize)]
@@ -254,122 +216,6 @@ pub struct SyncReportMod {
 }
 
 /// POST /quma/convoy/download — batched mod archive download
-pub async fn download(
-    req: HttpRequest,
-    state: web::Data<AppState>,
-    body: web::Json<DownloadRequest>,
-) -> actix_web::Result<HttpResponse> {
-    if let Some(response) = disabled_response(&state) {
-        return Ok(response);
-    }
-
-    if body.mods.is_empty() {
-        tracing::warn!("convoy download requested with empty mod list");
-        return Ok(HttpResponse::BadRequest().body("no mods requested"));
-    }
-
-    tracing::info!(mod_ids = ?body.mods, count = body.mods.len(), "convoy batch download requested");
-
-    let db = state.db.clone();
-    let dirs = state.dirs.clone();
-    let mod_ids = body.mods.clone();
-    let bundles_only = body.bundles_only;
-
-    let zip_path = web::block(move || {
-        let db = db.lock();
-        crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &mod_ids, bundles_only)
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!(err = %e, "convoy batch download failed");
-        actix_web::error::ErrorInternalServerError(e)
-    })?
-    .map_err(|e| {
-        tracing::error!(err = %e, "convoy batch download failed");
-        actix_web::error::ErrorInternalServerError(e)
-    })?;
-
-    let zip_len = std::fs::metadata(&zip_path)
-        .map(|m| m.len() as i64)
-        .unwrap_or(0);
-    tracing::info!(bytes = zip_len, "convoy batch download served");
-
-    let db_log = state.db.clone();
-    let ip = req
-        .connection_info()
-        .realip_remote_addr()
-        .map(str::to_owned);
-    let mod_ids_json = serde_json::to_string(&body.mods).unwrap_or_default();
-    tokio::task::spawn_blocking(move || {
-        let db = db_log.lock();
-        if let Err(e) = db.insert_sync_event(
-            "download",
-            ip.as_deref(),
-            Some(&mod_ids_json),
-            Some(zip_len),
-        ) {
-            tracing::warn!(err = %e, "failed to log convoy download event");
-        }
-    });
-
-    Ok(open_named_file(zip_path)
-        .await
-        .map_err(actix_web::error::ErrorInternalServerError)?
-        .set_content_disposition(actix_web::http::header::ContentDisposition {
-            disposition: actix_web::http::header::DispositionType::Attachment,
-            parameters: vec![actix_web::http::header::DispositionParam::Filename(
-                "convoy-mods.zip".to_string(),
-            )],
-        })
-        .into_response(&req))
-}
-
-/// GET /quma/convoy/mod/{mod_id}/archive — single mod download
-pub async fn single_mod_archive(
-    req: HttpRequest,
-    state: web::Data<AppState>,
-    path: web::Path<i64>,
-) -> actix_web::Result<HttpResponse> {
-    if let Some(response) = disabled_response(&state) {
-        return Ok(response);
-    }
-
-    let mod_id = path.into_inner();
-    let db = state.db.clone();
-    let dirs = state.dirs.clone();
-
-    tracing::info!(mod_id, "convoy single mod download requested");
-
-    let zip_path = web::block(move || {
-        let db = db.lock();
-        crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[mod_id], false)
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!(mod_id, err = %e, "convoy single mod download failed");
-        actix_web::error::ErrorInternalServerError(e)
-    })?
-    .map_err(|e| {
-        tracing::error!(mod_id, err = %e, "convoy single mod download failed");
-        actix_web::error::ErrorInternalServerError(e)
-    })?;
-
-    tracing::info!(mod_id, path = %zip_path.display(), "convoy single mod download served");
-
-    Ok(open_named_file(zip_path)
-        .await
-        .map_err(actix_web::error::ErrorInternalServerError)?
-        .set_content_disposition(actix_web::http::header::ContentDisposition {
-            disposition: actix_web::http::header::DispositionType::Attachment,
-            parameters: vec![actix_web::http::header::DispositionParam::Filename(
-                format!("mod-{mod_id}.zip"),
-            )],
-        })
-        .into_response(&req))
-}
-
-/// POST /quma/convoy/report — client sync report
-/// Accepts raw body instead of web::Json because SPT's PostJson may not set Content-Type.
 pub async fn report(
     req: HttpRequest,
     state: web::Data<AppState>,
@@ -451,15 +297,17 @@ pub async fn rehash(
         return Err(WebError::Forbidden.into());
     }
 
-    let cache = state.catalog_cache.clone();
-    web::block(move || cache.force_rehash())
-        .await
-        .map_err(WebError::from)?;
-
-    tracing::info!(user = %user.username, "convoy force rehash triggered");
-
-    set_flash(&session, "File checksums rehashed", FlashType::Success);
-    Ok(HttpResponse::Ok()
+    if state.convoy_publisher.status() == PublicationStatus::Disabled {
+        return Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({"code": "disabled"})));
+    }
+    state.convoy_publisher.refresh(PublishMode::Rehash);
+    tracing::info!(user = %user.username, "convoy rehash and republish queued");
+    set_flash(
+        &session,
+        "Convoy rehash and republish queued",
+        FlashType::Success,
+    );
+    Ok(HttpResponse::Accepted()
         .json(serde_json::json!({"ok": true, "redirect": "/quma/convoy?tab=settings"})))
 }
 
@@ -479,6 +327,7 @@ struct SettingsPartialTemplate {
     enabled: bool,
     exclusions: String,
     bootstrap_forge_id: i64,
+    publication: &'static str,
 }
 
 async fn render_settings_tab(state: &AppState, csrf_token: &str) -> Result<String, WebError> {
@@ -490,6 +339,7 @@ async fn render_settings_tab(state: &AppState, csrf_token: &str) -> Result<Strin
         enabled: convoy.enabled,
         exclusions: convoy.exclusions.join("\n"),
         bootstrap_forge_id: 2806,
+        publication: publication_status(state.convoy_publisher.status()),
     };
     tmpl.render().map_err(WebError::from)
 }
@@ -529,8 +379,6 @@ pub async fn save_settings(
         .filter(|l| !l.is_empty())
         .collect();
 
-    let was_enabled = state.config().convoy.as_ref().is_some_and(|c| c.enabled);
-
     {
         let _guard = state.config_lock.lock();
         let mut config = crate::config::Config::load(&state.config_path).map_err(WebError::from)?;
@@ -540,16 +388,6 @@ pub async fn save_settings(
         convoy.enabled = enabled;
         convoy.exclusions = exclusions;
         state.persist_config(&config)?;
-    }
-
-    if enabled && !was_enabled {
-        tracing::info!(user = %user.username, "convoy enabled via settings");
-        state.catalog_cache.invalidate();
-    } else if !enabled && was_enabled {
-        tracing::info!(user = %user.username, "convoy disabled via settings");
-        state.catalog_cache.clear();
-    } else if enabled {
-        state.regenerate_convoy();
     }
 
     set_flash(&session, "Convoy settings saved", FlashType::Success);

@@ -1,22 +1,17 @@
 #[allow(dead_code)]
 mod common;
-
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{Cursor, Read};
-use std::path::Path;
-
 use actix_web::{http::StatusCode, test};
-use serde_json::json;
-use spt_quartermaster::config::ConvoyConfig;
-use spt_quartermaster::convoy::{catalog::generate_catalog, download::clear_convoy_cache};
-use xxhash_rust::xxh3::xxh3_64;
-use zip::{ZipArchive, ZipWriter};
-
 use common::{TestApp, TestAppBuilder};
+use spt_quartermaster::config::ConvoyConfig;
+use std::{
+    io::{Cursor, Read},
+    path::Path,
+};
+use xxhash_rust::xxh3::xxh3_64;
+use zip::ZipArchive;
 
 const RECEIPT: &str = "BepInEx/plugins/ConvoySmokeFixture/receipt.txt";
 const CONTENT: &[u8] = b"Convoy fixture bytes\n\x00\xff";
-const MISSING: &str = "BepInEx/plugins/ConvoySmokeFixture/zz-missing.txt";
 
 fn checksum(bytes: &[u8]) -> String {
     format!("{:016x}", xxh3_64(bytes))
@@ -56,284 +51,12 @@ fn seed_client_mod(app: &TestApp) -> i64 {
     id
 }
 
-fn batch_request(id: i64, bundles_only: bool) -> actix_http::Request {
-    test::TestRequest::post()
-        .uri("/quma/convoy/download")
-        .set_json(json!({"mods": [id], "bundles_only": bundles_only}))
-        .to_request()
-}
-
-fn archive_requests(id: i64) -> [actix_http::Request; 2] {
-    [
-        batch_request(id, false),
-        test::TestRequest::get()
-            .uri(&format!("/quma/convoy/mod/{id}/archive"))
-            .to_request(),
-    ]
-}
-
-async fn assert_archives_match_catalog(app: &mut TestApp, id: i64) {
-    let catalog = generate_catalog(
-        &app.db.lock(),
-        &app.dirs().spt_server,
-        &ConvoyConfig::default(),
-    )
-    .unwrap();
-    let entry = &catalog.groups[0].mods[0];
-    assert_eq!(entry.id, id);
-    let advertised_checksum = &entry.file_checksums[RECEIPT];
-
-    for request in archive_requests(id) {
-        let uri = request.uri().to_string();
-        let response = app.send_raw(request).await;
-        assert_eq!(response.status(), StatusCode::OK, "{uri}");
-        let body = test::read_body(response).await;
-        let mut zip = ZipArchive::new(Cursor::new(&body)).unwrap();
-        assert_eq!(zip.len(), 1, "{uri} returned a {}-byte ZIP", body.len());
-        let mut contents = Vec::new();
-        zip.by_name(RECEIPT)
-            .unwrap()
-            .read_to_end(&mut contents)
-            .unwrap();
-        assert_eq!(contents, CONTENT, "{uri}");
-        assert_eq!(checksum(&contents), *advertised_checksum, "{uri}");
-        // The second endpoint must also build its archive on a cold cache.
-        clear_convoy_cache(&app.dirs().spt_server);
-    }
-}
-
-async fn assert_archives_fail(app: &mut TestApp, id: i64) {
-    for request in archive_requests(id) {
-        let uri = request.uri().to_string();
-        let response = app.send_raw(request).await;
-        assert_eq!(
-            response.status(),
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "{uri}"
-        );
-    }
-}
-
-#[actix_web::test]
-async fn convoy_archives_require_explicit_enablement_even_when_cached() {
-    let mut app = TestAppBuilder::new().with_nested_layout().build().await;
-    let id = seed_client_mod(&app);
-    write_file(&app.dirs().mod_overlay(), RECEIPT, CONTENT);
-    let warm = app.send_raw(batch_request(id, false)).await;
-    assert_eq!(warm.status(), StatusCode::OK);
-
-    for config in [
-        None,
-        Some(ConvoyConfig {
-            enabled: false,
-            ..ConvoyConfig::default()
-        }),
-    ] {
-        app.set_convoy_config(config);
-        for request in archive_requests(id) {
-            let uri = request.uri().to_string();
-            let response = app.send_raw(request).await;
-            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
-        }
-    }
-}
-
-#[actix_web::test]
-async fn convoy_archives_include_overlay_only_client_file() {
-    let mut app = TestAppBuilder::new().with_nested_layout().build().await;
-    let id = seed_client_mod(&app);
-    write_file(&app.dirs().mod_overlay(), RECEIPT, CONTENT);
-    assert!(!app.dirs().spt_server.join(RECEIPT).exists());
-    assert!(!app.dirs().spt_runtime().exists());
-
-    assert_archives_match_catalog(&mut app, id).await;
-}
-
-#[actix_web::test]
-async fn convoy_archives_include_direct_storage_client_file() {
-    let mut app = TestAppBuilder::new().build().await;
-    let id = seed_client_mod(&app);
-    write_file(&app.dirs().spt_server, RECEIPT, CONTENT);
-
-    assert_archives_match_catalog(&mut app, id).await;
-}
-
-#[actix_web::test]
-async fn convoy_archives_prefer_runtime_upper() {
-    let mut app = TestAppBuilder::new().with_nested_layout().build().await;
-    let id = seed_client_mod(&app);
-    write_file(&app.dirs().spt_server, RECEIPT, b"base");
-    write_file(&app.dirs().mod_overlay(), RECEIPT, b"mod overlay");
-    write_file(&app.dirs().runtime_upper(), RECEIPT, CONTENT);
-
-    assert_archives_match_catalog(&mut app, id).await;
-}
-
-#[actix_web::test]
-async fn convoy_archives_fail_without_caching_partial_zip_when_catalog_file_is_missing() {
-    let mut app = TestAppBuilder::new().with_nested_layout().build().await;
-    let id = seed_client_mod(&app);
-    write_file(&app.dirs().mod_overlay(), RECEIPT, CONTENT);
-    app.db
-        .lock()
-        .insert_file(id, MISSING, Some(&checksum(CONTENT)), None)
-        .unwrap();
-
-    assert_archives_fail(&mut app, id).await;
-    let cache = app.dirs().spt_server.join("quartermaster-cache/convoy");
-    assert!(std::fs::read_dir(cache).unwrap().next().is_none());
-
-    let response = app.send_raw(batch_request(id, true)).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = test::read_body(response).await;
-    assert!(ZipArchive::new(Cursor::new(body)).unwrap().is_empty());
-}
-
-#[actix_web::test]
-async fn convoy_archives_do_not_reveal_lower_layer_file_hidden_by_whiteout() {
-    let mut app = TestAppBuilder::new().with_nested_layout().build().await;
-    let id = seed_client_mod(&app);
-    write_file(&app.dirs().spt_server, RECEIPT, CONTENT);
-    write_file(
-        &app.dirs().runtime_upper(),
-        "BepInEx/plugins/ConvoySmokeFixture/.wh.receipt.txt",
-        b"",
-    );
-
-    assert_archives_fail(&mut app, id).await;
-}
-
-#[cfg(target_os = "linux")]
-#[actix_web::test]
-async fn convoy_archives_do_not_fall_back_after_a_denied_client_read() {
-    let mut app = TestAppBuilder::new().with_nested_layout().build().await;
-    let id = seed_client_mod(&app);
-    write_file(&app.dirs().spt_server, RECEIPT, CONTENT);
-    let upper = app.dirs().runtime_upper();
-    let server_path = "SPT_Runtime/user/profiles/fixture.json";
-    write_file(&upper, server_path, b"server fixture");
-    let receipt = upper.join(RECEIPT);
-    std::fs::create_dir_all(receipt.parent().unwrap()).unwrap();
-    std::os::unix::fs::symlink(upper.join(server_path), receipt).unwrap();
-
-    assert_archives_fail(&mut app, id).await;
-}
-
-#[actix_web::test]
-async fn convoy_archives_ignore_fresh_cache_from_before_layered_downloads() {
-    let mut app = TestAppBuilder::new().build().await;
-    let id = seed_client_mod(&app);
-    write_file(&app.dirs().spt_server, RECEIPT, CONTENT);
-
-    let mut hasher = DefaultHasher::new();
-    [id].as_slice().hash(&mut hasher);
-    false.hash(&mut hasher);
-    let cache = app.dirs().spt_server.join("quartermaster-cache/convoy");
-    std::fs::create_dir_all(&cache).unwrap();
-    let old_path = cache.join(format!("convoy-{:016x}.zip", hasher.finish()));
-    ZipWriter::new(std::fs::File::create(old_path).unwrap())
-        .finish()
-        .unwrap();
-
-    assert_archives_match_catalog(&mut app, id).await;
-}
-
-#[actix_web::test]
-async fn checksumless_eligible_files_reject_catalog() {
-    for path in [
-        "EscapeFromTarkov_Data/Managed/Required.dll",
-        "BepInEx/plugins/Required.dll",
-    ] {
-        let app = TestAppBuilder::new().with_nested_layout().build().await;
-        let id = seed_client_mod(&app);
-        write_file(&app.dirs().mod_overlay(), path, CONTENT);
-        app.db.lock().insert_file(id, path, None, None).unwrap();
-        let error = generate_catalog(
-            &app.db.lock(),
-            &app.dirs().spt_server,
-            &ConvoyConfig::default(),
-        )
-        .expect_err("incomplete packages must not advertise success");
-        assert!(error.to_string().contains("checksum"), "{error}");
-        assert!(error.to_string().contains(path), "{error}");
-    }
-}
-
-#[actix_web::test]
-async fn checksumless_eligible_files_reject_both_routes_cold() {
-    checksumless_routes(false).await;
-}
-
-#[actix_web::test]
-async fn checksumless_eligible_files_reject_both_routes_warm() {
-    checksumless_routes(true).await;
-}
-
-async fn checksumless_routes(warm: bool) {
-    for path in [
-        "EscapeFromTarkov_Data/Managed/Required.dll",
-        "BepInEx/plugins/Required.dll",
-    ] {
-        for route in 0..2 {
-            let mut app = TestAppBuilder::new().with_nested_layout().build().await;
-            let id = seed_client_mod(&app);
-            write_file(&app.dirs().mod_overlay(), RECEIPT, CONTENT);
-            write_file(&app.dirs().mod_overlay(), path, CONTENT);
-            app.db.lock().insert_file(id, path, None, None).unwrap();
-            clear_convoy_cache(&app.dirs().spt_server);
-            if warm {
-                // Seed the exact current cache identity with a previously built incomplete ZIP.
-                // This must never bypass live inventory validity checks.
-                let files = app.db.lock().get_files_for_mod_ids(&[id]).unwrap();
-                let mut identity = DefaultHasher::new();
-                let mut entries: Vec<_> = files
-                    .iter()
-                    .map(|f| (&f.file_path, &f.file_hash, &f.source))
-                    .collect();
-                entries.sort();
-                entries.hash(&mut identity);
-                let mut key = DefaultHasher::new();
-                vec![id].hash(&mut key);
-                false.hash(&mut key);
-                let cache = app.dirs().spt_server.join("quartermaster-cache/convoy");
-                std::fs::create_dir_all(&cache).unwrap();
-                let file = std::fs::File::create(cache.join(format!(
-                    "convoy-v3-{:016x}.zip-{:016x}.zip",
-                    key.finish(),
-                    identity.finish()
-                )))
-                .unwrap();
-                let mut zip = ZipWriter::new(file);
-                zip.start_file(path, zip::write::SimpleFileOptions::default())
-                    .unwrap();
-                std::io::Write::write_all(&mut zip, CONTENT).unwrap();
-                zip.finish().unwrap();
-            }
-            let response = app
-                .send_raw(archive_requests(id).into_iter().nth(route).unwrap())
-                .await;
-            assert_eq!(
-                response.status(),
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "path={path}, warm={warm}, route={route}"
-            );
-            let body = test::read_body(response).await;
-            assert!(
-                String::from_utf8_lossy(&body).contains("checksum"),
-                "{}",
-                String::from_utf8_lossy(&body)
-            );
-        }
-    }
-}
-
 #[actix_web::test]
 async fn managed_dependency_publisher_delivery_setup_and_cache() {
-    let mut app = TestAppBuilder::new().with_nested_layout().build().await;
+    let app = TestAppBuilder::new().with_nested_layout().build().await;
     let id = seed_client_mod(&app);
     let managed = "EscapeFromTarkov_Data/Managed/Unity.VectorGraphics.dll";
     let bridge = "EscapeFromTarkov_Data/Managed/Unity.InternalAPIEngineBridge.003.dll";
-    let files = [RECEIPT, managed, bridge];
     write_file(&app.dirs().mod_overlay(), RECEIPT, CONTENT);
     for path in [managed, bridge] {
         write_file(&app.dirs().mod_overlay(), path, CONTENT);
@@ -358,116 +81,6 @@ async fn managed_dependency_publisher_delivery_setup_and_cache() {
         "EscapeFromTarkov_Data/Managed/UntrackedGame.dll",
         b"game",
     );
-    let catalog = generate_catalog(
-        &app.db.lock(),
-        &app.dirs().spt_server,
-        &ConvoyConfig::default(),
-    )
-    .unwrap();
-    assert_eq!(catalog.groups[0].mods[0].file_checksums.len(), 3);
-    let export = std::env::var_os("CONVOY_FIXTURE_EXPORT").map(std::path::PathBuf::from);
-    if let Some(ref export) = export {
-        std::fs::create_dir_all(export).unwrap();
-        std::fs::write(
-            export.join("catalog.json"),
-            serde_json::to_vec(&catalog).unwrap(),
-        )
-        .unwrap();
-    }
-    for index in 0..2 {
-        clear_convoy_cache(&app.dirs().spt_server);
-        for warm in [false, true] {
-            let request = archive_requests(id).into_iter().nth(index).unwrap();
-            let response = app.send_raw(request).await;
-            assert_eq!(
-                response.status(),
-                StatusCode::OK,
-                "route={index}, warm={warm}"
-            );
-            let body = test::read_body(response).await;
-            let mut zip = ZipArchive::new(Cursor::new(&body)).unwrap();
-            assert_eq!(zip.len(), 3);
-            for path in files {
-                let mut got = Vec::new();
-                zip.by_name(path).unwrap().read_to_end(&mut got).unwrap();
-                assert_eq!(got, CONTENT);
-            }
-            if let Some(ref export) = export {
-                std::fs::write(export.join(format!("archive-{index}.zip")), &body).unwrap();
-            }
-        }
-    }
-    if let Some(executable) = std::env::var_os("CONVOY_MONO_REGRESSION") {
-        let state = app.app_state.clone();
-        state.catalog_cache.invalidate();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while state.catalog_cache.get().is_none() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "catalog rebuild timed out"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = actix_web::HttpServer::new(move || {
-            actix_web::App::new()
-                .app_data(state.clone())
-                .route(
-                    "/quma/convoy/catalog",
-                    actix_web::web::get().to(spt_quartermaster::web::handlers::convoy::catalog),
-                )
-                .route(
-                    "/quma/convoy/download",
-                    actix_web::web::post().to(spt_quartermaster::web::handlers::convoy::download),
-                )
-                .route(
-                    "/quma/convoy/mod/{mod_id}/archive",
-                    actix_web::web::get()
-                        .to(spt_quartermaster::web::handlers::convoy::single_mod_archive),
-                )
-                .route(
-                    "/quma/convoy/report",
-                    actix_web::web::post().to(spt_quartermaster::web::handlers::convoy::report),
-                )
-        })
-        .workers(1)
-        .listen(listener)
-        .unwrap()
-        .run();
-        let handle = server.handle();
-        actix_web::rt::spawn(server);
-        let output = tokio::task::spawn_blocking(move || {
-            std::process::Command::new("mono")
-                .arg(executable)
-                .arg("-config={\"BackendUrl\":\"http://127.0.0.1:1\",\"Version\":\"live\"}")
-                .arg("-token=convoy-regression-fixture")
-                .env("CONVOY_PUBLISHER_URL", format!("http://{address}"))
-                .output()
-                .unwrap()
-        })
-        .await
-        .unwrap();
-        handle.stop(true).await;
-        if let Some(ref export) = export {
-            std::fs::write(export.join("live-client.log"), &output.stdout).unwrap();
-        }
-        assert!(
-            output.status.success(),
-            "Mono consumer failed: {} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    // Identity must invalidate a warm archive even without an explicit cache clear.
-    app.db
-        .lock()
-        .insert_file(id, MISSING, Some(&checksum(CONTENT)), None)
-        .unwrap();
-    assert_archives_fail(&mut app, id).await;
-    write_file(&app.dirs().mod_overlay(), MISSING, CONTENT);
-    let response = app.send_raw(batch_request(id, false)).await;
-    assert_eq!(response.status(), StatusCode::OK);
     // Independent setup ZIP includes package dependencies and excludes server files by default.
     let tracked = app.db.lock().get_all_enabled_mod_files().unwrap();
     let filtered =
@@ -486,4 +99,214 @@ async fn managed_dependency_publisher_delivery_setup_and_cache() {
     assert!(zip
         .by_name("SPT_Runtime/user/profiles/private.json")
         .is_err());
+}
+
+#[actix_web::test]
+async fn v2_cutover_and_setup_independence() {
+    use spt_quartermaster::convoy::publisher::{PublicationStatus, PublishMode};
+
+    for governed in [false, true] {
+        // A fresh root and governor for every cell: no background cache or quota
+        // can leak in from the preceding delivery configuration.
+        for (enabled, broken) in [(false, false), (true, true), (true, false)] {
+            let mut app = TestAppBuilder::new()
+                .with_nested_layout()
+                .with_user("operator", "fixture-password", "admin")
+                .with_user("player", "fixture-password", "player")
+                .build()
+                .await;
+            if governed {
+                app.enable_fixture_governor();
+            }
+            let id = seed_client_mod(&app);
+            let extra = "extras/config.dat";
+            let expected = [(RECEIPT, CONTENT), (extra, &b"setup only"[..])];
+            write_file(&app.dirs().mod_overlay(), RECEIPT, CONTENT);
+            write_file(&app.dirs().mod_overlay(), extra, expected[1].1);
+            app.db
+                .lock()
+                .insert_file(id, extra, Some(&checksum(expected[1].1)), Some(10))
+                .unwrap();
+            app.set_convoy_config(Some(ConvoyConfig {
+                enabled,
+                max_store_bytes: if broken { 0 } else { 1024 },
+                ..Default::default()
+            }));
+            let publisher = app.app_state.convoy_publisher.clone();
+            let mut status = publisher.subscribe();
+            publisher.refresh(PublishMode::Managed);
+            if enabled {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    status.wait_for(|s| {
+                        matches!(
+                            s,
+                            PublicationStatus::Ready { .. } | PublicationStatus::Failed { .. }
+                        )
+                    }),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            }
+            let catalog = app.get("/quma/convoy/v2/catalog").await;
+            if enabled && !broken {
+                assert_eq!(catalog.status(), StatusCode::OK);
+                let json: serde_json::Value = test::read_body_json(catalog).await;
+                assert_eq!(json["protocol"], 2);
+                let files = json["groups"][0]["mods"][0]["files"].as_array().unwrap();
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0]["path"], RECEIPT);
+            } else {
+                assert_eq!(catalog.status(), StatusCode::SERVICE_UNAVAILABLE);
+                let json: serde_json::Value = test::read_body_json(catalog).await;
+                assert_eq!(
+                    json["code"],
+                    if broken { "publish_failed" } else { "disabled" }
+                );
+            }
+            for request in [
+                test::TestRequest::get().uri("/quma/convoy/catalog"),
+                test::TestRequest::post().uri("/quma/convoy/download"),
+                test::TestRequest::get().uri(&format!("/quma/convoy/mod/{id}/archive")),
+            ] {
+                let response = app.send_raw(request.to_request()).await;
+                assert_eq!(
+                    response.status(),
+                    if enabled {
+                        StatusCode::GONE
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                );
+                assert_eq!(response.headers().get("Cache-Control").unwrap(), "no-store");
+                let json: serde_json::Value = test::read_body_json(response).await;
+                assert_eq!(
+                    json["code"],
+                    if enabled {
+                        "upgrade_required"
+                    } else {
+                        "disabled"
+                    }
+                );
+                if enabled {
+                    assert_eq!(
+                        json["instructions"],
+                        "https://github.com/cebarks/convoy#installation"
+                    );
+                }
+            }
+
+            let cache = app.app_state.mod_zip_cache.clone();
+            for warm in [false, true] {
+                if warm {
+                    cache.invalidate();
+                    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                        while cache.get().is_none() {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+                    })
+                    .await
+                    .unwrap();
+                }
+                assert_eq!(cache.get().is_some(), warm);
+                let before = publisher.status();
+                let response = app.get("/quma/setup/mods.zip").await;
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    response.headers().contains_key("ETag"),
+                    warm,
+                    "warm uses NamedFile; cold builds in the handler"
+                );
+                let body = test::read_body(response).await;
+                if warm {
+                    assert_eq!(body.as_ref(), std::fs::read(cache.get().unwrap()).unwrap());
+                }
+                let mut zip = ZipArchive::new(Cursor::new(body)).unwrap();
+                assert_eq!(zip.len(), expected.len());
+                for (path, bytes) in expected {
+                    let mut got = Vec::new();
+                    zip.by_name(path).unwrap().read_to_end(&mut got).unwrap();
+                    assert_eq!(got, bytes);
+                }
+                assert_eq!(publisher.status(), before);
+                println!(
+                    "governed={governed} publisher={before:?} setup warm={warm} exact {:?}",
+                    expected.map(|(path, bytes)| (path, bytes.len()))
+                );
+            }
+            let report = app.send_raw(test::TestRequest::post().uri("/quma/convoy/report")
+                .set_json(serde_json::json!({"aid":"cutover-fixture","result":"updated","client_version":"fixture"})).to_request()).await;
+            assert_eq!(report.status(), StatusCode::OK);
+            let reports = app.db.lock().get_latest_sync_reports().unwrap();
+            assert_eq!(reports.len(), 1);
+            assert_eq!(reports[0].aid, "cutover-fixture");
+            assert_eq!(reports[0].result, "updated");
+
+            if enabled && !broken {
+                let rehash = "/quma/convoy/rehash";
+                app.login_as("player", "fixture-password").await;
+                let token = app.csrf_token_from("/quma/").await;
+                assert_eq!(
+                    app.send_authenticated(
+                        test::TestRequest::post()
+                            .uri(rehash)
+                            .insert_header(("x-csrf-token", token.as_str()))
+                    )
+                    .await
+                    .status(),
+                    StatusCode::FORBIDDEN
+                );
+                // Independently validate that *the identical player session and token*
+                // pass the real CSRF check on a player-accessible action.
+                let logout = app
+                    .post_form(
+                        "/quma/logout",
+                        &format!("csrf_token={}", urlencoding::encode(&token)),
+                    )
+                    .await;
+                assert_eq!(logout.status(), StatusCode::SEE_OTHER);
+                assert_eq!(logout.headers().get("Location").unwrap(), "/quma/login");
+                app.login_as("operator", "fixture-password").await;
+                assert_eq!(
+                    app.send_authenticated(test::TestRequest::post().uri(rehash))
+                        .await
+                        .status(),
+                    StatusCode::FORBIDDEN
+                );
+                let token = app.csrf_token_from("/quma/convoy?tab=settings").await;
+                assert_eq!(
+                    app.send_authenticated(
+                        test::TestRequest::post()
+                            .uri(rehash)
+                            .insert_header(("x-csrf-token", token))
+                    )
+                    .await
+                    .status(),
+                    StatusCode::ACCEPTED
+                );
+                println!("governed={governed} player valid proof 403 (same proof logs out), admin 403 without proof / 202 with proof");
+            }
+            if !enabled {
+                // Exhaust only this fixture's setup quota: a wrong governor branch
+                // cannot produce the expected contrast even if the ZIP looks right.
+                for _ in 0..6 {
+                    assert_eq!(
+                        app.get("/quma/setup/mods.zip").await.status(),
+                        StatusCode::OK
+                    );
+                }
+                let actual = app.get("/quma/setup/mods.zip").await.status();
+                assert_eq!(
+                    actual,
+                    if governed {
+                        StatusCode::TOO_MANY_REQUESTS
+                    } else {
+                        StatusCode::OK
+                    }
+                );
+                println!("governed={governed} ninth setup GET: {actual}");
+            }
+        }
+    }
 }

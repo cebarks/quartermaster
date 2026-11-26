@@ -430,29 +430,6 @@ mod tests {
             zip.file_names().next().unwrap().unwrap(),
             "BepInEx/plugins/Client.dll"
         );
-        let db = Database::open_in_memory().unwrap();
-        let id = db
-            .insert_mod(None, None, "Hybrid", None, "1", "local", None, None)
-            .unwrap();
-        for path in paths {
-            db.insert_file(
-                id,
-                path,
-                Some(&crate::spt::mods::compute_file_hash(&tmp.path().join(path)).unwrap()),
-                None,
-            )
-            .unwrap();
-        }
-        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
-        let out =
-            crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], false).unwrap();
-        let zip = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
-        assert_eq!(
-            zip.file_names()
-                .collect::<zip::result::ZipResult<Vec<_>>>()
-                .unwrap(),
-            vec!["BepInEx/plugins/Client.dll"]
-        );
     }
 
     #[cfg(target_os = "linux")]
@@ -509,30 +486,6 @@ mod tests {
                 .unwrap(),
             vec!["BepInEx/plugins/Client.dll"]
         );
-        let db = Database::open_in_memory().unwrap();
-        let id = db
-            .insert_mod(None, None, "Hybrid", None, "1", "local", None, None)
-            .unwrap();
-        for file in files {
-            db.insert_file(
-                id,
-                &file.file_path,
-                Some(
-                    &crate::spt::mods::compute_file_hash(&tmp.path().join(&file.file_path))
-                        .unwrap(),
-                ),
-                None,
-            )
-            .unwrap();
-        }
-        let dirs = QumaDirs::from_legacy(tmp.path().to_path_buf());
-        // Convoy cannot claim a complete advertised package when any eligible source
-        // is unsafe; the independent setup ZIP above still skips unsafe aliases.
-        let error =
-            crate::convoy::download::get_or_build_convoy_zip(&db, &dirs, &[id], false).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("cannot include advertised Convoy client file"));
     }
 
     #[test]
