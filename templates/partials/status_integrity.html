@@ -1,4 +1,4 @@
-<div class="card" style="border-left: 3px solid {% if report.missing_files.is_empty() && report.modified_files.is_empty() %}var(--success){% else %}var(--danger){% endif %}">
+<div class="card" style="border-left: 3px solid {% if report.missing_files.is_empty() && report.modified_files.is_empty() && report.unverified_files.is_empty() %}var(--success){% else %}var(--danger){% endif %}">
     <div style="display:flex;justify-content:space-between;align-items:center">
         <h2>Integrity</h2>
         <form method="post" action="/quma/api/mods/integrity/recheck" style="display:inline"
@@ -9,7 +9,7 @@
     </div>
     <div hx-get="/quma/api/mods/integrity/progress" hx-trigger="load" hx-swap="innerHTML">
     </div>
-    {% if report.missing_files.is_empty() && report.modified_files.is_empty() && report.untracked_dirs.is_empty() %}
+    {% if report.missing_files.is_empty() && report.modified_files.is_empty() && report.unverified_files.is_empty() && report.untracked_dirs.is_empty() %}
     <p class="text-muted">{{ report.tracked_files }} tracked files — all present, hashes match.</p>
     <p class="text-sm mt-1"><a href="/quma/files">View details →</a></p>
     {% else %}
@@ -20,6 +20,9 @@
         {% endif %}
         {% if !report.modified_files.is_empty() %}
         <tr><th>Modified</th><td><span class="badge badge-warning">{{ report.modified_files.len() }}</span></td></tr>
+        {% endif %}
+        {% if !report.unverified_files.is_empty() %}
+        <tr><th>Unverified</th><td><span class="badge badge-warning">{{ report.unverified_files.len() }}</span></td></tr>
         {% endif %}
         {% if !report.untracked_dirs.is_empty() %}
         <tr><th>Untracked</th><td class="text-muted">{{ report.untracked_dirs.len() }} director{% if report.untracked_dirs.len() != 1 %}ies{% else %}y{% endif %}</td></tr>

@@ -42,7 +42,17 @@ fn verified_bundle_manifest(
         bytes.len() as u64 <= MAX_DECLARATION_BYTES,
         "bundle declaration exceeds metadata limit"
     );
-    let actual = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
+    let actual = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(&bytes));
+    if let Some(row) = tracked {
+        ensure!(
+            !row.legacy_pending
+                && row
+                    .file_hash
+                    .as_deref()
+                    .is_some_and(|hash| super::manifest::lower_hex(hash, 32)),
+            "bundle declaration requires explicit XXH3-128 rebaseline"
+        );
+    }
     if let Some(row) = tracked.filter(|_| !rehash) {
         if let Some(size) = row.file_size {
             ensure!(

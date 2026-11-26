@@ -140,13 +140,17 @@ Built with HTMX and server-sent events — no JavaScript build step required.
 
 ## Database upgrades and legacy hashes
 
-Database schema upgrades run automatically when Quartermaster opens its database. Older installations gain persistent update-notification state and a queue for completing the SHA-256-to-xxHash3 transition.
+Database schema upgrades run automatically when Quartermaster opens its database. Tracked files now use seed-zero XXH3-128 (32 lowercase hex digits). Legacy SHA-256/XXH3-64 evidence is preserved with algorithm provenance and remains pending/unverified; genuinely unknown NULL baselines remain unknown. Startup does not rebaseline files automatically.
 
-On normal CLI or web initialization, queued legacy hashes are recomputed from the current files, including mod and addon files in server, client, overlay, and disabled-stash locations. Already-current xxHash3 hashes and previously unknown hashes are not reset. The first start may take longer in proportion to the queued files' total size; completed work is retained across restarts.
+Inspect `quma status --json` (`integrity.unverified_files` includes record IDs, paths and `legacy`/`unknown` reasons), or the file/integrity pages. After backing up the database and installation and reviewing the selected bytes, explicitly trust only the chosen IDs:
 
-**This transition establishes a new integrity baseline from current disk contents.** Changes made since the old SHA-256 hash was recorded are accepted, not checked against that old digest. Back up the database and installation before upgrading if you need to preserve that historical baseline.
+```bash
+quma --quma-dir /path/to/installation rebaseline --file-id 42 --file-id 43 --trust-current
+```
 
-Missing, unreadable, hidden, or unsafe files remain queued with a warning and are retried on subsequent initialization. Their content remains unverified until rehashing succeeds; missing-file detection still applies. One unavailable file does not stop recovery of other files or otherwise prevent startup. No new configuration or command is required.
+**This action establishes a new integrity baseline from current disk contents.** It does not compare with the old checksum, and never calculates SHA-256 or XXH3-64. The flag is an explicit acknowledgement, not a bulk default. Unselected rows and old evidence are preserved. Disabled mod/addon files are read from the stash; enabled files respect runtime/mod/base overlay visibility.
+
+Missing, unreadable, hidden, unsafe or concurrently changed files stay pending; fix the cause and retry the selected command. Partial success is retained and the command reports failure for unresolved selections. Pending client assets block the entire Convoy v3 generation, not just that mod; pending server-only records remain unverified in health without blocking unrelated publication. After rebaseline, wait for publication or use **Rehash and republish**. See the [paired upgrade and rollback policy](docs/convoy-client-files.md#paired-upgrade-and-rollback) before cutover.
 
 ## Configuration
 

@@ -7,22 +7,55 @@ use crate::db::Database;
 use crate::dirs::QumaDirs;
 use crate::spt::scoped::{relative_path, ScopedDir};
 
-/// Trust current bytes for queued legacy hashes; unavailable files remain pending for retry.
-pub(crate) fn rebaseline_pending_hashes(db: &Database, dirs: &QumaDirs) -> Result<usize> {
+#[cfg(test)]
+static AFTER_READ: parking_lot::Mutex<
+    std::collections::BTreeMap<std::path::PathBuf, Box<dyn FnOnce() + Send>>,
+> = parking_lot::Mutex::new(std::collections::BTreeMap::new());
+
+/// Trust current bytes for selected queued legacy hashes; unavailable files remain pending.
+pub(crate) fn rebaseline_selected_hashes(
+    db: &Database,
+    dirs: &QumaDirs,
+    selected: &[i64],
+) -> Result<usize> {
     let mut rebaselined = 0;
     for (file, disabled) in db.pending_file_rehashes()? {
+        if !selected.contains(&file.id) {
+            continue;
+        }
         let recovered = (|| -> Result<_> {
             let relative = relative_path(&file.file_path)?;
-            let source = open_visible_file(dirs, &relative, disabled)?;
-            let size = i64::try_from(source.metadata()?.len())
-                .context("file size exceeds SQLite range")?;
-            let hash = crate::spt::mods::compute_reader_hash(source)?;
+            let mut source = open_visible_file(dirs, &relative, disabled)?;
+            let before = source.metadata()?;
+            let size = i64::try_from(before.len()).context("file size exceeds SQLite range")?;
+            let hash = crate::spt::mods::compute_reader_hash(&mut source)?;
+            #[cfg(test)]
+            if let Some(hook) = AFTER_READ.lock().remove(&dirs.spt_server.join(&relative)) {
+                hook();
+            }
+            anyhow::ensure!(
+                same_identity(&before, &source.metadata()?),
+                "source changed while hashing"
+            );
+            let mut current = open_visible_file(dirs, &relative, disabled)?;
+            anyhow::ensure!(
+                same_identity(&before, &current.metadata()?),
+                "source changed after hashing"
+            );
+            anyhow::ensure!(
+                crate::spt::mods::compute_reader_hash(&mut current)? == hash,
+                "source bytes changed after hashing"
+            );
+            anyhow::ensure!(
+                same_identity(&before, &current.metadata()?),
+                "source changed during verification"
+            );
             Ok((hash, size))
         })();
         match recovered {
             Ok((hash, size)) => {
                 rebaselined += db
-                    .complete_file_rehash(file.id, &hash, Some(size))
+                    .complete_file_rehash(&file, disabled, &hash, Some(size))
                     .context("failed to complete pending file rehash")?;
             }
             Err(error) => {
@@ -42,6 +75,37 @@ pub(crate) fn rebaseline_pending_hashes(db: &Database, dirs: &QumaDirs) -> Resul
         );
     }
     Ok(rebaselined)
+}
+
+fn same_identity(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (
+        a.dev(),
+        a.ino(),
+        a.len(),
+        a.mtime(),
+        a.mtime_nsec(),
+        a.ctime(),
+        a.ctime_nsec(),
+    ) == (
+        b.dev(),
+        b.ino(),
+        b.len(),
+        b.mtime(),
+        b.mtime_nsec(),
+        b.ctime(),
+        b.ctime_nsec(),
+    )
+}
+
+#[cfg(test)]
+fn rebaseline_pending_hashes(db: &Database, dirs: &QumaDirs) -> Result<usize> {
+    let ids: Vec<_> = db
+        .pending_file_rehashes()?
+        .iter()
+        .map(|(file, _)| file.id)
+        .collect();
+    rebaseline_selected_hashes(db, dirs, &ids)
 }
 
 fn is_not_found(error: &anyhow::Error) -> bool {
@@ -230,12 +294,12 @@ mod tests {
             );
             assert_eq!(
                 fixture.file(mod_file).file_hash.as_deref(),
-                Some("9555e8555c62dcfd")
+                Some("b5e9c1ad071b3e7fc779cfaa5e523818")
             );
             assert_eq!(fixture.file(mod_file).file_size, Some(5));
             assert_eq!(
                 fixture.file(addon_file).file_hash.as_deref(),
-                Some("94c7978acb932996")
+                Some("3cdd8eceaad870d00a730e86e7b01817")
             );
             assert_eq!(fixture.file(addon_file).file_size, Some(12));
             assert_eq!(
@@ -256,7 +320,7 @@ mod tests {
             );
             assert_eq!(
                 fixture.file(mod_file).file_hash.as_deref(),
-                Some("9555e8555c62dcfd")
+                Some("b5e9c1ad071b3e7fc779cfaa5e523818")
             );
         }
     }
@@ -281,7 +345,7 @@ mod tests {
             );
             assert_eq!(
                 fixture.file(id).file_hash.as_deref(),
-                Some("9555e8555c62dcfd")
+                Some("b5e9c1ad071b3e7fc779cfaa5e523818")
             );
         }
     }
@@ -309,7 +373,7 @@ mod tests {
             );
             assert_eq!(
                 fixture.file(id).file_hash.as_deref(),
-                Some("9555e8555c62dcfd")
+                Some("b5e9c1ad071b3e7fc779cfaa5e523818")
             );
         }
     }
@@ -335,7 +399,7 @@ mod tests {
         assert_eq!(fixture.remaining(), 0);
         assert_eq!(
             fixture.file(id).file_hash.as_deref(),
-            Some("9555e8555c62dcfd")
+            Some("b5e9c1ad071b3e7fc779cfaa5e523818")
         );
     }
 
@@ -378,7 +442,7 @@ mod tests {
         );
         assert_eq!(
             fixture.file(alias).file_hash.as_deref(),
-            Some("9555e8555c62dcfd")
+            Some("b5e9c1ad071b3e7fc779cfaa5e523818")
         );
         assert_eq!(fixture.remaining(), 4);
     }
@@ -452,7 +516,7 @@ mod tests {
         );
         assert_eq!(
             fixture.file(id).file_hash.as_deref(),
-            Some("9555e8555c62dcfd")
+            Some("b5e9c1ad071b3e7fc779cfaa5e523818")
         );
     }
 
@@ -472,15 +536,127 @@ mod tests {
         assert!(fixture.file(blocked).file_hash.is_none());
         assert_eq!(
             fixture.file(readable).file_hash.as_deref(),
-            Some("9555e8555c62dcfd")
+            Some("b5e9c1ad071b3e7fc779cfaa5e523818")
         );
         assert_eq!(fixture.remaining(), 1);
+    }
+
+    #[test]
+    fn changed_database_record_after_read_stays_pending() {
+        let fixture = Fixture::new(false);
+        let id = fixture.pending("old-name.dll", false);
+        let path = write(&fixture.dirs.spt_server, "old-name.dll", b"abc");
+        let db_path = fixture.dirs.db_path();
+        AFTER_READ.lock().insert(
+            path,
+            Box::new(move || {
+                rusqlite::Connection::open(db_path)
+                    .unwrap()
+                    .execute(
+                        "UPDATE installed_files SET file_path = 'new-name.dll' WHERE id = ?1",
+                        [id],
+                    )
+                    .unwrap();
+            }),
+        );
+        assert_eq!(
+            rebaseline_selected_hashes(&fixture.db, &fixture.dirs, &[id]).unwrap(),
+            0
+        );
+        assert!(fixture.file(id).file_hash.is_none());
+        assert_eq!(fixture.file(id).file_path, "new-name.dll");
+        assert_eq!(fixture.remaining(), 1);
+    }
+
+    #[test]
+    fn changed_source_after_hash_stays_pending() {
+        let fixture = Fixture::new(false);
+        let id = fixture.pending("changed-during-read.dll", false);
+        let path = write(&fixture.dirs.spt_server, "changed-during-read.dll", b"abc");
+        let changed = path.clone();
+        AFTER_READ.lock().insert(
+            path,
+            Box::new(move || std::fs::write(changed, b"def").unwrap()),
+        );
+        assert_eq!(
+            rebaseline_selected_hashes(&fixture.db, &fixture.dirs, &[id]).unwrap(),
+            0
+        );
+        assert!(fixture.file(id).file_hash.is_none());
+        assert_eq!(fixture.remaining(), 1);
+    }
+
+    #[test]
+    fn explicit_selection_rebaselines_only_requested_pending_files() {
+        let fixture = Fixture::new(false);
+        let selected = fixture.pending("chosen.dll", false);
+        let other = fixture.pending("other.dll", false);
+        write(&fixture.dirs.spt_server, "chosen.dll", b"abc");
+        write(&fixture.dirs.spt_server, "other.dll", b"abc");
+        assert_eq!(
+            rebaseline_selected_hashes(&fixture.db, &fixture.dirs, &[selected]).unwrap(),
+            1
+        );
+        assert_eq!(
+            fixture.file(selected).file_hash.as_deref(),
+            Some("06b05ab6733a618578af5f94892f3950")
+        );
+        assert!(fixture.file(other).file_hash.is_none());
+        assert_eq!(fixture.remaining(), 1);
+    }
+
+    #[test]
+    fn selected_legacy_baseline_can_be_committed_without_discarding_other_pending_records() {
+        let fixture = Fixture::new(false);
+        let selected = fixture.pending("chosen.dll", false);
+        let other = fixture.pending("other.dll", false);
+        fixture
+            .db
+            .conn()
+            .execute(
+                "UPDATE installed_files SET file_hash = ?1 WHERE id = ?2",
+                rusqlite::params!["78af5f94892f3950", selected],
+            )
+            .unwrap();
+        fixture.db.conn().execute(
+            "INSERT INTO legacy_file_hashes (file_id, algorithm, hash) VALUES (?1, 'xxh3_64', ?2)",
+            rusqlite::params![selected, "78af5f94892f3950"],
+        ).unwrap();
+        assert_eq!(
+            fixture
+                .db
+                .complete_file_rehash(
+                    &fixture.file(selected),
+                    false,
+                    "06b05ab6733a618578af5f94892f3950",
+                    Some(3)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            fixture.file(selected).file_hash.as_deref(),
+            Some("06b05ab6733a618578af5f94892f3950")
+        );
+        assert!(fixture.file(other).file_hash.is_none());
+        assert_eq!(fixture.remaining(), 1);
+        let legacy: String = fixture
+            .db
+            .conn()
+            .query_row(
+                "SELECT hash FROM legacy_file_hashes WHERE file_id = ?1",
+                [selected],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy, "78af5f94892f3950");
     }
 
     #[test]
     fn completion_preserves_a_newer_hash() {
         let fixture = Fixture::new(false);
         let id = fixture.pending("changed.dll", false);
+        let captured = fixture.file(id);
         fixture
             .db
             .update_file_hash(id, "1111111111111111", Some(99))
@@ -488,7 +664,7 @@ mod tests {
         assert_eq!(
             fixture
                 .db
-                .complete_file_rehash(id, "9555e8555c62dcfd", Some(5))
+                .complete_file_rehash(&captured, false, "9555e8555c62dcfd", Some(5))
                 .unwrap(),
             0
         );
@@ -497,7 +673,7 @@ mod tests {
             Some("1111111111111111")
         );
         assert_eq!(fixture.file(id).file_size, Some(99));
-        assert_eq!(fixture.remaining(), 0);
+        assert_eq!(fixture.remaining(), 1);
     }
 
     #[test]
@@ -514,7 +690,7 @@ mod tests {
             .unwrap();
         assert!(fixture
             .db
-            .complete_file_rehash(id, "9555e8555c62dcfd", Some(5))
+            .complete_file_rehash(&fixture.file(id), false, "9555e8555c62dcfd", Some(5))
             .is_err());
         assert!(fixture.file(id).file_hash.is_none());
         assert_eq!(fixture.remaining(), 1);

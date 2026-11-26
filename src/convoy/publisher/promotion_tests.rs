@@ -4,7 +4,7 @@ use actix_web::{dev::Service, web, App, HttpServer};
 use std::net::TcpListener;
 use tokio::sync::Notify;
 
-const MANIFEST: &str = "/quma/convoy/v2/catalog";
+const MANIFEST: &str = "/quma/convoy/v3/catalog";
 const PING: &str = "/launcher/v2/ping";
 
 fn app_state(
@@ -152,7 +152,7 @@ async fn wave_promotion_keeps_single_worker_live_and_rejects_old_ticket() -> Res
         .no_proxy()
         .timeout(Duration::from_secs(5))
         .build()?;
-    let old_url = format!("{origin}/quma/convoy/v2/generations/{old}/objects/{old_digest}");
+    let old_url = format!("{origin}/quma/convoy/v3/generations/{old}/objects/{old_digest}");
     let manifest = format!("{origin}{MANIFEST}");
 
     // Stop the real stamp receiver with its first admitted query, then fill
@@ -244,7 +244,7 @@ async fn wave_promotion_keeps_single_worker_live_and_rejects_old_ticket() -> Res
     continue_retry.send(())?;
     assert_eq!(ready(&p).await, candidate_generation);
     let new_url =
-        format!("{origin}/quma/convoy/v2/generations/{candidate_generation}/objects/{new_digest}");
+        format!("{origin}/quma/convoy/v3/generations/{candidate_generation}/objects/{new_digest}");
     assert_eq!(
         http.get(new_url)
             .send()
@@ -293,7 +293,7 @@ async fn wave_failed_promotion_rolls_back_receipt_rows_and_new_objects() -> Resu
             .query_row("SELECT file_hash FROM installed_files", [], |r| r.get(0))?;
     assert_eq!(
         checksum,
-        format!("{:016x}", xxhash_rust::xxh3::xxh3_64(OLD))
+        format!("{:032x}", xxhash_rust::xxh3::xxh3_128(OLD))
     );
     let store = f.dirs.convoy_store_dir();
     let aborted = store.join(receipt::digest(NEW));

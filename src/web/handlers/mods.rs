@@ -2463,6 +2463,7 @@ pub async fn file_tracking_page(
         tracked_files: 0,
         missing_files: vec![],
         modified_files: vec![],
+        unverified_files: vec![],
         untracked_dirs: vec![],
     });
 

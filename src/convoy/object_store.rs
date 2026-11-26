@@ -1,6 +1,6 @@
 use anyhow::{ensure, Context, Result};
 use cap_std::fs::{Dir, OpenOptions};
-use sha2::{Digest, Sha256};
+
 use std::{
     collections::BTreeMap,
     fs::{self, File, Metadata},
@@ -86,7 +86,7 @@ impl ObjectStore {
 
     fn open(&self, digest: &str) -> Result<File> {
         use cap_std::fs::OpenOptionsExt;
-        ensure!(lower_hex(digest, 64), "invalid object digest");
+        ensure!(lower_hex(digest, 32), "invalid object digest");
         let mut opts = OpenOptions::new();
         opts.read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
@@ -111,12 +111,11 @@ impl ObjectStore {
     }
 
     pub(super) fn verify(&self, asset: &AssetEntry) -> Result<ObjectRecord> {
-        let mut file = self.open(&asset.sha256)?;
+        let mut file = self.open(&asset.xxh3_128)?;
         let before = ObjectRecord::stat(&file.metadata()?);
         ensure!(before.length == asset.length, "object length mismatch");
         ensure!(
-            hash_exact(&mut file, asset.length, std::io::sink())?
-                == (asset.sha256.clone(), asset.xxh3_64.clone())
+            hash_exact(&mut file, asset.length, std::io::sink())? == asset.xxh3_128
                 && ObjectRecord::stat(&file.metadata()?) == before,
             "retained object failed verification"
         );
@@ -132,22 +131,19 @@ impl ObjectStore {
         Ok(dir)
     }
 
-    pub(super) fn collect(&self, keep: &std::collections::BTreeSet<String>) -> Result<()> {
+    /// Remove only an object whose verified open handle is still held by this process.
+    pub(super) fn retire(&self, digest: &str, expected: &ObjectRecord, held: &File) -> Result<()> {
         let _lock = self.lock_directory()?;
-        for entry in self.root.entries()? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let Some(s) = name.to_str() else { continue };
-            if !keep.contains(s)
-                && (lower_hex(s, 64)
-                    || s.strip_prefix(".tmp").is_some_and(|suffix| {
-                        suffix.len() == 6 && suffix.bytes().all(|c| c.is_ascii_alphanumeric())
-                    }))
-                && self.root.symlink_metadata(&name)?.is_file()
-            {
-                self.root.remove_file(&name)?;
-            }
-        }
+        let current = self.open(digest)?;
+        ensure!(
+            &ObjectRecord::stat(&held.metadata()?) == expected,
+            "retired object handle changed"
+        );
+        ensure!(
+            &ObjectRecord::stat(&current.metadata()?) == expected,
+            "retired object was replaced"
+        );
+        self.root.remove_file(digest)?;
         Ok(())
     }
 
@@ -227,8 +223,8 @@ pub(super) struct Candidate<'a> {
 
 impl Candidate<'_> {
     pub(super) fn reuse(&mut self, asset: &AssetEntry, record: &ObjectRecord) -> Result<()> {
-        let _ = self.store.lease(&asset.sha256, record)?;
-        self.objects.insert(asset.sha256.clone(), record.clone());
+        let _ = self.store.lease(&asset.xxh3_128, record)?;
+        self.objects.insert(asset.xxh3_128.clone(), record.clone());
         Ok(())
     }
 
@@ -263,7 +259,7 @@ impl Candidate<'_> {
         } else {
             None
         };
-        let (sha256, xxh3_64) = if let Some(temp) = &mut staged {
+        let xxh3_128 = if let Some(temp) = &mut staged {
             #[cfg(test)]
             let mut first = true;
             hash_exact_with(source, length, temp.as_file_mut(), || {
@@ -277,7 +273,7 @@ impl Candidate<'_> {
         };
         if let Some(expected) = tracked.0 {
             ensure!(
-                xxh3_64 == expected,
+                xxh3_128 == expected,
                 "source checksum differs from tracked checksum"
             );
         }
@@ -285,13 +281,12 @@ impl Candidate<'_> {
             ObjectRecord::stat(&source.metadata()?) == ObjectRecord::stat(&stat),
             "source changed while verifying"
         );
-        if !self.objects.contains_key(&sha256) {
-            let record = match self.store.open(&sha256) {
+        if !self.objects.contains_key(&xxh3_128) {
+            let record = match self.store.open(&xxh3_128) {
                 Ok(mut existing) => {
                     let before = ObjectRecord::stat(&existing.metadata()?);
                     ensure!(
-                        hash_exact(&mut existing, length, std::io::sink())?
-                            == (sha256.clone(), xxh3_64.clone())
+                        hash_exact(&mut existing, length, std::io::sink())? == xxh3_128
                             && ObjectRecord::stat(&existing.metadata()?) == before,
                         "retained object failed verification"
                     );
@@ -313,21 +308,20 @@ impl Candidate<'_> {
                     temp.as_file()
                         .set_permissions(fs::Permissions::from_mode(0o400))?;
                     temp.as_file().sync_all()?;
-                    temp.persist_noclobber(Path::new(&root).join(&sha256))
+                    temp.persist_noclobber(Path::new(&root).join(&xxh3_128))
                         .map_err(|e| e.error)?;
-                    self.created.push(sha256.clone());
+                    self.created.push(xxh3_128.clone());
                     self.used = used;
-                    ObjectRecord::stat(&self.store.open(&sha256)?.metadata()?)
+                    ObjectRecord::stat(&self.store.open(&xxh3_128)?.metadata()?)
                 }
                 Err(e) => return Err(e),
             };
-            self.objects.insert(sha256.clone(), record);
+            self.objects.insert(xxh3_128.clone(), record);
         }
         Ok(AssetEntry {
             path,
             length,
-            sha256,
-            xxh3_64,
+            xxh3_128,
         })
     }
 
@@ -349,7 +343,7 @@ impl Drop for Candidate<'_> {
     }
 }
 
-fn hash_exact(source: &mut File, remaining: u64, dest: impl Write) -> Result<(String, String)> {
+fn hash_exact(source: &mut File, remaining: u64, dest: impl Write) -> Result<String> {
     hash_exact_with(source, remaining, dest, || {})
 }
 
@@ -358,8 +352,7 @@ fn hash_exact_with(
     mut remaining: u64,
     mut dest: impl Write,
     mut after_write: impl FnMut(),
-) -> Result<(String, String)> {
-    let mut sha = Sha256::new();
+) -> Result<String> {
     let mut xx = Xxh3::new();
     let mut buf = [0u8; 64 * 1024];
     while remaining != 0 {
@@ -367,7 +360,6 @@ fn hash_exact_with(
         let n = source.read(&mut buf[..size])?;
         ensure!(n != 0, "object ended before declared length");
         let bytes = &buf[..n];
-        sha.update(bytes);
         xx.update(bytes);
         dest.write_all(bytes)?;
         after_write();
@@ -377,10 +369,7 @@ fn hash_exact_with(
         source.read(&mut buf[..1])? == 0,
         "object exceeds declared length"
     );
-    Ok((
-        format!("{:x}", sha.finalize()),
-        format!("{:016x}", xx.digest()),
-    ))
+    Ok(format!("{:032x}", xx.digest128()))
 }
 
 fn free_bytes(dir: &File) -> Result<u64> {

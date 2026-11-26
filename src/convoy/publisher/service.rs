@@ -5,6 +5,9 @@ use tokio::sync::{oneshot, watch, OwnedSemaphorePermit, Semaphore};
 
 const POLL: Duration = Duration::from_millis(250);
 const STAMP_QUEUE: usize = 32;
+// File handles preserve inode identity but must not exhaust the process limit.
+// Objects beyond this bound are retained and still count against storage.
+const MAX_RETIRED_HANDLES: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublicationStatus {
@@ -30,6 +33,7 @@ struct State {
     pending: Option<PublishMode>,
     active: Option<Active>,
     pins: BTreeMap<String, (usize, u64)>,
+    retired: BTreeMap<String, (ObjectStore, File, ObjectRecord)>,
     pin_wait: Option<PinWait>,
     collected_dirty: bool,
     promoting: bool,
@@ -309,8 +313,8 @@ impl Worker {
     fn run(self, jobs: mpsc::Receiver<()>) {
         let mut attempted = None;
         while !self.state.lock().stopped {
-            self.reconcile(&mut attempted);
             self.collect_retired();
+            self.reconcile(&mut attempted);
             if let Err(mpsc::RecvTimeoutError::Disconnected) = jobs.recv_timeout(POLL) {
                 break;
             }
@@ -323,14 +327,20 @@ impl Worker {
             if !std::mem::take(&mut state.collected_dirty) {
                 return;
             }
-            state
-                .active
-                .as_ref()
-                .map(|active| (active.store.clone(), state.reachable()))
+            let keep = state.reachable();
+            let keys: Vec<_> = state
+                .retired
+                .keys()
+                .filter(|digest| !keep.contains(*digest))
+                .cloned()
+                .collect();
+            keys.into_iter()
+                .filter_map(|digest| state.retired.remove(&digest).map(|object| (digest, object)))
+                .collect::<Vec<_>>()
         };
-        if let Some((store, keep)) = job {
-            if let Err(err) = store.collect(&keep) {
-                tracing::warn!(%err, "cannot collect retired Convoy objects");
+        for (digest, (store, held, record)) in job {
+            if let Err(err) = store.retire(&digest, &record, &held) {
+                tracing::warn!(%err, %digest, "cannot safely collect retired Convoy object; retaining it");
             }
         }
     }
@@ -396,10 +406,14 @@ impl Worker {
             let (runtime, spt_version) = installation(&input)?;
             let mut updates = Rebaseline::new();
             let mut witnesses = Witnesses::default();
+            let legacy_receipt = input
+                .committed_receipt
+                .as_ref()
+                .is_some_and(receipt::Receipt::is_legacy);
             let restored = input
                 .committed_receipt
                 .as_ref()
-                .filter(|_| matches!(mode, PublishMode::Managed))
+                .filter(|_| matches!(mode, PublishMode::Managed) && !legacy_receipt)
                 .map(|stored| {
                     receipt::Receipt::restore(
                         stored,
@@ -417,7 +431,7 @@ impl Worker {
                 let previous = previous
                     .as_deref()
                     .or(restored.as_ref().map(|(_, snapshot)| snapshot));
-                let mut keep = {
+                {
                     let state = self.state.lock();
                     for (digest, (_, length)) in &state.pins {
                         if !state
@@ -428,21 +442,15 @@ impl Worker {
                             retired_pins.insert(digest.clone(), *length);
                         }
                     }
-                    state.reachable()
-                };
-                if let Some(previous) = previous {
-                    keep.extend(previous.objects.keys().cloned());
                 }
                 match input
                     .committed_receipt
                     .as_ref()
+                    .filter(|_| !legacy_receipt)
                     .map(receipt::Receipt::committed_digests)
                     .transpose()
                 {
-                    Ok(digests) => {
-                        keep.extend(digests.into_iter().flatten());
-                        store.collect(&keep)?;
-                    }
+                    Ok(_) => {}
                     Err(err) if matches!(mode, PublishMode::Rehash) => {
                         // An unreadable receipt is not a deletion allowlist.
                         // Stage against all retained bytes and let successful
@@ -565,7 +573,43 @@ impl Worker {
                     state.collected_dirty = true;
                     state.active.replace(active)
                 };
-                drop(retired);
+                if let Some(retired) = retired {
+                    let (live, available) = {
+                        let mut state = self.state.lock();
+                        let live: std::collections::BTreeSet<_> = state
+                            .active
+                            .as_ref()
+                            .map(|active| active.snapshot.objects.keys().cloned().collect())
+                            .unwrap_or_default();
+                        state.retired.retain(|digest, _| !live.contains(digest));
+                        (
+                            live,
+                            MAX_RETIRED_HANDLES.saturating_sub(state.retired.len()),
+                        )
+                    };
+                    let mut held = Vec::new();
+                    for (digest, record) in &retired.snapshot.objects {
+                        if live.contains(digest) {
+                            continue;
+                        }
+                        if held.len() == available {
+                            tracing::warn!(
+                                "retired Convoy handle limit reached; preserving remaining objects"
+                            );
+                            break;
+                        }
+                        match retired.store.lease(digest, record) {
+                            Ok(file) => held.push((
+                                digest.clone(),
+                                (retired.store.clone(), file, record.clone()),
+                            )),
+                            Err(err) => {
+                                tracing::warn!(%err, %digest, "cannot hold retired Convoy object; preserving it")
+                            }
+                        }
+                    }
+                    self.state.lock().retired.extend(held);
+                }
                 self.collect_retired();
                 let stamp = self.capture_db.convoy_stamp();
                 let config = self.config.read();

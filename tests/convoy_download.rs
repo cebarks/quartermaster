@@ -7,14 +7,14 @@ use std::{
     io::{Cursor, Read},
     path::Path,
 };
-use xxhash_rust::xxh3::xxh3_64;
+use xxhash_rust::xxh3::xxh3_128;
 use zip::ZipArchive;
 
 const RECEIPT: &str = "BepInEx/plugins/ConvoySmokeFixture/receipt.txt";
 const CONTENT: &[u8] = b"Convoy fixture bytes\n\x00\xff";
 
 fn checksum(bytes: &[u8]) -> String {
-    format!("{:016x}", xxh3_64(bytes))
+    format!("{:032x}", xxh3_128(bytes))
 }
 
 fn write_file(root: &Path, path: &str, bytes: &[u8]) {
@@ -149,11 +149,11 @@ async fn v2_cutover_and_setup_independence() {
                 .unwrap()
                 .unwrap();
             }
-            let catalog = app.get("/quma/convoy/v2/catalog").await;
+            let catalog = app.get("/quma/convoy/v3/catalog").await;
             if enabled && !broken {
                 assert_eq!(catalog.status(), StatusCode::OK);
                 let json: serde_json::Value = test::read_body_json(catalog).await;
-                assert_eq!(json["protocol"], 2);
+                assert_eq!(json["protocol"], 3);
                 let files = json["groups"][0]["mods"][0]["files"].as_array().unwrap();
                 assert_eq!(files.len(), 1);
                 assert_eq!(files[0]["path"], RECEIPT);
@@ -166,6 +166,8 @@ async fn v2_cutover_and_setup_independence() {
                 );
             }
             for request in [
+                test::TestRequest::get().uri("/quma/convoy/v2/catalog"),
+                test::TestRequest::get().uri("/quma/convoy/v2/generations/old/objects/old"),
                 test::TestRequest::get().uri("/quma/convoy/catalog"),
                 test::TestRequest::post().uri("/quma/convoy/download"),
                 test::TestRequest::get().uri(&format!("/quma/convoy/mod/{id}/archive")),

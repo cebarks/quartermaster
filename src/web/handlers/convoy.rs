@@ -185,7 +185,7 @@ pub async fn retired(state: web::Data<AppState>) -> HttpResponse {
             HttpResponse::Gone(),
             serde_json::json!({
                 "code": "upgrade_required",
-                "message": "Install the standalone Convoy v2 client with the game closed, paired with a Convoy v2 Quartermaster server.",
+                "message": "Install the standalone Convoy v3 client with the game closed, paired with a Convoy v3 Quartermaster server.",
                 "instructions": "https://github.com/cebarks/convoy#installation"
             }),
         )

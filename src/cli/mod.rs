@@ -12,6 +12,7 @@ pub mod install;
 pub mod invite;
 pub mod list;
 pub mod migrate;
+pub mod rebaseline;
 pub mod reindex;
 pub mod remove;
 pub mod restore;
@@ -217,6 +218,16 @@ pub enum Command {
         deps: bool,
     },
 
+    /// Explicitly trust current bytes for selected legacy tracked files
+    Rebaseline {
+        /// Database file ID to rebaseline (repeat for multiple records)
+        #[arg(long = "file-id", required = true)]
+        file_ids: Vec<i64>,
+        /// Acknowledge that current bytes become the new trusted baseline
+        #[arg(long, required = true)]
+        trust_current: bool,
+    },
+
     /// Restore from a backup
     Restore {
         /// Backup ID (numeric) to restore
@@ -272,6 +283,17 @@ pub enum ServerAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rebaseline_requires_explicit_trust_and_selected_record_ids() {
+        assert!(Cli::try_parse_from(["quma", "rebaseline"]).is_err());
+        assert!(Cli::try_parse_from(["quma", "rebaseline", "--file-id", "1"]).is_err());
+        assert!(Cli::try_parse_from(["quma", "rebaseline", "--trust-current"]).is_err());
+        assert!(
+            Cli::try_parse_from(["quma", "rebaseline", "--file-id", "1", "--trust-current"])
+                .is_ok()
+        );
+    }
 
     #[test]
     fn initialization_commands_preserve_custom_directory() {

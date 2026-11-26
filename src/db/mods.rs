@@ -40,6 +40,7 @@ pub struct InstalledFile {
     pub file_hash: Option<String>,
     pub file_size: Option<i64>,
     pub source: String,
+    pub legacy_pending: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -316,7 +317,8 @@ impl Database {
 
     pub fn get_files_for_mod(&self, mod_id: i64) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source
+            "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = installed_files.id)
              FROM installed_files WHERE mod_id = ?1 ORDER BY file_path",
         )?;
         let rows = stmt.query_map(params![mod_id], row_to_installed_file)?;
@@ -333,13 +335,15 @@ impl Database {
         }
         let placeholders: String = forge_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = f.id)
              FROM installed_files f
              JOIN installed_mods m ON f.mod_id = m.id
              WHERE m.forge_mod_id IN ({placeholders})
              AND m.disabled = 0
              UNION ALL
-             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = f.id)
              FROM installed_files f
              JOIN installed_addons a ON f.addon_id = a.id
              JOIN installed_mods m ON a.parent_mod_id = m.id
@@ -368,13 +372,15 @@ impl Database {
         }
         let placeholders: String = mod_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = f.id)
              FROM installed_files f
              JOIN installed_mods m ON f.mod_id = m.id
              WHERE m.id IN ({placeholders})
              AND m.disabled = 0
              UNION ALL
-             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = f.id)
              FROM installed_files f
              JOIN installed_addons a ON f.addon_id = a.id
              JOIN installed_mods m ON a.parent_mod_id = m.id
@@ -398,12 +404,14 @@ impl Database {
 
     pub fn get_all_enabled_mod_files(&self) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = f.id)
              FROM installed_files f
              JOIN installed_mods m ON f.mod_id = m.id
              WHERE m.disabled = 0
              UNION ALL
-             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source
+             SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = f.id)
              FROM installed_files f
              JOIN installed_addons a ON f.addon_id = a.id
              JOIN installed_mods m ON a.parent_mod_id = m.id
@@ -423,7 +431,8 @@ impl Database {
 
     pub fn get_all_tracked_files(&self) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source
+            "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = installed_files.id)
              FROM installed_files ORDER BY file_path",
         )?;
         let rows = stmt.query_map([], row_to_installed_file)?;
@@ -433,7 +442,7 @@ impl Database {
     /// Pending files with their effective disabled state, including addon parents.
     pub(crate) fn pending_file_rehashes(&self) -> rusqlite::Result<Vec<(InstalledFile, bool)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source,
+            "SELECT f.id, f.mod_id, f.addon_id, f.file_path, f.file_hash, f.file_size, f.source, 1,
                     COALESCE(m.disabled, 0) OR COALESCE(a.disabled, 0) OR COALESCE(parent.disabled, 0)
              FROM pending_file_rehashes p
              JOIN installed_files f ON f.id = p.file_id
@@ -442,28 +451,41 @@ impl Database {
              LEFT JOIN installed_mods parent ON parent.id = a.parent_mod_id
              ORDER BY f.id",
         )?;
-        let rows = stmt.query_map([], |row| Ok((row_to_installed_file(row)?, row.get(7)?)))?;
+        let rows = stmt.query_map([], |row| Ok((row_to_installed_file(row)?, row.get(8)?)))?;
         rows.collect()
     }
 
     /// Commit a recovered hash and queue completion together without replacing a newer hash.
     pub(crate) fn complete_file_rehash(
         &self,
-        file_id: i64,
+        file: &InstalledFile,
+        disabled: bool,
         hash: &str,
         size: Option<i64>,
     ) -> rusqlite::Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
         let updated = tx.execute(
             "UPDATE installed_files SET file_hash = ?1, file_size = ?2
-             WHERE id = ?3 AND file_hash IS NULL
+             WHERE id = ?3 AND mod_id IS ?4 AND addon_id IS ?5 AND file_path = ?6
+             AND file_hash IS ?7 AND file_size IS ?8 AND source = ?9
+             AND (SELECT COALESCE(m.disabled, 0) OR COALESCE(a.disabled, 0) OR COALESCE(parent.disabled, 0)
+                  FROM installed_files f
+                  LEFT JOIN installed_mods m ON m.id = f.mod_id
+                  LEFT JOIN installed_addons a ON a.id = f.addon_id
+                  LEFT JOIN installed_mods parent ON parent.id = a.parent_mod_id
+                  WHERE f.id = ?3) = ?10
+             AND (file_hash IS NULL OR file_hash IS
+                 (SELECT hash FROM legacy_file_hashes WHERE file_id = ?3))
              AND EXISTS (SELECT 1 FROM pending_file_rehashes WHERE file_id = ?3)",
-            params![hash, size, file_id],
+            params![hash, size, file.id, file.mod_id, file.addon_id, file.file_path,
+                file.file_hash, file.file_size, file.source, disabled],
         )?;
-        tx.execute(
-            "DELETE FROM pending_file_rehashes WHERE file_id = ?1",
-            params![file_id],
-        )?;
+        if updated == 1 {
+            tx.execute(
+                "DELETE FROM pending_file_rehashes WHERE file_id = ?1",
+                params![file.id],
+            )?;
+        }
         tx.commit()?;
         Ok(updated)
     }
@@ -857,6 +879,7 @@ pub(crate) fn row_to_installed_file(row: &rusqlite::Row<'_>) -> rusqlite::Result
         file_hash: row.get(4)?,
         file_size: row.get(5)?,
         source: row.get(6)?,
+        legacy_pending: row.get(7)?,
     })
 }
 

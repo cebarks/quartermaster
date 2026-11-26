@@ -30,7 +30,7 @@ pub(crate) fn seed_generation(f: &Fixture, clients: &[u32]) {
         vec![id],
     )])
     .unwrap();
-    let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"published"));
+    let hash = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(b"published"));
     db.insert_file(id, REL, Some(&hash), Some(9)).unwrap();
     let policy = super::PolicySnapshot::load(&db).unwrap();
     drop(db);

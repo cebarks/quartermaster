@@ -42,7 +42,7 @@ fn native_never_started_creation_prepares_without_boot_or_relaxed_existing_inspe
             vec![id],
         )])
         .unwrap();
-        let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"published"));
+        let hash = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(b"published"));
         db.insert_file(id, "BepInEx/plugins/Excluded.dll", Some(&hash), Some(9))
             .unwrap();
         for p in [

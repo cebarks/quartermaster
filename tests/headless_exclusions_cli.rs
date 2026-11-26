@@ -135,7 +135,7 @@ impl Fixture {
         )])
         .unwrap();
         let bytes = b"published";
-        let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(bytes));
+        let hash = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(bytes));
         db.insert_file(
             id,
             "BepInEx/plugins/Excluded.dll",

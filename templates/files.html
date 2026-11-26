@@ -23,6 +23,7 @@
         <tr><th style="width:160px">Tracked Files</th><td>{{ report.tracked_files }}</td></tr>
         <tr><th>Missing Files</th><td>{% if report.missing_files.is_empty() %}<span class="text-muted">None</span>{% else %}<span class="badge badge-danger">{{ report.missing_files.len() }}</span>{% endif %}</td></tr>
         <tr><th>Modified Files</th><td>{% if report.modified_files.is_empty() %}<span class="text-muted">None</span>{% else %}<span class="badge badge-warning">{{ report.modified_files.len() }}</span>{% endif %}</td></tr>
+        <tr><th>Unverified Files</th><td>{% if report.unverified_files.is_empty() %}<span class="text-muted">None</span>{% else %}<span class="badge badge-warning">{{ report.unverified_files.len() }}</span>{% endif %}</td></tr>
         <tr><th>Untracked Dirs</th><td>{% if report.untracked_dirs.is_empty() %}<span class="text-muted">None</span>{% else %}<span class="text-muted">{{ report.untracked_dirs.len() }}</span>{% endif %}</td></tr>
     </table>
 </div>
@@ -45,7 +46,7 @@
 {% if !report.modified_files.is_empty() %}
 <div class="card" style="border-left: 3px solid var(--warning)">
     <h2>Modified Files ({{ report.modified_files.len() }})</h2>
-    <p class="text-muted text-sm mb-1">Files whose SHA256 hash differs from the recorded value.</p>
+    <p class="text-muted text-sm mb-1">Files whose XXH3-128 hash differs from the recorded value.</p>
     <table>
         <thead><tr><th>Path</th></tr></thead>
         <tbody>
@@ -54,6 +55,16 @@
             {% endfor %}
         </tbody>
     </table>
+</div>
+{% endif %}
+
+{% if !report.unverified_files.is_empty() %}
+<div class="card" style="border-left: 3px solid var(--warning)">
+    <h2>Unverified Files ({{ report.unverified_files.len() }})</h2>
+    <p class="text-muted text-sm mb-1">These files have no verified XXH3-128 baseline.</p>
+    <table><thead><tr><th>ID</th><th>Path</th><th>Reason</th></tr></thead><tbody>
+        {% for f in &report.unverified_files %}<tr><td>{{ f.id }}</td><td class="text-sm">{{ f.path }}</td><td>{{ f.reason }}</td></tr>{% endfor %}
+    </tbody></table>
 </div>
 {% endif %}
 

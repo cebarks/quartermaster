@@ -655,6 +655,7 @@ mod tests {
             file_hash: None,
             file_size: None,
             source: "archive".to_string(),
+            legacy_pending: false,
         }];
 
         let dirs = crate::dirs::QumaDirs::from_legacy(spt_dir.path().to_path_buf());
@@ -677,6 +678,7 @@ mod tests {
             file_hash: None,
             file_size: None,
             source: "archive".to_string(),
+            legacy_pending: false,
         }];
 
         let dirs = crate::dirs::QumaDirs::from_legacy(spt_dir.path().to_path_buf());

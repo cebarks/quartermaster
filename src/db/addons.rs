@@ -175,7 +175,8 @@ impl Database {
 
     pub fn get_files_for_addon(&self, addon_id: i64) -> rusqlite::Result<Vec<InstalledFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source
+            "SELECT id, mod_id, addon_id, file_path, file_hash, file_size, source,
+                    EXISTS(SELECT 1 FROM pending_file_rehashes p WHERE p.file_id = installed_files.id)
              FROM installed_files WHERE addon_id = ?1 ORDER BY file_path",
         )?;
         let rows = stmt.query_map(params![addon_id], super::mods::row_to_installed_file)?;

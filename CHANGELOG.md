@@ -4,9 +4,21 @@ All notable changes to Quartermaster will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-26
+
+### Breaking
+
+- Require paired Convoy protocol 3 delivery using canonical XXH3-128 identities and lengths. V2 catalog/object routes are retired; legacy receipts are not served. XXH3-128 detects accidental corruption but does not authenticate content or resist intentional collisions.
+- Preserve legacy tracked checksum evidence as pending instead of automatically trusting current files. Use selected `quma rebaseline --file-id <id> --trust-current` actions; pending client assets prevent publication. Client legacy ownership needs explicit player review, with separate backed-up DLL replacement consent for differing bytes.
+
+### Changed
+
+- Use XXH3-128 for archive/file tracking, integrity, publisher snapshots, delivery validators and client verification. Retain old store bytes against the configured capacity; insufficient migration space fails without deleting retained data or increasing the limit. See [migration and rollback](docs/convoy-client-files.md#paired-upgrade-and-rollback).
+
 ### Fixed
 
 - Detect SVM in the managed server overlay and expose its preset editor. Leave SVM inactive until a preset is explicitly activated; for overlay-based installations, editing requires the mounted SPT runtime.
+- Keep pending disabled mod/addon records visible as unverified. Reject conflicting object lengths and non-v3 protocols before restoring publisher receipts.
 
 ## [0.5.0] - 2026-11-26
 
