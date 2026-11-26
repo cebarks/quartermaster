@@ -4,9 +4,12 @@ All notable changes to Quartermaster will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-26
+
 ### Upgrade notes
 
-- Upgrade Quartermaster and the standalone Convoy client as a pair. Legacy Convoy catalog and ZIP delivery return `410 Gone` when enabled; setup and invite ZIPs are unchanged. See [Convoy file policy and rollback](docs/convoy-client-files.md#paired-upgrade-and-rollback).
+- Upgrade Quartermaster and the standalone [Convoy v0.7.0 client](https://github.com/cebarks/convoy/releases/tag/v0.7.0) together. Legacy Convoy catalog and ZIP delivery return `410 Gone` when enabled; setup and invite ZIPs are unchanged. See [Convoy file policy and rollback](docs/convoy-client-files.md#paired-upgrade-and-rollback).
+- The paired file transfer was tested end to end on Linux/Mono. Native Windows/Unity startup, interrupted sync and loaded-DLL replacement still need qualification before rollout.
 - Headless exclusion ownership uses journal format 3 and requires durable directory user xattrs. Active or pending format-1/2 ownership cannot be upgraded safely from inode numbers alone and now refuses automatic adoption or teardown; preserve its data/evidence for separately authorized recovery. Keep the updated daemon and CLI paired. See [overlay generation and recovery requirements](docs/headless-exclusions.md#overlay-generations-and-destructive-lifecycle-operations).
 
 ### Added

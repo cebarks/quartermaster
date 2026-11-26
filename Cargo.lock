@@ -3947,7 +3947,7 @@ dependencies = [
 
 [[package]]
 name = "spt-quartermaster"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "actix-files",
  "actix-governor",
