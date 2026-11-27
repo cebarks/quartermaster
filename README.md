@@ -168,6 +168,7 @@ QUMA_DIR=~/spt-server quma status
 - [docs/forge-api-notes.md](docs/forge-api-notes.md) — Undocumented Forge API quirks and behaviors
 - [docs/spt-remote-client-connectivity.md](docs/spt-remote-client-connectivity.md) — SPT remote client connectivity investigation and proxy setup
 - [docs/headless-exclusions.md](docs/headless-exclusions.md) — Headless mod-group policy, guarded lifecycle preparation and offline reconciliation
+- [docs/headless-entrypoint.md](docs/headless-entrypoint.md) — Headless image display isolation, shutdown and native fixture verification
 
 ## Development
 

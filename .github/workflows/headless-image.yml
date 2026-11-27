@@ -5,9 +5,17 @@ on:
     branches: [main]
     paths:
       - 'container/headless/**'
+      - 'scripts/test-headless-entrypoint.py'
+      - 'tests/headless_image_workflow.rs'
+      - '.github/workflows/headless-image.yml'
+      - 'docs/headless-entrypoint.md'
   pull_request:
     paths:
       - 'container/headless/**'
+      - 'scripts/test-headless-entrypoint.py'
+      - 'tests/headless_image_workflow.rs'
+      - '.github/workflows/headless-image.yml'
+      - 'docs/headless-entrypoint.md'
   release:
     types: [published]
   workflow_dispatch:
@@ -17,22 +25,132 @@ env:
   IMAGE_NAME: ${{ github.repository }}/headless
 
 jobs:
-  build:
-    name: Build & Push
-    if: github.event_name != 'pull_request'
+  build-and-test:
+    name: Build & native test
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
-      packages: write
+    outputs:
+      image_id: ${{ steps.build.outputs.image_id }}
+      archive_sha256: ${{ steps.archive.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+
+      - name: Validate entrypoint and fixture
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y podman shellcheck
+          sh -n container/headless/entrypoint.sh
+          shellcheck container/headless/entrypoint.sh
+          python3 -B scripts/test-headless-entrypoint.py --help >/dev/null
+          podman info >/dev/null
+
+      - name: Build disposable image
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          podman build --layers --pull=missing --jobs=1 \
+            --cpu-period=100000 --cpu-quota=400000 --memory=12g \
+            --tag localhost/quma-headless:display-test \
+            --file container/headless/Containerfile container/headless
+          image_id=$(podman image inspect localhost/quma-headless:display-test --format '{{.Id}}')
+          test -n "$image_id"
+          printf 'IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
+          printf 'image_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
+          printf 'Built image ID: %s\n' "$image_id"
+
+      - name: Verify runtime process-group tools
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never --entrypoint /bin/sh "$IMAGE_ID" -ec '
+            for tool in /usr/bin/setsid /usr/bin/kill; do
+              rpm -qf "$tool" | grep -q "^util-linux-core-"
+            done
+            setsid sleep 30 & pid=$!
+            for attempt in $(seq 1 50); do
+              if /bin/kill -0 -- "-$pid" 2>/dev/null; then break; fi
+              sleep 0.02
+            done
+            /bin/kill -0 -- "-$pid"
+            /bin/kill -TERM -- "-$pid" "$pid"
+            wait "$pid" || :
+          '
+
+      - name: Test immutable image with real Xvfb and synthetic Wine children
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/headless-evidence"
+          python3 -B scripts/test-headless-entrypoint.py "$IMAGE_ID" \
+            --evidence-dir "$RUNNER_TEMP/headless-evidence/fixtures"
+
+      - name: Retain native test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/headless-evidence/
+          if-no-files-found: ignore
+
+      - name: Export tested image
+        id: archive
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          podman save --format oci-archive \
+            --output "$RUNNER_TEMP/headless-image.oci.tar" localhost/quma-headless:display-test
+          printf 'sha256=%s\n' "$(sha256sum "$RUNNER_TEMP/headless-image.oci.tar" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Transfer tested image
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/headless-image.oci.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    name: Publish tested image
+    needs: build-and-test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      packages: write
+    steps:
+      - name: Prepare disposable image store
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y podman
+          podman info >/dev/null
+
+      - name: Receive tested image
+        uses: actions/download-artifact@v4
+        with:
+          name: headless-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/headless-image
+
+      - name: Verify transferred image
+        env:
+          EXPECTED_SHA256: ${{ needs.build-and-test.outputs.archive_sha256 }}
+          EXPECTED_IMAGE_ID: ${{ needs.build-and-test.outputs.image_id }}
+          ARCHIVE: ${{ runner.temp }}/headless-image/headless-image.oci.tar
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA256" =~ ^[[:xdigit:]]{64}$ ]]
+          [[ "$EXPECTED_IMAGE_ID" =~ ^[[:xdigit:]]{64}$ ]]
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$ARCHIVE" | sha256sum -c -
+          podman load --input "$ARCHIVE"
+          imported_id=$(podman image inspect localhost/quma-headless:display-test --format '{{.Id}}')
+          test "$imported_id" = "$EXPECTED_IMAGE_ID"
+          printf 'IMAGE_ID=%s\n' "$imported_id" >> "$GITHUB_ENV"
 
       - name: Extract metadata
         id: meta
@@ -44,25 +162,16 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,prefix=
 
-      - name: Build and push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: container/headless
-          file: container/headless/Containerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  build-check:
-    name: Build Check
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: container/headless
-          file: container/headless/Containerfile
-          push: false
+      - name: Publish tested image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | podman login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+          test -n "$TAGS"
+          while IFS= read -r tag; do
+            test -n "$tag" || continue
+            podman tag "$IMAGE_ID" "$tag"
+            podman push "$tag"
+          done <<< "$TAGS"

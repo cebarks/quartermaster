@@ -87,7 +87,9 @@ RUN /build/wine/configure \
     --enable-archs=x86_64 \
     --enable-build-id
 
-RUN make -j$(nproc)
+# GNU ld 2.47 separates fixed-address preloader code and rodata beyond PC-relative reach.
+# Keep the workaround on Wine's preloader target; other native and PE links retain their flags.
+RUN make -j$(nproc) wine_preloader_LDFLAGS=-Wl,--no-rosegment
 RUN make install DESTDIR=/staging
 
 # Stage 2: Minimal runtime
@@ -96,6 +98,7 @@ FROM registry.fedoraproject.org/fedora-minimal:latest
 # Runtime deps only — no -devel, no build tools
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=False \
     xorg-x11-server-Xvfb xkbcomp xkeyboard-config \
+    util-linux-core \
     mesa-dri-drivers mesa-libGL mesa-libEGL mesa-vulkan-drivers \
     vulkan-loader \
     fontconfig liberation-sans-fonts \
